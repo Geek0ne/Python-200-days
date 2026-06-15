@@ -324,3 +324,138 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ============================================================
+# 6. 进阶：递归遍历的实用模式
+# ============================================================
+
+def walk_with_patterns(root: str, patterns: list = None,
+                        exclude_dirs: list = None, max_depth: int = -1):
+    """带文件名模式匹配和目录排除的递归遍历
+
+    参数:
+        root: 根目录
+        patterns: 文件名模式列表，如 ["*.py", "*.md"]
+        exclude_dirs: 要排除的目录名，如 [".git", "__pycache__"]
+        max_depth: 最大深度
+    """
+    import fnmatch
+
+    if patterns is None:
+        patterns = ["*"]
+    if exclude_dirs is None:
+        exclude_dirs = [".git", "__pycache__", ".DS_Store"]
+
+    def _walk(current: str, depth: int = 0):
+        if max_depth >= 0 and depth > max_depth:
+            return
+        try:
+            for entry in sorted(os.listdir(current)):
+                full = os.path.join(current, entry)
+                if os.path.isdir(full):
+                    if entry not in exclude_dirs and not entry.startswith("."):
+                        _walk(full, depth + 1)
+                elif os.path.isfile(full):
+                    for pattern in patterns:
+                        if fnmatch.fnmatch(entry, pattern):
+                            yield full
+                            break
+        except PermissionError:
+            pass
+
+    yield from _walk(root)
+
+
+def count_lines_in_project(root: str, extensions: tuple = (".py", ".md")):
+    """递归统计项目中指定扩展名的文件行数"""
+    total_lines = 0
+    file_counts = {}
+
+    def _count(current: Path):
+        nonlocal total_lines
+        try:
+            for entry in current.iterdir():
+                if entry.is_dir():
+                    if entry.name not in (".git", "__pycache__", ".venv"):
+                        _count(entry)
+                elif entry.suffix in extensions:
+                    lines = len(entry.read_text().splitlines())
+                    total_lines += lines
+                    file_counts[str(entry)] = lines
+        except (PermissionError, OSError):
+            pass
+
+    _count(Path(root))
+    return total_lines, file_counts
+
+
+def tree_to_dict(root: str) -> dict:
+    """将目录树转换为嵌套字典（可用于 JSON 序列化）
+
+    返回:
+        {
+            "name": "project",
+            "type": "directory",
+            "children": [
+                {"name": "main.py", "type": "file", "size": 1024},
+                {"name": "src", "type": "directory", "children": [...]}
+            ]
+        }
+    """
+    def _build(path: Path) -> dict:
+        name = path.name
+        if path.is_file():
+            return {
+                "name": name,
+                "type": "file",
+                "size": path.stat().st_size,
+            }
+        elif path.is_dir():
+            children = []
+            try:
+                for entry in sorted(path.iterdir()):
+                    if not entry.name.startswith("."):
+                        children.append(_build(entry))
+            except PermissionError:
+                pass
+            return {
+                "name": name,
+                "type": "directory",
+                "children": children,
+            }
+
+    return _build(Path(root))
+
+
+def find_dir_cycles(start: str) -> list:
+    """检测目录中的符号链接循环（递归陷阱实战）
+
+    在某些情况下，符号链接可能导致无限递归循环。
+    此函数使用 visited 集合来避免循环。
+    """
+    visited_real = set()
+    cycles = []
+
+    def _walk(current: str, path_chain: list):
+        try:
+            real = os.path.realpath(current)
+            if real in visited_real:
+                cycles.append(path_chain + [current])
+                return
+            visited_real.add(real)
+            for entry in os.listdir(current):
+                full = os.path.join(current, entry)
+                if os.path.isdir(full) and not os.path.islink(full):
+                    _walk(full, path_chain + [entry])
+                elif os.path.islink(full) and os.path.isdir(full):
+                    target = os.path.realpath(full)
+                    if target in visited_real:
+                        cycles.append(path_chain + [entry])
+        except PermissionError:
+            pass
+
+    _walk(start, [os.path.basename(start)])
+    return cycles
+
+
