@@ -240,10 +240,10 @@ def main():
     print(f"   比差:               {t_rm / t_it:.2f}x")
 
     # ---------- 基准测试 3: 求和 ----------
-    print("\n➕ 3. 求和 (n=10000)")
-    t_r, r_r = benchmark("sum_recursive", sum_recursive, 10000)
-    t_i, r_i = benchmark("sum_iterative", sum_iterative, 10000)
-    t_f, r_f = benchmark("sum_formula", sum_formula, 10000)
+    print("\n➕ 3. 求和 (n=500)")
+    t_r, r_r = benchmark("sum_recursive", sum_recursive, 500)
+    t_i, r_i = benchmark("sum_iterative", sum_iterative, 500)
+    t_f, r_f = benchmark("sum_formula", sum_formula, 500)
     assert r_r == r_i == r_f
     print(f"   递归:       {format_time(t_r)}")
     print(f"   迭代:       {format_time(t_i)}")
@@ -251,11 +251,11 @@ def main():
     print(f"   递归 vs 迭代: {t_r / t_i:.2f}x")
 
     # ---------- 基准测试 4: 幂运算 ----------
-    print("\n🔢 4. 幂运算 (2¹⁰⁰⁰⁰)")
-    t_pr, r_pr = benchmark("power_recursive", power_recursive, 2, 10000)
+    print("\n🔢 4. 幂运算 (2¹⁰⁰⁰)")
+    t_pr, r_pr = benchmark("power_recursive", power_recursive, 2, 1000)
     t_pf, r_pf = benchmark("power_fast_recursive",
-                           power_fast_recursive, 2, 10000)
-    t_pi, r_pi = benchmark("power_iterative", power_iterative, 2, 10000)
+                           power_fast_recursive, 2, 1000)
+    t_pi, r_pi = benchmark("power_iterative", power_iterative, 2, 1000)
     assert r_pr == r_pf == r_pi
     print(f"   普通递归 O(n):     {format_time(t_pr)}")
     print(f"   快速幂 O(log n):   {format_time(t_pf)}")
