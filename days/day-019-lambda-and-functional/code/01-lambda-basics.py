@@ -214,3 +214,42 @@ try:
 except TypeError as e:
     print(f"空序列出错: {e}")
 print(f"带初始值:   {reduce(lambda a, b: a + b, [], 0)}")
+
+print()
+
+# ============================================================
+# 7. 综合：Lambda 实战
+# ============================================================
+print("\n" + "=" * 60)
+print("7. Lambda 综合实战")
+print("=" * 60)
+
+# 统计词频
+text = "python java python python java cpp rust python java rust"
+words_list = text.split()
+unique_words = set(words_list)
+word_count = {w: len(list(filter(lambda x: x == w, words_list)))
+              for w in unique_words}
+print("词频统计:")
+for word, count in sorted(word_count.items(), key=lambda x: -x[1]):
+    print(f"  {word:8}: {count}次")
+
+# 列表排名
+scores = [88, 92, 75, 95, 68, 83]
+ranked = sorted(
+    [{"score": s, "rank": r + 1}
+     for r, s in enumerate(sorted(scores, reverse=True))],
+    key=lambda x: scores.index(x["score"])
+)
+print("\n成绩排名:")
+for item in ranked:
+    print(f"  分数 {item['score']:3} → 第{item['rank']}名")
+
+# 数据清洗
+raw_data = ["  Alice  ", "BOB", "charlie ", " DAVE ", None, ""]
+cleaned = list(filter(None, map(
+    lambda s: s.strip().capitalize(), filter(None, raw_data))))
+print(f"\n数据清洗: {raw_data}")
+print(f"清洗结果: {cleaned}")
+
+print("\n✅ Lambda 基础示例完成")
