@@ -219,7 +219,59 @@ def factorial_tail(n, acc=1):
    - TCO 会掩盖栈溢出错误，使调试更困难
    - 鼓励人们使用迭代（更 Pythonic 的方式）
 
-> **结论**：在 Python 中不要依赖尾递归优化。如果递归深度可能超过 1000，请使用迭代。
+### 尾递归与迭代的转换
+
+尾递归形式可以机械地转换为迭代：
+
+```python
+# 尾递归版本
+def fact_tail(n, acc=1):
+    if n == 0:
+        return acc
+    return fact_tail(n - 1, n * acc)
+
+# 等价迭代版本
+def fact_iter(n):
+    acc = 1
+    while n > 0:
+        acc = n * acc
+        n -= 1
+    return acc
+```
+
+**转换规则**：
+- 递归参数 → 循环变量
+- 累加器 → 循环中的累加操作
+- 基线条件 → 循环终止条件
+- 递归调用 → `continue`（回到循环开始）
+
+### 模拟尾递归（手动实现 Trampoline）
+
+虽然 Python 不支持 TCO，但可以使用 **蹦床函数 (Trampoline)** 手动模拟：
+
+```python
+def trampoline(f):
+    """将尾递归函数转换为迭代执行"""
+    def wrapped(*args, **kwargs):
+        result = f(*args, **kwargs)
+        while callable(result):
+            result = result()
+        return result
+    return wrapped
+
+def fact_trampoline(n, acc=1):
+    if n == 0:
+        return acc
+    # 返回一个 lambda 而非调用自身
+    return lambda: fact_trampoline(n - 1, n * acc)
+
+fact_trampoline = trampoline(fact_trampoline)
+print(fact_trampoline(10000))  # ✅ 不会栈溢出！
+```
+
+> **注意**：Trampoline 本质上是把递归转换成了迭代，虽然保持了递归的代码形式。
+
+> **结论**：在 Python 中不要依赖尾递归优化。如果递归深度可能超过 1000，请使用迭代或蹦床函数。
 
 ## 🚨 常见递归陷阱与调试技巧
 
