@@ -193,3 +193,98 @@ def solve_n_queens(n):
 | 文件系统遍历 | | | |
 | 回溯算法 | | | |
 | 性能分析 | | | |
+
+
+---
+
+## 🧪 挑战题解答思路
+
+### 练习 9：二叉树递归遍历（解答思路）
+
+```python
+class TreeNode:
+    def __init__(self, val, left=None, right=None):
+        self.val = val
+        self.left = left
+        self.right = right
+
+# 1. 最大深度
+def max_depth(root):
+    if root is None:          # 基线条件：空树深度为 0
+        return 0
+    left_depth = max_depth(root.left)
+    right_depth = max_depth(root.right)
+    return max(left_depth, right_depth) + 1
+
+# 2. 中序遍历
+def inorder_traversal(root):
+    if root is None:          # 基线条件
+        return []
+    return (inorder_traversal(root.left) +
+            [root.val] +
+            inorder_traversal(root.right))
+
+# 3. 镜像翻转
+def mirror(root):
+    if root is None:          # 基线条件
+        return None
+    root.left, root.right = root.right, root.left
+    mirror(root.left)          # 递归翻转左子树
+    mirror(root.right)         # 递归翻转右子树
+    return root
+```
+
+### 练习 10：N 皇后问题（回溯框架）
+
+```python
+def solve_n_queens(n):
+    def is_safe(board, row, col):
+        # 检查列、对角线是否有皇后
+        for i in range(row):
+            if (board[i] == col or
+                board[i] - i == col - row or
+                board[i] + i == col + row):
+                return False
+        return True
+
+    def backtrack(row, board):
+        if row == n:          # 基线条件：所有行都放了皇后
+            solutions.append(board[:])
+            return
+        for col in range(n):
+            if is_safe(board, row, col):
+                board.append(col)        # 选择
+                backtrack(row + 1, board)  # 递归
+                board.pop()               # 回溯
+
+    solutions = []
+    backtrack(0, [])
+    return solutions
+```
+
+---
+
+## 📊 递归学习路线图
+
+```mermaid
+graph LR
+    A[理解递归概念] --> B[简单递归函数<br>阶乘/斐波那契]
+    B --> C[递归思想<br>汉诺塔/二分查找]
+    C --> D[调用栈分析<br>调试技巧]
+    D --> E[优化递归<br>Memoization/TCO]
+    E --> F[递归实战<br>文件遍历/树操作]
+    F --> G[高级应用<br>回溯/分治/动态规划]
+
+    style A fill:#e1f5fe
+    style G fill:#c8e6c9
+```
+
+## 💡 递归模式速查表
+
+| 模式 | 结构 | 适用于 | 示例 |
+|------|------|--------|------|
+| **尾部递归** | 返回值直接是递归调用 | 累加、遍历 | `fact_tail(n, acc)` |
+| **头部递归** | 先递归再处理 | 反向输出 | `reverse(s[1:]) + s[0]` |
+| **树形递归** | 多次调用自身 | 分治算法 | 斐波那契、树遍历 |
+| **嵌套递归** | 调用参数包含递归调用 | 复杂数学 | Ackermann 函数 |
+| **互递归** | 函数 A 调 B, B 调 A | 语法解析 | `parse_expr` + `parse_term` |
