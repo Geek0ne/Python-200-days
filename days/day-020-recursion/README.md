@@ -318,7 +318,7 @@ def traverse(node, visited=None):
 
 ### 调试技巧
 
-**技巧 1：打印调用深度**
+**技巧 1：打印调用深度（调用树可视化）**
 
 ```python
 def factorial(n, depth=0):
@@ -342,24 +342,80 @@ def factorial(n, depth=0):
 # → return 6
 ```
 
-**技巧 2：使用 `sys.setrecursionlimit`**
+**技巧 2：使用 `sys.setrecursionlimit` 安全地增加深度**
 
 ```python
 import sys
+
+# 检查当前限制
+print(sys.getrecursionlimit())  # 默认 1000
+
+# 安全增加（不要超过系统栈大小）
 sys.setrecursionlimit(10_000)
+
+# ⚠️ 增大限制不是银弹：
+# - 超过了系统 C 栈限制会导致 Segfault（段错误）
+# - 更深的递归 = 更大的内存消耗
+# - 更好的做法：改成迭代
 ```
 
-**技巧 3：memoization 优化**
+**技巧 3：装饰器辅助调试**
 
 ```python
-from functools import lru_cache
+def trace_calls(func):
+    """装饰器：追踪递归调用次数和参数"""
+    def wrapper(*args, **kwargs):
+        wrapper.call_count += 1
+        return func(*args, **kwargs)
+    wrapper.call_count = 0
+    return wrapper
 
-@lru_cache(maxsize=None)
+@trace_calls
 def fib(n):
     if n <= 1:
         return n
     return fib(n-1) + fib(n-2)
+
+fib(10)
+print(f"fib(10) 被调用了 {fib.call_count} 次")
+# 输出: fib(10) 被调用了 177 次
 ```
+
+**技巧 4：memoization 优化（性能提升 10⁵ 倍）**
+
+```python
+from functools import lru_cache
+
+# 基础版：O(2ⁿ) — fib(40) ≈ 3.3 亿次调用
+def fib_naive(n):
+    if n <= 1: return n
+    return fib_naive(n-1) + fib_naive(n-2)
+
+# 记忆化版：O(n) — fib(40) 仅 41 次调用
+@lru_cache(maxsize=None)
+def fib_memo(n):
+    if n <= 1: return n
+    return fib_memo(n-1) + fib_memo(n-2)
+
+# 手动实现 memoization（理解原理）
+def make_memoized(func):
+    cache = {}
+    def memoized(*args):
+        if args not in cache:
+            cache[args] = func(*args)
+        return cache[args]
+    return memoized
+
+@make_memoized
+def fib_manual(n):
+    if n <= 1: return n
+    return fib_manual(n-1) + fib_manual(n-2)
+```
+
+> **lru_cache VS 手动 memoization**：
+> - `@lru_cache` 是生产推荐（线程安全、有缓存上限）
+> - 手动实现更易理解原理，适合需求特殊的缓存策略
+> - 两者都使用 `dict` 做缓存，时间复杂度 O(1) 查找
 
 ## 🎨 Mermaid 图解
 
