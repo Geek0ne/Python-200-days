@@ -221,4 +221,147 @@ with open("data.json", "r", encoding="utf-8") as f:
 import gzip
 with gzip.open("archive.gz", "rb") as f:
     content = f.read()
+
+---
+
+## 四、文件指针与 seek/tell
+
+### 4.1 文件指针概念
+
+文件指针（文件位置指示器）记录当前读写位置。每次读写操作后，指针自动向后移动。
+
+```
+文件内容:  H e l l o   W o r l d  \n
+字节位置:  0 1 2 3 4 5 6 7 8 9 10 11
+                   ↑
+               指针位置 (pos=5)
+```
+
+### 4.2 `tell()` — 获取当前位置
+
+```python
+with open("data.txt", "r") as f:
+    print(f.tell())   # 0 — 在开头
+    f.read(5)
+    print(f.tell())   # 5 — 读了5个字符后
+    f.read()
+    print(f.tell())   # 文件总大小 — 读完了
+```
+
+### 4.3 `seek()` — 移动指针
+
+```python
+f.seek(offset, whence)
+
+# whence 参数:
+#   os.SEEK_SET (0) — 从文件开头计算 (默认)
+#   os.SEEK_CUR (1) — 从当前位置计算
+#   os.SEEK_END (2) — 从文件末尾计算
+```
+
+```python
+with open("data.txt", "r") as f:
+    f.seek(10)              # 移动到第10个字符
+    print(f.read(5))        # 读取5个字符
+
+    f.seek(0, os.SEEK_SET)  # 回到开头
+    print(f.read(5))        # 重新读取前5个字符
+
+    f.seek(-5, os.SEEK_END) # 移动到末尾前5个字符
+    print(f.read())         # 读取最后5个字符
+```
+
+### 4.4 二进制文件中的 seek
+
+二进制模式下，`seek` 可以自由使用 `SEEK_CUR` 和 `SEEK_END`：
+
+```python
+with open("data.bin", "rb") as f:
+    # 末尾前10字节
+    f.seek(-10, 2)        # 2 = SEEK_END
+    print(f.read())
+
+    # 当前位置后移20字节
+    f.seek(20, 1)         # 1 = SEEK_CUR
+```
+
+**注意：文本模式下 `seek` 受限！**
+
+文本模式下 `seek(offset, whence)` 只有在以下两种情况有效：
+1. `seek(0, SEEK_SET)` — 回到开头
+2. `seek(pos, SEEK_SET)` — 从开头移动到某个已知位置（`tell()` 返回值）
+
+原因是 UTF-8 编码中字符长度可变，无法从字节偏移直接计算字符偏移。
+
+---
+
+## 五、编码问题与处理
+
+### 5.1 常见编码
+
+| 编码 | 说明 | 字节数/字符 |
+|------|------|------------|
+| ASCII | 仅支持英文/数字/符号 | 1 字节 |
+| UTF-8 | 通用编码，兼容 ASCII | 1-4 字节 |
+| UTF-16 | Unicode 编码 | 2-4 字节 |
+| GBK | 中文编码（简体中文） | 1-2 字节 |
+| ISO-8859-1 | 西欧语言 | 1 字节 |
+
+### 5.2 编码问题典型案例
+
+```python
+# 编码不匹配 → UnicodeDecodeError
+with open("chinese.txt", "r", encoding="ascii") as f:
+    content = f.read()
+# UnicodeDecodeError: 'ascii' codec can't decode byte 0xe4
+
+# 指定正确编码 → 正常工作
+with open("chinese.txt", "r", encoding="utf-8") as f:
+    content = f.read()
+
+# 读取未知编码的文件 → 尝试推断
+import chardet
+with open("unknown.txt", "rb") as f:
+    raw = f.read()
+    result = chardet.detect(raw)
+    encoding = result["encoding"]
+    content = raw.decode(encoding)
+```
+
+### 5.3 编码错误处理策略
+
+```python
+# 严格模式（默认）— 遇到非法编码抛出异常
+with open("data.txt", "r", encoding="utf-8", errors="strict") as f:
+    pass
+
+# 忽略模式 — 跳过无法解码的字符（可能丢失数据！）
+with open("data.txt", "r", encoding="utf-8", errors="ignore") as f:
+    pass
+
+# 替换模式 — 用 ? 替换无法解码的字符
+with open("data.txt", "r", encoding="utf-8", errors="replace") as f:
+    pass
+
+# 编码时替代
+with open("output.txt", "w", encoding="ascii", errors="xmlcharrefreplace") as f:
+    f.write("你好")  # 写入 &#20320;&#22909;
+```
+
+### 5.4 BOM（字节顺序标记）
+
+UTF-16 和 UTF-8 with BOM 编码的文件开头有 BOM 标记：
+
+```
+UTF-8 with BOM:    EF BB BF    (3 bytes)
+UTF-16 LE:         FF FE       (2 bytes)
+UTF-16 BE:         FE FF       (2 bytes)
+```
+
+```python
+# 跳过 BOM 读取
+import codecs
+with open("bom_file.txt", "r", encoding="utf-8-sig") as f:
+    content = f.read()  # BOM 自动被移除
+```
 ```
