@@ -436,5 +436,51 @@ with open("shared.log", "a") as f:
     f.write("important data\n")
     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 ```
+
+---
+
+## 七、性能对比：不同读取方式
+
+```python
+import time
+
+# 测试文件：100MB 文本
+filename = "test_100mb.txt"
+
+# 方法 1：read() 全量读取
+start = time.time()
+with open(filename) as f:
+    data = f.read()
+print(f"read() 全量: {time.time()-start:.3f}s")
+
+# 方法 2：readlines()
+start = time.time()
+with open(filename) as f:
+    lines = f.readlines()
+print(f"readlines(): {time.time()-start:.3f}s")
+
+# 方法 3：逐行迭代
+start = time.time()
+with open(filename) as f:
+    for line in f:
+        pass
+print(f"迭代器: {time.time()-start:.3f}s")
+
+# 方法 4：分块读取
+start = time.time()
+with open(filename) as f:
+    while chunk := f.read(65536):
+        pass
+print(f"64KB 块: {time.time()-start:.3f}s")
+```
+
+**典型结果：**
+
+| 方式 | 内存 | 速度 | 推荐场景 |
+|------|------|------|---------|
+| `read()` | ❌ 高 | ⭐ 快 | 小文件 (<100MB) |
+| `readlines()` | ❌ 更高 | ⭐⭐ 更快 | 需要索引访问行 |
+| `for line in f` | ✅ 低 | ⭐ 快 | 大文件逐行处理 |
+| `read(chunk_size)` | ✅ 可控 | ⭐⭐⭐ 最快 | 二进制大文件 |
 ```
 ```
