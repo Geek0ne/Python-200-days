@@ -334,6 +334,36 @@ sequenceDiagram
     f4-->>Main: return 4 * 6 = 24
 ```
 
+> **优化前 vs 优化后对比**：朴素递归 vs 记忆化递归
+
+```mermaid
+flowchart TD
+    subgraph 朴素递归[朴素递归 - O(2ⁿ)]
+        A1[fib5] --> B1[fib4]
+        A1 --> C1[fib3]
+        B1 --> D1[fib3]
+        B1 --> E1[fib2]
+        C1 --> F1[fib2]
+        C1 --> G1[fib1]
+        D1 --> H1[fib2]
+        D1 --> I1[fib1]
+        E1 --> J1[fib1]
+        E1 --> K1[fib0]
+    end
+
+    subgraph 记忆化递归[记忆化递归 - O(n)]
+        A2[fib5] --> B2[fib4]
+        A2 --> C2[fib3]
+        B2 --> D2[fib3]
+        B2 --> E2[fib2]
+        D2 -.->|缓存命中| C2
+        E2 -.->|缓存命中| F2[fib1]
+        E2 -.->|缓存命中| G2[fib0]
+    end
+
+    朴素递归 -->|冗余计算| 记忆化递归
+```
+
 ### 递归树（斐波那契 fib(5)）
 
 ```mermaid
