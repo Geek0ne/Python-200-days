@@ -350,7 +350,7 @@ def demo_batch_validation():
 # ═══════════════════════════════════════════════════════════════
 
 def main():
-    print("🐍 Python 输入验证器实战")
+    print("🐍 Python 输入验证器实战代码")
     print()
 
     if "--interactive" in sys.argv or sys.stdin.isatty():
