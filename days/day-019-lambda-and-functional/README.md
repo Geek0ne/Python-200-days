@@ -69,3 +69,104 @@ for f in funcs:
 | 文档字符串 | 支持 | 不支持 |
 | 调试友好度 | 高 | 低 |
 | 适用场景 | 通用 | 简单的一次性逻辑 |
+
+---
+
+## 二、函数式编程核心工具
+
+### 2.1 `map()` — 映射
+
+**原理：** 将一个函数应用于可迭代对象的每个元素，返回迭代器。
+
+```python
+map(func, iterable, *iterables)
+```
+
+- `func`：接收元素并返回新值的函数
+- 返回 `map` 对象（迭代器，惰性求值）
+
+```python
+numbers = [1, 2, 3, 4]
+squared = list(map(lambda x: x ** 2, numbers))
+# [1, 4, 9, 16]
+```
+
+**多迭代器：**
+
+```python
+list(map(lambda a, b: a + b, [1, 2, 3], [10, 20, 30]))
+# [11, 22, 33]
+```
+
+**内部机制（简化）：**
+
+```python
+def my_map(func, iterable):
+    for item in iterable:
+        yield func(item)
+```
+
+### 2.2 `filter()` — 过滤
+
+**原理：** 用函数测试每个元素，保留测试结果为 `True` 的元素。
+
+```python
+filter(func, iterable)
+```
+
+- `func`：接收元素返回布尔值
+- `func=None` 时过滤掉所有假值
+
+```python
+numbers = [1, 2, 3, 4, 5, 6]
+evens = list(filter(lambda x: x % 2 == 0, numbers))
+# [2, 4, 6]
+
+# 过滤假值
+data = [0, 1, '', 'hello', None, [], [1]]
+cleaned = list(filter(None, data))
+# [1, 'hello', [1]]
+```
+
+### 2.3 `reduce()` — 归约
+
+**原理：** 从左到右累积应用函数，将序列归约为单个值。
+
+```python
+from functools import reduce
+
+reduce(func, iterable, initial=None)
+```
+
+- `func(a, b)` → 接收当前累积值和下一个元素
+- 可选 `initial`：初始值
+
+```python
+from functools import reduce
+
+# 求和
+reduce(lambda a, b: a + b, [1, 2, 3, 4, 5])
+# ((((1+2)+3)+4)+5) = 15
+
+# 带初始值
+reduce(lambda a, b: a + b, [1, 2, 3], 10)
+# (((10+1)+2)+3) = 16
+
+# 阶乘
+reduce(lambda a, b: a * b, range(1, 6))
+# 120
+```
+
+**内部机制：**
+
+```python
+def my_reduce(func, iterable, initial=None):
+    it = iter(iterable)
+    if initial is None:
+        value = next(it)
+    else:
+        value = initial
+    for item in it:
+        value = func(value, item)
+    return value
+```
