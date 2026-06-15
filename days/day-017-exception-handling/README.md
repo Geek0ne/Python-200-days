@@ -184,17 +184,81 @@ sequenceDiagram
     finally_block->>Program: 返回 / 传播
 ```
 
-### 关键规则
+### 详细执行规则矩阵
 
-| 场景 | try | except | else | finally |
-|------|-----|--------|------|---------|
-| 无异常 | ✅ 执行 | ❌ 跳过 | ✅ 执行 | ✅ 执行 |
-| 异常匹配 | ❌ 中断 | ✅ 执行 | ❌ 跳过 | ✅ 执行 |
-| 异常不匹配 | ❌ 中断 | ❌ 跳过 | ❌ 跳过 | ✅ 执行后传播 |
-| return 在 try 中 | ⚡ 暂缓 | — | — | ⚡ 仍执行 |
-| 异常在 except 中 | — | ❌ 中断 | — | ✅ 执行后传播 |
+| 场景 | try | except | else | finally | 异常传播 |
+|------|-----|--------|------|---------|----------|
+| 无异常 | ✅ 执行 | ❌ 跳过 | ✅ 执行 | ✅ 执行 | ❌ 无 |
+| 异常匹配 | ❌ 中断 | ✅ 执行 | ❌ 跳过 | ✅ 执行 | ❌ 停止 |
+| 异常不匹配 | ❌ 中断 | ❌ 跳过 | ❌ 跳过 | ✅ 执行后传播 | ✅ 继续向上 |
+| return 在 try 中 | ⚡ 暂缓 | — | — | ⚡ 仍执行 | ❌ 无 |
+| 异常在 except 中 | — | ❌ 中断 | — | ✅ 执行后传播 | ✅ 新异常 |
+| continue/break | ⚡ 暂缓 | — | — | ⚡ 仍执行 | ❌ 无 |
+| except 中 raise | — | ❌ 中断 | — | ✅ 执行后传播 | ✅ 新异常 |
 
 > **关键洞察**：`finally` 总会执行，即使 `try` 或 `except` 中有 `return`、`break`、`continue`。它会在这些语句 **生效前** 执行。
+
+### 深入执行细节
+
+#### 场景 1：try 中无异常
+```
+try 块 → 正常完成 → else 块 → finally 块 → 继续
+```
+
+#### 场景 2：try 中有匹配的异常
+```
+try 块 → 异常抛出 → except 块（匹配） → finally 块 → 继续
+```
+
+#### 场景 3：try 中有不匹配的异常
+```
+try 块 → 异常抛出 → 查找 except（不匹配） → finally 块 → 向上传播
+```
+
+#### 场景 4：try 中有 return
+```python
+def func():
+    try:
+        return "try"  # ① 暂缓 return
+    finally:
+        print("finally")  # ② 先执行 finally
+    # ③ 然后 return 生效
+```
+
+#### 场景 5：多重嵌套异常处理
+```python
+try:
+    try:
+        raise ValueError("内层")
+    except ValueError:
+        print("内层处理")
+        raise  # 重抛
+except ValueError:
+    print("外层处理")  # 外层也能捕获到
+```
+
+### 经典案例分析
+
+```python
+# Case A: finally 的 return 覆盖异常
+>>> def test():
+...     try:
+...         raise ValueError("原始错误")
+...     finally:
+...         return 42
+>>> test()
+42  # ← 异常被覆盖！ValueError 消失了
+
+# Case B: finally 先于 return 执行
+>>> def test2():
+...     try:
+...         return "try"
+...     finally:
+...         print("清理中...")
+>>> print(test2())
+清理中...  # ← finally 先执行
+try       # ← 然后 return 生效
+```
 
 ### 异常传播链
 
