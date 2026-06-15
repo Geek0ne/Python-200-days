@@ -169,4 +169,16 @@ def my_reduce(func, iterable, initial=None):
     for item in it:
         value = func(value, item)
     return value
+
+### 2.4 API 速查表
+
+| 函数 | 说明 | 输入 → 输出 |
+|------|------|-----------|
+| `map(func, iter)` | 映射变换 | `[a,b,c] → [f(a),f(b),f(c)]` |
+| `filter(func, iter)` | 条件过滤 | `[a,b,c] → [b]` (仅包含真) |
+| `reduce(func, iter)` | 归约聚合 | `[a,b,c] → f(f(a,b),c)` |
+| `sorted(iter, key=)` | 自定义排序 | `[a,b,c] → [c,a,b]` (按 key 排序) |
+| `all(iter)` / `any(iter)` | 全真/任一真 | `[T,T,F] → False / True` |
+| `zip(*iters)` | 打包为元组 | `[a,b],[x,y] → [(a,x),(b,y)]` |
+| `enumerate(iter)` | 带索引枚举 | `[a,b] → [(0,a),(1,b)]` |
 ```
