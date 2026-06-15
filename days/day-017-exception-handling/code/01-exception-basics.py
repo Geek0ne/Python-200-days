@@ -309,7 +309,7 @@ def demo_exc_info():
 # ═══════════════════════════════════════════════════════════════
 
 def main():
-    print("🐍 Python 异常处理基础演示")
+    print("🐍 Python 异常处理基础用法示例")
     print()
 
     demo_basic_try_except()
