@@ -2,6 +2,8 @@
 """
 Day 021 - itertools 模块应用实战
 count, cycle, chain, zip_longest, islice, groupby, product 等
+
+Updated 2026-06-15: Added sliding window, data pipeline, and log analysis examples
 """
 
 import itertools
