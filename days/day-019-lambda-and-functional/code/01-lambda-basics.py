@@ -171,3 +171,46 @@ print(f"求和(初始10): {from_zero}")
 nested = [[1, 2], [3, 4, 5], [6], [7, 8]]
 flattened = reduce(lambda a, b: a + b, nested)
 print(f"列表扁平化:  {flattened}")
+
+print()
+
+# ============================================================
+# 6. 常见陷阱与避坑
+# ============================================================
+print("=" * 60)
+print("6. 常见陷阱与避坑")
+print("=" * 60)
+
+# 陷阱 1：Late Binding（延迟绑定）
+print("\n--- 陷阱 1: Late Binding ---")
+bad_funcs = [lambda: i for i in range(3)]
+print("延迟绑定导致：", [f() for f in bad_funcs])  # [2, 2, 2]
+
+good_funcs = [lambda i=i: i for i in range(3)]
+print("修复后：      ", [f() for f in good_funcs])  # [0, 1, 2]
+
+# 陷阱 2：Lambda 中不能使用赋值语句
+print("\n--- 陷阱 2: 不能使用赋值 ---")
+inc = lambda x: x + 1
+print(f"inc(5) = {inc(5)}")
+
+# 陷阱 3：Lambda 可读性陷阱
+print("\n--- 陷阱 3: 过度使用 Lambda ---")
+hard = lambda x: (lambda y: (lambda z: x + y + z)(3))(2)(1)
+def easy(x, y, z):
+    return x + y + z
+print(f"可读版本: easy(1, 2, 3) = {easy(1, 2, 3)}")
+
+# 陷阱 4：map/filter 惰性求值
+print("\n--- 陷阱 4: 惰性求值 ---")
+m = map(lambda x: x ** 2, [1, 2, 3])
+print(f"第一次消费: {list(m)}")
+print(f"第二次消费: {list(m)}")
+
+# 陷阱 5：reduce 空序列
+print("\n--- 陷阱 5: reduce 空序列 ---")
+try:
+    reduce(lambda a, b: a + b, [])
+except TypeError as e:
+    print(f"空序列出错: {e}")
+print(f"带初始值:   {reduce(lambda a, b: a + b, [], 0)}")
