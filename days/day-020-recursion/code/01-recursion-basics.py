@@ -281,3 +281,62 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ============================================================
+# 7. 练习题答案验证
+# ============================================================
+
+def reverse_string(s: str) -> str:
+    """递归反转字符串"""
+    if len(s) <= 1:  # 基线条件
+        return s
+    return reverse_string(s[1:]) + s[0]  # 递归条件
+
+
+def is_palindrome(s: str) -> bool:
+    """递归判断回文"""
+    if len(s) <= 1:
+        return True
+    if s[0] != s[-1]:
+        return False
+    return is_palindrome(s[1:-1])
+
+
+def flatten(nested: list) -> list:
+    """递归展开嵌套列表"""
+    result = []
+    for item in nested:
+        if isinstance(item, list):
+            result.extend(flatten(item))
+        else:
+            result.append(item)
+    return result
+
+
+def digital_root(n: int) -> int:
+    """递归数字根（各位数之和直到一位数）"""
+    if n < 10:
+        return n
+    return digital_root(sum(int(d) for d in str(n)))
+
+
+def gcd(a: int, b: int) -> int:
+    """欧几里得算法递归求最大公约数"""
+    if b == 0:
+        return a
+    return gcd(b, a % b)
+
+
+if __name__ == "__main__":
+    main()
+    print()
+    print("=" * 60)
+    print("额外练习验证")
+    print("=" * 60)
+    print(f'  reverse_string("hello") = {reverse_string("hello")}')
+    print(f'  is_palindrome("racecar") = {is_palindrome("racecar")}')
+    print(f'  is_palindrome("hello")   = {is_palindrome("hello")}')
+    print(f'  flatten([1, [2, [3, 4]]]) = {flatten([1, [2, [3, 4]]])}')
+    print(f'  digital_root(942) = {digital_root(942)}')
+    print(f'  gcd(48, 18) = {gcd(48, 18)}')
