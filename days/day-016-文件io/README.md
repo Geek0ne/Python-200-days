@@ -482,5 +482,43 @@ print(f"64KB 块: {time.time()-start:.3f}s")
 | `readlines()` | ❌ 更高 | ⭐⭐ 更快 | 需要索引访问行 |
 | `for line in f` | ✅ 低 | ⭐ 快 | 大文件逐行处理 |
 | `read(chunk_size)` | ✅ 可控 | ⭐⭐⭐ 最快 | 二进制大文件 |
+
+---
+
+## 八、文件对象方法与属性速查
+
+### 8.1 读取方法
+
+| 方法 | 说明 | 示例 |
+|------|------|------|
+| `read(n)` | 读取 n 个字符/字节 | `f.read(100)` |
+| `read()` | 读取全部内容 | `content = f.read()` |
+| `readline()` | 读取一行（含换行符） | `line = f.readline()` |
+| `readlines()` | 读取所有行，返回列表 | `lines = f.readlines()` |
+| 迭代 | 逐行迭代（推荐大文件） | `for line in f:` |
+
+### 8.2 写入方法
+
+| 方法 | 说明 | 示例 |
+|------|------|------|
+| `write(s)` | 写入字符串/字节 | `f.write("Hello")` |
+| `writelines(lines)` | 写入字符串列表 | `f.writelines(["a\n", "b\n"])` |
+| `flush()` | 强制刷新缓冲区 | `f.flush()` |
+
+### 8.3 属性与方法
+
+| 属性/方法 | 说明 | 示例 |
+|----------|------|------|
+| `name` | 文件名 | `f.name → "data.txt"` |
+| `mode` | 打开模式 | `f.mode → "r"` |
+| `encoding` | 编码 | `f.encoding → "utf-8"` |
+| `closed` | 是否已关闭 | `f.closed → True/False` |
+| `fileno()` | 文件描述符 | `fd = f.fileno()` |
+| `isatty()` | 是否终端设备 | `f.isatty()` |
+| `truncate(size)` | 截断文件 | `f.truncate(100)` |
+| `seekable()` | 是否支持随机访问 | `f.seekable()` |
+| `readable()` | 是否可读 | `f.readable()` |
+| `writable()` | 是否可写 | `f.writable()` |
+| `detach()` | 分离底层二进制流 | `binary = f.detach()` |
 ```
 ```
