@@ -76,6 +76,30 @@ f(n) = f(n-1) + ...    ← 递归关系
 └────────────────────────┘
 ```
 
+### Python 深递归的 CPython 实现细节
+
+Python 的调用栈由 C 栈实现，每个 PyFrameObject 代表一个栈帧：
+
+```c
+// CPython 内部结构（简化）
+typedef struct _frame {
+    PyObject_VAR_HEAD
+    struct _frame *f_back;      // 指向上一个栈帧
+    PyCodeObject *f_code;       // 指向代码对象
+    PyObject *f_locals;         // 局部变量字典
+    PyObject **f_valuestack;    // 值栈底
+    Py_ssize_t f_stackdepth;    // 当前栈深度
+    int f_lineno;               // 当前行号
+} PyFrameObject;
+```
+
+每次递归调用：
+1. 分配新的 `PyFrameObject`（堆分配，约 512-1024 字节）
+2. 通过 `f_back` 指针形成链表
+3. Python 的 `sys.getrecursionlimit()` 检查的是框架对象的数量，而非 C 栈大小
+4. **默认 1000 是保守值**，CPython 2.7.9 后默认为 1000
+5. 可通过 `sys.setrecursionlimit()` 调整，但增大后 C 栈溢出可能导致段错误而非优雅的异常
+
 ### recursion tree (递归树) 模型
 
 以 `fib(5)` 为例，递归调用形成一棵树：
