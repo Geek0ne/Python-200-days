@@ -184,3 +184,53 @@ graph LR
     style A4 fill:#e74c3c,color:#fff
     style B4 fill:#2ecc71,color:#fff
 ```
+
+## 9️⃣ try/except/else/finally 决策树
+
+```mermaid
+graph TD
+    Start["执行 try 代码块"] --> ExceptOccurred{"异常发生?"}
+
+    ExceptOccurred -->|否| ElseBlock["执行 else 块"]
+    ElseBlock --> FinallyBlock["执行 finally 块"]
+    FinallyBlock --> Continue["继续程序"]
+
+    ExceptOccurred -->|是| MatchType{"匹配 except?"}
+    MatchType -->|匹配| Handle["执行 except 块"]
+    Handle --> FinallyBlock
+
+    MatchType -->|不匹配| FinallyProp["执行 finally 块"]
+    FinallyProp --> Propagate["异常向上传播"]
+
+    style Start fill:#3498db,color:#fff
+    style ExceptOccurred fill:#f39c12,color:#fff
+    style MatchType fill:#f39c12,color:#fff
+    style Propagate fill:#e74c3c,color:#fff
+    style Continue fill:#2ecc71,color:#fff
+```
+
+## 🔟 异常链决策流
+
+```mermaid
+flowchart LR
+    subgraph 异常发生
+        E1["异常 A 发生"]
+    end
+
+    subgraph 异常链策略
+        Decide{选择策略}
+        Decide -->|简单抛出| R1["raise A"]
+        Decide -->|保留因果| R2["raise B from A"]
+        Decide -->|隐藏细节| R3["raise B from None"]
+        Decide -->|重抛| R4["raise (裸)"]
+    end
+
+    subgraph 结果
+        R1 --> C1["新异常，无上下文"]
+        R2 --> C2["__cause__ = A<br>保留完整链"]
+        R3 --> C3["__cause__ = None<br>隐藏底层细节"]
+        R4 --> C4["保留原始 traceback<br>和异常类型"]
+    end
+
+    E1 --> Decide
+```
