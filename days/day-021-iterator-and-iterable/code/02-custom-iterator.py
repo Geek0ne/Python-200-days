@@ -2,6 +2,8 @@
 """
 Day 021 - Custom Iterator Implementation
 自定义迭代器实战：斐波那契、素数生成、二叉树遍历、分页
+
+Updated 2026-06-15: Added Fibonacci, Prime, Paginated, Binary Tree iterators
 """
 
 from collections.abc import Iterator, Iterable
