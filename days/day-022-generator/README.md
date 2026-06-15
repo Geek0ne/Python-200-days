@@ -1,5 +1,7 @@
 # Day 022 — 生成器 (Generator) ⚡
 
+<!-- Updated 2026-06-15: Added yield from code examples and bidirectional communication explanation -->
+
 ## 概述
 
 **生成器（Generator）** 是 Python 中最优雅的惰性求值工具。它结合了迭代器的所有优点（惰性、节省内存），同时用 `yield` 关键字提供了极其简洁的语法。
