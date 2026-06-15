@@ -470,6 +470,7 @@ def main():
     print("   3. 用 AppError 基类统一捕获业务异常")
     print("   4. 使用 ErrorHandler 模式统一转换异常")
     print("   5. 使用 Retry + RetryableError 处理临时故障")
+    print("   6. 自定义异常的 __init__ 应调用 super().__init__()")
 
 
 if __name__ == "__main__":
