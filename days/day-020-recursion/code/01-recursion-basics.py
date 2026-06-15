@@ -277,15 +277,121 @@ def main():
         r = binary_search_recursive(arr, t)
         i = binary_search_iterative(arr, t)
         print(f"  搜索 {t:>2}: 递归={r}, 迭代={i}")
+def trap_no_base_case():
+    """陷阱1: 缺失基线条件 -> 无限递归 -> RecursionError"""
+    def infinite(x):
+        return infinite(x + 1)  # 没有基线条件！
+
+    try:
+        infinite(0)
+    except RecursionError as e:
+        return f"❌ RecursionError: {e}"
+    except Exception as e:
+        return f"❌ {type(e).__name__}: {e}"
 
 
-if __name__ == "__main__":
-    main()
+def trap_no_progress():
+    """陷阱2: 不向基线条件逼近 -> 也是无限递归"""
+    def bad_fact(n):
+        if n == 0:
+            return 1
+        # n 没有减小！始终调用 bad_fact(n)
+        return n * bad_fact(n)
+
+    try:
+        bad_fact(5)
+    except RecursionError as e:
+        return f"❌ RecursionError: {e}"
 
 
-# ============================================================
-# 7. 练习题答案验证
-# ============================================================
+def trap_shared_default_arg():
+    """陷阱3: 可变默认参数在递归中共享"""
+    def traverse(n, visited=[]):
+        visited.append(n)
+        if n <= 0:
+            return visited
+        return traverse(n - 1, visited)
+
+    # 多次调用会共享 visited
+    r1 = traverse(3)
+    r2 = traverse(2)  # 结果不是 [2,1,0] 而是 [3,2,1,0,2,1,0]!
+    return r2  # ❌ 错误的共享状态
+
+
+def trap_shared_default_fixed():
+    """陷阱3修复: 使用 None + 每次新建"""
+    def traverse(n, visited=None):
+        if visited is None:
+            visited = []
+        visited.append(n)
+        if n <= 0:
+            return visited
+        return traverse(n - 1, visited)
+
+    r1 = traverse(3)
+    r2 = traverse(2)  # ✅ 正确: [2, 1, 0]
+    return r2
+
+
+def trap_redundant_computation(n: int) -> tuple:
+    """陷阱4: 重复计算 — 展示 fib_naive 的调用计数"""
+    call_count = 0
+
+    def fib_count(x):
+        nonlocal call_count
+        call_count += 1
+        if x <= 1:
+            return x
+        return fib_count(x - 1) + fib_count(x - 2)
+
+    result = fib_count(n)
+    return result, call_count
+
+
+def trap_deep_recursion():
+    """陷阱5: 深度递归导致栈溢出"""
+    def recurse(depth):
+        if depth <= 0:
+            return 0
+        return 1 + recurse(depth - 1)
+
+    import sys
+    limit = sys.getrecursionlimit()
+    safe_depth = limit - 100  # 留 100 层的余量
+
+    try:
+        result = recurse(limit + 100)  # 超过限制
+        return f"完成: {result}"
+    except RecursionError as e:
+        return f"❌ 深度 {limit + 100} 超过限制 {limit}: {e}"
+
+
+def trap_demo():
+    """运行所有陷阱展示"""
+    print("\n⚠️ 常见递归陷阱演示")
+    print("=" * 60)
+
+    print("\n1️⃣ 陷阱: 缺失基线条件")
+    print(f"   {trap_no_base_case()}")
+
+    print("\n2️⃣ 陷阱: 不向基线条件逼近")
+    print(f"   {trap_no_progress()}")
+
+    print("\n3️⃣ 陷阱: 可变默认参数共享")
+    result = trap_shared_default_arg()
+    print(f"   traverse(3) 后 traverse(2) = {result}")
+    result2 = trap_shared_default_fixed()
+    print(f"   修复后 traverse(2) = {result2} ✅")
+
+    print("\n4️⃣ 陷阱: 重复计算 (fib(30))")
+    result, count = trap_redundant_computation(30)
+    print(f"   fib(30) = {result}")
+    print(f"   函数调用次数: {count:,} 次! 😱")
+    print(f"   (对比: 理论调用次数 = fib(31)*2-1 ≈ {2*1346269-1:,})")
+
+    print("\n5️⃣ 陷阱: 递归深度过深")
+    print(f"   {trap_deep_recursion()}")
+
 
 def hanoi_benchmark(max_n: int = 15):
     """对 1 到 max_n 的汉诺塔进行基准测试"""
@@ -375,7 +481,6 @@ def gcd(a: int, b: int) -> int:
         return a
     return gcd(b, a % b)
 
-
 if __name__ == "__main__":
     main()
     print()
@@ -403,3 +508,10 @@ if __name__ == "__main__":
     for t in [2, 4, 6]:
         idx, first, last = binary_search_first_last(arr_dup, t)
         print(f"  搜索 {t}: 索引={idx}, 首次={first}, 末次={last}")
+
+    trap_demo()
+
+
+# ============================================================
+# 7. 练习题答案验证
+# ============================================================
