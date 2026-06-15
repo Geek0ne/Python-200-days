@@ -483,12 +483,85 @@ def main():
         # 写入方法
         demo_write_methods()
         
+        # 编码处理
+        demo_encoding_basics()
+        
         print(f"\n{'='*60}")
         print(f"  所有演示完成！临时目录: {TEMP_DIR}")
         print(f"{'='*60}")
     
     finally:
         cleanup()
+
+
+def demo_encoding_basics():
+    """演示编码处理基础：编码检测、BOM、errors 策略"""
+    section("编码处理基础")
+
+    file_enc = os.path.join(TEMP_DIR, "encoding_demo.txt")
+
+    # 1. 编码检测：通过 BOM
+    print("1. BOM 编码检测:")
+    for bom_name, bom_bytes, enc in [
+        ("UTF-8 with BOM", b"\xef\xbb\xbf", "utf-8-sig"),
+        ("UTF-16 LE", b"\xff\xfe", "utf-16-le"),
+        ("UTF-16 BE", b"\xfe\xff", "utf-16-be"),
+    ]:
+        print(f"   {bom_name}: BOM={bom_bytes.hex()} → encoding={enc}")
+
+    # 2. 不同编码的文件读写
+    print("\n2. 编码写入与读取:")
+
+    # 写入 UTF-8
+    with open(file_enc, "w", encoding="utf-8") as f:
+        f.write("Hello, 世界!\n")
+    with open(file_enc, "rb") as f:
+        raw = f.read()
+    print(f"   UTF-8 写入, 原始字节: {raw}")
+
+    # 用不同编码读取
+    for enc in ["utf-8", "gbk", "latin-1"]:
+        try:
+            text = raw.decode(enc)
+            print(f"   用 {enc} 读取: {repr(text)}")
+        except UnicodeDecodeError as e:
+            print(f"   用 {enc} 读取: ❌ {e}")
+
+    # 3. errors 参数处理策略
+    print("\n3. 编码错误处理策略对比:")
+    bad_bytes = b"Hello \xff\xfe World"  # 包含非法 UTF-8 字节
+
+    strategies = {
+        "strict": "抛异常",
+        "ignore": "跳过非法字节",
+        "replace": "用 ? 替换",
+        "backslashreplace": "用 \\xNN 转义",
+        "surrogateescape": "代理转义",
+    }
+    for strategy, desc in strategies.items():
+        try:
+            text = bad_bytes.decode("utf-8", errors=strategy)
+            print(f"   {strategy:<20s} ({desc}): {repr(text)}")
+        except UnicodeDecodeError as e:
+            print(f"   {strategy:<20s} ({desc}): ❌ {e}")
+
+    # 4. tell/seek 在二进制中的文件导航
+    print("\n4. 文件指针在二进制文件中的导航:")
+    bin_file = os.path.join(TEMP_DIR, "seek_nav.bin")
+    with open(bin_file, "wb") as f:
+        f.write(bytes(range(100)))
+
+    with open(bin_file, "rb") as f:
+        print(f"   初始: tell()={f.tell()}")
+        f.seek(50)
+        print(f"   seek(50): tell()={f.tell()}, 读取={list(f.read(5))}")
+        f.seek(-10, os.SEEK_END)
+        print(f"   seek(-10, END): tell()={f.tell()}, 读取={list(f.read(5))}")
+        f.seek(5, os.SEEK_CUR)
+        print(f"   seek(5, CUR):  tell()={f.tell()}, 读取={list(f.read(5))}")
+
+    os.remove(bin_file)
+    os.remove(file_enc)
 
 
 if __name__ == "__main__":
