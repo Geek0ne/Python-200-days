@@ -287,6 +287,54 @@ if __name__ == "__main__":
 # 7. 练习题答案验证
 # ============================================================
 
+def hanoi_benchmark(max_n: int = 15):
+    """对 1 到 max_n 的汉诺塔进行基准测试"""
+    import time
+    print(f"{'n':>3} | {'步骤数':>8} | {'理论值':>8} | {'时间':>10} | 状态")
+    print("-" * 50)
+    for n in range(1, max_n + 1):
+        start = time.perf_counter()
+        steps = hanoi(n, 'A', 'C', 'B')
+        elapsed = time.perf_counter() - start
+        expected = 2**n - 1
+        ok = "\u2705" if len(steps) == expected else "\u274c"
+        print(f"{n:>3} | {len(steps):>8,} | {expected:>8,} | {elapsed * 1_000_000:>8.2f}us | {ok}")
+
+
+def binary_search_first_last(arr: list, target: int) -> tuple:
+    """递归二分查找：返回(任意索引, 首次出现, 末次出现)"""
+    def first_occurrence(left, right):
+        if left > right:
+            return -1
+        mid = (left + right) // 2
+        if arr[mid] < target:
+            return first_occurrence(mid + 1, right)
+        elif arr[mid] > target:
+            return first_occurrence(left, mid - 1)
+        else:
+            if mid == 0 or arr[mid - 1] != target:
+                return mid
+            return first_occurrence(left, mid - 1)
+
+    def last_occurrence(left, right):
+        if left > right:
+            return -1
+        mid = (left + right) // 2
+        if arr[mid] < target:
+            return last_occurrence(mid + 1, right)
+        elif arr[mid] > target:
+            return last_occurrence(left, mid - 1)
+        else:
+            if mid == len(arr) - 1 or arr[mid + 1] != target:
+                return mid
+            return last_occurrence(mid + 1, right)
+
+    idx = binary_search_recursive(arr, target)
+    first = first_occurrence(0, len(arr) - 1)
+    last = last_occurrence(0, len(arr) - 1)
+    return idx, first, last
+
+
 def reverse_string(s: str) -> str:
     """递归反转字符串"""
     if len(s) <= 1:  # 基线条件
@@ -340,3 +388,18 @@ if __name__ == "__main__":
     print(f'  flatten([1, [2, [3, 4]]]) = {flatten([1, [2, [3, 4]]])}')
     print(f'  digital_root(942) = {digital_root(942)}')
     print(f'  gcd(48, 18) = {gcd(48, 18)}')
+
+    print()
+    print("=" * 60)
+    print("汉诺塔性能基准测试")
+    print("=" * 60)
+    hanoi_benchmark(10)
+
+    print()
+    print("=" * 60)
+    print("二分查找扩展测试 (重复元素)")
+    print("=" * 60)
+    arr_dup = [1, 2, 2, 2, 3, 4, 4, 5]
+    for t in [2, 4, 6]:
+        idx, first, last = binary_search_first_last(arr_dup, t)
+        print(f"  搜索 {t}: 索引={idx}, 首次={first}, 末次={last}")
