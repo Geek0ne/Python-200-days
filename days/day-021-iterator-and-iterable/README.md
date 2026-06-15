@@ -1,5 +1,7 @@
 # Day 021 — 迭代器与可迭代对象 (Iterator & Iterable) 🔄
 
+<!-- Updated 2026-06-15: Added for loop implementation details and __getitem__ fallback mechanism -->
+
 ## 概述
 
 **迭代器（Iterator）** 和 **可迭代对象（Iterable）** 是 Python 中遍历数据的核心抽象。理解它们的关系和差异，是掌握 Python 数据流处理的关键一步。
