@@ -363,5 +363,78 @@ UTF-16 BE:         FE FF       (2 bytes)
 import codecs
 with open("bom_file.txt", "r", encoding="utf-8-sig") as f:
     content = f.read()  # BOM 自动被移除
+
+---
+
+## 六、常见文件操作陷阱与避坑
+
+### 🚫 陷阱 1：大文件直接读取
+
+```python
+# ❌ 不要这样！内存会爆
+with open("huge_file.txt") as f:
+    content = f.read()  # 整个文件读入内存
+
+# ✅ 逐行/逐块读取
+with open("huge_file.txt") as f:
+    for line in f:          # 迭代器方式，只存一行在内存
+        process(line)
+
+# 或分块读取
+with open("huge_file.bin", "rb") as f:
+    while chunk := f.read(8192):  # 每次读 8KB
+        process(chunk)
+```
+
+### 🚫 陷阱 2：跨平台换行符
+
+```python
+# 在 Windows 上用二进制模式写入文本
+with open("data.txt", "wb") as f:
+    f.write("line1\nline2\n".encode())  # ❌ Windows 上可能显示为单行
+
+# ✅ 用文本模式让 Python 处理换行符
+with open("data.txt", "w") as f:
+    f.write("line1\nline2\n")  # Windows → \r\n, Linux → \n
+```
+
+### 🚫 陷阱 3：忘记编码
+
+```python
+# ❌ 依赖默认编码（不同系统可能不同）
+with open("data.txt") as f:     # Windows: gbk, Linux: utf-8
+    ...
+
+# ✅ 显式指定编码
+with open("data.txt", encoding="utf-8") as f:
+    ...
+```
+
+### 🚫 陷阱 4：写入后立即读取
+
+```python
+# ❌ 写入后指针在末尾，读取不到内容
+with open("data.txt", "w+") as f:
+    f.write("Hello")
+    content = f.read()  # 空字符串！
+
+# ✅ 写入后 seek 到开头
+with open("data.txt", "w+") as f:
+    f.write("Hello")
+    f.seek(0)
+    content = f.read()  # "Hello"
+```
+
+### 🚫 陷阱 5：多进程写冲突
+
+```python
+# 使用文件锁防止并发写入
+import fcntl
+
+with open("shared.log", "a") as f:
+    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+    f.write("important data\n")
+    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+```
 ```
 ```
