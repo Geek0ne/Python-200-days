@@ -265,11 +265,13 @@ class MeetingScheduler:
     - 检查时间是否在参会者的工作时间范围内
     """
 
-    # 常用城市时区映射
+    # 常用城市时区映射（中英文名均可）
     CITY_TIMEZONES = {
         '北京': 'Asia/Shanghai',
         '上海': 'Asia/Shanghai',
+        'Shanghai': 'Asia/Shanghai',
         '东京': 'Asia/Tokyo',
+        'Tokyo': 'Asia/Tokyo',
         '首尔': 'Asia/Seoul',
         '新加坡': 'Asia/Singapore',
         '孟买': 'Asia/Kolkata',
@@ -277,11 +279,15 @@ class MeetingScheduler:
         '柏林': 'Europe/Berlin',
         '巴黎': 'Europe/Paris',
         '伦敦': 'Europe/London',
+        'London': 'Europe/London',
         '纽约': 'America/New_York',
+        'New_York': 'America/New_York',
+        'New York': 'America/New_York',
         '芝加哥': 'America/Chicago',
         '丹佛': 'America/Denver',
         '洛杉矶': 'America/Los_Angeles',
         '悉尼': 'Australia/Sydney',
+        'Sydney': 'Australia/Sydney',
         '奥克兰': 'Pacific/Auckland',
     }
 
