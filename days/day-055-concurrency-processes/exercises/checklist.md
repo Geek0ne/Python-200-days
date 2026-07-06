@@ -174,6 +174,36 @@ if __name__ == '__main__':
 - 生产者在队列满时阻塞（自动背压）
 - 消费者处理完一个才通知生产者继续
 
+**参考实现：**
+```python
+import multiprocessing as mp
+import time
+
+def producer(queue, count):
+    for i in range(count):
+        item = f"item-{i}"
+        queue.put(item)  # 队列满时自动阻塞
+        print(f"  生产: {item}")
+    queue.put(None)
+
+def consumer(queue):
+    while True:
+        item = queue.get()
+        if item is None:
+            break
+        print(f"  消费: {item}")
+        time.sleep(0.3)  # 模拟慢速处理
+
+if __name__ == '__main__':
+    queue = mp.Queue(maxsize=3)  # 缓冲区大小为 3
+    p = mp.Process(target=producer, args=(queue, 10))
+    c = mp.Process(target=consumer, args=(queue,))
+    p.start()
+    c.start()
+    p.join()
+    c.join()
+```
+
 ---
 
 ## 🎯 挑战题
