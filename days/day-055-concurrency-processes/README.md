@@ -597,3 +597,36 @@ graph TB
 | 序列化限制 | 进程间数据必须可 pickle |
 
 > 🎯 **明日预告**：Day 056 将学习 asyncio 异步编程，探索另一种高效的并发范式。
+
+---
+
+## 附录：API 速查表
+
+### multiprocessing.Process
+
+```python
+mp.Process(target=func, args=(...), kwargs={...}, daemon=False)
+# 启动: start()
+# 等待: join(timeout=None)
+# 终止: terminate() / kill()
+# 状态: is_alive(), pid, exitcode
+```
+
+### multiprocessing.Queue
+
+```python
+mp.Queue(maxsize=0)
+# 放入: put(obj, block=True, timeout=None) / put_nowait(obj)
+# 取出: get(block=True, timeout=None) / get_nowait()
+# 状态: qsize(), empty(), full()
+```
+
+### multiprocessing.Pool
+
+```python
+mp.Pool(processes=None)
+# 同步: map(func, iterable) / starmap(func, iterable)
+# 异步: map_async(func, iterable) / apply_async(func, args)
+# 惰性: imap(func, iterable) / imap_unordered(func, iterable)
+# 控制: close() / terminate() / join()
+```
