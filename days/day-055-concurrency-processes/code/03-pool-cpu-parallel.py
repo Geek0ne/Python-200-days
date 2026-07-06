@@ -90,15 +90,17 @@ def example_2_apply_async():
 # 示例 3：Pool 方法对比
 # ============================================================
 
+def process_item(item):
+    """演示用：处理单个元素"""
+    time.sleep(0.1)
+    return item * 10
+
+
 def example_3_pool_methods():
     """对比 map / imap / imap_unordered"""
     print("=" * 60)
     print("示例 3：Pool 方法对比")
     print("=" * 60)
-    
-    def process_item(item):
-        time.sleep(0.1)
-        return item * 10
     
     items = [1, 2, 3, 4, 5]
     
