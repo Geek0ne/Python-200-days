@@ -207,3 +207,33 @@ fork（Linux 默认）              spawn（Windows/macOS 默认）
 ✅ 快（直接复制）              ✅ 安全（无残留状态）
 ❌ 不安全（继承锁/线程）       ❌ 慢（重新加载模块）
 ```
+
+---
+
+## 7. 常用代码片段速查
+
+```python
+# 创建子进程
+p = mp.Process(target=func, args=(arg1,))
+p.start()
+p.join()
+
+# 进程池
+with mp.Pool(4) as pool:
+    results = pool.map(func, iterable)
+
+# Queue 通信
+queue = mp.Queue()
+queue.put(data)  # 生产
+queue.get()      # 消费
+
+# Pipe 通信
+parent, child = mp.Pipe()
+parent.send(data)
+child.recv()
+
+# 共享内存
+counter = mp.Value('i', 0)
+with mp.Lock():
+    counter.value += 1
+```
