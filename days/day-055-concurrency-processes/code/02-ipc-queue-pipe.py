@@ -242,10 +242,8 @@ def example_5_queue_timeout():
     for i in range(3):
         queue.put(f"item-{i}")
     
-    # 检查队列状态
+    # 检查队列状态（注意：qsize/close/full 在多进程下不可靠）
     print(f"  qsize: {queue.qsize()}")
-    print(f"  empty: {queue.empty()}")
-    print(f"  full: {queue.full()}")
     
     # 非阻塞取出
     item = queue.get_nowait()
@@ -265,6 +263,13 @@ def example_5_queue_timeout():
         queue.put_nowait("overflow")
     except Exception as e:
         print(f"  put_nowait 满: {type(e).__name__}")
+    
+    # 清空队列避免残留
+    while not queue.empty():
+        try:
+            queue.get_nowait()
+        except:
+            break
     
     print()
 
