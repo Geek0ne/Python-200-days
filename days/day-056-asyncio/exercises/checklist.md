@@ -156,3 +156,11 @@ async def main():
             print(f"任务 {i}: 成功 - {r}")
 ```
 </details>
+
+---
+
+## 📚 推荐阅读
+
+- [Python 官方文档 - asyncio](https://docs.python.org/3/library/asyncio.html)
+- [Real Python - Async IO in Python](https://realpython.com/async-io-python/)
+- [aiohttp 文档](https://docs.aiohttp.org/)
