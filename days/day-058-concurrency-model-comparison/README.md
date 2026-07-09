@@ -466,3 +466,32 @@ async def wrapper():
 - [PEP 703 — Making the GIL Optional](https://peps.python.org/pep-0703/)
 - [Real Python — Speed Up Python with Concurrency](https://realpython.com/python-concurrency/)
 - [David Beazley — Understanding the Python GIL](https://pyvideo.org/pycon-us-2010/understanding-the-python-gil.html)
+
+---
+
+## 附录: 常见面试题
+
+### Q1: Python 的 GIL 是什么？为什么存在？
+
+GIL (Global Interpreter Lock) 是 CPython 解释器中的全局锁，确保同一时刻只有一个线程执行 Python 字节码。它简化了 C 扩展的内存管理，但限制了多线程的 CPU 并行能力。
+
+### Q2: 多线程和多进程的区别？
+
+| 特性 | 多线程 | 多进程 |
+|------|--------|--------|
+| 内存 | 共享 | 独立 |
+| 创建开销 | 小 | 大 |
+| 通信 | 简单（共享变量） | 复杂（IPC） |
+| GIL 影响 | 受限 | 不受限 |
+| 适用场景 | I/O 密集 | CPU 密集 |
+
+### Q3: 什么时候用协程？
+
+高并发 I/O 场景，如网络爬虫、API 网关、WebSocket 服务。协程在单线程中管理数万并发连接，内存占用极低。
+
+### Q4: 如何绕过 GIL？
+
+1. 使用多进程（每个进程有自己的 GIL）
+2. 使用 C 扩展（NumPy 等释放 GIL）
+3. 使用 Python 3.13+ 的 Free-threaded Python（实验性）
+4. 使用 Jython/IronPython 等替代实现
