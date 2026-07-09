@@ -106,3 +106,20 @@ async def simulated_request(task_id, delay):
 3. **协程的 `await` 和线程的 `sleep` 有什么本质区别？**
 
 4. **如何判断一个任务是 CPU 密集型还是 I/O 密集型？**
+
+---
+
+## 📚 推荐阅读
+
+### 必读
+- [Python GIL 官方文档](https://docs.python.org/3/glossary.html#global-interpreter-lock)
+- [PEP 703 — Making the GIL Optional](https://peps.python.org/pep-0703/)
+- [Real Python — Speed Up Python with Concurrency](https://realpython.com/python-concurrency/)
+
+### 进阶
+- [David Beazley — Understanding the Python GIL](https://pyvideo.org/pycon-us-2010/understanding-the-python-gil.html)
+- [Python 3.13 Free-threaded Python](https://docs.python.org/3.13/whatsnew/3.13.html)
+
+### 视频
+- PyCon 2010: Understanding the Python GIL (David Beazley)
+- PyCon 2023: The GIL and Beyond
