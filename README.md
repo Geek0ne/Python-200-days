@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-71%2F200-35.5%25-blue) ![Commits](https://img.shields.io/badge/Commits-541-brightgreen) ![LOC](https://img.shields.io/badge/LOC-152%2C447-success) ![Files](https://img.shields.io/badge/Files-502-orange) ![Phase](https://img.shields.io/badge/Phase-5_%E6%A0%87%E5%87%86%E5%BA%93%E4%B8%8E%E7%94%9F%E6%80%81-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-76%2F200-38.00%25-blue) ![Commits](https://img.shields.io/badge/Commits-550-brightgreen) ![Phase](https://img.shields.io/badge/Phase-6_%E5%AE%9E%E6%88%98%E9%A1%B9%E7%9B%AE-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [📊 进度追踪](progress.json) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 71 / 200** · 进度的 35.5% · 当前：Phase 5 标准库与生态系统
+> **Day 76 / 200** · 进度的 38.0% · 当前：Phase 6 实战项目
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **71 天** |
-| 📝 总提交次数 | **541 commits** |
-| 📄 总代码行数 | **152,445 行** |
-| 📂 总文件数 | **502 个** |
-| 🏗️ 当前阶段 | **Phase 5 — 标准库与生态系统** |
+| 📅 已完成天数 | **75 天** |
+| 📝 总提交次数 | **542 commits** |
+| 📄 总代码行数 | **159,621 行** |
+| 📂 总文件数 | **527 个** |
+| 🏗️ 当前阶段 | **Phase 6 — 实战项目** |
 
 ### ✅ 已完成的阶段
 
