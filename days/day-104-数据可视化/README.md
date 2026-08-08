@@ -450,3 +450,51 @@ plt.show()
 - [Seaborn 示例库](https://seaborn.pydata.org/examples/)
 - [Python 数据可视化最佳实践](https://clauswilke.com/dataviz/)
 - [Python Graph Gallery](https://www.python-graph-gallery.com/)
+
+---
+
+## 附录：Matplotlib API 速查表
+
+| 方法 | 功能 | 常用参数 |
+|------|------|----------|
+| `plt.subplots()` | 创建画布+子图 | `nrows, ncols, figsize, dpi` |
+| `ax.plot()` | 折线图 | `marker, linewidth, label, color` |
+| `ax.bar()` | 柱状图 | `color, edgecolor, width` |
+| `ax.barh()` | 水平柱状图 | `height, color, edgecolor` |
+| `ax.scatter()` | 散点图 | `c, cmap, s, alpha, edgecolors` |
+| `ax.hist()` | 直方图 | `bins, edgecolor, alpha, density` |
+| `ax.boxplot()` | 箱线图 | `patch_artist, notch, labels` |
+| `ax.pie()` | 饼图 | `labels, autopct, explode, colors` |
+| `ax.imshow()` | 热力图 | `cmap, aspect, interpolation` |
+| `ax.text()` | 添加文本 | `x, y, s, fontsize, ha, va` |
+| `ax.legend()` | 图例 | `loc, fontsize, title` |
+| `ax.grid()` | 网格线 | `alpha, linestyle, which` |
+| `ax.set_title()` | 标题 | `fontsize, fontweight, pad` |
+| `ax.set_xlabel()` | X 轴标签 | `fontsize, labelpad` |
+| `ax.set_ylabel()` | Y 轴标签 | `fontsize, labelpad` |
+| `ax.set_xticks()` | X 轴刻度 | `ticks, labels` |
+| `ax.set_xlim()` | X 轴范围 | `left, right` |
+| `ax.set_ylim()` | Y 轴范围 | `bottom, top` |
+| `plt.tight_layout()` | 自动调整布局 | `pad, h_pad, w_pad` |
+| `plt.savefig()` | 保存图片 | `dpi, bbox_inches, facecolor` |
+| `plt.close()` | 关闭画布 | — |
+
+## 附录：Seaborn API 速查表
+
+| 方法 | 功能 | 常用参数 |
+|------|------|----------|
+| `sns.histplot()` | 直方图 | `data, x, hue, kde, bins` |
+| `sns.kdeplot()` | 密度图 | `data, x, hue, fill, shade` |
+| `sns.boxplot()` | 箱线图 | `data, x, y, hue, palette` |
+| `sns.violinplot()` | 小提琴图 | `data, x, y, hue, split, inner` |
+| `sns.barplot()` | 柱状图 | `data, x, y, hue, ci` |
+| `sns.countplot()` | 计数图 | `data, x, hue, order` |
+| `sns.stripplot()` | 散点图 | `data, x, y, hue, jitter` |
+| `sns.swarmplot()` | 蜂群图 | `data, x, y, hue, size` |
+| `sns.scatterplot()` | 散点图 | `data, x, y, hue, style, size` |
+| `sns.lineplot()` | 折线图 | `data, x, y, hue, style` |
+| `sns.regplot()` | 回归图 | `data, x, y, scatter_kws` |
+| `sns.heatmap()` | 热力图 | `data, annot, cmap, center, fmt` |
+| `sns.pairplot()` | 散点矩阵 | `data, hue, diag_kind, palette` |
+| `sns.catplot()` | 分类图 | `data, x, y, hue, kind, col` |
+| `sns.set_theme()` | 全局主题 | `style, palette, font_scale` |
