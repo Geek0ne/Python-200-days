@@ -342,7 +342,24 @@ y_pred = model.predict(X_test)
 ```python
 # 如果 95% 是 A 类，5% 是 B 类
 # 模型全预测 A 就有 95% 准确率，但毫无意义！
-# 解决：用 F1 分数、加权分类报告、过采样/欠采样
+# 解决方案：
+# 1. 用 F1 分数替代准确率
+# 2. 使用 class_weight='balanced'
+# 3. 过采样 (SMOTE) 或欠采样
+# 4. 使用 precision-recall 曲线而非 ROC
+```
+
+### ❌ 陷阱 4：特征工程中使用测试集信息
+
+```python
+# ❌ 错误：用全体数据计算均值填充缺失值
+mean_val = df['age'].mean()  # 包含了测试集的统计信息
+df['age'].fillna(mean_val)
+
+# ✅ 正确：只用训练集计算
+mean_val = X_train['age'].mean()
+X_train['age'].fillna(mean_val, inplace=True)
+X_test['age'].fillna(mean_val, inplace=True)  # 用训练集的均值
 ```
 
 ---
