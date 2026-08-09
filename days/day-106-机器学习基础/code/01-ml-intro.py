@@ -66,11 +66,15 @@ def main():
     # 查看前几个预测结果
     print(f"\n🔮 预测结果（前 10 条）:")
     print(f"  {'真实':>6} → {'预测':>6}")
+    correct = 0
     for i in range(min(10, len(y_test))):
         real = iris.target_names[y_test[i]]
         pred = iris.target_names[y_pred[i]]
         mark = "✅" if y_test[i] == y_pred[i] else "❌"
+        if y_test[i] == y_pred[i]:
+            correct += 1
         print(f"  {real:>6} → {pred:>6}  {mark}")
+    print(f"  前 10 条准确率: {correct}/{min(10, len(y_test))}")
 
     # ===== 6. 评估 =====
     accuracy = accuracy_score(y_test, y_pred)
