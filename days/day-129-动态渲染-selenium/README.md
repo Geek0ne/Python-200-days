@@ -243,3 +243,15 @@ driver.find_element(By.CLASS_NAME, "next").click()  # 翻页
 
 - Selenium 文档：https://www.selenium.dev/documentation/
 - 明天预告：Day 130 Playwright -- 微软出品的新一代爬虫利器，自动等待开箱即用。
+
+## 🧾 速查：常用操作一行流
+
+```python
+driver.get(url)                              # 打开页面
+driver.current_url                           # 当前 URL
+driver.back() / driver.forward()             # 后退/前进
+driver.refresh()                             # 刷新
+elem.get_attribute("href")                   # 取属性
+elem.text                                    # 取可见文本
+driver.execute_script("return arguments[0].textContent", elem)  # 取隐藏文本
+```
