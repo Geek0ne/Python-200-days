@@ -165,3 +165,19 @@ graph TD
 3. `navigator.webdriver` 已被 patch 成 false，站点还有哪些方式判断你在用自动化浏览器？
 4. 为什么 requests 发送一个与浏览器完全相同的请求头，仍可能在"零响应"阶段被 Cloudflare 识别？
 5. 无头浏览器（headless）过 Cloudflare 成功率明显更低，你认为主要原因是什么？什么时候必须放弃无头？
+
+---
+
+## 附录：指纹自检与工具安装
+
+```bash
+# 本地跑 FingerprintJS 开源版，先测自己爬虫环境的指纹
+git clone https://github.com/fingerprintjs/fingerprintjs
+
+# 关键工具安装
+pip install undetected-chromedriver curl_cffi DrissionPage
+```
+
+**自检口诀**：先用浏览器访问 `https://browserleaks.com/` 与 `https://tls.browserleaks.com/json`，
+记录自己环境的 Canvas / WebGL / JA3 三项基线，再用爬虫环境请求同一页面做 diff，
+凡是不一致且非有意伪装的差异，都是破绽。
