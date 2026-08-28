@@ -229,3 +229,27 @@ graph LR
 3. `navigator.webdriver` 检测属于环境检测。站在攻防角度，为什么"属性改回 false"在 Selenium 下可能仍然被识破？（提示：CDP 特征）
 4. 什么情况下应该放弃补环境、直接上无头浏览器？各自的成本与风险如何权衡？
 5. Hook `JSON.parse` 与 Hook `XMLHttpRequest.send` 分别适合什么场景？两者的捕获时机有什么本质区别？
+
+---
+
+## 附录：JS Hook 常用脚本片段（Console 直接粘贴）
+
+```js
+// Hook JSON.stringify（抓提交前的序列化参数）
+(function () {
+  var _o = JSON.stringify;
+  JSON.stringify = function (v) {
+    console.log("[hook] stringify:", v);
+    return _o.apply(this, arguments);
+  };
+})();
+
+// Hook cookie 写入（抓动态 Cookie 生成）
+(function () {
+  var _d = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+  Object.defineProperty(document, "cookie", {
+    set: function (v) { console.log("[hook] setCookie:", v); _d.set.call(this, v); },
+    get: function () { return _d.get.call(this); },
+  });
+})();
+```
