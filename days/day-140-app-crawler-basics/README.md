@@ -117,3 +117,100 @@ app.apk
 
 ---
 
+## 三、API 速查表
+
+### 3.1 mitmproxy 常用命令
+
+```bash
+mitmproxy                    # 终端交互式界面
+mitmweb                      # 浏览器界面（推荐新手）
+mitmdump -w app.flow         # 抓包保存到文件
+mitmdump -s addon.py         # 加载 Python 脚本实时处理流量
+mitmdump --mode reverse:http://api.example.com  # 反向代理模式
+```
+
+### 3.2 mitmproxy addon 脚本 API
+
+```python
+class Addon:
+    def request(self, flow): ...    # 请求阶段（可改请求）
+    def response(self, flow): ...   # 响应阶段（可读/改响应）
+# flow.request.url / .headers / .content
+# flow.response.status_code / .content
+```
+
+### 3.3 jadx / frida 常用
+
+```bash
+jadx -d out/ app.apk               # 反编译输出到 out/
+jadx-gui app.apk                   # GUI（搜索 "sign"/"encrypt"）
+frida -U -f com.example.app -l hook.js   # spawn 启动并注入
+frida-trace -U -i "md5" com.example.app  # 追踪函数调用
+```
+
+### 3.4 Python 协议模拟对照表
+
+| App 请求特征 | Python 对应处理 |
+|---|---|
+| Content-Type: application/json | `requests.post(url, json=data)` |
+| body 是二进制 Protobuf | `requests.post(url, data=pb.SerializeToString())` |
+| header 带 token/sign | 构造 dict，先本地算 sign 再带上 |
+| 需要维持设备指纹 | 固定 device_id/user_agent |
+
+---
+
+## 四、图解
+
+### 4.1 App 爬虫完整工作流
+
+```mermaid
+flowchart TD
+    A[目标App] -->|安装CA证书+代理| B[mitmproxy 抓包]
+    B --> C{抓到明文?}
+    C -->|否: SSL Pinning| D[Frida hook 解除] --> B
+    C -->|是| E[分析请求参数: sign/token]
+    E --> F{能看懂算法?}
+    F -->|Java层| G[jadx 静态分析]
+    F -->|native层| H[unidbg/frida 调 so]
+    G --> I[Python 复现签名算法]
+    H --> I
+    I --> J[requests/httpx 协议模拟]
+    J --> K[结构化数据入库]
+```
+
+### 4.2 抓包代理链路
+
+```
+┌─────────┐   Wi-Fi 手动代理    ┌────────────┐         ┌──────────┐
+│ 手机App  │ ─────────────────> │ mitmproxy  │ ──────> │ 目标服务器 │
+│ (同局域网)│  ip:8080           │ (电脑8080) │  直连    │  (HTTPS) │
+└─────────┘                    └────────────┘         └──────────┘
+     │                               │
+     └── 已装 mitm CA 证书 <──────────┘ 首次访问 mitm.it 下载证书
+```
+
+---
+
+## 五、实战代码案例
+
+完整代码见 `code/` 目录：
+
+1. `01-mitmproxy-addon.py` — mitmproxy 抓包脚本（基础用法）
+2. `02-sign-crack-demo.py` — 签名参数复现与避坑（进阶）
+3. `03-app-api-spider.py` — 完整 App 协议模拟爬虫（实战）
+
+---
+
+## 六、思考题
+
+1. 为什么 App 把签名算法写在客户端就注定能被破解？有没有"理论上不可破解"的客户端方案？（提示：思考白盒加密/服务器下发算法的代价）
+2. Android 7.0 之后默认不信任用户证书，这个安全设计保护的究竟是谁？
+3. 如果接口返回的是 Protobuf 二进制，相比 JSON 抓包多了哪些步骤？为什么越来越多大厂用 Protobuf？
+4. 抓包时发现请求间隔小于 100ms 就被 ban，除了放慢速度，还能从哪些维度把爬虫行为"伪装"得像真人？
+5. frida hook 是动态分析，jadx 是静态分析，两者各有什么不可替代的场景？
+
+---
+
+## ⚖️ 合规提醒
+
+App 爬虫技术门槛高、法律风险也高。仅对**自己拥有或获得授权**的 App 做安全研究；抓取任何数据前确认不违反《数据安全法》《个人信息保护法》及目标服务条款。逆向他人 App 用于商业数据窃取属于违法行为。
