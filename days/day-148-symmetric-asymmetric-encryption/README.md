@@ -260,3 +260,93 @@ Day 149 学的 JWT 与 Day 148 的这套密码学知识，是同一批底层工�
 | ECC-256 运算 | ~100× 慢 | 椭圆曲线点乘 |
 
 正是这个数量级差，逼出了混合加密这一必然方案。
+
+## 三、常见陷阱与避坑指南
+
+### 3.1 用 ECB 模式加密（结构性泄露）
+
+```python
+# ❌ 错误：ECB 会让相同明文块产生相同密文块
+cipher = Cipher(algorithms.AES(key), modes.ECB())
+```
+
+**后果**：加密图片能看出轮廓，加密数据库字段能看出哪些行值相同。
+**正确做法**：用 `AESGCM`（推荐）或 CBC + 随机 IV。
+
+### 3.2 IV / nonce 重用（最致命的一类错误）
+
+- **CBC 的 IV 可预测**：固定 IV 或"时间戳当 IV"，会让相同明文前缀产生相同
+  密文前缀，泄露信息（BEAST 攻击）。
+- **GCM 的 nonce 重用是毁灭性的**：同一个 (key, nonce) 加密两条消息，
+  两条密文异或 = 两条明文异或（直接泄露明文关系），更严重的是可以恢复出
+  **认证密钥 H**，从而伪造任意消息的 tag。
+
+```python
+# ❌ 错误：nonce 写死 / 每次用同一个
+aesgcm.encrypt(b"\x00" * 12, data, None)
+# ✅ 正确：每次加密都生成新 nonce
+nonce = os.urandom(12)
+```
+
+**纪律**：自己管 nonce 时用随机 12 字节（碰撞概率极低）或严格单调计数器；
+用 `AESGCM` 时把 nonce 与密文一起存储/传输。
+
+### 3.3 用"教科书 RSA"（无填充）
+
+```python
+# ❌ 错误：确定性加密 + 可乘性 + 小消息可开方
+c = pow(int.from_bytes(msg, "big"), e, n)
+# ✅ 正确：必须带 OAEP 填充
+public_key.encrypt(msg, padding.OAEP(mgf=..., algorithm=SHA256(), label=None))
+```
+
+### 3.4 拿 RSA 加密大文件 / 超长消息
+
+2048-bit 密钥 + SHA-256 的 OAEP 上限约 **190 字节**。超了会直接报
+`ValueError: Encryption failed`。正确姿势是用混合加密（见 `code/03`）。
+
+### 3.5 用 `==` 比较密钥、tag、HMAC
+
+字符串/字节比较会在第一个不同字节处提前返回，攻击者可据耗时逐字节猜测
+（**时序攻击**）。必须用常数时间比较：
+
+```python
+import hmac
+hmac.compare_digest(a, b)   # ✅
+a == b                      # ❌ 用于安全比较
+```
+
+### 3.6 硬编码密钥 / 把密钥提交进 Git
+
+```python
+KEY = b"1234567890123456"   # ❌ 会被 git 永远记住
+```
+正确做法：密钥放环境变量、KMS、Vault 或密钥管理服务；用 `.gitignore`
+排除密钥文件；一旦泄露必须**轮换密钥**（历史提交无法真正删除）。
+
+### 3.7 自己发明加密方案 / 自造填充
+
+"我用 AES 加密，再把结果倒序一下，再加个盐，肯定更安全" —— 这类
+**自制密码学（Roll Your Own Crypto）** 是安全事故高发区。用经过审计的
+库与标准组合：`AESGCM`、`ChaCha20Poly1305`、`Fernet`。
+
+### 3.8 把编码当加密
+
+`base64`、`hex`、`urlencode` 全部可逆且无密钥，**不能保护任何机密**。
+它们只用于让二进制适配文本协议。
+
+### 3.9 加密了却忘了认证（Encrypt-then-MAC 顺序）
+
+CBC 加密不防篡改。若必须用 CBC，应"先加密、后对密文做 HMAC"（
+Encrypt-then-MAC），并**先验 MAC 再解密**。顺序颠倒会引入 Padding Oracle。
+GCM 已经内置了这个顺序，所以优先选 GCM。
+
+### 3.10 忽略随机源质量
+
+用 `random` 模块生成密钥/IV 是灾难（伪随机，种子可预测）。
+**密钥、IV、盐一律用 `os.urandom()` 或 `secrets` 模块。**
+
+```python
+import secrets
+key = secrets.token_bytes(32)   # ✅ 密码学安全
+```
