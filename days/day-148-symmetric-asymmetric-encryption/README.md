@@ -350,3 +350,152 @@ GCM 已经内置了这个顺序，所以优先选 GCM。
 import secrets
 key = secrets.token_bytes(32)   # ✅ 密码学安全
 ```
+
+## 四、定义与使用方法（API 速查表）
+
+> 本节所有 API 来自 `cryptography` 库（`pip install cryptography`），它是
+> Python 生态事实标准的密码学库，底层用 OpenSSL/Rust 实现，**不要自己
+> 用纯 Python 手写 AES/RSA**。
+
+### 4.1 对称加密 AESGCM
+
+```python
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import os
+
+# 生成密钥
+key = AESGCM.generate_key(bit_length=256)     # 返回 32 字节 bytes
+# 或 key = os.urandom(32)
+
+aes = AESGCM(key)
+nonce = os.urandom(12)                        # 12 字节，每次加密都要新
+ct = aes.encrypt(nonce, plaintext_bytes, aad) # aad 可为 None 或 bytes
+pt = aes.decrypt(nonce, ct, aad)              # 篡改/密钥错 → InvalidTag
+```
+
+| 方法 | 参数 | 返回 | 说明 |
+|---|---|---|---|
+| `AESGCM.generate_key(bit_length)` | 128/192/256 | `bytes` | 生成随机密钥 |
+| `AESGCM(key)` | 32/24/16 字节 | 实例 | key 长度不对会报错 |
+| `.encrypt(nonce, data, aad)` | nonce 8~128B（推荐 12） | `bytes` | 输出 = 密文 + 16B tag |
+| `.decrypt(nonce, data, aad)` | 同上 | `bytes` | 失败抛 `InvalidTag` |
+
+### 4.2 ChaCha20-Poly1305（无 AES 硬件时的替代）
+
+```python
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+chacha = ChaCha20Poly1305(ChaCha20Poly1305.generate_key())
+ct = chacha.encrypt(os.urandom(12), b"data", b"aad")
+```
+
+### 4.3 RSA 密钥生成与序列化
+
+```python
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+
+private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+public_key = private_key.public_key()
+
+# 导出 PEM
+pem_pub = public_key.public_bytes(
+    serialization.Encoding.PEM,
+    serialization.PublicFormat.SubjectPublicKeyInfo)
+
+pem_priv = private_key.private_bytes(
+    serialization.Encoding.PEM,
+    serialization.PrivateFormat.PKCS8,
+    serialization.BestAvailableEncryption(b"passphrase"))   # 口令保护
+
+# 从 PEM 加载
+pub = serialization.load_pem_public_key(pem_pub)
+priv = serialization.load_pem_private_key(pem_priv, password=b"passphrase")
+```
+
+### 4.4 RSA 加密（OAEP）与签名（PSS）
+
+```python
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+
+OAEP = padding.OAEP(mgf=padding.MGF1(hashes.SHA256()),
+                    algorithm=hashes.SHA256(), label=None)
+PSS  = padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                   salt_length=padding.PSS.MAX_LENGTH)
+
+ct = public_key.encrypt(b"short msg", OAEP)      # ≤ 190 字节 (2048+SHA256)
+pt = private_key.decrypt(ct, OAEP)
+
+sig = private_key.sign(b"doc", PSS, hashes.SHA256())      # 私钥签名
+public_key.verify(sig, b"doc", PSS, hashes.SHA256())      # 公钥验签，失败抛 InvalidSignature
+```
+
+### 4.5 常用填充别名
+
+```python
+from cryptography.hazmat.primitives import padding as sym_padding
+padder = sym_padding.PKCS7(128).padder()     # 128 bit = 16 字节分组
+```
+
+### 4.6 选型速查
+
+| 需求 | 推荐 API |
+|---|---|
+| 加密任意数据（同时要完整性） | `AESGCM` / `ChaCha20Poly1305` |
+| 加密会话密钥 / 短消息 | `RSA-OAEP` 或 ECIES |
+| 数字签名 | `RSA-PSS`（兼容） / `Ed25519`（现代） |
+| 密钥协商 | `ECDH` / `X25519` |
+| 密码存储 | `pbkdf2_hmac` / `scrypt` / Argon2（Day 147） |
+| 完整性校验（无密钥） | `hashlib.sha256`（Day 147） |
+
+### 4.7 官方文档入口
+
+- `https://cryptography.io/en/latest/hazmat/primitives/`
+- 选模式时先看 "Authenticated encryption" 章节
+
+---
+
+## 五、图解（Mermaid / ASCII）
+
+### 5.1 两种加密的密钥流向
+
+```mermaid
+flowchart LR
+    subgraph SYM[对称加密 AES]
+        K1[同一把密钥 K] --> E1[加密] --> C1[密文]
+        K1 --> D1[解密] --> P1[明文]
+    end
+    subgraph ASYM[非对称加密 RSA]
+        PU[公钥 - 可公开] --> E2[加密] --> C2[密文]
+        PR[私钥 - 保密] --> D2[解密] --> P2[明文]
+    end
+```
+
+### 5.2 混合加密时序
+
+```mermaid
+sequenceDiagram
+    participant C as 客户端
+    participant S as 服务器
+    C->>C: 生成一次性会话密钥 K
+    C->>S: RSA_OAEP(服务器公钥, K)
+    C->>S: AES_GCM(K, 业务数据)
+    S->>S: 私钥解出 K → 解密数据
+    S-->>C: 后续通信都走 AES(K)
+    Note over C,S: RSA 只搬 32 字节密钥，数据全走 AES
+```
+
+### 5.3 AEAD 密文结构
+
+```
+ nonce(12B)      ciphertext(与明文等长)         tag(16B)
+┌──────────┬───────────────────────────────┬──────────────┐
+│  随机数   │         加密后的数据           │  认证标签     │
+└──────────┴───────────────────────────────┴──────────────┘
+     ▲                      ▲                       ▲
+  可公开传输          AAD 参与认证但不加密      篡改任一字节
+                                             → tag 校验失败
+```
+
+更完整的图解（ECB 对比、RSA 数学直觉、选型决策树）见
+[`diagrams/README.md`](../diagrams/README.md)。
