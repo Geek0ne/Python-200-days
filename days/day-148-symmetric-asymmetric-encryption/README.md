@@ -499,3 +499,85 @@ sequenceDiagram
 
 更完整的图解（ECB 对比、RSA 数学直觉、选型决策树）见
 [`diagrams/README.md`](../diagrams/README.md)。
+
+## 六、实战代码案例
+
+本日三个可运行示例位于 `code/`，逐层递进（每个文件都能直接
+`python3 xxx.py` 运行，需要 `pip install cryptography`）：
+
+| 文件 | 类型 | 内容 |
+|---|---|---|
+| `01-aes-gcm-basics.py` | 基础用法 | AES-256-GCM 加解密、AAD 认证、篡改检测、nonce 重用演示 |
+| `02-rsa-asymmetric.py` | 进阶 / 避坑 | RSA 密钥对生成与 PEM 序列化、OAEP 加解密、长度上限、PSS 签名验签 |
+| `03-hybrid-secure-channel.py` | 实战 | 混合加密安全通信工具：客户端/服务器类、密钥封装、签名、篡改与伪造攻击演示 |
+
+### 6.1 `01` — 基础：把一次加密做对
+
+演示了正确姿势的完整闭环：`os.urandom(12)` 生成 nonce → `AESGCM.encrypt`
+→ 传输 `(nonce, 密文)` → `AESGCM.decrypt`。并连续演示三种篡改（翻密文位、
+改 AAD、换密钥）全部被 `InvalidTag` 拦下——这是 GCM 相比 CBC 的核心价值。
+
+### 6.2 `02` — 进阶：RSA 的正确边界
+
+关键代码与结论：
+
+```python
+max_len = 256 - 2 * 32 - 2      # 2048bit 密钥 + SHA-256 ⇒ 190 字节
+public_key.encrypt(b"A" * 191, OAEP)   # ValueError: Encryption failed
+```
+
+`02` 用一个真实的 `ValueError` 让你记住：**RSA 装不下业务数据**。同时对比
+"公钥加密→私钥解密"（机密性）与"私钥签名→公钥验证"（身份+完整性）两条
+方向不同的链路。
+
+### 6.3 `03` — 实战：安全通信工具
+
+模拟 TLS 的简化版，`SecureServer` / `SecureClient` 两个类完整走通：
+
+```
+客户端                                         服务器
+  │ 生成会话密钥 K ── RSA_OAEP(服务器公钥, K) ──► 私钥解出 K
+  │ AES_GCM(K, 消息) + nonce ─────────────────► 用 K 解密
+  │ RSA_PSS(客户端私钥, 密文) ─────────────────► 用登记的客户端公钥验签
+```
+
+`03` 还内置了两场攻击演示：
+- **篡改密文** → 验签/解密失败；
+- **攻击者自带密钥伪造消息** → 因公钥不在服务器信任名单内被拒。
+
+这解释了真实系统为什么要"证书固定 / CA 信任链"：**光有加密不够，
+还必须确认"你手里的公钥真的是对方的"**——否则中间人可以直接换掉公钥。
+
+### 6.4 运行方式
+
+```bash
+cd days/day-148-symmetric-asymmetric-encryption/code
+pip install cryptography
+python3 01-aes-gcm-basics.py
+python3 02-rsa-asymmetric.py
+python3 03-hybrid-secure-channel.py
+```
+
+---
+
+## 七、思考题
+
+1. **为什么 AES 分组长度固定 128 bit，但密钥可以是 128/192/256 bit？**
+   密钥变长改变的是轮数还是分组？这样做的好处是什么？
+
+2. **GCM 的 nonce 只有 12 字节，如果高并发系统每秒加密上百万条消息，
+   随机 nonce 会不会碰撞？** 请从生日悖论角度估算碰撞概率，并说明工业界
+   如何避免（提示：计数器 / 随机 96 位 / 密钥轮换）。
+
+3. **RSA 公钥加密没有前向保密，为什么现代 TLS 1.3 干脆删掉了 RSA 密钥
+   交换，只保留 (EC)DHE？** 如果服务器私钥被盗，两种方案的后果差别在哪？
+
+4. **"签名"和"HMAC"都能防篡改，什么时候必须用签名而不能用 HMAC？**
+   （提示：HMAC 双方共享同一把密钥，谁都能伪造）
+
+5. **假设你要做一个"端到端加密聊天软件"，设计了：客户端各自生成 RSA
+   密钥对，互相用对方公钥加密消息。** 这个方案有哪些致命问题？
+   请至少说出两点并给出改进方向（提示：为何实际产品用双棘轮 / Signal 协议）。
+
+> 做完思考题，再回看 `diagrams/README.md` 的决策树，尝试用它回答：
+> "给 100 万用户的数据库字段做加密，你会怎么设计密钥体系？"
