@@ -138,3 +138,164 @@ Security Best Current Practice）已明确建议弃用。
 
 ---
 
+## 二、原理解释（底层机制）
+
+### 2.1 授权码流程（Authorization Code Flow）逐步拆解
+
+```
+① 用户点"用 Google 登录"
+   Client → 浏览器重定向 → Authorization Server
+   GET /authorize?response_type=code
+                &client_id=CLIENT_ID
+                &redirect_uri=https://app.com/cb
+                &scope=email+profile
+                &state=RANDOM_CSRF_TOKEN
+                &code_challenge=xxx&code_challenge_method=S256   ← PKCE
+
+② 用户在授权服务器上"同意授权"（这一步能看到"应用要读你的邮箱"）
+
+③ 授权服务器重定向回 Client
+   302 https://app.com/cb?code=AUTH_CODE&state=RANDOM_CSRF_TOKEN
+
+④ Client 后端用 code 换 token（这一步走服务器到服务器，浏览器看不到）
+   POST /token
+     grant_type=authorization_code
+     &code=AUTH_CODE
+     &redirect_uri=https://app.com/cb
+     &client_id=...&client_secret=...
+     &code_verifier=原始随机串    ← PKCE
+
+⑤ 授权服务器返回
+   {"access_token":"...", "refresh_token":"...", "expires_in":3600, "token_type":"Bearer"}
+
+⑥ Client 用 access_token 访问资源
+   GET /userinfo  Authorization: Bearer <access_token>
+```
+
+**为什么要把"发码"和"换令牌"分成两步？**
+
+- 授权码是**通过浏览器前端**（URL 重定向）传回来的，可以被 URL 日志、历史记录、
+  Referer 泄漏 —— 所以它**天生不安全**。
+- 因此设计上给授权码加了两个保险：**① 一次性、极短有效期（通常 30~60 秒）；
+  ② 换令牌时必须由客户端**后端**带着 `client_secret` 发起**。
+- 攻击者就算截到授权码，只要换不了令牌（拿不到 secret），也拿不到 access_token。
+
+这就是**授权码流程最核心的设计思想**：让"敏感的令牌"永远不经过浏览器，
+浏览器只传一个"很快就作废的临时凭证"。
+
+### 2.2 PKCE 原理（Proof Key for Code Exchange, RFC 7636）
+
+PKCE 解决的是"**公开客户端（Public Client）没有 client_secret**"的问题。
+
+```
+Client 侧（一次性随机）:
+  code_verifier  = 随机 43~128 字符的高熵字符串
+  code_challenge = BASE64URL( SHA256(code_verifier) )      # method = S256
+
+① 授权请求带上 code_challenge
+② 换令牌请求带上 code_verifier
+③ 授权服务器计算 SHA256(verifier)，与最初存的 challenge 比对
+```
+
+**为什么这样能防攻击？** 攻击者即使**截获了授权码**，也不知道 `code_verifier`
+（它只存在于生成它的那个客户端内存里，从不经过浏览器 URL）。没有 verifier，
+换不到令牌。
+
+⚠️ **避坑**：`code_challenge_method` 必须是 `S256`，**绝不能用 `plain`**
+（plain 等于明文传 verifier，PKCE 白做）。另外 verifier 必须用
+**密码学安全的随机源**（Python 里是 `secrets`，不是 `random`）。
+
+### 2.3 `state` 参数：OAuth2 里的 CSRF 防护
+
+`state` 是一段**客户端自己生成的随机串**，在授权请求里带上，授权服务器
+**原样回传**。客户端在回调里比对：对不上就拒绝。
+
+**它防的正是 CSRF**。攻击流程如下（无 state 时）：
+
+```
+攻击者用自己的账号在 Google 走完授权，拿到一个回调 URL:
+  https://victim-app.com/cb?code=ATTACKER_CODE
+然后把这个 URL 发给受害者，诱导其点击（图片/链接/短链）。
+受害者浏览器带着自己的会话 Cookie 访问该 URL；
+应用用 ATTACKER_CODE 换了令牌，把攻击者的第三方账号
+绑定到了受害者的账号上 → 攻击者以后可以用自己的第三方账号登录受害者账号。
+```
+
+加了 `state` 后：回调里的 state 和受害者浏览器会话里存的 state 不一致 → 拒绝。
+
+**记住三件绑定关系：** `state` 必须
+
+1. **随机且高熵**（`secrets.token_urlsafe(32)`）；
+2. **存在用户会话里**（服务端 session，或加密 Cookie）；
+3. **用后即焚**（一次性，回调后立刻删除，防重放）。
+
+### 2.4 CSRF 攻击原理与四层防护
+
+**攻击本体（一个恶意 HTML 页面就够了）：**
+
+```html
+<!-- evil.com 上的页面 -->
+<form action="https://bank.com/transfer" method="POST" id="f">
+  <input name="to"   value="attacker">
+  <input name="amount" value="10000">
+</form>
+<script>document.getElementById('f').submit()</script>
+```
+
+用户只要在登录 bank.com 的状态下访问 evil.com，浏览器就会**自动带上
+bank.com 的 Cookie** 去 POST —— 服务器以为是用户本人操作。
+
+> ⚠️ 注意：**CORS 不能防 CSRF**。CORS 限制的是"JS 能不能读取响应"，
+> 不是"请求能不能发出去"。简单请求（表单、img、script）根本不受 CORS 预检约束。
+
+**四层防护，建议全上（纵深防御）：**
+
+| 防护 | 机制 | 强度 | 备注 |
+|---|---|---|---|
+| `SameSite=Lax/Strict` Cookie | 浏览器跨站请求时不带该 Cookie | ⭐⭐⭐⭐ | 现代首选，默认 `Lax` |
+| Synchronizer Token（CSRF Token） | 服务端生成随机 token 存 session，表单/头里必须带上并比对 | ⭐⭐⭐⭐⭐ | 传统可靠方案 |
+| Double Submit Cookie | token 同时放 Cookie 和请求体，服务端比对两者 | ⭐⭐⭐ | 适合无状态服务，需签名 |
+| `Origin` / `Referer` 校验 | 检查请求来源域名白名单 | ⭐⭐⭐ | 作为补充，不要单独依赖 |
+
+⚠️ **避坑**：`SameSite=None` 必须配合 `Secure`；只对**状态改变**的请求
+（POST/PUT/DELETE）做校验，GET 必须**无副作用**（否则 CSRF 防护失效）；
+JSON API 若靠 `Content-Type: application/json` 做隐式防护是**不可靠的**
+（攻击者可用 `text/plain` 绕过表单限制的场景要具体分析）。
+
+### 2.5 SSRF 原理、检测与防护
+
+**原理**：任何"服务端会去请求一个 URL"的功能，如果 URL 部分或全部
+**用户可控**，就可能是 SSRF。
+
+**常见绕过手法（做检测时必须考虑）：**
+
+| 绕过手法 | 例子 |
+|---|---|
+| 十进制/八进制/十六进制 IP | `http://2130706433/` = `127.0.0.1`；`http://0x7f000001/` |
+| IPv6 映射 | `http://[::ffff:127.0.0.1]/`、`http://[::1]/` |
+| 短域名/重定向 | `http://attacker.com` → 302 到 `http://169.254.169.254/` |
+| DNS Rebinding | 第一次解析到公网 IP（通过校验），第二次解析到内网 IP（发起请求） |
+| 用户名 @ 混淆 | `http://expected.com@evil.com/` |
+| 域名后缀混淆 | `http://evil.com#expected.com`、`http://expected.com.evil.com` |
+| URL 解析差异 | `http://expected.com%2f@evil.com`、多余 `\` 或 `@` |
+
+**高危目标（防护黑名单必须包含）：**
+
+- `127.0.0.0/8`、`::1`（本机）
+- `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`（内网）
+- `169.254.0.0/16` 特别是 `169.254.169.254`（云元数据）
+- `0.0.0.0/8`、`100.64.0.0/10`（CGNAT）、`224.0.0.0/4`（组播）
+- 云厂商专用：`metadata.google.internal`、`100.100.100.200`（阿里云）
+
+**正确防护顺序（白名单 > 黑名单）：**
+
+1. **业务上优先白名单**：只允许固定域名/路径，用映射表（`id → URL`）而非直接收 URL；
+2. **协议白名单**：只允许 `http/https`，禁止 `file://`、`gopher://`、`dict://`、
+   `ftp://`（老漏洞里这些协议能打内网服务）；
+3. **解析 → 校验 → 再请求，且 IP 校验后不要再二次 DNS 解析**（防 Rebinding），
+   最稳的是：**解析出 IP 后直接连该 IP，并带上 Host 头**；
+4. **禁止跟随重定向**（或每次跳转都重新校验）；
+5. **网络层隔离**：出网走代理，代理侧做白名单；云元数据服务用 IMDSv2（需要 token）。
+
+---
+
