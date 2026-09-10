@@ -47,3 +47,30 @@ c2 = AESGCM(key).encrypt(n, b"password=654321", None)
 print(xor(c1[:16], c2[:16]))   # 前 16 字节异或的结果说明了什么？
 ```
 
+
+### 进阶
+
+**4. 实现带 AAD 的"加密消息头"**：写一对函数
+`seal(msg: str, key: bytes, meta: dict) -> bytes` /
+`open_(blob: bytes, key: bytes) -> str`。要求把 `meta` 序列化成 JSON 作为
+AAD（不加密但受完整性保护），并把 `blob` 设计成
+`nonce || len(aad) || aad || ciphertext` 的可解析格式。测试：把 blob 里的
+`meta` 改一个字符后 `open_` 必须抛出 `InvalidTag`。
+
+**5. 用 RSA 给配置下发做签名**：模拟"服务器下发配置、客户端校验"：
+服务器生成 RSA 密钥对并公开公钥；对配置 JSON 用 RSA-PSS 签名；
+客户端用公钥验签后才加载配置。测试并回答：为什么这里**不能**改成
+"服务器用自己私钥加密配置、客户端用公钥解密"？（提示：公钥是公开的，
+谁都能解密；那只能证明完整性吗？）
+
+### 挑战
+
+**6. 设计一个"带前向保密"的简化握手**：现有方案里，会话密钥被 RSA 公钥
+封装，一旦服务器私钥泄露，攻击者录下的历史流量都能被解开。查阅 ECDHE /
+Diffie-Hellman，用 `cryptography` 的 `ec.generate_private_key` +
+`exchange(ECDH(), peer_public_key)` 实现一次性密钥协商，并画时序图说明
+为什么服务器私钥事后泄露也解不开历史会话（前向保密 / Forward Secrecy）。
+
+**7.（选做）性能实测**：用 `time.perf_counter` 对比同样加密/解密 1 MB
+数据的 AES-256-GCM 与 RSA-2048（RSA 需分块，实际不可用），把耗时比例
+算出来，用数据解释"为什么混合加密是唯一可行方案"。
