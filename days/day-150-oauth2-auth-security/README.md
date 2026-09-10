@@ -299,3 +299,70 @@ JSON API 若靠 `Content-Type: application/json` 做隐式防护是**不可靠�
 
 ---
 
+## 三、定义与使用方法（API 速查）
+
+### 3.1 OAuth2 端点与参数速查
+
+**授权端点 `GET /authorize`**
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `response_type` | ✅ | `code`（推荐）；`token` 属于已废弃的隐式模式 |
+| `client_id` | ✅ | 客户端标识 |
+| `redirect_uri` | ✅ | 回调地址，**必须精确匹配**注册值 |
+| `scope` | ❌ | 权限范围，空格分隔，如 `openid email profile` |
+| `state` | ✅(实践) | 防 CSRF 的随机串，必须校验 |
+| `code_challenge` | PKCE | `BASE64URL(SHA256(verifier))` |
+| `code_challenge_method` | PKCE | `S256`（禁用 `plain`） |
+| `nonce` | OIDC | 防 ID Token 重放（OIDC 专属） |
+
+**令牌端点 `POST /token`**
+
+| 参数 | grant=authorization_code | grant=refresh_token |
+|---|---|---|
+| `grant_type` | ✅ `authorization_code` | ✅ `refresh_token` |
+| `code` | ✅ | — |
+| `redirect_uri` | ✅（若授权时带了） | — |
+| `client_id` / `client_secret` | 机密客户端必填 | 同左 |
+| `code_verifier` | PKCE 必填 | — |
+| `refresh_token` | — | ✅ |
+
+**令牌响应**
+
+```json
+{
+  "access_token": "eyJhbGciOi...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "8xLOxBtZp8",
+  "scope": "read write",
+  "id_token": "eyJ..."      // 仅 OIDC
+}
+```
+
+**调用资源**
+
+```http
+GET /api/me HTTP/1.1
+Authorization: Bearer <access_token>
+```
+
+### 3.2 安全基线检查表（今天的内容浓缩版）
+
+| # | 检查项 | 合格标准 |
+|---|---|---|
+| 1 | 授权请求是否含 `state` | 有且高熵、服务端会话存储、一次性 |
+| 2 | 公开客户端是否用 PKCE | `S256`，非 `plain` |
+| 3 | `redirect_uri` 校验 | **精确字符串匹配**，禁止通配/前缀匹配 |
+| 4 | 是否仍支持隐式/密码模式 | 应关闭 |
+| 5 | 全链路是否 HTTPS | 授权、令牌、回调、资源全 HTTPS |
+| 6 | Cookie 标志 | `HttpOnly` + `Secure` + `SameSite=Lax/Strict` |
+| 7 | 令牌存储位置 | 后端 session 或 `HttpOnly` Cookie；**不要放 localStorage** |
+| 8 | 令牌有效期 | access 短（5~60min），refresh 轮转（Rotation） |
+| 9 | 撤销能力 | 支持 refresh 撤销 / 登出失效 |
+| 10 | SSRF 入口 | 用户可控 URL 全部走白名单 + IP 校验 |
+| 11 | 错误信息 | 不回显内部地址/堆栈 |
+| 12 | 日志 | 不打印 token / code / secret |
+
+---
+
