@@ -366,3 +366,148 @@ Authorization: Bearer <access_token>
 
 ---
 
+## 四、图解
+
+### 4.1 授权码 + PKCE 全流程（Mermaid）
+
+```mermaid
+sequenceDiagram
+    participant U as 用户(浏览器)
+    participant C as Client 应用
+    participant AS as 授权服务器
+    participant RS as 资源服务器
+
+    C->>C: 生成 code_verifier / state
+    C->>U: 302 /authorize?code_challenge=S256(v)&state=随机
+    U->>AS: 带 code_challenge 的授权请求
+    AS->>U: 登录 + 同意授权页面
+    U->>AS: 同意
+    AS->>U: 302 /cb?code=CODE&state=随机
+    U->>C: 回调(浏览器只看到 code, 看不到 token)
+    C->>C: 校验 state 一致且未用过 ✅
+    C->>AS: POST /token (code + code_verifier + client_secret)
+    AS->>AS: SHA256(verifier) == 存下的 challenge ?
+    AS->>C: access_token + refresh_token
+    C->>RS: GET /api/me  Authorization: Bearer <token>
+    RS->>C: 200 用户数据
+```
+
+### 4.2 CSRF 攻击与防护对照（ASCII）
+
+```
+                 【无防护】
+ 受害者浏览器 ── 已登录 bank.com (Cookie: session=abc)
+        │
+        │  访问 evil.com  →  页面自动提交表单
+        ▼
+ bank.com: 看到 Cookie(session=abc) ✅ ── 执行转账 💸
+        （服务端无法区分"用户点的"和"evil.com发的"）
+
+                 【有防护】
+ evil.com 自动提交 ─→ bank.com
+                       ├─ 校验 csrf_token ✗ 缺失/不匹配 → 403 拒绝
+                       ├─ SameSite=Lax 跨站POST不带Cookie → 无会话 → 拒绝
+                       └─ Origin: https://evil.com ✗ 不在白名单 → 拒绝
+```
+
+### 4.3 SSRF 攻击路径与纵深防御（ASCII）
+
+```
+ 用户可控 URL
+      │
+      ▼
+ ┌──────────────────────────────────────────────────────┐
+ │ 第1层 协议白名单:  http/https only  ✗ file/gopher/dict │
+ │ 第2层 域名白名单:  只允许 api.trusted.com 映射表        │
+ │ 第3层 DNS解析→IP:  10.0.0.5 / 169.254.169.254 ✗        │
+ │ 第4层 直连该IP(防 Rebinding) + 禁跟随重定向             │
+ │ 第5层 出网代理 + 网络层ACL: 内网段不可达                │
+ └──────────────────────────────────────────────────────┘
+      │
+      ▼
+  公网目标 ✅        内网/元数据 ❌ (如果漏了任意一层 → 云凭证泄漏)
+```
+
+---
+
+## 五、实战代码案例
+
+> 全部代码位于 `code/`，**仅依赖标准库**，可直接 `python3 xx.py` 运行。
+
+### 5.1 `01-oauth2-auth-code-flow.py` — 授权码 + PKCE 流程模拟
+
+用纯标准库搭一个"迷你授权服务器"，真实地走完：
+
+- 生成 `state` 与 `code_verifier / code_challenge`（S256）
+- 授权请求 → 回调校验 state → 换令牌（服务端校验 verifier）
+- 用 access_token 访问受保护资源，并演示**令牌过期后 refresh**
+
+```bash
+python3 code/01-oauth2-auth-code-flow.py
+```
+
+### 5.2 `02-oauth2-csrf-pitfalls.py` — CSRF 攻击复现与四层防护
+
+- 演示**缺少 `state`** 时，攻击者如何用"自己的授权码"绑定受害者账号
+- 演示 **CSRF 表单自动提交**在有无 CSRF Token / `SameSite` 时的不同结果
+- 顺带对比"令牌存 localStorage vs HttpOnly Cookie"的风险差异
+- 每个坑都给出**修复前后**的代码
+
+```bash
+python3 code/02-oauth2-csrf-pitfalls.py
+```
+
+### 5.3 `03-auth-security-audit.py` — 认证系统安全审计脚本（实战）
+
+对一份"认证配置 + 用户可控 URL 列表"做自动化审计，输出分级报告：
+
+- OAuth2 配置检查（state / PKCE / redirect_uri 精确匹配 / 弃用模式）
+- Cookie 标志检查（HttpOnly / Secure / SameSite）
+- CSRF 防护检查
+- **SSRF 检测**：IP 字面量、私有段、云元数据、协议白名单、重定向风险
+- 输出 `PASS / WARN / FAIL` 与修复建议，并返回退出码（可接 CI）
+
+```bash
+python3 code/03-auth-security-audit.py
+```
+
+---
+
+## 六、思考题
+
+1. **OAuth2 到底"授权"了什么？** 如果说 access_token 泄漏等于"别人拿到了你的
+   权限"，那么"令牌该有多长的有效期"这个权衡里，安全和体验的边界在哪？
+   为什么业界普遍选 5~60 分钟而不是 24 小时？
+
+2. **`state` 和 PKCE 都在防"攻击者拿到 code"，它们防的是一回事吗？**
+   请分别说出各自拦截的攻击场景，并解释为什么**两者都要有**。
+
+3. **有 `SameSite=Lax` 就够了吗？** 找出至少两种 `SameSite=Lax` **防不住**或
+   需要额外考虑的场景（提示：子域名、`GET` 有副作用、老浏览器、
+   `SameSite=None` 的第三方嵌入场景）。
+
+4. **SSRF 为什么"黑名单永远防不住"？** 请解释 DNS Rebinding 的攻击时序，
+   并说明"解析出 IP 后直连该 IP、且不跟随重定向"为什么能同时缓解
+   Rebinding 和 302 绕过。
+
+5. **把这三天的知识串起来：** 假设你负责一个"用 Google 登录"的系统，
+   请写出从浏览器到数据库这一条链路上，**至少 8 个**必须做的安全动作
+   （从 TLS、state、PKCE、redirect_uri、token 存储、Cookie 标志、SSRF 防护，
+   到审计日志），并标注每一项属于"认证"还是"授权"问题。
+
+---
+
+## 附：本日文件清单
+
+```
+days/day-150-oauth2-auth-security/
+├── README.md                          ← 本文
+├── code/
+│   ├── 01-oauth2-auth-code-flow.py    ← 授权码 + PKCE 全流程模拟
+│   ├── 02-oauth2-csrf-pitfalls.py     ← CSRF 攻击复现与四层防护
+│   └── 03-auth-security-audit.py      ← 认证系统安全审计脚本
+├── diagrams/
+│   └── README.md                      ← 流程图 / 攻击路径 ASCII + Mermaid
+└── exercises/
+    └── checklist.md                   ← 完成清单 + 练习题
+```
