@@ -147,3 +147,51 @@ PY
 
 然后：把 `demo_config()` 的失败项全部修好，确认脚本退出码从 `1` 变 `0`。
 
+---
+
+### 挑战题（综合设计，无唯一答案）
+
+**Q9. 设计一个"零信任"登录链路**
+为一个"手机 App + Web 后台 + 第三方登录"的系统，写出完整的认证/授权方案，
+必须覆盖：
+
+- 用哪种 grant type？为什么？
+- `state` / PKCE / `nonce` 分别放哪、谁生成、谁校验、存哪里？
+- access_token 与 refresh_token 的有效期、存储位置、轮转策略
+- CSRF 防护用哪几层？
+- 用户改密码 / 登出 / 检测到 refresh 重放时，如何做到"立刻失效"？
+- 全链路哪些地方可能出 SSRF？怎么防？
+
+请用 **1 张流程图 + 1 张参数表 + 1 份风险清单** 呈现结论。
+
+**Q10. 还原一次真实漏洞**
+搜索 2019 年 Capital One 数据泄露事件的公开分析，回答：
+
+1. SSRF 出现在哪个功能上？（提示：WAF 与 EC2 元数据）
+2. 攻击者最终拿到的是什么？为什么这比"读到一个页面"严重得多？
+3. 如果当时做了"解析后校验 IP 且不跟随重定向"，攻击能否被阻止？
+4. 除了代码层，云侧配置还应做什么加固？
+
+> ⚠️ 注意：只做**公开资料的学习与复盘**，不要对任何未授权目标做实际测试。
+
+---
+
+## 🎯 自测标准
+
+| 水平 | 标准 |
+|---|---|
+| 及格 | 能说清授权码流程 6 步，能解释 state 与 PKCE 各防什么 |
+| 良好 | 能独立写出 CSRF 的四层防护，并跑通 3 个示例代码 |
+| 优秀 | 能扩展审计脚本（Q7），并完整设计 Q9 的零信任登录链路 |
+
+---
+
+## 📚 延伸阅读（建议自行搜索原文）
+
+- RFC 6749 — The OAuth 2.0 Authorization Framework
+- RFC 7636 — PKCE（Proof Key for Code Exchange）
+- RFC 9700 — OAuth 2.0 Security Best Current Practice（强烈推荐通读）
+- RFC 6265bis — Cookies: HTTP State Management（`SameSite` 权威定义）
+- OWASP Cheat Sheet — CSRF Prevention / SSRF Prevention
+- OWASP Top 10（2021）A01 访问控制失效、A10 SSRF
+- PortSwigger Web Security Academy — CSRF / SSRF 实验（有免费靶场）
