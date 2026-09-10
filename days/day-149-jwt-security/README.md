@@ -300,3 +300,93 @@ payload 只是 Base64，**不是加密**。把手机号、身份证、内部 IP 
 
 **防护**：payload 只放**非敏感**标识（`sub`、`jti`、`role`）；敏感数据
 服务端按 `sub` 查库；确需放入则改用 JWE。
+
+---
+
+## 三、定义与使用方法（API 速查）
+
+### 3.1 PyJWT 核心 API
+
+安装：`pip install pyjwt`（要 RS256/ES256 再加 `pip install cryptography`）。
+
+| 函数 | 签名 | 说明 |
+|---|---|---|
+| `jwt.encode` | `(payload, key, algorithm="HS256", headers=None)` → `str` | 签发 token。PyJWT ≥2.0 返回 `str`，不再是 `bytes` |
+| `jwt.decode` | `(jwt, key, algorithms=[...], options=None, audience=None, issuer=None, leeway=0)` | 验证 + 解码。**`algorithms` 必填** |
+| `jwt.get_unverified_header` | `(jwt)` → `dict` | ⚠️ **不验签**只解 Header，仅用于取 `kid` 选密钥 |
+| `jwt.decode_complete` | `(jwt, key, algorithms=[...])` → `dict` | 同时返回 `header` / `payload` / `signature` |
+| `jwt.api_jwk.PyJWKClient` | `(uri).get_signing_key_from_jwt(token)` | 从 JWKS 端点按 `kid` 取公钥（内含缓存） |
+
+**`jwt.decode` 常用参数：**
+
+| 参数 | 作用 | 建议值 |
+|---|---|---|
+| `algorithms` | 允许的算法**白名单** | `["RS256"]`，绝不要传 `[header["alg"]]` |
+| `audience` | 校验 `aud` | 你的服务名，如 `"api.example.com"` |
+| `issuer` | 校验 `iss` | 可信签发者，如 `"https://auth.example.com"` |
+| `leeway` | 允许的时钟偏移（秒） | `30` |
+| `options` | 细粒度开关 | 见下 |
+
+**`options` 常用开关：**
+
+```python
+options = {
+    "verify_signature": True,      # 永远保持 True
+    "verify_exp": True,            # 校验过期
+    "verify_nbf": True,            # 校验生效时间
+    "verify_aud": True,            # 校验受众
+    "verify_iss": True,            # 校验签发者
+    "require": ["exp", "iat", "sub"],  # 强制这些 claim 必须存在
+}
+```
+
+`options["require"]` 是**很容易被忽略但极其重要**的一项：把 `exp`、`iss`、
+`aud` 设为必填，能从根上避免"攻击者把字段删掉绕过校验"。
+
+### 3.2 异常类型速查（按需捕获）
+
+```
+jwt.InvalidTokenError            ← 所有 JWT 异常的基类（兜底 catch 这个）
+├── DecodeError                  ← token 格式/Base64 解码错误
+├── InvalidSignatureError        ← 签名不匹配（最常见）
+├── InvalidAlgorithmError        ← 算法不在白名单
+├── ExpiredSignatureError        ← exp 已过
+├── ImmatureSignatureError       ← nbf 未到
+├── InvalidAudienceError         ← aud 不匹配
+├── InvalidIssuerError           ← iss 不匹配
+├── MissingRequiredClaimError    ← require 里要求的 claim 缺失
+└── InvalidKeyError              ← 密钥类型不对（如拿 PEM 当 HMAC 密钥）
+```
+
+**注意**：`ExpiredSignatureError` 继承自 `InvalidSignatureError`，而
+`InvalidSignatureError` 继承自 `InvalidTokenError`。所以捕获顺序要从具体到宽泛。
+对外返回时**统一返回 401，不要泄露具体是"签名错"还是"过期"**，
+否则等于给攻击者送情报。
+
+### 3.3 算法对比与选型
+
+| 算法 | 类型 | 密钥 | 签名长度 | 速度 | 适用场景 |
+|---|---|---|---|---|---|
+| `HS256` | HMAC-SHA256 | 共享密钥 | 32 B | ⚡ 最快 | 单体应用、内部服务 |
+| `RS256` | RSA-PKCS1v1.5 | 私钥签/公钥验 | 256 B | 慢（验证比签名快） | 微服务、开放平台 |
+| `PS256` | RSA-PSS | 私钥签/公钥验 | 256 B | 慢 | RS256 的现代化替代，抗签名伪造 |
+| `ES256` | ECDSA P-256 | 私钥签/公钥验 | 64 B | 快 | **现代首选**，token 短 |
+| `EdDSA` | Ed25519 | 私钥签/公钥验 | 64 B | 最快 | 新系统首选，需较新库支持 |
+| `none` | 无签名 | — | 0 B | — | ❌ **永远不要用** |
+
+选型决策：
+
+```
+需要多方验证（第三方登录 / 微服务各自验签）？
+   ├─ 是 → 用非对称：EdDSA > ES256 > PS256 > RS256
+   └─ 否 → 单方自用，可以 HS256，但密钥必须 ≥32B 随机
+```
+
+### 3.4 密钥与生命周期管理清单
+
+- [ ] 密钥用 `secrets.token_bytes(32)` 或 KMS 生成，**不写进代码/git**
+- [ ] 配置走环境变量或密钥管理服务（Vault / AWS KMS / 阿里云 KMS）
+- [ ] 支持**双密钥并存**：换钥时新旧同时可验，过渡期后再撤旧钥
+- [ ] access token 短（5~30 分钟）+ refresh token 长（7~30 天，且可撤销）
+- [ ] 用 `jti` + 服务端黑名单实现"主动登出"
+- [ ] 定期审计：日志里绝不打完整 token（打前 8 位 + 哈希即可）
