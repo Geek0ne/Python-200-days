@@ -390,3 +390,167 @@ jwt.InvalidTokenError            ← 所有 JWT 异常的基类（兜底 catch �
 - [ ] access token 短（5~30 分钟）+ refresh token 长（7~30 天，且可撤销）
 - [ ] 用 `jti` + 服务端黑名单实现"主动登出"
 - [ ] 定期审计：日志里绝不打完整 token（打前 8 位 + 哈希即可）
+
+---
+
+## 四、实战案例：一个安全的 JWT 认证流程
+
+### 4.1 场景说明
+
+一个典型的 Web 应用：用户登录后拿到 **access token**（短效）和
+**refresh token**（长效），访问受保护接口时带 access token，过期后用
+refresh token 换新的。
+
+```
+                        ┌──────────────────────────────┐
+                        │        Auth 服务              │
+   ① 登录(用户名/密码)    │  ┌────────────────────────┐  │
+ ───────────────────────►│  │ 验密码 → 签发双 token   │  │
+                        │  └────────────────────────┘  │
+   ② access(15min)        │                              │
+      refresh(7d)         │                              │
+ ◄───────────────────────┤                              │
+                        └──────────────────────────────┘
+   ③ 每次请求带 access ──►  API 服务（只持公钥，本地验签，无状态）
+       签名对 + 未过期 → 放行
+       已过期 → 401
+   ④ 拿 refresh 换新 access ──► Auth 服务（查库校验 refresh 是否被撤销）
+```
+
+**为什么 access 要短、refresh 要长？** 这是"安全"与"体验"的折中：
+access 短 → 泄露窗口小；但每次都让用户重新登录体验差 → 用 refresh 续命。
+而 refresh 一旦泄露危害极大，所以它**必须可撤销**（存库 + 黑名单）。
+
+### 4.2 关键设计点（每个都是"为什么"）
+
+| 设计 | 为什么这么做 |
+|---|---|
+| access / refresh 用不同 `aud` | 防止 refresh token 被拿去当 access 用 |
+| refresh 存库、可撤销 | access 无状态；refresh 必须有状态才能"登出" |
+| `sub` 放用户 ID，不放用户名 | ID 稳定，用户名可改；改用户名不用重发 token |
+| `role` 放 token | 免去每个请求查库拿角色，但**改角色要等 token 过期**（或加版本号） |
+| 加 `jti` | 支持单 token 黑名单 / 审计追溯 |
+| 加 `kid` | 密钥轮换时，验证方知道用哪把公钥 |
+| 不用 `none`、算法写死白名单 | 从根上堵掉 alg 系列攻击 |
+| dev/prod 密钥不同 | 防止开发环境 token 拿到生产用 |
+
+### 4.3 核心代码骨架（安全版）
+
+```python
+import secrets
+import time
+import jwt
+
+ACCESS_TTL = 15 * 60          # 15 分钟
+REFRESH_TTL = 7 * 24 * 3600   # 7 天
+
+# HS256：单方自用；生产建议换成 RS256 + 公私钥分离
+ACCESS_SECRET = secrets.token_bytes(32)
+REFRESH_SECRET = secrets.token_bytes(32)   # ✅ 两套密钥，互不通用
+
+
+def issue_tokens(user_id: str, role: str) -> dict:
+    now = int(time.time())
+    common = {"sub": user_id, "iss": "https://auth.example.com", "iat": now,
+              "jti": secrets.token_hex(8)}
+    access = jwt.encode(
+        {**common, "aud": "api.example.com", "role": role, "exp": now + ACCESS_TTL},
+        ACCESS_SECRET, algorithm="HS256")
+    refresh = jwt.encode(
+        {**common, "aud": "auth.example.com", "exp": now + REFRESH_TTL},
+        REFRESH_SECRET, algorithm="HS256")
+    return {"access_token": access, "refresh_token": refresh,
+            "expires_in": ACCESS_TTL, "token_type": "Bearer"}
+
+
+def verify_access(token: str) -> dict:
+    """API 服务的验证函数：算法白名单 + aud/iss 校验 + exp 必填"""
+    return jwt.decode(
+        token, ACCESS_SECRET,
+        algorithms=["HS256"],                 # ✅ 白名单，绝不读 Header.alg
+        audience="api.example.com",           # ✅ 防止 refresh 当 access 用
+        issuer="https://auth.example.com",    # ✅ 只认自己的签发者
+        leeway=30,                            # ✅ 容忍时钟漂移
+        options={"require": ["exp", "iat", "sub", "aud", "iss"]},  # ✅ 必填
+    )
+
+
+def refresh_access(refresh_token: str, is_revoked) -> dict:
+    """用 refresh 换新 access；必须先查撤销状态"""
+    payload = jwt.decode(
+        refresh_token, REFRESH_SECRET,
+        algorithms=["HS256"],
+        audience="auth.example.com",
+        issuer="https://auth.example.com",
+        leeway=30,
+        options={"require": ["exp", "iat", "sub", "jti"]},
+    )
+    if is_revoked(payload["jti"]):            # ✅ refresh 必须可撤销
+        raise jwt.InvalidTokenError("refresh token 已被撤销")
+    return issue_tokens(payload["sub"], role="user")
+```
+
+**注意 HS256 与 RS256 的 token 不能互验**：两者的签名算法完全不同，
+就算密钥碰巧相同也会失败 —— 这正是防算法混淆的最后一道物理屏障。
+
+### 4.4 常见反模式（看到就要修）
+
+```python
+# ❌ 1. 算法来自 token
+alg = jwt.get_unverified_header(token)["alg"]
+jwt.decode(token, key, algorithms=[alg])
+
+# ❌ 2. 关掉签名验证（有人为了"先解析看看"这么写，然后忘了改回来）
+jwt.decode(token, key, options={"verify_signature": False})
+
+# ❌ 3. 不做 aud 校验（多服务共用密钥时 = 横向越权）
+jwt.decode(token, key, algorithms=["HS256"])
+
+# ❌ 4. 密钥写死在代码里
+SECRET = "my-super-secret-key-2026"      # 进了 git = 全世界都知道
+
+# ❌ 5. 用 kid 直接拼路径 / SQL
+open(f"/keys/{kid}").read()
+
+# ❌ 6. 把敏感信息放 payload
+jwt.encode({"phone": "138...", "password": "..."}, key, algorithm="HS256")
+
+# ❌ 7. catch 住所有异常后放行
+try:
+    jwt.decode(...)
+except Exception:
+    pass            # 相当于没有任何验证
+```
+
+---
+
+## 五、思考题
+
+1. **无状态的代价**：JWT 的卖点是"服务端不存会话"，但这就带来"无法主动
+   失效"的问题。请设计一个方案，既保留 JWT 的无状态优势，又能在
+   用户改密码 / 被盗号时**立刻**让旧 token 失效。提示：从"密钥版本号"、
+   "`jti` 黑名单的粒度"、"短 access + 可撤销 refresh"三个角度比较
+   各自的召回延迟与存储成本。
+
+2. **`aud` 到底防的是什么**：假设 A 服务（权限低）和 B 服务（权限高）
+   共用同一个签发者和同一把密钥，且两边都**不校验 `aud`**。请写出一个
+   具体的越权攻击步骤，并说明加上 `aud` 校验后为什么攻击失败。
+
+3. **算法混淆的本质**：HS/RS 混淆之所以能成功，是因为验证方"用了攻击者
+   可控的输入来决定验证逻辑"。请举出另外 **两个** 非 JWT 场景中
+   同样"信任了输入中的元数据"而导致的漏洞（提示：反序列化、
+   模板引擎、`Content-Type` 协商、XXE 的 DTD 处理都是候选）。
+
+4. **时钟与过期**：如果签发服务器比验证服务器快 10 分钟，`exp` 校验会
+   出现什么现象？`leeway` 能解决到什么程度？如果服务器**慢** 10 分钟，
+   又会怎样？请说明为什么"签发时钟"和"验证时钟"的漂移方向不同，
+   风险是不对称的。
+
+5. **Base64 不是加密**：有人主张"反正 payload 只放用户 ID，不怕看"。
+   但请思考：一个只含 `sub` 和 `role` 的 payload，在**统计层面**能泄露
+   哪些信息？（提示：token 长度、`role` 分布、不同用户 token 可否被打包
+   关联、以及"加密的 cookie 会话"与之相比的差异。）
+
+6. **密钥轮换**：如果你要支持"每 90 天轮换一次签名密钥，且不能让已登录
+   用户掉线"，请设计完整的轮换流程，说明 `kid`、验证端密钥环、
+   以及新旧密钥的并存时长应该如何设置。
