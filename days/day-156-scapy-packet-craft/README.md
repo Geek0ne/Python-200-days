@@ -637,3 +637,150 @@ Route / conf.route                         # 路由表
 | 吞吐上不去 | Scapy 纯 Python 解析 | 用 BPF 过滤 + `store=False` + 少解析字段 |
 
 ---
+## 四、图解
+
+> 完整图解（6 张）见 [`diagrams/README.md`](diagrams/README.md)。核心三张如下。
+
+### 4.1 `send` vs `sendp` 的内核路径（Mermaid）
+
+```mermaid
+flowchart TD
+    A["pkt = IP(dst=...)/TCP(...)"] --> B{"用哪个函数?"}
+    B -->|send / sr| C["Scapy 序列化 → bytes"]
+    C --> D["socket(AF_INET, SOCK_RAW, IPPROTO_RAW)"]
+    D --> E["内核查询路由表<br/>选出口网卡 + 下一跳"]
+    E --> F["内核补 Ether 头<br/>（查 ARP 缓存）"]
+    F --> G["网卡发送"]
+    B -->|sendp / srp| H["Scapy 序列化（含你自己写的 Ether 层）"]
+    H --> I["socket(AF_PACKET, SOCK_RAW)"]
+    I --> J["直接绑定到 iface 指定的网卡"]
+    J --> G
+    J -.->|"绕过内核路由表"| K["所以你写错 MAC 就发不出去"]
+```
+
+### 4.2 半开扫描（SYN scan）状态机（ASCII）
+
+```
+              端口开放                    端口关闭              被防火墙过滤
+  扫描器        目标        扫描器         目标       扫描器       目标
+    │            │            │             │           │           │
+    │── SYN ────►│            │── SYN ─────►│           │── SYN ───►│
+    │            │            │             │           │           X  (丢弃)
+    │◄─ SYN-ACK ─│            │◄─ RST,ACK ──│           │           │
+    │── RST ────►│            │   (结束)     │           │   超时     │
+    │  (结束)     │            │             │           │           │
+
+  判定逻辑：
+    SYN-ACK  →  open      （然后必须发 RST 让对方别再等，这也是扫描痕迹）
+    RST,ACK  →  closed
+    无响应    →  filtered  （或超时，需区分 timeout 与 unreachable）
+
+⚠️ 三个"看不到的东西"：
+   1. 应用层没有任何日志（连接从未建立）
+   2. 但网络层/IDS 能看到"SYN 之后没有握手"→ 这是 SYN 扫描的检测特征
+   3. 发大量 SYN 不完成握手 = SYN Flood 的特征，会被限速/拉黑
+```
+
+### 4.3 Scapy 序列化流水线（ASCII）
+
+```
+  Python 对象                       序列化（build）                字节流
+┌────────────────┐    fields_desc  ┌──────────────────┐    ┌──────────────┐
+│ Ether          │ ─────────────►  │ 逐字段 pack      │ →  │ 14 字节       │
+│  └ IP          │                 │ 自动算:          │    │ ┌──────────┐ │
+│     └ TCP      │                 │  · ihl/len       │    │ │ 20 字节  │ │
+│        └ Raw   │                 │  · chksum        │    │ │ 20 字节  │ │
+└────────────────┘                 │  · 校验和回填     │    │ │ 载荷     │ │
+                                   └──────────────────┘    │ └──────────┘ │
+                                                            └──────────────┘
+
+反向（dissect / 解析）：
+  字节流 → 按 hints 猜测下一层 → 递归构造 Packet 对象
+           ↑ 这里是最慢的一步（guess_payload_class）
+
+所以：p.show() 显示的是"对象"；p.show2() 会先 build 再 dissect，
+      因此能看到"自动算出来的校验和"。
+```
+
+---
+
+## 五、完整可运行实战代码
+
+| 文件 | 行数 | 内容 |
+|---|---|---|
+| `code/01-scapy-basics.py` | ~250 | 基础：分层构造、字段读写、`send`/`sendp`/`sr1`、dry-run 演示 |
+| `code/02-sniff-pitfalls.py` | ~300 | 进阶：嗅探 8 大坑（store、BPF、校验和、分片、权限 …）+ 离线自检 |
+| `code/03-network-probe.py` | ~360 | 实战：网络探测工具（ICMP ping / 手写 traceroute / ARP 存活发现） |
+
+**运行方式：**
+
+```bash
+pip install scapy
+
+# 1) 基础构造（默认 dry-run，不发包，不需要 root）
+python3 code/01-scapy-basics.py --show
+python3 code/01-scapy-basics.py --show --self-test
+
+# 2) 真实发送到回环（需要 root，且要显式 --send）
+sudo python3 code/01-scapy-basics.py --send --dst 127.0.0.1
+
+# 3) 嗅探避坑（离线自检不需要 root）
+python3 code/02-sniff-pitfalls.py --self-test
+sudo python3 code/02-sniff-pitfalls.py --sniff -i lo -f "icmp" -t 15
+
+# 4) 网络探测（默认只允许本机/私网；需要 root 才真发）
+sudo python3 code/03-network-probe.py ping 127.0.0.1
+sudo python3 code/03-network-probe.py trace 127.0.0.1 --max-hops 5
+sudo python3 code/03-network-probe.py arp-scan 192.168.1.0/24
+```
+
+**护栏说明：**
+
+- 目标 IP 必须命中白名单：`127.0.0.0/8`、`::1`、RFC1918 私网段；
+- 默认 `dry_run=True`，`--send` 才真发；
+- 不提供源 IP 伪造功能（示例里 `IP(src=...)` 只接受本机地址）；
+- 嗅探默认只监听回环（`lo`），要看真实网卡必须显式 `-i eth0`。
+
+---
+
+## 六、思考题
+
+1. **为什么 `send()` 不需要 `iface` 参数，而 `sendp()` 需要？**
+   请从"内核参与程度"解释。
+
+2. Scapy 里 `IP(len=None)` 的 `None` 有什么特殊含义？
+   为什么要这样设计（而不是让用户自己填）？
+
+3. TCP 校验和为什么要包含**伪首部**？如果没有伪首部，会出现什么安全问题？
+
+4. 你用 Scapy 做了 1 万次 SYN 扫描，发现**大量端口返回 filtered**，
+   而 nmap 扫同一目标成功。可能的原因有哪些？（至少 3 条）
+
+5. **为什么交换机环境下嗅探看不到别的端口流量？** 那么 ARP 欺骗为什么能
+   让嗅探成功？防御方应该怎么防 ARP 欺骗？
+
+6. 长时间 `sniff()` 导致内存暴涨，**根因**是什么？如果已经跑了 3 小时不能重启，
+   有什么补救办法？
+
+7. **防御视角**：作为 IDS 运维，你会用什么特征识别"Scapy 写的扫描器"
+   与"nmap 的扫描"的差异？
+
+8. 为什么说"Scapy 是协议的显微镜，不是网络的流水线"？
+   举一个 Scapy 做不了/不该做的真实场景。
+
+---
+
+## 附：本日文件清单
+
+```
+days/day-156-scapy-packet-craft/
+├── README.md                    ← 本文
+├── code/
+│   ├── 01-scapy-basics.py       ← 分层构造与发送基础
+│   ├── 02-sniff-pitfalls.py     ← 嗅探 8 大坑 + 离线自检
+│   └── 03-network-probe.py      ← 实战：ping / traceroute / ARP 发现
+├── diagrams/
+│   └── README.md                ← 6 张原理图
+└── exercises/
+    └── checklist.md             ← 完成清单 + 练习
+```
