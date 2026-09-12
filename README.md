@@ -38,10 +38,10 @@
 | **Phase 4** | 🔥 高阶特性 | Day 046–060 | ✅ 已完成 |
 | **Phase 5** | 📦 标准库与生态系统 | Day 061–075 | ✅ 已完成 |
 | **Phase 6** | 实战项目（一） | Day 076–090 | ✅ 已完成 |
-| **Phase 7** | 进阶与性能优化 | Day 091–100 | **进行中** |
-| **Phase 8** | 数据分析与 AI/ML | Day 101–125 | ⏳ |
-| **Phase 9** | 爬虫与反爬对抗 | Day 126–145 | ⏳ |
-| **Phase 10** | 网络安全开发 | Day 146–165 | ⏳ |
+| **Phase 7** | 进阶与性能优化 | Day 091–100 | ✅ 已完成 |
+| **Phase 8** | 数据分析与 AI/ML | Day 101–125 | ✅ 已完成 |
+| **Phase 9** | 爬虫与反爬对抗 | Day 126–145 | ✅ 已完成 |
+| **Phase 10** | 网络安全开发 | Day 146–165 | **进行中** |
 | **Phase 11** | 自动化运维与 DevOps | Day 166–185 | ⏳ |
 | **Phase 12** | 综合实战 | Day 186–200 | ⏳ |
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 131 / 200** · 进度的 65.5% · 当前：Phase 7 进阶与性能优化
+> **Day 153 / 200** · 进度的 76.5% · 当前：Phase 10 网络安全开发
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **131 天** |
-| 📝 总提交次数 | **994 commits** |
-| 📄 总代码行数 | **104,654 行** |
-| 📂 总文件数 | **702 个** |
-| 🏗️ 当前阶段 | **Phase 7 — 进阶与性能优化** |
+| 📅 已完成天数 | **153 天** |
+| 📝 总提交次数 | **1,207 commits** |
+| 📄 总代码行数 | **137,552 行** |
+| 📂 总文件数 | **1,039 个** |
+| 🏗️ 当前阶段 | **Phase 10 — 网络安全开发** |
 
 ### ✅ 已完成的阶段
 
@@ -182,7 +182,7 @@
 </details>
 
 <details open>
-<summary><b>Phase 7：进阶与性能优化（Day 091–100）— 🔥 进行中</b></summary>
+<summary><b>Phase 7：进阶与性能优化（Day 091–100）— ✅ 已完成</b></summary>
 
 - ✅ 性能剖析
 - ✅ 代码优化技巧
@@ -193,7 +193,79 @@
 - ✅ 领域特定语言 DSL
 - ✅ Python 内部机制
 - ✅ 扩展 Python
-- ⏳ Day 100 待完成
+- ✅ Day 100 完成
+
+</details>
+
+<details>
+<summary><b>Phase 8：数据分析与 AI/ML（Day 101–125）— ✅ 已完成</b></summary>
+
+- ✅ NumPy 核心
+- ✅ Pandas 核心
+- ✅ Pandas 进阶
+- ✅ 数据可视化
+- ✅ 数据分析 Pipeline
+- ✅ 机器学习基础
+- ✅ 线性回归
+- ✅ 逻辑回归
+- ✅ 决策树与随机森林
+- ✅ SVM 与 KNN
+- ✅ 无监督学习
+- ✅ 模型调优与流水线
+- ✅ PyTorch 基础
+- ✅ 神经网络入门
+- ✅ 训练循环
+- ✅ CNN
+- ✅ 迁移学习
+- ✅ NLP 基础
+- ✅ 大模型 API 调用
+- ✅ LangChain RAG
+- ✅ 异常检测与安全交叉
+- ✅ 推荐系统基础
+- ✅ 模型部署
+- ✅ 时间序列预测
+- ✅ 综合 AI 应用（Day 125）
+
+</details>
+
+<details>
+<summary><b>Phase 9：爬虫与反爬对抗（Day 126–145）— ✅ 已完成</b></summary>
+
+- ✅ requests 深入
+- ✅ BeautifulSoup / lxml 解析
+- ✅ Scrapy 框架
+- ✅ Selenium 动态渲染
+- ✅ Playwright 现代爬虫
+- ✅ 爬虫策略
+- ✅ 代理池
+- ✅ UA / Cookie 池
+- ✅ 验证码识别
+- ✅ JS 逆向入门
+- ✅ JS 逆向进阶
+- ✅ 浏览器指纹规避
+- ✅ Scrapy 分布式
+- ✅ 存储管道
+- ✅ App 爬虫基础
+- ✅ 爬虫监控
+- ✅ 爬虫法律合规
+- ✅ 反爬项目实战（上）
+- ✅ 反爬项目实战（下）
+- ✅ Phase 9 阶段收官（Day 145）
+
+</details>
+
+<details open>
+<summary><b>Phase 10：网络安全开发（Day 146–165）— 🔥 进行中</b></summary>
+
+- ✅ HTTPS / TLS 抓包分析
+- ✅ 密码学基础
+- ✅ 对称与非对称加密
+- ✅ JWT 安全
+- ✅ OAuth2 授权安全
+- ✅ SQL 注入
+- ✅ XSS Web 漏洞
+- ✅ 端口扫描进阶
+- ⏳ 后续课程进行中
 
 </details>
 
@@ -207,7 +279,7 @@
 │   ├── day-001-hello-python/
 │   ├── day-002-variables-and-datatypes/
 │   ├── ...
-│   └── day-099-扩展-python/
+│   └── day-153-port-scan-advanced/
 ├── 📁 projects/                # 阶段项目实战
 ├── 📁 tools/                   # 学习工具脚本
 │   ├── daily_runner.sh         # 每日执行脚本
@@ -229,7 +301,7 @@ git clone git@github.com:Geek0ne/Python-200-days.git
 cd python-200-days
 
 # 查看当天学习内容
-cd days/day-099-扩展-python
+cd days/day-153-port-scan-advanced
 
 # 运行代码
 python main.py
