@@ -422,3 +422,218 @@ for snd, rcv in ans:
 只做"查询"，不做"应答"。
 
 ---
+## 三、定义与使用方法（API 速查表）
+
+### 3.1 安装与权限
+
+```bash
+pip install scapy
+# Linux 还需要（可选但推荐）：libpcap 用于 BPF 过滤
+sudo apt install libpcap-dev
+
+# 权限：原始套接字需要 root 或 capability
+sudo python3 script.py
+
+# 或者（更安全，只给必要能力）
+sudo setcap cap_net_raw,cap_net_admin+eip $(readlink -f $(which python3))
+
+# Docker 里
+# docker run --cap-add=NET_RAW --cap-add=NET_ADMIN ...
+```
+
+```python
+# 检查是否有权限（不抛异常的写法）
+from scapy.all import conf
+try:
+    conf.L3socket()
+    print("✅ 有原始套接字权限")
+except Exception as e:
+    print("❌ 权限不足，需要 root 或 CAP_NET_RAW：", e)
+```
+
+### 3.2 常用协议层与关键字段
+
+```python
+from scapy.all import *
+
+# ─── 链路层 ───
+Ether(dst="ff:ff:ff:ff:ff:ff", src=None, type=0x0800)
+ARP(op=1, pdst="192.168.1.1", hwdst="00:00:00:00:00:00")
+       # op: 1=who-has(请求) 2=is-at(应答)
+
+# ─── 网络层 ───
+IP(src="127.0.0.1", dst="127.0.0.1",
+   ttl=64, tos=0, id=1,
+   flags="DF", frag=0, proto=6)
+IPv6(dst="::1")
+ICMP(type=8, code=0)      # 8=Echo Request, 0=Echo Reply
+                         # 3=Dest Unreachable, 11=Time Exceeded
+ICMPv6ND_NS(tgt="...")    # IPv6 邻居发现
+
+# ─── 传输层 ───
+TCP(sport=12345, dport=80,
+    flags="S",            # S=SYN A=ACK F=FIN R=RST P=PSH U=URG（可组合 "SA"）
+    seq=1000, ack=0,
+    window=8192,
+    options=[("MSS",1460), ("SAckOK", b""), ("WScale", 7)])
+UDP(sport=12345, dport=53)
+
+# ─── 应用层 ───
+DNS(rd=1, qd=DNSQR(qname="example.com", qtype="A"))
+Raw(load=b"hello")        # 任意字节载荷
+```
+
+**常用 TCP 标志位组合：**
+
+| flags | 含义 | 用途 |
+|---|---|---|
+| `S` | SYN | 发起连接（半开扫描） |
+| `SA` | SYN+ACK | 接受连接 |
+| `A` | ACK | 确认 |
+| `F` | FIN | 关闭 |
+| `R` | RST | 重置 |
+| `PA` | PSH+ACK | 带数据的报文 |
+| `FPU` | FIN+PSH+URG | 经典的"圣诞树包"（畸形包测试） |
+| `""` | 无标志 | null scan（部分系统不响应） |
+
+### 3.3 发送 / 接收函数速查
+
+```python
+# ── 只发不收 ──
+send(IP(dst="127.0.0.1")/ICMP(), verbose=0)             # L3
+sendp(Ether()/IP(dst="127.0.0.1")/ICMP(), iface="lo")   # L2
+send(..., loop=1, inter=0.5)                            # 循环发
+sendp(..., count=10, inter=0.1)
+send(..., return_packets=True)                          # 返回发出的包
+
+# ── 发并收 ──
+ans, unans = sr(IP(dst="127.0.0.1")/ICMP(), timeout=2)
+r = sr1(IP(dst="127.0.0.1")/TCP(dport=80, flags="S"), timeout=2)
+ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst="192.168.1.0/24"),
+                 timeout=2, verbose=0)
+
+# ── 参数对照 ──
+timeout=2         # 每个响应等待秒数
+inter=0.1         # 发送间隔（秒），限速用
+retry=2           # 未响应重试次数
+verbose=0         # 静默（脚本里必加！）
+multi=False       # True = 一个包可对应多个响应
+filter="icmp"     # BPF 过滤（只收匹配的）
+iface="eth0"      # 指定网卡
+nofilter=True     # 关闭内核 BPF（性能差，仅调试用）
+
+# ── 结果对象 ──
+for snd, rcv in ans:
+    print(rcv.summary())     # 一行摘要
+    print(rcv.show())        # 完整字段树
+    print(bytes(rcv))        # 原始字节
+```
+
+### 3.4 嗅探速查
+
+```python
+from scapy.all import sniff, AsyncSniffer
+
+# ── 同步（阻塞）──
+pkts = sniff(count=5, timeout=10, iface="lo", filter="icmp",
+             prn=lambda p: print(p.summary()),   # 每包回调
+             store=False)                        # 不存内存！长期嗅探必备
+
+# ── 异步（推荐）──
+sniffer = AsyncSniffer(iface="lo", filter="tcp port 8080",
+                       prn=handler, store=False)
+sniffer.start()
+time.sleep(30)
+sniffer.stop()
+# 或 sniffer.join()
+
+# ── 保存 / 读取 ──
+wrpcap("out.pcap", pkts)          # 写
+pkts = rdpcap("out.pcap")        # 一次读入（小心大文件）
+with PcapReader("big.pcap") as pr:   # 流式读（大文件必用）
+    for p in pr:
+        process(p)
+```
+
+**BPF filter 速查（和 tcpdump 相同）：**
+
+```
+icmp                         ICMP 全部
+tcp port 80                  TCP 且源或目的端口 80
+tcp[tcpflags] & tcp-syn != 0 只看 SYN
+udp and dst port 53          去往 53 的 UDP
+host 192.168.1.5             指定主机
+net 192.168.1.0/24           网段
+vlan 100                     指定 VLAN
+not port 22                  排除 SSH（别把自己锁在外面）
+```
+
+### 3.5 显示与检查速查
+
+```python
+p = IP(dst="127.0.0.1")/ICMP()/b"hello"
+
+p.summary()            # 'IP / ICMP / Raw'
+p.show()               # 树状字段（含校验和）
+p.show2()              # 序列化后重新解析再显示（校验和已回填）★
+hexdump(p)             # 十六进制 dump
+bytes(p)               # 序列化
+len(p)                 # 总长度
+
+p[IP].ttl              # 按层名索引
+p[IP].ttl = 32         # 改字段
+p.haslayer(TCP)        # 是否含 TCP
+p.getlayer(ICMP).type
+p[Raw].load            # 载荷
+p.payload              # 下一层对象
+
+# 分层迭代
+for layer in p:
+    print(layer.name)
+
+# 复制与修改
+q = p.copy()
+q[IP].ttl = 1
+```
+
+### 3.6 IP 段 / 端口段写法（Scapy 的特色）
+
+```python
+IP(dst="192.168.1.1-10")         # 连续 10 个 IP
+IP(dst="192.168.1.0/24")         # 整个 C 段
+IP(dst=["1.1.1.1", "8.8.8.8"])   # 列表
+TCP(dport=[80, 443, 8080])       # 多端口
+TCP(dport=(1, 1024))             # 端口范围
+IP(ttl=(1, 5))                   # ttl 从 1 到 5 → 用于 traceroute
+```
+
+**注意：** 这种"多值字段"在 `send()` 时会**展开成多个包**，
+`sr()` 时要注意 `ans` 数量与匹配关系。
+
+### 3.7 常用内置工具函数
+
+```python
+arping("192.168.1.1")                      # ARP 探测
+ping("192.168.1.1")                        # ICMP ping
+traceroute("8.8.8.8", dport=80)            # 路由追踪
+fragment(pkt, fragsize=1480)               # 分片（理解 MTU 用）
+defrag([p1, p2])                           # 重组
+sniff(...)                                 # 嗅探
+wrpcap / rdpcap / PcapReader               # PCAP
+Route / conf.route                         # 路由表
+```
+
+### 3.8 常见异常与排错速查
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| `PermissionError: [Errno 1] Operation not permitted` | 没有 CAP_NET_RAW | `sudo` 或 setcap |
+| `WARNING: No route found for IPv6` | 无关紧要，可忽略 | 设置 `conf.ipv6_enabled=False` |
+| 发出去收不到响应 | 目标不回 / 被过滤 / TTL 太小 | 换回环测试；`show2()` 看校验和 |
+| `sniff()` 收不到包 | 网卡选错 / 没权限 / filter 写错 | `conf.ifaces` 查网卡名；先不加 filter |
+| 抓包看到 `checksum incorrect` | 手动改了载荷没重算 | 用 `payload=` 赋值而非改 bytes |
+| IP 分片导致解析异常 | MTU 太小 / 大包 | `fragment()` 或减小载荷 |
+| 长时间嗅探后内存暴涨 | `store=True`（默认） | `store=False` |
+| 吞吐上不去 | Scapy 纯 Python 解析 | 用 BPF 过滤 + `store=False` + 少解析字段 |
+
+---
