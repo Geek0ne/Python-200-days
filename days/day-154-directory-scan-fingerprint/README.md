@@ -345,3 +345,163 @@ favicon.ico (二进制)
 低风险主动探针（robots.txt / favicon / 已知路径）"的组合。
 
 ---
+## 三、定义与使用方法（API 速查表）
+
+### 3.1 `requests` 扫描必需部分速查
+
+```python
+import requests
+
+# ── 会话：复用 TCP 连接，扫描时必用 ──
+s = requests.Session()
+s.headers.update({
+    "User-Agent": "Mozilla/5.0 (compatible; OwnedSiteAudit/1.0)",  # 标识自己，礼貌
+    "Accept": "*/*",
+})
+
+# ── 请求：超时必须是 (连接超时, 读取超时) 元组 ──
+r = s.get(url, timeout=(3, 5), allow_redirects=False, verify=False)
+
+# 参数说明：
+#   timeout=(3, 5)       连接 3s、读取 5s 未完成就抛异常
+#   allow_redirects=False 关键！需要自己看 301/302 的 Location，而不是被自动跟随
+#   verify=False          仅用于自签名证书的靶场；会打印 InsecureRequestWarning
+#   stream=True + r.raw.read(limit)  只读前 N 字节，适合大文件/伪造 content-length
+
+# ── 响应属性 ──
+r.status_code      # int: 200/301/404/...
+r.headers          # CaseInsensitiveDict，r.headers.get("server") 小写也能取到
+r.text             # str，按 apparent_encoding 解码
+r.content          # bytes，算哈希/写文件用这个，避免解码带来的差异
+r.url              # 最终 URL（allow_redirects=True 时可能已变化）
+r.history          # list[Response]，重定向链
+r.elapsed          # timedelta，本请求耗时
+
+# ── 异常体系（必须按顺序捕获）──
+requests.exceptions.ConnectTimeout      # 连接阶段超时
+requests.exceptions.ReadTimeout         # 读取阶段超时
+requests.exceptions.TooManyRedirects    # 重定向死循环
+requests.exceptions.SSLError            # 证书错误
+requests.exceptions.ConnectionError     # DNS 失败 / 拒绝连接（含上面几种的子类父类关系）
+requests.exceptions.RequestException    # 所有异常的基类 ← 兜底写这个
+
+# ── 关闭 ──
+s.close()          # 或 with requests.Session() as s: ...
+```
+
+### 3.2 `concurrent.futures` 速查（扫描骨架）
+
+```python
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+with ThreadPoolExecutor(max_workers=50) as ex:
+    futures = {ex.submit(probe, url): url for url in urls}
+    for fut in as_completed(futures):
+        url = futures[fut]
+        try:
+            result = fut.result(timeout=0)     # 已在 as_completed 后，timeout 无意义
+        except Exception as e:
+            result = None                      # 单个任务失败不影响整体
+```
+
+| 方法 | 作用 | 注意 |
+|---|---|---|
+| `submit(fn, *args)` | 提交单个任务，返回 `Future` | 不阻塞 |
+| `map(fn, iterable)` | 批量提交，返回**按输入顺序**的迭代器 | 会按顺序返回，慢任务会阻塞后面 |
+| `as_completed(fs)` | 谁先完成先返回 | 扫描场景首选 |
+| `Future.result()` | 取返回值，异常会在此**重新抛出** | 不写 try 会让整个循环崩掉 |
+| `Future.cancel()` | 取消未开始的任务 | 已运行的取消不了 |
+| `shutdown(wait=False)` | 不等任务结束 | `with` 语句会自动 `wait=True` |
+
+### 3.3 哈希与 base64 速查（favicon / 内容比对）
+
+```python
+import base64, hashlib
+try:
+    import mmh3                      # pip install mmh3
+except ImportError:
+    mmh3 = None
+
+data = open("favicon.ico", "rb").read()
+
+# Shodan/Fofa 口径的 favicon 哈希
+h = mmh3.hash(base64.encodebytes(data))        # 注意：encodebytes 带换行，社区两种口径都有
+# 另一种常见口径：mmh3.hash(base64.b64encode(data))  （标准 b64，无换行）
+print(h)                                       # 有符号 32 位整数，如 -1234567890
+
+# 响应体内容指纹（用于软 404 比对，避免解码差异）
+sha = hashlib.sha256(r.content).hexdigest()
+
+# 归一化后再哈希（去掉动态数字/时间戳）
+import re
+norm = re.sub(rb"\d+", b"#", r.content)        # 把所有数字替换成 #
+norm_hash = hashlib.sha256(norm).hexdigest()
+```
+
+### 3.4 常用指纹特征速查表
+
+```python
+FINGERPRINTS = {
+    "Server 头": {
+        r"nginx/([\d.]+)":      "nginx",
+        r"Apache/([\d.]+)":     "Apache httpd",
+        r"gunicorn/([\d.]+)":   "Gunicorn (Python WSGI)",
+        r"uvicorn":             "Uvicorn (ASGI/FastAPI)",
+        r"cloudflare":          "Cloudflare CDN",
+        r"openresty":           "OpenResty (nginx+lua)",
+        r"Microsoft-IIS/([\d.]+)": "IIS",
+    },
+    "X-Powered-By": {
+        r"PHP/([\d.]+)":        "PHP",
+        r"Express":             "Express (Node.js)",
+        r"ASP\.NET":            "ASP.NET",
+    },
+    "Cookie 名": {
+        r"PHPSESSID":   "PHP",
+        r"JSESSIONID":  "Java Servlet (Tomcat/Jetty)",
+        r"csrftoken":   "Django",
+        r"sessionid":   "Django",
+        r"laravel_session": "Laravel (PHP)",
+        r"connect\.sid": "Express (Node.js)",
+        r"ASP\.NET_SessionId": "ASP.NET",
+        r"grafana_session": "Grafana",
+    },
+    "HTML 特征": {
+        r'name="generator" content="WordPress ([\d.]+)"': "WordPress",
+        r"wp-content/":  "WordPress",
+        r"/_next/static/": "Next.js",
+        r"/static/js/main\.[0-9a-f]+\.js": "React (CRA)",
+        r"__NEXT_DATA__": "Next.js",
+        r"Drupal\.settings": "Drupal",
+        r"cdn\.shopify\.com": "Shopify",
+    },
+    "探针路径": {
+        "/wp-login.php":   "WordPress",
+        "/administrator/": "Joomla",
+        "/user/login":     "Drupal",
+        "/actuator/health":"Spring Boot Actuator",
+        "/swagger-ui.html":"SpringFox Swagger",
+        "/.git/HEAD":      "Git 目录泄露 ⚠️",
+        "/.env":           ".env 泄露 ⚠️",
+        "/phpinfo.php":    "phpinfo 泄露 ⚠️",
+        "/server-status":  "Apache status ⚠️",
+    },
+}
+```
+
+### 3.5 响应头安全自查速查（防御侧）
+
+| 响应头 | 期望值 | 缺失意味着 |
+|---|---|---|
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | 可被 SSL 剥离降级 |
+| `Content-Security-Policy` | 白名单式策略 | XSS 无第二道防线 |
+| `X-Content-Type-Options` | `nosniff` | MIME 嗅探导致脚本执行 |
+| `X-Frame-Options` / CSP `frame-ancestors` | `DENY` / `SAMEORIGIN` | 点击劫持 |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | 敏感 URL 泄露给第三方 |
+| `Permissions-Policy` | 按需关闭 | 摄像头/麦克风被滥用 |
+| `Server` / `X-Powered-By` | **建议删除或模糊化** | 版本信息泄露 → 精准打 CVE |
+
+> 扫描自己的站点时，**这份表就是产出物**：一份"缺失的安全头清单"比
+> 一堆 `200` 的目录列表有用得多。
+
+---
