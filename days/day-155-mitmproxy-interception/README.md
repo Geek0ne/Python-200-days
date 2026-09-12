@@ -614,3 +614,149 @@ flow.response = http.Response.make(
 | 抓不到手机 App | App 忽略系统代理 | 透明代理 或 反向代理 |
 
 ---
+## 四、图解
+
+> 完整图解（6 张 Mermaid / ASCII 图）见 [`diagrams/README.md`](diagrams/README.md)。
+> 核心两张如下。
+
+### 4.1 HTTPS 中间人的证书拆分（Mermaid 时序图）
+
+```mermaid
+sequenceDiagram
+    participant C as 客户端
+    participant M as mitmproxy
+    participant S as 真服务器
+
+    C->>M: CONNECT example.com:443
+    M-->>C: 200 Connection established
+    Note over C,M: 隧道建立，接下来是 TLS
+    C->>M: ClientHello (SNI=example.com)
+    Note over M: 用 mitmproxy CA 现场签发<br/>example.com 假证书
+    M-->>C: ServerHello + 假证书
+    Note over C: 校验签发者
+    alt 客户端信任 mitmproxy CA
+        C->>M: Finished
+        Note over C,M: TLS① 建立成功，明文可达 ✅
+    else 客户端不信任（或 App 做了 pinning）
+        C--xM: 证书错误，连接终止 ❌
+    end
+    M->>S: ClientHello (TLS②)
+    S-->>M: ServerHello + 真证书
+    M->>S: Finished
+    Note over M,S: TLS② 建立
+    C->>M: GET /api/users (明文 HTTP)
+    M->>S: GET /api/users (重新加密)
+    S-->>M: 200 OK (TLS②加密)
+    M-->>C: 200 OK (TLS①加密，可先改写)
+```
+
+### 4.2 Addon 事件生命周期（ASCII）
+
+```
+ 客户端请求
+     │
+     ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ client_connected          ← 新 TCP 连接                      │
+ │ tls_clienthello           ← 看到 SNI（判断要不要拦截）        │
+ │ http_connect              ← CONNECT 请求                     │
+ ├─────────────────────────────────────────────────────────────┤
+ │ requestheaders(flow)      ← 头已到，body 未读                │
+ │      │  可以在这里：改 URL / 改头 / 直接拒绝                  │
+ │ request(flow)             ← ✅ body 已完整，最常用            │
+ │      │  可以在这里：改 body / 加认证头 / 记日志               │
+ ├─────────────────────────────────────────────────────────────┤
+ │            ↓ 转发到上游 ↓                                     │
+ ├─────────────────────────────────────────────────────────────┤
+ │ responseheaders(flow)     ← 响应头已到                       │
+ │      │  可以在这里：根据 Content-Type 决定要不要读 body        │
+ │ response(flow)            ← ✅ body 已完整，最常用            │
+ │      │  可以在这里：改状态码 / 改 body / 注入 / 删安全头      │
+ ├─────────────────────────────────────────────────────────────┤
+ │ 回给客户端                                                   │
+ │ client_disconnected                                          │
+ └─────────────────────────────────────────────────────────────┘
+
+⚠️ 这些都是"同步"回调，跑在同一个事件循环里。
+   任何一个里写 time.sleep(10)，整个代理停 10 秒。
+```
+
+---
+
+## 五、完整可运行实战代码
+
+| 文件 | 行数 | 内容 |
+|---|---|---|
+| `code/01-addon-basics.py` | ~200 | 基础：最小 Addon、三种运行方式、只看不改的流量记录 |
+| `code/02-addon-pitfalls.py` | ~300 | 进阶：改包 8 大坑（gzip / Content-Length / 二进制 / 阻塞 / 死循环 / 白名单 …） |
+| `code/03-traffic-tool.py` | ~360 | 实战：自动化流量处理工具（JSONL 落盘 + 敏感信息脱敏 + HTML 报表） |
+
+**运行方式（三种任选）：**
+
+```bash
+# 1) 直接用 mitmdump 加载脚本
+pip install mitmproxy
+mitmdump -s code/01-addon-basics.py -p 8080
+
+# 2) 作为普通 Python 程序运行（脚本内自带 self-test，不需要 mitmproxy）
+python3 code/02-addon-pitfalls.py --self-test
+
+# 3) 完整工具：拦截 + 落盘 + 报表
+mitmdump -s code/03-traffic-tool.py --set confdir=./mitmconf \
+         --set out_dir=./traffic-out -p 8080
+```
+
+**护栏说明：**
+
+- 三个 Addon 都只处理**白名单域**（`127.0.0.1` / `localhost` / `example.com`），
+  其它域直接透传、不落盘；
+- 落盘前自动**脱敏**：`Authorization` / `Cookie` / `Set-Cookie` /
+  `password` / `token` 等字段一律替换为 `***`；
+- 示例 02 的"危险改写"全部包在 `--set demo_rewrite=true` 后面，
+  默认只**打印**不会真的改。
+
+---
+
+## 六、思考题
+
+1. **为什么 HTTP 代理不需要装证书，而 HTTPS 需要？**
+   请从「哪里能看到明文」和「信任链如何建立」两个角度回答。
+
+2. 一个 App 做了 **certificate pinning**，你装上 mitmproxy 的 CA 后
+   依然抓不到内容。**为什么 pinning 能防住？** 如果你是该 App 的开发者，
+   你会怎么设计 pinning 策略（pin 什么？备选证书怎么办？过期怎么办？）？
+
+3. `flow.response.text = flow.response.text.replace("a", "b")` 这行代码，
+   mitmproxy 内部**至少**帮你做了哪 4 件事？
+   （提示：解压、解码、长度、传输编码）
+
+4. 你在 `request` 回调里写了一个同步 HTTP 请求去查数据库，结果代理
+   在 100 并发下完全卡死。**根因是什么？** 三种改法分别是什么？
+
+5. **防御视角**：作为后端开发者，你如何快速判断"我的接口正在被中间人分析"？
+   （提示：TLS 指纹、JA3、证书透明度、客户端证书、
+
+   异常 User-Agent 与请求序列）
+
+6. 为什么 `mitmdump -n -s script.py` 里的 `-n` 很重要？
+   它在什么场景下会救你一命？（提示：加载顺序、官方 addon 干扰）
+
+7. 透明代理在 Linux 上靠 iptables 重定向，但**目标地址会丢**。
+   代理是靠什么找回原目标地址的？为什么 iOS/Android 上要 root 才能做？
+
+---
+
+## 附：本日文件清单
+
+```
+days/day-155-mitmproxy-interception/
+├── README.md                      ← 本文
+├── code/
+│   ├── 01-addon-basics.py         ← 最小 Addon 与流量观察
+│   ├── 02-addon-pitfalls.py       ← 改包 8 大坑（含离线自检）
+│   └── 03-traffic-tool.py         ← 实战：自动化流量处理工具
+├── diagrams/
+│   └── README.md                  ← 6 张原理图
+└── exercises/
+    └── checklist.md               ← 完成清单 + 练习
+```
