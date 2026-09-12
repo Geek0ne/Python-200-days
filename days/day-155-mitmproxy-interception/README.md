@@ -198,3 +198,177 @@ Web 框架的中间件丰富得多，事件模型更自然。
 要跨设备/App → mitmproxy 透明代理；要主动扫描漏洞 → Burp。
 
 ---
+## 二、原理解释（底层机制与设计动机）
+
+### 2.1 HTTP 代理的两种形态：普通请求 vs CONNECT 隧道
+
+客户端配置了 HTTP 代理后，行为分两种：
+
+**（1）目标是 HTTP（明文）：**
+
+```
+GET http://example.com/a HTTP/1.1     ← 注意：请求行里是"绝对 URL"
+Host: example.com
+Proxy-Connection: keep-alive
+
+代理收到后，把请求行改成相对形式，转发给 example.com。
+```
+
+**（2）目标是 HTTPS：**
+
+```
+CONNECT example.com:443 HTTP/1.1      ← 先建立隧道
+Host: example.com:443
+
+代理回复：
+HTTP/1.1 200 Connection established
+
+之后客户端在"这条隧道"里做 TLS 握手。
+```
+
+**关键理解点：**
+
+- 明文 HTTP 时，代理**天然就能看到全部内容**，不需要任何证书；
+- HTTPS 时，`CONNECT` 只是请求开一条**盲隧道**。mitmproxy 要想看内容，
+  必须**不老实**——它回复 `200 Connection established` 之后，
+  **自己扮演服务器完成 TLS① 握手**（出示自签证书），再**扮演客户端**
+  去和真服务器做 TLS②。这就是 MITM 的全部魔法。
+
+```
+  客户端                      mitmproxy                      真服务器
+    │                             │                             │
+    │  CONNECT example.com:443    │                             │
+    │────────────────────────────►│                             │
+    │  200 Connection established │                             │
+    │◄────────────────────────────│                             │
+    │                             │                             │
+    │  ClientHello                │                             │
+    │────────────────────────────►│                             │
+    │                             │  ① 判断 SNI = example.com    │
+    │                             │  ② 用 CA 现场签一张          │
+    │                             │     example.com 证书         │
+    │  ServerHello + 自签证书      │                             │
+    │◄────────────────────────────│                             │
+    │  (若客户端信任 mitmproxy CA) │                             │
+    │  Finished  ────────────────►│                             │
+    │      ✅ TLS① 建立，明文可达   │                             │
+    │                             │  ── TLS② 握手（用真证书）──►  │
+    │                             │◄────────────────────────────│
+    │                             │      ✅ TLS② 建立            │
+    │  HTTP 明文请求 ─────────────►│  改写/记录后重新加密转发 ────►│
+    │  HTTP 明文响应 ◄────────────│  ◄── 解密并改写后回传 ───────│
+```
+
+### 2.2 证书"现场签发"意味着什么
+
+mitmproxy 内部维护一张 CA（`~/.mitmproxy/mitmproxy-ca-cert.pem`）。
+每次遇到新的 SNI，它会：
+
+1. 生成一对新的 **临时私钥**（或用缓存）；
+2. 用 mitmproxy CA 的私钥**签发**一张 CN/SAN = 目标域名的证书；
+3. 缓存这张证书（默认在内存 + `~/.mitmproxy/` 下）。
+
+**三个重要推论：**
+
+1. **不同域名得到不同证书**——所以 SAN 校验会通过（域名对得上）；
+2. **签发者不同**——所以防 pinning 的 App 会拒；
+3. **自签证书不受平台欢迎**——Android 7+ 起，用户安装的 CA 默认**不被
+   应用信任**（除非 App 显式开启 `networkSecurityConfig` 或系统 CA）。
+
+**这就是为什么"抓 Android App 的包"这么麻烦：**
+需要 root + 把 CA 装到系统证书区，或者用 frida 绕过 pinning。
+
+### 2.3 为什么修改响应体会破坏 `Content-Length`
+
+HTTP/1.1 里，响应体的长度有三种告知方式：
+
+| 方式 | 示例 | 含义 |
+|---|---|---|
+| `Content-Length: N` | `Content-Length: 342` | 定长，读 N 字节结束 |
+| `Transfer-Encoding: chunked` | `chunked` | 分块，`0\r\n\r\n` 结束 |
+| 无长度 + 连接关闭 | 无 | 读到 EOF 结束（HTTP/1.0 风格） |
+
+如果你把响应体从 342 字节改成 400 字节，却**不改 `Content-Length`**：
+
+```
+客户端期待 342 字节 → 多出来的 58 字节被当作"下一个响应" → 协议错乱
+```
+
+**mitmproxy 的正确做法**：用 `flow.response.text = "新内容"` 或
+`flow.response.content = b"..."`，它**自动**重算 `Content-Length`
+并处理 `chunked`。**不要**手动去写 `flow.response.headers["Content-Length"]`
+（除非你很清楚自己在干什么）。
+
+### 2.4 gzip/br压缩：改包前必须先解压
+
+服务器常返回 `Content-Encoding: gzip`。此时 `flow.response.content`
+是**压缩后的字节**。你如果直接对压缩字节做字符串替换：
+
+```python
+# ❌ 错误：乱码 / 匹配不到
+flow.response.content = flow.response.content.replace(b"old", b"new")
+
+# ✅ 正确：用 text 属性，mitmproxy 自动解码/重编码
+if "old" in flow.response.text:
+    flow.response.text = flow.response.text.replace("old", "new")
+```
+
+**注意 `flow.response.text` 的代价**：它会把整个 body 解码成 `str`
+（UTF-8 解码失败会抛异常），大文件（>几十 MB）会吃内存。
+**规则：小文本用 `.text`，大文件/二进制用 `.content` 或 `.raw_content`。**
+
+### 2.5 Addon 的执行顺序与"响应改写"的时机
+
+Addon 支持**注册顺序**与 `@hook` 装饰器两种写法。默认按注册顺序执行。
+重要事件顺序：
+
+```
+requestheaders  →  request  →  [转发]  →  responseheaders  →  response
+   ↑ 此时只有头          ↑ 此时 body 已完整        ↑ 只有头        ↑ body 完整
+```
+
+**设计动机：** 分阶段是为了**流式**处理——大文件上传时，
+你不可能等整个 body 到齐才决定要不要拦截。分阶段让你能在
+**头阶段**就做出决策（比如直接拒绝），而不用等 body。
+
+**两个常被误解的事实：**
+
+1. `request` 事件触发时，body **已经完整读入**（除非开了 `stream_*` 系列事件）；
+2. 在 `response` 里改 `flow.response` **会**生效，因为此时还没回给客户端。
+
+### 2.6 透明代理为什么要靠 iptables
+
+透明代理的目标是"客户端完全不知道有代理"。实现靠**网络层重定向**：
+
+```bash
+# Linux 上把 80/443 的流量重定向到 mitmproxy 的 8080
+iptables -t nat -A PREROUTING -p tcp --dport 80  -j REDIRECT --to-ports 8080
+iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-ports 8080
+# 原目标地址会丢失，所以需要 SO_ORIGINAL_DST 找回
+```
+
+**关键问题：目标地址被 NAT 改掉了。** 代理必须通过 `getsockopt(SO_ORIGINAL_DST)`
+把"客户端原本想访问谁"找回来，否则不知道要连哪里。
+mitmproxy 的 `--mode transparent` 会自动处理这一步。
+
+**为什么这在 macOS/Windows 上麻烦？** 因为那是 Linux 的 netfilter 特性，
+其它系统要用 pf（macOS）/ WinDivert（Windows）。
+
+### 2.7 为什么 Addon 里不能做"长时间阻塞操作"
+
+mitmproxy 的事件循环（asyncio）是**单线程**的。你在 `request` 里写：
+
+```python
+time.sleep(10)          # ❌ 整个代理卡住 10 秒，所有连接都停
+requests.get(...)       # ❌ 同步请求阻塞事件循环
+```
+
+正确做法：
+
+- 用 `mitmproxy` 提供的异步 API（如 `flow.request` 的 `await` 变体）；
+- 或者把重活丢到 `ThreadPoolExecutor` / `asyncio.to_thread`；
+- 需要"挂起请求稍后继续"时，用 `flow.intercept()` + `flow.resume()`。
+
+**这就是"代理为什么突然变慢"的最常见原因。**
+
+---
