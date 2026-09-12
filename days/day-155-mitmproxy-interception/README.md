@@ -372,3 +372,245 @@ requests.get(...)       # ❌ 同步请求阻塞事件循环
 **这就是"代理为什么突然变慢"的最常见原因。**
 
 ---
+## 三、定义与使用方法（API 速查表）
+
+### 3.1 安装与首次运行
+
+```bash
+# 方式 1：pip（推荐，与本系列 Python 环境一致）
+pip install mitmproxy
+mitmdump --version
+
+# 方式 2：pipx（隔离环境，不污染项目）
+pipx install mitmproxy
+
+# 方式 3：系统包（Ubuntu）
+# sudo apt install mitmproxy
+
+# 启动（默认监听 127.0.0.1:8080）
+mitmproxy                 # TUI
+mitmdump                  # 无界面
+mitmweb                   # Web UI，默认 http://127.0.0.1:8081
+```
+
+**首次运行会生成 CA：**
+
+```
+~/.mitmproxy/
+├── mitmproxy-ca-cert.pem      ← 给 Firefox/curl 用（PEM）
+├── mitmproxy-ca-cert.cer      ← 给 Windows/Android 用
+├── mitmproxy-ca-cert.p12      ← 给 iOS/macOS 用（双击导入）
+└── mitmproxy-ca.pem           ← CA 私钥（⚠️ 绝不要外泄！）
+```
+
+> ⚠️ **`mitmproxy-ca.pem` 是私钥**。谁拿到它，就能伪造任何 HTTPS 站点。
+> 不要提交到 git，不要发到聊天里，用完及时 `mitmproxy --set confdir=...` 隔离。
+
+### 3.2 客户端配置
+
+```bash
+# curl
+curl -x http://127.0.0.1:8080 https://example.com
+curl -x http://127.0.0.1:8080 --cacert ~/.mitmproxy/mitmproxy-ca-cert.pem https://example.com
+
+# 环境变量（大多数 CLI 工具认这两个）
+export HTTP_PROXY=http://127.0.0.1:8080
+export HTTPS_PROXY=http://127.0.0.1:8080
+# ⚠️ 别忘 NO_PROXY，否则本机请求也会被代理
+export NO_PROXY=127.0.0.1,localhost
+
+# Python requests
+proxies = {"http": "http://127.0.0.1:8080", "https": "http://127.0.0.1:8080"}
+requests.get(url, proxies=proxies, verify="~/.mitmproxy/mitmproxy-ca-cert.pem")
+
+# 浏览器：设置 → 网络 → 代理 → 手动 http/https = 127.0.0.1:8080
+# 然后访问 http://mitm.it 下载对应平台的 CA 并安装信任
+```
+
+### 3.3 `mitmdump` 常用参数速查
+
+```bash
+# ── 监听 ──
+mitmdump -p 8080                       # 端口
+mitmdump --listen-host 0.0.0.0         # 对外监听（⚠️ 危险，仅内网授权场景）
+
+# ── 模式 ──
+mitmdump --mode regular                # 正向（默认）
+mitmdump --mode transparent            # 透明（需 iptables）
+mitmdump --mode reverse:http://127.0.0.1:3000   # 反向代理到本地上游
+mitmdump --mode upstream:http://127.0.0.1:8081  # 走上游代理
+
+# ── 流量控制（关键：只抓你想抓的）──
+mitmdump -f "~u example\.com"          # 只看这个域
+mitmdump -f "~m POST"                  # 只看 POST
+mitmdump -f "~s"                       # 只看响应
+mitmdump -f "~u api" | mitmdump --ignore-hosts ".*\.png"
+
+# ── 输出 ──
+mitmdump -w flows.mitm                 # 保存为 mitm 格式（可回放/重分析）
+mitmdump -r flows.mitm                 # 读取并重新处理
+mitmdump --set save_stream_file=all.mitm
+mitmdump -n                            # 不加载任何 addon（纯净模式，排查问题用）
+
+# ── 加载脚本（核心用法）──
+mitmdump -s my_addon.py
+mitmdump -s my_addon.py --set my_option=1
+
+# ── 常用 set 项 ──
+--set confdir=./mitmconf               # 隔离配置目录（含 CA）
+--set block_global=false               # 允许非本机客户端连进来
+--set connection_strategy=lazy         # 延迟连接上游（配合 map_local 有用）
+--set upstream_cert=false              # 不校验上游证书（⚠️ 仅测试环境）
+--set ssl_insecure=true                # 同上，跳过 TLS 校验
+--set stream_large_bodies=10m          # 大 body 流式处理阈值
+--set termlog_verbosity=info
+```
+
+### 3.4 `mitmproxy` TUI 快捷键速查
+
+```
+┌─ 三个主页面 ───────────────────────────────────────┐
+│  q        返回上一级 / 退出                          │
+│  ?        帮助（所有快捷键）                          │
+│  Enter    进入选中的 flow                            │
+│  Tab      在 Request / Response / Detail 间切换      │
+│  /        搜索（正则）                                │
+│  f        过滤（输入 filter 表达式，如 ~u api）        │
+│  z        清空当前视图                                │
+└────────────────────────────────────────────────────┘
+
+┌─ 编辑与重放 ───────────────────────────────────────┐
+│  e        编辑（按类型选：headers / body / method）   │
+│  r        重放（replay）该请求                        │
+│  R        重放并编辑后重放                            │
+│  d        删除                                       │
+│  i        设置 interception 断点（拦截并暂停）         │
+│  a        恢复被拦截的 flow                           │
+│  A        恢复全部                                    │
+│  m        标记 / 取消标记                             │
+│  w        保存 body 到文件                            │
+│  |        用外部命令处理 body（如 |jq）                │
+└────────────────────────────────────────────────────┘
+```
+
+### 3.5 Addon 事件速查（最常用的 15 个）
+
+```python
+class Addon:
+    # ─── 连接层 ───
+    def client_connected(self, client): ...
+    def client_disconnected(self, client): ...
+
+    # ─── TLS 层 ───
+    def tls_clienthello(self, data): ...          # 客户端 ClientHello（看 SNI）
+    def tls_established_client(self, tls): ...
+
+    # ─── HTTP 请求 ───
+    def http_connect(self, flow): ...             # CONNECT 请求
+    def requestheaders(self, flow): ...           # 只有头，body 未读
+    def request(self, flow): ...                  # ✅ 最常用：请求完整
+    def request_error(self, flow): ...
+
+    # ─── HTTP 响应 ───
+    def responseheaders(self, flow): ...          # 只有头
+    def response(self, flow): ...                 # ✅ 最常用：响应完整
+    def error(self, flow): ...                    # 上游出错
+
+    # ─── WebSocket / TCP / UDP ───
+    def websocket_start(self, flow): ...
+    def websocket_message(self, flow): ...
+    def tcp_message(self, flow): ...
+    def udp_message(self, flow): ...
+
+    # ─── 生命周期 ───
+    def running(self): ...
+    def done(self): ...
+    def load(self, loader): ...                   # 注册自定义 --set 选项
+```
+
+### 3.6 `flow` 对象属性速查
+
+```python
+flow.id                      # 唯一 ID（str）
+flow.client_conn             # 客户端连接对象（.peername, .tls_setup ...）
+flow.server_conn             # 服务器连接对象（.peername, .address, .sni）
+flow.request                 # HTTPFlow.request
+flow.response                # HTTPFlow.response（可能为 None）
+flow.error                   # 如果出错
+flow.type                    # "http" / "websocket" / "tcp" / "udp"
+
+# ── request / response 共有属性 ──
+flow.request.method          # "GET"
+flow.request.scheme          # "https"
+flow.request.host            # "example.com"
+flow.request.host_header     # 可以单独改（vhost 测试用）
+flow.request.port            # 443
+flow.request.path            # "/api/v1/users?page=2"（含 query）
+flow.request.url             # 完整 URL
+flow.request.headers         # Headers 对象（大小写不敏感）
+flow.request.content         # bytes（原始字节）
+flow.request.text            # str（自动解码，gzip 自动解）
+flow.request.query           # MultiDictView（可直接改 query 参数）
+flow.request.urlencoded_form # MultiDictView（表单）
+flow.request.cookies         # MultiDictView
+flow.request.json()          # 若 body 是 JSON → dict
+
+# ── 常用改写操作 ──
+flow.request.headers["Authorization"] = "Bearer xxx"
+flow.request.headers.pop("Cookie", None)          # 删除头（注意用 pop）
+flow.request.url = "http://127.0.0.1/admin"       # 改 URL（谨慎，会改 host）
+flow.request.path = "/admin?x=1"
+flow.request.query["page"] = "1"
+flow.request.json = {"role": "admin"}             # 自动重算 Content-Length
+flow.request.text = '{"role":"admin"}'
+flow.request.content = b"raw bytes"
+
+# ── 响应改写 ──
+flow.response.status_code = 200
+flow.response.reason = "OK"
+flow.response.headers["X-Debug"] = "1"
+flow.response.text = flow.response.text.replace("old", "new")
+flow.response.content = b"<html>fake</html>"
+
+# ── 直接构造响应（不发到上游）──
+from mitmproxy import http
+flow.response = http.Response.make(
+    200,
+    b'{"mock": true}',
+    {"Content-Type": "application/json"},
+)
+```
+
+### 3.7 常用 filter 表达式（`-f` / 搜索）
+
+```
+~u pattern        URL 包含
+~u ^https://      URL 以此开头
+~h pattern        请求头包含
+~hq pattern       请求头（仅请求）
+~hs pattern       响应头
+~b pattern        请求体包含
+~bs pattern       响应体包含
+~m POST           method 匹配
+~c 200            状态码匹配
+~d example.com    域名匹配
+~s                是响应（而非请求）
+~q                是请求
+~t regex          content-type 匹配
+!~u example      取反
+~u api & ~m POST 组合（& = and, | = or）
+```
+
+### 3.8 常见排错速查
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| 浏览器提示 `NET::ERR_CERT_AUTHORITY_INVALID` | CA 没装/没信任 | 访问 `http://mitm.it` 安装并信任 |
+| 所有请求都 `502` | 上游连不上 / DNS 问题 | `--set upstream_cert=false`、检查网络 |
+| 只看到 `CONNECT` 看不到内容 | 客户端没信任 CA（或 App pinning） | 装 CA / 处理 pinning |
+| 改 body 后页面白屏 | 忘了重算 `Content-Length` | 用 `.text` / `.content` 赋值 |
+| 代理越来越慢 | 事件循环被阻塞 | 别用 `time.sleep` / 同步 IO |
+| 本机请求也被代理了 | `NO_PROXY` 没设 | `export NO_PROXY=127.0.0.1,localhost` |
+| 抓不到手机 App | App 忽略系统代理 | 透明代理 或 反向代理 |
+
+---
