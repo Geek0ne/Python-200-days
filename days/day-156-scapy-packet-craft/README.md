@@ -202,3 +202,223 @@ IDS/防火墙能看到 SYN 而看不到后续握手（这正是 SYN 扫描的检
 **一句话：Scapy 是"协议的显微镜"，不是"网络的流水线"。**
 
 ---
+## 二、原理解释（底层机制与设计动机）
+
+### 2.1 一次 `send()` 在内核里发生了什么
+
+```
+你的 Python 进程
+   │  pkt = IP(dst="10.0.0.5")/ICMP()
+   │  send(pkt)
+   ▼
+Scapy 序列化：把 Python 对象 → bytes（逐字段 pack，自动算校验和）
+   ▼
+socket(AF_INET, SOCK_RAW, IPPROTO_RAW)     ← 需要 CAP_NET_RAW
+   │  sendto(bytes, (dst, 0))
+   ▼
+内核路由表查询 → 选出出口网卡与下一跳
+   ▼
+内核补上 Ether 头（源/目的 MAC 由 ARP 缓存决定）
+   ▼
+网卡驱动 → DMA → 物理发送
+```
+
+**关键点：**
+
+1. `send()` 走的是 `AF_INET + SOCK_RAW`，**内核仍参与**（补 L2、查路由）；
+2. `sendp()` 走的是 `AF_PACKET + SOCK_RAW`，**直接指定网卡**，
+   连 Ether 头都由你决定——所以它需要 `iface` 参数；
+3. 用 `SOCK_RAW` 时，有些平台（Linux）**内核会自动补 IP 校验和**，
+   有些平台不会；Scapy 默认自己算，可用 `IP(len=...)` 之类手动覆盖。
+
+**为什么必须 root？** 因为 `SOCK_RAW` / `AF_PACKET` 允许你构造任意报文，
+是典型的"可绕过内核安全策略"的能力。Linux 用 capability 收窄权限：
+`CAP_NET_RAW`（发原始包）、`CAP_NET_ADMIN`（改网卡配置）。
+
+### 2.2 Scapy 的对象模型：`Packet` + `Field`
+
+Scapy 每个协议层都是一个 Python 类，字段用**类属性 + 描述符**声明：
+
+```python
+class IP(Packet):
+    name = "IP"
+    fields_desc = [
+        BitField("version", 4, 4),        # 4 位
+        BitField("ihl", None, 4),         # 4 位，None = 自动计算
+        ByteField("tos", 0),              # 8 位
+        ShortField("len", None),          # 16 位，None = 自动计算
+        ShortField("id", 1),
+        FlagsField("flags", 0, 3, ["MF", "DF", "evil"]),
+        BitField("frag", 0, 13),
+        ByteField("ttl", 64),
+        ByteEnumField("proto", 0, {1: "icmp", 6: "tcp", 17: "udp"}),
+        XShortField("chksum", None),      # None = 自动计算
+        IPField("src", "127.0.0.1"),
+        IPField("dst", "127.0.0.1"),
+    ]
+```
+
+**设计动机（这是 Scapy 最巧妙的地方）：**
+
+- **`None` 表示"等我算"**：`len`、`chksum`、`ihl` 这些"派生字段"，
+  在序列化时根据实际内容自动计算；
+- **字段级联（overloading）**：`IP(dst="1.2.3.4", ttl=1)` 或
+  `IP()/TCP()` 都能工作，因为 `Packet.__init__` 用**位置/关键字参数**
+  匹配 `fields_desc`；
+- **可变字段（`fuzz` / `RandShort()`）**：把字段设成随机生成器对象，
+  每次序列化都取新值——这是 fuzz 测试的基础。
+
+**`/` 运算符的实现：**
+
+```python
+def __truediv__(self, other):
+    # 把 other 挂到 self 的 payload 上（或合并到最后一层）
+    ...
+```
+
+所以 `IP()/TCP()` 得到的是"一个 IP 包，payload 是 TCP 对象"，
+序列化时**自底向上**逐层 pack。
+
+### 2.3 校验和（checksum）是怎么算出来的
+
+IPv4 头校验和是**16 位反码求和**：
+
+```
+1. 把头部按 16 位分组
+2. 全部相加（进位回卷）
+3. 取反码
+```
+
+Scapy 的 `IP.chksum` 字段为 `None` 时，在 `post_build` 阶段调用
+`checksum(pkt)` 计算并回填。TCP/UDP 校验和更麻烦——它需要一个
+**伪首部（pseudo-header）**：
+
+```
+伪首部（仅用于计算，不真正发送）:
+  ┌────────────┬────────────┬──────────┬─────────┐
+  │ 源 IP (32) │ 目的 IP(32)│ 0 │proto │ TCP 长度 │
+  └────────────┴────────────┴──────────┴─────────┘
+                              ↑ 这里隐藏了一个经典陷阱：
+                                伪首部里的 proto 字段是 8 位，但为了
+                                16 位对齐，前面补 0，所以其实占了 16 位
+```
+
+**为什么 TCP 校验和要包含伪首部？** 为了**防止报文被错误投递**：
+如果路由器把包投到了错误的 IP，接收方算校验和会不一致（因为源/目的 IP
+参与了计算），从而丢弃。这是"端到端校验"思想的一个体现。
+
+**常见错误**：手动改 TCP 载荷后忘了重算校验和 → 抓包看是"TCP checksum
+incorrect"，服务端静默丢弃。**Scapy 的规则：用 `pkt[TCP].payload = b"..."`，
+不要绕过对象直接改 `bytes`。**
+
+### 2.4 为什么 Scapy 慢
+
+| 环节 | 代价 |
+|---|---|
+| Python 对象 → bytes 序列化 | 每个字段一次 Python 函数调用 |
+| bytes → Python 对象 反序列化 | 逐层猜测下一层类型（`guess_payload_class`） |
+| 内省（introspection） | `fields_desc` 描述符查找 |
+| 无零拷贝 | 每层都做一次内存复制 |
+| 单线程 | 默认没有并行发送 |
+
+**量级参考：**
+
+- Scapy 构造 1 万个包：约几秒；
+- 用 `sendpfast`（底层调 tcpreplay）或 `AsyncSniffer` 会快不少；
+- nmap 用 C 写的扫描一个 C 段只要几秒，Scapy 同样任务要几分钟。
+
+**结论：** 教学/实验/低频探测用 Scapy，**量大用专用工具**。
+
+### 2.5 `sniff()` 的内核路径与丢包
+
+```
+网卡收到帧
+   ▼
+内核 netif_receive_skb
+   ├─→ 协议栈（正常的 TCP/IP 处理）
+   └─→ AF_PACKET 套接字（Scapy 的 socket）
+          │  ① BPF 过滤（如果设置了 filter）
+          │  ② 放入环形缓冲区（默认 208KB！）
+          │  ③ 用户态 recvfrom()
+          ▼
+       Scapy 逐层解析 → Packet 对象
+```
+
+**丢包的三个原因：**
+
+1. **环形缓冲区太小**：默认 `net.core.rmem_default` / `rmem_max` 约 200KB，
+   突发流量下瞬间写满 → 内核直接丢；
+2. **用户态处理太慢**：Scapy 解析速度跟不上包速率；
+3. **没有 BPF 过滤**：全部包都往用户态搬。
+
+**解决：**
+
+```bash
+# 放大缓冲区（需要 root）
+sysctl -w net.core.rmem_max=26214400
+sysctl -w net.core.rmem_default=26214400
+```
+
+```python
+# Scapy 侧：用 PcapReader / AsyncSniffer + 只处理必要字段
+from scapy.all import AsyncSniffer
+sniffer = AsyncSniffer(iface="eth0", filter="tcp", prn=handler, store=False)
+sniffer.start()
+```
+
+**为什么 `store=False` 很重要？** 默认 `sniff()` 会把**所有**包存在
+一个 list 里返回——长时间嗅探时内存会无限增长直到 OOM。
+**`store=False` 是长时间嗅探的必备参数。**
+
+### 2.6 TTL 与 traceroute 原理
+
+traceroute 的原理极其优雅：
+
+```
+TTL=1 的包 → 第一跳路由器收到，TTL 减到 0 → 回 ICMP Time Exceeded
+TTL=2 的包 → 第二跳路由器 → 回 ICMP Time Exceeded
+...
+TTL=N 的包 → 到达目标 → 回 ICMP Echo Reply（或目标端口的响应）
+```
+
+**逐跳递增 TTL，收集每一跳的源 IP，就得到了路径。**
+Scapy 自带 `traceroute()`，也可以手写（本日示例 03 会用 Scapy 复现）：
+
+```python
+ans, unans = sr(IP(dst=target, ttl=(1, 10)) / ICMP(), timeout=1)
+```
+
+**为什么会有 `*`（超时）？** 三种情况：
+① 该跳路由器配置了"不发送 ICMP 超时"（隐蔽路由）；
+② 丢包；
+③ 链路太长/超时太短。
+
+### 2.7 ARP 与局域网发现
+
+ARP 是"IP → MAC"的解析协议，工作在**链路层**（无 IP 头）：
+
+```
+"谁是 192.168.1.1？请告诉 192.168.1.100"
+  → 广播帧（目的 MAC = ff:ff:ff:ff:ff:ff）
+  ← 单播应答："192.168.1.1 是 aa:bb:cc:dd:ee:ff"
+```
+
+**用 Scapy 做局域网存活发现（本日示例 03 的第二个功能）：**
+
+```python
+ans, unans = srp(Ether(dst="ff:ff:ff:ff:ff:ff") /
+                 ARP(pdst="192.168.1.0/24"), timeout=2)
+for snd, rcv in ans:
+    print(rcv.psrc, rcv.hwsrc)      # IP + MAC
+```
+
+**为什么比 ping 扫描快且准？**
+
+- ARP 走链路层，**不受主机防火墙"禁 ICMP"影响**（很多主机不回 ping 但必须回 ARP）；
+- 交换机必须转发 ARP 广播，响应是单播，速度快。
+
+**安全警示：** ARP 没有认证，所以可以**伪造 ARP 应答**（ARP 欺骗），
+这也是抓包/中间人的经典手段。**本日不提供任何 ARP 欺骗示例**——
+只做"查询"，不做"应答"。
+
+---
