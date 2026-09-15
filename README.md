@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-99%2F200-49.50%25-blue) ![Commits](https://img.shields.io/badge/Commits-753-brightgreen) ![Phase](https://img.shields.io/badge/Phase-7_%E8%BF%9B%E9%98%B6%E4%B8%8E%E6%80%A7%E8%83%BD%E4%BC%98%E5%8C%96-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-157%2F200-78.50%25-blue) ![Commits](https://img.shields.io/badge/Commits-1250-brightgreen) ![Phase](https://img.shields.io/badge/Phase-10_%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8%E5%8F%91%E5%B1%95-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [📊 进度追踪](progress.json) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,14 +49,14 @@
 
 ## 📊 当前进度
 
-> **Day 156 / 200** · 进度的 78.0% · 当前：Phase 10 网络安全开发
+> **Day 157 / 200** · 进度的 78.5% · 当前：Phase 10 网络安全开发
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **156 天** |
-| 📝 总提交次数 | **1,241 commits** |
-| 📄 总代码行数 | **140,670 行** |
-| 📂 总文件数 | **1,057 个** |
+| 📅 已完成天数 | **157 天** |
+| 📝 总提交次数 | **1,250 commits** |
+| 📄 总代码行数 | **140,861 行** |
+| 📂 总文件数 | **1,063 个** |
 | 🏗️ 当前阶段 | **Phase 10 — 网络安全开发** |
 
 ### ✅ 已完成的阶段
@@ -268,6 +268,7 @@
 - ✅ 目录扫描与指纹识别
 - ✅ mitmproxy 中间人
 - ✅ Scapy 数据包构造
+- ✅ pyshark 流量分析
 - ⏳ 后续课程进行中
 
 </details>
