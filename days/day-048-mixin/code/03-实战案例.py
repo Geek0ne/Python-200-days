@@ -5,6 +5,7 @@ Day 048 - 混入(Mixin) - 实战案例
 import json
 import logging
 import time
+from functools import wraps
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -70,14 +71,16 @@ class LoggingMixin:
         logger = self._setup_logger()
         logger.log(level, message)
 
-    def log_operation(self, op_name: str):
+    @staticmethod
+    def log_operation(op_name: str):
         """装饰器：自动记录操作耗时"""
         def decorator(func):
-            def wrapper(*args, **kwargs):
+            @wraps(func)
+            def wrapper(self, *args, **kwargs):
                 self.log(f"▶ 开始: {op_name}")
                 start = time.time()
                 try:
-                    result = func(*args, **kwargs)
+                    result = func(self, *args, **kwargs)
                     elapsed = time.time() - start
                     self.log(f"✓ 完成: {op_name} ({elapsed:.3f}s)")
                     return result
@@ -184,10 +187,11 @@ class UserManager(LoggingMixin, CacheMixin):
     """用户管理器 — 管理多个用户"""
 
     def __init__(self):
+        super().__init__()  # 沿 MRO 初始化 CacheMixin
         self._users: Dict[int, User] = {}
         self._next_id = 1
 
-    @LoggingMixin.log_operation.__func__  # 绑定到实例
+    @LoggingMixin.log_operation("添加用户")
     def add_user(self, name, email, age=25, role="user"):
         user = User(name, email, age, role)
         user_id = self._next_id
