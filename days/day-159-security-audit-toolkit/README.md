@@ -307,3 +307,113 @@ python3 $D/03-audit-toolkit.py report /tmp/audit.json --format markdown
 ```
 
 无第三方依赖，Python 3.10+ 即可（本仓库在 3.12 上验证）。
+## 5. 定义与使用方法（API 速查）
+
+### 5.1 数据结构
+
+| 结构 | 字段 | 说明 |
+|---|---|---|
+| `Rule` | `id / title / severity / confidence / category / why / remediation / cwe / pattern / file_glob / flags` | `frozen=True`；构造时校验 severity 与 confidence 合法性 |
+| `Finding` | `rule_id / title / severity / confidence / category / cwe / path / line / masked / evidence_sha256 / why / remediation` | **没有 raw 字段**（结构性脱敏）；`key` = `(rule_id, path, line)`；`band` 属性 |
+| `Coverage` | `files_scanned / bytes_read / skipped / errors / truncated / complete / gaps` | `complete` 与 `gaps` 是派生属性 |
+| `AuditReport` | `root / findings / suppressed / coverage / rules_evaluated` | `by_severity()` / `by_band()` / `at_or_above(t)` / `to_dict()` |
+
+### 5.2 函数速查
+
+| 函数 | 签名要点 | 用途 |
+|---|---|---|
+| `local_rules()` | `→ list[Rule]` | 内置 13 条规则（每次返回新列表，可安全追加） |
+| `priority(sev, conf)` | `→ int 1..15` | triage 分值 |
+| `triage_band(sev, conf)` | `→ 'P0'..'P3'` | 分档（≥12 P0、≥8 P1、≥4 P2、其余 P3） |
+| `mask(value, keep=4, cap=32)` | `→ str` | 脱敏；超长截断并附 `(len=N)` |
+| `fingerprint(value)` | `→ str(16)` | SHA-256 前 16 位，跨报告比对用 |
+| `inspect_text(name, text, rules, baseline=())` | `→ (findings, suppressed)` | 审计一段文本（内存，无 IO） |
+| `scan_path(root, rules=None, *, max_files=1000, max_bytes=1MiB, baseline=(), exclude_dirs=None, allow_symlinks=False)` | `→ AuditReport` | 只读扫描文件/目录 |
+| `dedupe(findings)` | `→ list` | 按 `(rule_id, path, line)` 去重 |
+| `summarize(report)` | `→ str` | 一行摘要（含覆盖状态） |
+
+### 5.3 报告层函数（`02-report-builder.py`）
+
+| 函数 | 用途 |
+|---|---|
+| `escape_md(text)` | 转义 `|` 与反引号，防止文件名切碎 Markdown 表格 |
+| `sort_findings(findings)` | 优先级降序 → 路径 → 行号 |
+| `load_baseline(path)` | 读 baseline 文件（`#` 注释；空行忽略） |
+| `coverage_warning(report)` | 生成覆盖声明（完整时也给正面声明） |
+| `render_markdown(report, title)` | 人类可读报告 |
+| `gate_exit_code(report, fail_on)` | CI 门禁退出码 0/3/4 |
+
+### 5.4 CLI 速查（`03-audit-toolkit.py`）
+
+| 子命令 | 参数 | 说明 |
+|---|---|---|
+| `scan <target>` | `--format {markdown,json}` `--fail-on {low,medium,high,critical}` `--baseline FILE` `--max-files N` `--max-bytes N` `--output FILE` | 扫描并输出报告；退出码即门禁结果 |
+| `report <report.json>` | `--format {markdown,json}` | 由 JSON 重新渲染（复核人员无需重扫） |
+| `rules` | — | 打印规则库（id/严重度/置信度/类别/CWE） |
+| `lab` | `--format` `--fail-on` | 临时目录生成演示项目并扫描，退出即清理 |
+| `--self-test` | — | 自测，输出 `SELF-TEST OK` |
+
+### 5.5 baseline 文件格式
+
+```text
+# 已知并接受的风险（需评审 + 复查日期）
+secret_hardcoded_credential:docs/notes.md      # 按"规则:路径"抑制
+world_writable_chmod:deploy/fix_perms.sh
+secret_cloud_access_key:1a5d44a2dca19669       # 按"规则:证据指纹"抑制
+```
+
+三种键都支持：`rule:path`、`rule:sha256`、`rule:path:line`。
+
+## 6. 实战流程（六步）
+
+1. **定范围**：明确审计目标的边界（哪个目录、哪个仓库、哪台机器的哪份副本），
+   拿到授权记录。范围外的目录用黑名单挡住。
+2. **快照去噪声**：优先扫描**离线副本**或 Git 工作区，避免扫到
+   `.venv`、`node_modules`、构建产物这类必定产生噪声的目录。
+3. **扫描**：`scan --format json --output audit.json`，把 JSON 作为唯一的
+   机器可信中间产物（后续 diff、归档、工单都用它）。
+4. **先读覆盖，再读命中**：`coverage.complete` 为 false 时，
+   先把 `gaps` 处理掉（提高 `--max-bytes`、补权限、缩小范围），
+   再谈命中项。
+5. **按优先级复核**：P0/P1 逐条人工确认——值是真的凭据还是示例？
+   调用是否真的接收外部输入？确认后再进整改流程。
+6. **写 baseline 并留痕**：确认为误报或已接受的，写进 baseline 文件
+   （带原因与复查日期），提交进版本控制；不要用"删除规则"来消除噪音。
+
+## 7. 常见陷阱（对照表）
+
+| 陷阱 | 症状 | 正确做法 |
+|---|---|---|
+| 报告写绝对路径/主机名 | 转发即泄露内部拓扑 | 只保留末级目录名 + 相对路径 |
+| 打印命中的原始行 | 明文凭据进 CI 日志 | 只输出 `masked` + `evidence_sha256` |
+| 覆盖不全仍写"未发现问题" | 漏掉的正是问题所在 | `complete == False` 时强制声明缺口 |
+| Markdown 不转义 | 文件名里的 `|` 切碎表格 | 统一 `escape_md()` |
+| 空结果无输出 | 分不清"没命中"和"没跑" | 空结果也输出摘要行 |
+| baseline 直接过滤 | 无人知道接受过多少风险 | 抑制项单独计数并列出 |
+| 默认扫全盘 | 越权 + 噪声淹没 | 必须显式指定目标，默认黑名单 |
+| 用命中数考核 | 有人会去关规则 | 考核"高危命中确认时长 + 复发率" |
+| 自动处置 | 误报升级为生产事故 | 发现与处置分权限，工具只读 |
+
+## 8. 局限（必须写进报告，不能省略）
+
+- **纯模式匹配**：看不见数据流（外部输入是否真的到达危险调用）、
+  看不见运行时行为、看不见权限关系。
+- **无漏洞利用验证**：命中项未被证实可利用；也不判断实际影响面。
+- **规则是教学基线**：13 条远不及生产规则集，需按业务补充。
+- **不解析压缩包/二进制**：压缩包里的凭据、图片马、二进制配置都看不见。
+- **未评测检出率**：没有在带标签的真实样本集上计算 precision/recall，
+  因此**不能**替代生产审计产品，也不能作为合规结论的依据。
+
+## 9. 思考题
+
+1. 报告里，文档误报（`docs/notes.md` 的 `password = "example-value"`）与
+   真实私钥命中看起来同样"严重"。这对"用命中数考核团队"意味着什么？
+2. 如果允许审计工具自动处置（自动改 chmod、自动删密钥），
+   哪一类故障会从"漏报"升级成"生产事故"？
+3. 退出码把"覆盖不全(4)"排在"命中(3)"之前。请举一个**反例场景**，
+   说明在某些组织里这个优先级可能需要调整，以及调整的代价。
+4. 本课 13 条规则全是模式匹配。请列出至少三类它**结构上**看不见的风险，
+   并各给一个"纯模式匹配会产生误判"的具体例子。
+5. `baseline` 里的抑制项如果长期不复查，会发生什么？
+   请设计一个能让"抑制腐化"暴露出来的机制（提示：报告里加哪些字段、
+   CI 里加哪条检查）。
