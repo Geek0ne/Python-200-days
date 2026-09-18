@@ -331,3 +331,121 @@ python3 $D/03-log-analyzer.py analyze /var/log --brute-threshold 20 --work-start
 
 无第三方依赖，Python 3.10+（本仓库在 3.12 上验证）。
 `--host` 用于指定"日志里没有主机名时的回退主机名"（会出现在报告的 hosts 里）。
+## 5. 定义与使用方法（API 速查）
+
+### 5.1 数据结构
+
+| 结构 | 字段 | 说明 |
+|---|---|---|
+| `LogEvent` | `ts / host / source / kind / action / user / src_ip / status / path / ref` | `frozen=True`；**无 raw 字段**；`subject` 属性 = `(host, src_ip, user)` |
+| `LogCoverage` | `lines_total / parsed / unparsed / no_timestamp / deduped / out_of_order / hosts / time_start / time_end` | `complete` = `unparsed==0 and no_timestamp==0`；`gaps` 为人类可读缺口列表 |
+| `Alert` | `detector / title / severity / confidence / subject / subject_sha / count / window_seconds / first_ts / last_ts / evidence / why / remediation / parameters` | `band` 属性 = P0..P3；`subject` 已掩码 |
+| `AlertReport` | `alerts / coverage / detectors_run / parameters` | `by_severity()` / `at_or_above(t)` / `to_dict()` |
+
+### 5.2 解析层函数
+
+| 函数 | 签名要点 | 用途 |
+|---|---|---|
+| `parse_timestamp(text, *, assume_tz=DEFAULT_TZ, year=2026)` | `→ datetime \| None` | 四种格式；失败返回 None |
+| `detect_source(line)` | `→ 'app'\|'nginx'\|'sshd'\|'unknown'` | 形态识别 |
+| `parse_sshd / parse_nginx / parse_json_log(line, host, *, assume_tz, year, ref)` | `→ LogEvent \| None` | 单格式解析 |
+| `parse_line(line, host, *, ...)` | `→ LogEvent \| None` | 自动分派 |
+| `parse_lines(lines, *, fallback_host, assume_tz, year, source_name)` | `→ (events, coverage)` | 解析 + 去重 + 排序 + 统计 |
+| `mask_ip(ip)` / `subject_sha(value)` | `→ str` | 报告脱敏 / 跨报告关联 |
+| `priority(sev, conf)` / `triage_band(sev, conf)` | `→ int / 'P0'..'P3'` | 分档排序 |
+
+### 5.3 检测器函数
+
+| 函数 | 关键参数 | 触发条件 |
+|---|---|---|
+| `detect_brute_force(events, *, window_seconds=300, threshold=8, host=None)` | 窗口/阈值 | 同 `(host, src_ip)` 窗口内失败 ≥ 阈值 |
+| `detect_distributed_bruteforce(events, *, window_seconds=600, threshold=10, min_sources=3)` | 窗口/阈值/来源数 | 同 `(host, user)` 窗口内失败 ≥ 阈值且来源 ≥ min_sources |
+| `detect_failed_then_success(events, *, window_seconds=900, min_failures=3)` | 窗口/前置失败数 | 同 `(host, user, src_ip)` 失败 ≥ N 次后成功 |
+| `detect_new_source(events, baseline=None)` | 基线 dict | 有基线：来源不在基线内；无基线：退化为 single_source 启发式 |
+| `detect_off_hours_success(events, *, start_hour=8, end_hour=20)` | 工作时段 | 成功登录发生在时段外 |
+| `detect_web_auth_abuse(events, *, window_seconds=600, threshold=20)` | 窗口/阈值 | 同 `(host, src_ip)` 窗口内 401/403 ≥ 阈值 |
+| `detect_path_traversal_probe(events)` | — | 请求路径含 `../` / `%2e%2e` / `%252e` |
+| `analyze(events, coverage=None, *, baseline=None, parameters=None)` | — | 跑全部检测器，返回 `AlertReport` |
+
+所有检测器都只读事件、不写任何东西；`window_seconds=0` 表示"瞬时类"告警（无窗口）。
+
+### 5.4 CLI 速查（`03-log-analyzer.py`）
+
+| 子命令 | 参数 | 说明 |
+|---|---|---|
+| `parse <targets...>` | `--year` `--host` | 打印标准化事件表与覆盖统计 |
+| `analyze <targets...>` | `--format {markdown,json}` `--fail-on {low,medium,high,critical}` `--baseline FILE` `--output FILE` `--year` `--host` `--brute-window` `--brute-threshold` `--fts-window` `--fts-min-failures` `--work-start` `--work-end` `--web-window` `--web-threshold` | 完整检测 + 报告；退出码即门禁结果 |
+| `lab` | `--dirty` `--format` `--fail-on` | 临时目录生成合成日志并分析 |
+| `--self-test` | — | 自测，输出 `SELF-TEST OK` |
+
+`<targets>` 可以是文件，也可以是目录（目录只收 `*.log` / `*.txt`，递归查找）。
+
+### 5.5 基线文件格式（`--baseline`）
+
+```json
+{
+  "web01|deploy": ["192.0.2.9", "192.0.2.20"],
+  "web02|ops": ["198.51.100.31"]
+}
+```
+
+键是 `host|user`，值是**该账号已知的正常来源 IP 列表**。
+有基线的账号走 `login_from_unexpected_source`（medium/medium），
+没基线的账号只能走低置信度启发式（low/low）。
+
+## 6. 实战流程（六步）
+
+1. **确定范围与时区**：哪些主机、哪些日志文件、日志时间基准是什么
+   （UTC 还是本地时间、有没有跨时区设备）。这一步错了，后面全错。
+2. **先 parse，后 analyze**：先跑 `parse` 看事件表与覆盖统计。
+   有大量 `unparsed` 就先修采集/格式，不要急着调检测阈值。
+3. **确认可判定性**：看 `no_timestamp` 是否为 0。不为 0 时，
+   窗口类结论一律打折——报告里的"覆盖声明"就是在说这件事。
+4. **跑检测并回显参数**：`analyze --fail-on high`，检查报告"检测参数"段
+   是否符合你所在组织的作息（`work-start/work-end`、阈值）。
+5. **人工复核优先级最高的告警**：对照值班表、变更记录、来源情报。
+   `failed_then_success` 永远先看——它最可能是真的。
+6. **建立并维护基线**：把确认过的正常来源写进 baseline JSON，
+   并定期复查（否则基线会变成永久消音器，与 Day 159 的 baseline 同理）。
+
+## 7. 常见陷阱（对照表）
+
+| 陷阱 | 症状 | 正确做法 |
+|---|---|---|
+| 猜时间戳 | 攻击窗口变成编造的数字 | 无时间戳 → `ts=None` + `no_timestamp` 计数 |
+| 按分钟分桶 | 攻击均摊到两桶即可隐形 | 滑动窗口（任意 W 秒内） |
+| 按 IP 聚合跨主机 | 假告警（"一台机器被打 12 次"） | 主体键必须带 host |
+| 忽略重复行 | 计数虚高、误报爆炸 | 按全字段元组去重 |
+| 只写单源检测 | 分布式爆破完全隐形 | 增加按账号聚合的检测器 + 置信度说明 |
+| 关联条件过宽 | "失败后成功"全是误报 | 限死 host + user + src_ip |
+| 不回显阈值 | "没告警"与"阈值太宽"无法区分 | 报告里输出实际参数 |
+| 覆盖不全仍下结论 | 漏掉的日志里就是攻击 | 覆盖缺口优先（退出码 4 > 3） |
+| 报告输出完整 IP | 内部拓扑泄露 | 末段掩码 + sha 指纹 |
+| 输出原始日志行 | 可能带出口令/Cookie | 只输出结构化字段 + `ref` 溯源指针 |
+
+## 8. 局限（必须写进报告，不能省略）
+
+- **只看日志**：没有主机侧证据（进程、文件、连接），无法确认是否失陷。
+- **日志可被篡改**：攻击者删除失败记录后，本工具"看不到"任何东西；
+  需要用不可变存储/远端转发来补偿。
+- **无情报关联**：不知道某个 IP 是否为已知恶意来源，置信度因此受限。
+- **检测器是教学基线**：7 个检测器远不及真实 SOC 规则集。
+- **未评测检出率**：没有在带标签的真实日志集上计算 precision/recall，
+  **不能**替代生产 SIEM/SOC 产品。
+- **不会自动处置**：不封 IP、不改配置、不发请求——处置需要单独的授权与流程。
+
+## 9. 思考题
+
+1. 如果"零告警"可能来自"阈值太宽"，那么在给管理层做汇报时，
+   **除了告警数**你还必须报告什么，才能让这个数字有意义？
+2. 攻击者知道滑动窗口阈值后可以降低频率（例如每 10 分钟 7 次）。
+   这种"低频慢速"攻击在当前设计里会以什么形式留下痕迹？
+   需要补充哪一类检测（提示：时间跨度、成功/失败比、账号覆盖面）？
+3. `no_timestamp` 的事件无法参与窗口判定。如果这些事件恰好全部是
+   攻击者构造的，会出现什么后果？如何设计一个"缺时间戳即拒绝下结论"
+   的严格模式（思考 `--strict` 的语义）？
+4. 分布式爆破的置信度只有 medium，因为 NAT/共享出口也会长成这样。
+   要把它抬到 high，你需要哪三类外部信息？分别从哪里获得？
+5. 日志分析器是只读的。如果给它加上"自动封禁 IP"的能力，
+   哪一类误报会直接升级为生产事故（提示：想想 `login_from_single_source`
+   这种 low/low 的启发式告警）？为什么本课刻意不做这件事？
