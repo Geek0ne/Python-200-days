@@ -171,3 +171,139 @@ Markdown 报告里单独一节列出（规则 + 位置 + 严重度），并写�
 `dynamic_eval`），而形态极其确定的（私钥 PEM 头、云 Access Key 前缀）
 才给高置信度。此外，`docs/notes.md` 这类文档命中是**故意保留**的样本——
 它演示了误报的真实形态，也是练习 6 的对象。
+## 4. 核心机制详解
+
+### 4.1 引擎执行流程
+
+```mermaid
+flowchart TD
+    A[scan_path root] --> B{root 存在?}
+    B -->|否| Z[FileNotFoundError]
+    B -->|是| C[os.walk followlinks=False]
+    C --> D[目录黑名单过滤]
+    D --> E{文件数 >= max_files?}
+    E -->|是| T[truncated=True 停止]
+    E -->|否| F{符号链接?}
+    F -->|是且未允许| S1[skipped: symlink]
+    F -->|否| G{大小 > max_bytes?}
+    G -->|是| S2[skipped: too_large]
+    G -->|否| H{后缀是二进制类型?}
+    H -->|是| S3[skipped: binary]
+    H -->|否| I[read_bytes]
+    I --> J{能 utf-8 解码?}
+    J -->|否| S4[skipped: not_utf8]
+    J -->|是| K[逐行正则匹配规则]
+    K --> L[make_finding: 掩码 + 指纹]
+    L --> M{在 baseline 中?}
+    M -->|是| N[suppressed]
+    M -->|否| O[findings]
+    S1 --> P[Coverage]
+    S2 --> P
+    S3 --> P
+    S4 --> P
+    T --> P
+    N --> Q[AuditReport]
+    O --> Q
+```
+
+三个设计细节：
+
+1. **`followlinks=False`**：不跟随符号链接目录，避免顺着 `link → /etc` 走出审计范围。
+   文件级符号链接也默认跳过并计数。
+2. **二进制后缀判断在读取之前**：省 IO；代价是"文本内容改了 .png 后缀"会漏，
+   这是有意的取舍（宁可漏一个，也不要每次都把 500 MB 的镜像读进内存）。
+3. **`consume()` 内部吞掉 OSError 但记录到 `errors`**：
+   单个文件读不了不能让整次审计崩掉，但也不能静默忽略。
+
+### 4.2 规则库（13 条，四类）
+
+| 类别 | 规则 id | 严重度 | 置信度 | 匹配形态 |
+|---|---|---|---|---|
+| secret | `secret_private_key` | critical | high | `-----BEGIN ... PRIVATE KEY-----` |
+| secret | `secret_cloud_access_key` | critical | high | `AKIA` + 16 位 |
+| secret | `secret_hardcoded_credential` | high | medium | `password/token/api_key = "…"` |
+| secret | `secret_bearer_jwt` | medium | medium | `eyJ…`.`…`.`…` |
+| config | `config_debug_enabled` | medium | high | 行首 `DEBUG = True/1/on` |
+| config | `tls_verify_disabled` | high | high | `verify=False` |
+| config | `tls_legacy_protocol` | medium | high | `TLSv1.0/1.1`、`SSLv3` |
+| config | `world_writable_chmod` | high | medium | `chmod 777/666/a+rwx` |
+| crypto | `weak_hash_or_cipher` | low | low | `md5/sha1/des/rc4` |
+| code | `shell_exec_enabled` | medium | high | `shell=True` |
+| code | `dynamic_eval` | medium | low | `eval(` / `exec(` |
+| supply | `insecure_package_index` | medium | high | `index-url = http://…` |
+| supply | `unpinned_dependency` | low | medium | `requirements*.txt` 中无版本行 |
+
+**规则编写要点（踩过的坑）**：
+
+- 凭据规则**不能**写 `\bpassword\b`：变量名常见写法是 `DB_PASSWORD`，
+  下划线是单词字符，`\b` 会把最常见的情况直接漏掉（本课规则里写了注释说明）。
+- 依赖规则必须带 `file_glob='requirements*.txt'`，否则全仓库每一行都会被匹配。
+- 弱算法规则用 `(?i)` 但要给低置信度：`MD5` 出现在文档里也会命中。
+
+### 4.3 匹配的粒度与去重
+
+```python
+inspect_text(name, text, rules, baseline)
+  → 逐行 re.finditer(pattern, line, flags)
+  → 每个匹配生成一个 Finding(rule_id, path, line, masked, sha256)
+  → dedupe(): 以 (rule_id, path, line) 为键去重
+```
+
+为什么用 `(rule_id, path, line)` 而不是整行内容？
+因为同一行里出现两次相同值（例如一行写了两个 `password=`）属于**同一处问题**，
+去重后复核人员只看一次；而同一行触发**不同规则**时必须都保留——它们是不同问题。
+
+### 4.4 覆盖统计字段
+
+| 字段 | 含义 | 为什么重要 |
+|---|---|---|
+| `files_scanned` | 成功读取并解析的文件数 | 报告里唯一能证明"真的扫了"的数字 |
+| `bytes_read` | 累计读取字节 | 异常大或异常小都提示范围不对 |
+| `skipped: {reason: n}` | 跳过分类计数 | 四类：`too_large` / `binary` / `not_utf8` / `symlink` |
+| `errors: [..]` | 读取失败的文件 | 权限问题往往出现在最需要审计的地方 |
+| `truncated` | 是否达到 `max_files` | 静默截断 = 用"没扫完"冒充"没问题" |
+| `complete` | 上述是否全空 | 唯一的"结果可用于下结论"的开关 |
+| `gaps` | 人类可读的缺口列表 | 直接进报告的覆盖声明段 |
+
+### 4.5 报告的三层结构
+
+```text
+summary   {findings, suppressed, by_severity, by_triage_band}   ← 一眼看规模
+coverage  {files_scanned, skipped, errors, complete, gaps}      ← 结论可信度
+findings  [ {rule, severity, confidence, priority, band,
+             path, line, masked, evidence_sha256,
+             why, remediation, cwe} ]                           ← 复核依据
+```
+
+Markdown 渲染顺序刻意是：**摘要 → 覆盖声明 → 命中明细 → 抑制清单 → 免责声明**。
+覆盖声明必须在明细**之前**，因为它决定了明细能不能被当作结论使用。
+
+### 4.6 门禁退出码
+
+| 退出码 | 含义 | CI 中的反应 |
+|---|---|---|
+| 0 | 无达到阈值的命中，且覆盖完整 | 通过 |
+| 2 | 用法错误 / 目标不存在 | 修流水线配置 |
+| 3 | 存在严重度 ≥ `--fail-on` 的命中 | 派人处理，或加 baseline（需评审） |
+| 4 | 覆盖不全 | **先修工具/权限**，结果暂不可信 |
+
+优先级：`2 > 4 > 3 > 0`。把 4 排在 3 之前，是这份设计里最容易被忽略、
+也最重要的一条：**不可信的结果不配当门禁依据。**
+
+### 4.7 快速开始
+
+```bash
+cd ~/code/Learn-Python
+D=days/day-159-security-audit-toolkit/code
+
+python3 $D/01-scanner-core.py --self-test      # 规则引擎基础（内存样本）
+python3 $D/02-report-builder.py --self-test    # 报告生成与覆盖声明
+python3 $D/03-audit-toolkit.py --self-test     # CLI 整合
+python3 $D/03-audit-toolkit.py rules           # 查看 13 条规则
+python3 $D/03-audit-toolkit.py lab             # 临时目录演示项目 → 报告 + 退出码 3
+python3 $D/03-audit-toolkit.py scan ./your-project --fail-on high
+python3 $D/03-audit-toolkit.py scan ./your-project --format json --output /tmp/audit.json
+python3 $D/03-audit-toolkit.py report /tmp/audit.json --format markdown
+```
+
+无第三方依赖，Python 3.10+ 即可（本仓库在 3.12 上验证）。
