@@ -199,3 +199,135 @@ CI 门禁的价值是**可信**。当有 20% 的日志行无法解析、或有 5
 - 报告中的主体 IP 默认**末段掩码**（`203.0.113.x`）
 - 每个主体附 `subject_sha` 指纹，用于**跨报告关联同一对象**（掩码后仍可追踪）
 - 报告只列输入文件名，不输出绝对路径
+## 4. 核心机制详解
+
+### 4.1 模块结构
+
+```text
+log_core.py            核心：事件模型 / 解析器 / 检测器 / 覆盖统计
+ ├─ LogEvent           标准化事件（不含原始行）
+ ├─ LogCoverage        行数 / 解析 / 无法识别 / 缺时间戳 / 去重 / 乱序
+ ├─ parse_timestamp()  四种时间格式 → 带时区 datetime（失败返回 None）
+ ├─ parse_sshd/nginx/json_log()
+ ├─ detect_source()    JSON → nginx → sshd → unknown
+ ├─ parse_lines()      解析 + 去重 + 排序 + 统计
+ ├─ 7 个检测器（产生 8 类告警）
+ └─ analyze()          跑全部检测器并排序汇总
+
+01-log-parser.py       基础：标准化与覆盖统计
+02-detectors.py        进阶：七个场景 + 七类踩坑演示
+03-log-analyzer.py     实战：CLI（parse / analyze / lab）
+```
+
+### 4.2 解析层：识别顺序与失败处理
+
+```mermaid
+flowchart TD
+    A[一行日志] --> B{以 { 开头?}
+    B -->|是| C[parse_json_log]
+    B -->|否| D{匹配 nginx combined?}
+    D -->|是| E[parse_nginx]
+    D -->|否| F{syslog 且含 sshd/sudo?}
+    F -->|是| G[parse_sshd]
+    F -->|否| H[unknown → coverage.unparsed]
+    C --> I{解析成功?}
+    E --> I
+    G --> I
+    I -->|否/不是关心的动作| H
+    I -->|是| J{时间可解析?}
+    J -->|否| K[ts=None → coverage.no_timestamp]
+    J -->|是| L[带时区 datetime]
+```
+
+三个容易忽略的设计点：
+
+1. **`detect_source` 是启发式**：JSON 靠首字符 `{`、nginx 靠完整正则、
+   sshd 靠 syslog 前缀 + 进程名。识别失败 → 计入 `unparsed`，
+   **绝不"尽力猜一种格式硬解析"**（那会造出错误字段，比丢行更糟）。
+2. **sshd 行里不关心的动作（如 `Connection closed`）不算解析失败**：
+   它返回 None，但在本实现中被计入 `unparsed`——这是一个**有意的取舍**，
+   报告里会显示 `unparsed=1` 提醒你"这行我没用上"。
+3. **syslog 无年份**：`Sep 19 06:12:01` 必须补年份，所以 `parse_lines`
+   接受 `year=` 参数。跨年日志要按文件分批传入（否则 12 月 31 日的日志
+   可能被补成错误年份）。
+
+### 4.3 时间与派生字段
+
+| 输入形态 | 解析结果 | 说明 |
+|---|---|---|
+| `2026-09-19T06:12:01+08:00` | 带偏移的 datetime | 最理想 |
+| `2026-09-19T06:12:01Z` | UTC datetime | `Z` 会被换成 `+00:00` |
+| `19/Sep/2026:06:12:01 +0800` | nginx 标准格式 | `%d/%b/%Y:%H:%M:%S %z` |
+| `Sep 19 06:12:01` | 需 `year` + 假设时区 | 缺信息 → 假设必须显式 |
+| 无法解析 | `None` | **不填 now()、不填文件时间** |
+
+`LogEvent.ts` 全部带时区，比较/排序不会出现"naive 与 aware 混用"的经典异常。
+报告展示统一按 `DEFAULT_TZ`（UTC+8）渲染。
+
+### 4.4 检测器清单（7 个注册检测器 / 8 类告警）
+
+| 检测器 | 主体键 | 窗口/阈值（默认） | severity | confidence |
+|---|---|---|---|---|
+| `brute_force_single_source` | (host, src_ip) | 300s / 8 次 | high（≥24 次升级 critical） | high |
+| `brute_force_distributed` | (host, user) | 600s / 10 次 / ≥3 来源 | medium | medium |
+| `failed_then_success` | (host, user, src_ip) | 900s / 前置失败 ≥3 | high | medium |
+| `login_from_unexpected_source` | (host, user) | 基线比对 | medium | medium |
+| `login_from_single_source` | (host, user) | 无基线时的启发式 | low | low |
+| `off_hours_success` | (host, user) | 工作时段 8:00–20:00 | low | low |
+| `web_auth_abuse` | (host, src_ip) | 600s / 20 次 401-403 | medium | medium |
+| `path_traversal_probe` | (host, src_ip) | 单次命中 | medium | high |
+
+> `login_from_unexpected_source` 与 `login_from_single_source` 由**同一个函数**
+> `detect_new_source()` 产生：有基线时是前者（medium/medium），
+> 无基线时退化到后者（low/low）。这体现了"**置信度取决于你掌握多少外部信息**"。
+
+### 4.5 覆盖与可判定性
+
+| 字段 | 含义 | 会影响结论吗 |
+|---|---|---|
+| `lines_total` | 读取到的非空行数 | — |
+| `parsed` | 成功标准化的事件数 | — |
+| `unparsed` | 无法识别格式的行 | ✅ 使 `complete=False` |
+| `no_timestamp` | 缺少/无法解析时间的事件 | ✅ 使 `complete=False`，且退出窗口检测 |
+| `deduped` | 被判定为重复的行 | 否（信息性） |
+| `out_of_order` | 文件顺序中的时间倒挂次数 | 否（已排序，信息性） |
+| `hosts` / `time_start` / `time_end` | 主机集合与时间范围 | 用于判断"范围是否对得上" |
+| `complete` | `unparsed == 0 and no_timestamp == 0` | ✅ 唯一"可以下结论"的开关 |
+
+CLI 额外把**空输入**和 **read_error**（编码错误、IO 错误、超过行数上限）
+也算作覆盖缺口。
+
+### 4.6 门禁与报告渲染
+
+```text
+报告结构（Markdown）：
+  摘要（行数/解析/主机/时间范围/告警分级）
+  ⚠️ 覆盖声明        ← 必须在明细之前
+  告警明细（按 priority 降序，每条形如"主体 / 次数 / 窗口 / 时间 / 证据 / 为什么 / 建议"）
+  检测参数（阈值回显，标注默认 or 自定义）
+  检测器清单
+  免责声明
+```
+
+`--format json` 输出结构化报告（`summary` / `parameters` / `coverage` / `detectors_run` / `alerts`），
+供 CI 与工单系统消费；`analyze --output file` 落盘；`report` 之类的重渲染
+按需自建（本课的 JSON 已含渲染所需全部字段）。
+
+### 4.7 快速开始
+
+```bash
+cd ~/code/Learn-Python
+D=days/day-160-日志安全分析/code
+
+python3 $D/01-log-parser.py --self-test          # 标准化与覆盖统计
+python3 $D/02-detectors.py --self-test           # 七场景 + 七类踩坑
+python3 $D/03-log-analyzer.py --self-test        # CLI 整合
+python3 $D/03-log-analyzer.py lab                # 合成日志 → 报告 + 退出码 3
+python3 $D/03-log-analyzer.py lab --dirty        # 混入脏数据 → 覆盖声明 + 退出码 4
+python3 $D/03-log-analyzer.py parse /var/log/auth.log
+python3 $D/03-log-analyzer.py analyze /var/log --fail-on high --format json --output /tmp/a.json
+python3 $D/03-log-analyzer.py analyze /var/log --brute-threshold 20 --work-start 7 --work-end 22
+```
+
+无第三方依赖，Python 3.10+（本仓库在 3.12 上验证）。
+`--host` 用于指定"日志里没有主机名时的回退主机名"（会出现在报告的 hosts 里）。
