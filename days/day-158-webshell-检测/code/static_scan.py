@@ -1,26 +1,162 @@
-"""只读静态审阅辅助：词法命中不是恶意判定，也不证明数据流可达。"""
+"""实战规则引擎：多语言特征词典 + 加权评分 + 风险分级。
+
+只读静态分析：把文件当数据读取，匹配词法特征，从不导入、解码、
+执行或被扫描内容。命中是"需人工复核的线索"，不是恶意结论。
+"""
 import os
 import re
+import stat
 from pathlib import Path
 
-# 单独出现时常见于正常程序。只报告规则名/行号，不导出源码或凭据。
-RULES = {
-    'dynamic_evaluation': re.compile(r'\b(?:eval|assert)\s*\(', re.I),
-    'encoded_content': re.compile(r'\b(?:base64_decode|gzinflate)\s*\(', re.I),
-    'process_api': re.compile(r'\b(?:ProcessBuilder|child_process)\b', re.I),
+# ---------------------------------------------------------------- 规则库
+# weight：该特征单独出现时的可疑程度（1=常见于正常代码，3=高度可疑）
+# 同一规则在文件里多次出现会累加（第 2、3 次起权重递减），
+# 反复混淆/重复调用在真实后门里很常见。
+
+Rule = tuple  # (name, pattern, weight, category, languages)
+
+RULES = [
+    # ---- PHP 命令执行 ----
+    ('php_cmd_exec',
+     re.compile(r'\b(?:system|exec|shell_exec|passthru|popen|proc_open|pcntl_exec)\s*\(', re.I),
+     3, 'command', {'php'}),
+    ('php_backtick_exec',
+     re.compile(r'`[^`]*`', re.I),
+     2, 'command', {'php'}),
+    ('php_dynamic_eval',
+     re.compile(r'\b(?:eval|assert|create_function)\s*\(', re.I),
+     3, 'dynamic', {'php'}),
+    ('php_call_user_func',
+     re.compile(r'\b(?:call_user_func(?:_array)?)\s*\(', re.I),
+     2, 'dynamic', {'php'}),
+    # ---- 编码 / 混淆（真实后门曲线解码常用）----
+    ('encode_decode',
+     re.compile(r'\b(?:base64_decode|gzinflate|gzuncompress|str_rot13|hex2bin|pack)\s*\(', re.I),
+     2, 'encoding', {'php', 'asp', 'aspx'}),
+    ('encode_encode',
+     re.compile(r'\b(?:base64_encode|gzcompress|str_rot13|bin2hex)\s*\(', re.I),
+     1, 'encoding', {'php', 'asp', 'aspx'}),
+    ('php_error_suppress',
+     re.compile(r'@\s*(?:system|exec|shell_exec|passthru|eval|assert|mysql|include|require|file_put_contents)\b', re.I),
+     1, 'obfuscation', {'php'}),
+    ('php_superglobal_input',
+     re.compile(r'\$(?:_GET|_POST|_REQUEST|_COOKIE|_FILES)\s*\[', re.I),
+     1, 'input', {'php'}),
+    ('php_long_obfuscated_var',
+     re.compile(r'\$[a-zA-Z_]\w{15,}\s*='),
+     1, 'obfuscation', {'php'}),
+    ('php_globals_var',
+     re.compile(r'\$GLOBALS\s*\[', re.I),
+     1, 'obfuscation', {'php'}),
+    # ---- 文件系统后门动作 ----
+    ('file_write',
+     re.compile(r'\b(?:fwrite|fputs|file_put_contents|move_uploaded_file)\s*\(', re.I),
+     2, 'filesystem', {'php'}),
+    ('file_mod',
+     re.compile(r'\b(?:chmod|unlink|rename|copy)\s*\(', re.I),
+     1, 'filesystem', {'php'}),
+    # ---- 网络外联 ----
+    ('network_socket',
+     re.compile(r'\b(?:fsockopen|pfsockopen|stream_socket_client|socket_create|curl_exec)\s*\(', re.I),
+     2, 'network', {'php'}),
+    # ---- 文件包含 ----
+    ('include_dynamic',
+     re.compile(r'\b(?:include|include_once|require|require_once)\s*\(\s*[\'"$]', re.I),
+     1, 'include', {'php'}),
+    # ---- JSP ----
+    ('jsp_runtime_exec',
+     re.compile(r'Runtime\s*\.\s*getRuntime\s*\(\s*\)\s*\.\s*exec', re.I),
+     3, 'command', {'jsp'}),
+    ('jsp_process_builder',
+     re.compile(r'\bProcessBuilder\s*\(', re.I),
+     3, 'command', {'jsp'}),
+    ('jsp_define_class',
+     re.compile(r'\bdefineClass\s*\(', re.I),
+     2, 'dynamic', {'jsp'}),
+    # ---- ASPX / ASP ----
+    ('aspx_process_start',
+     re.compile(r'\bProcess\s*\.\s*Start\s*\(', re.I),
+     3, 'command', {'aspx'}),
+    ('asp_wscript_shell',
+     re.compile(r'CreateObject\s*\(\s*["\']W?Script\.Shell["\']', re.I),
+     3, 'command', {'asp'}),
+    ('asp_execute',
+     re.compile(r'\bExecute(?:Global)?\s*\(', re.I),
+     2, 'dynamic', {'asp'}),
+]
+
+# 语言标签 → 展示名
+LANG_NAMES = {'php': 'PHP', 'jsp': 'JSP', 'aspx': 'ASPX', 'asp': 'ASP'}
+
+# 扩展名 → 语言集合：用于压制跨语言误报（如 Java 的 .exec() 不应命中 PHP 规则）
+EXT_LANGS = {
+    '.php': {'php'}, '.php3': {'php'}, '.php5': {'php'}, '.phtml': {'php'},
+    '.jsp': {'jsp'}, '.jspx': {'jsp'},
+    '.aspx': {'aspx'},
+    '.asp': {'asp'},
+    # 未知扩展名（txt/log/conf…）：不限定语言，全部规则参与匹配
 }
-LIMIT = 1024 * 1024
+
+LIMIT = 1024 * 1024  # 单文件读取上限 1 MiB
+
+# 风险分级阈值（累计得分）
+SEVERITY_LEVELS = [
+    (8, 'critical'),
+    (5, 'high'),
+    (3, 'medium'),
+    (1, 'low'),
+]
 
 
-def inspect_text(text):
-    """扫描纯文本；不会解析、解码、执行或导入被扫描内容。"""
-    return [{'rule': name, 'line': text.count('\n', 0, m.start()) + 1}
-            for name, regex in RULES.items() for m in regex.finditer(text)]
+def classify_score(score):
+    for threshold, level in SEVERITY_LEVELS:
+        if score >= threshold:
+            return level
+    return 'clean'
+
+
+def inspect_text(text, languages=None):
+    """返回命中列表：规则名、类别、权重、行号。只做词法匹配。"""
+    findings = []
+    for name, pattern, weight, category, langs in RULES:
+        if languages and not (langs & languages):
+            continue
+        for match in pattern.finditer(text):
+            findings.append({
+                'rule': name,
+                'category': category,
+                'weight': weight,
+                'line': text.count('\n', 0, match.start()) + 1,
+            })
+    findings.sort(key=lambda f: (f['line'], f['rule']))
+    return findings
+
+
+def score_findings(findings):
+    """加权评分：每规则首次命中记 weight，重复命中记 1（封顶 3 次）。"""
+    counts = {}
+    for f in findings:
+        counts[f['rule']] = counts.get(f['rule'], 0) + 1
+    score = 0
+    for rule, count in counts.items():
+        weight = next(w for name, _, w, _, _ in RULES if name == rule)
+        score += weight + max(0, min(count, 3) - 1) * 1
+    return score
+
+
+def summarize(findings):
+    """按规则聚合，给人工复核压缩后的摘要。"""
+    summary = {}
+    for f in findings:
+        entry = summary.setdefault(f['rule'], {'category': f['category'],
+                                               'weight': f['weight'],
+                                               'lines': []})
+        entry['lines'].append(f['line'])
+    return summary
 
 
 def inspect_file(path):
-    """Linux 上以 O_NOFOLLOW 打开，拒绝符号链接和特殊文件。"""
-    import stat
+    """读取单个文件并返回扫描结果；本机安全守卫：O_NOFOLLOW + 大小/编码/类型限制。"""
     path = Path(path)
     try:
         if path.is_symlink():
@@ -38,24 +174,27 @@ def inspect_file(path):
             text = data.decode('utf-8')
         except UnicodeDecodeError:
             return {'status': 'skipped', 'reason': 'not_utf8'}
-        return {'status': 'scanned', 'findings': inspect_text(text)}
+        findings = inspect_text(text, EXT_LANGS.get(path.suffix.lower()))
+        return {'status': 'scanned', 'findings': findings,
+                'score': score_findings(findings),
+                'severity': classify_score(score_findings(findings)),
+                'summary': summarize(findings)}
     except OSError as exc:
         return {'status': 'error', 'reason': type(exc).__name__}
 
 
 def scan_tree(root, max_files=1000):
-    """显式本地目录；不跟随链接，不删改文件，最多处理 max_files 个条目。
-
-    用于离线、稳定的证据副本。不是对恶意并发目录替换的安全沙箱。
-    """
+    """遍历目录。不跟随链接，不删改文件；上限由 max_files 控制。"""
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError('目标必须是存在的普通目录，不能是符号链接')
     if max_files < 1:
         raise ValueError('max_files 必须大于零')
     results, walk_errors = [], []
+
     def onerror(exc):
         walk_errors.append(type(exc).__name__)
+
     for parent, dirs, files in os.walk(root, followlinks=False, onerror=onerror):
         dirs[:] = sorted(d for d in dirs if not (Path(parent) / d).is_symlink())
         for name in sorted(files):
@@ -64,3 +203,12 @@ def scan_tree(root, max_files=1000):
             path = Path(parent) / name
             results.append({'file': str(path.relative_to(root)), **inspect_file(path)})
     return {'files': results, 'truncated': False, 'walk_errors': walk_errors}
+
+
+def print_rules():
+    """--rules 输出：规则总览（类别 / 权重 / 覆盖语言）。"""
+    lines = []
+    for name, _, weight, category, langs in sorted(RULES, key=lambda r: (-r[2], r[0])):
+        names = ', '.join(LANG_NAMES[l] for l in langs)
+        lines.append(f'{name:24s} w={weight}  {category:12s} {names}')
+    return '\n'.join(lines)
