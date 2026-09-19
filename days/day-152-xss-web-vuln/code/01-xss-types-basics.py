@@ -35,8 +35,11 @@ Day 152 · 示例 01：三种 XSS 的最小复现（基础用法）
     ④ main()                  —— 用 urllib 真实请求，打印原始响应体
 """
 
+import argparse
 import html
 import http.server
+import re
+import sys
 import threading
 import urllib.parse
 import urllib.request
@@ -80,6 +83,90 @@ def show(label: str, text: str, limit: int = 420) -> None:
         print(text[:limit] + f"\n…（共 {len(text)} 字符，已截断）")
     else:
         print(text)
+
+
+# ══════════════════════════════════════════════════════════════
+# ①-b 渲染层：把「响应体长什么样」从 HTTP 处理里抽出来（纯函数）
+# ══════════════════════════════════════════════════════════════
+# 【为什么要把这几段 HTML 构造抽成独立函数？】
+#   1) 可测试：纯函数没有 socket、没有 self，`--self-test` 可以在**完全离线**
+#      的环境里断言「危险版真的原样输出」「安全版真的编码了」；
+#   2) 单一职责：Handler 只负责"收包 / 发包"，"渲染"是另一件事；
+#   3) 分岔点一目了然：每个函数里**只有一处** `if safe`，漏洞与修复都在那一行。
+#
+# ⚠️ 真实的框架（Django/Jinja2）就是把这个"渲染层"做成了模板引擎，
+#    并默认对所有变量做自动转义。这里手写，是为了让 XSS 的成因无处藏身。
+
+def render_reflect(user_input: str, safe: bool) -> str:
+    """构造 `/reflect` 的响应体。`safe` 是危险版/安全版的**唯一**分岔点。
+
+    注意这段 HTML 同时踩了两个上下文：
+        · <div>…</div>           → HTML 文本上下文
+        · <input value="…">      → HTML 属性上下文（引号必须一起编码！）
+    同一份数据、同一个出口页面，两个上下文要的是**同一种**编码（html.escape），
+    但只要漏掉引号（quote=False），属性那个位置就破了。
+    """
+    if safe:
+        rendered = esc(user_input)           # ✅ 输出前按上下文编码
+        label = "✅ safe=1 —— 已做 HTML 输出编码（html.escape）"
+    else:
+        rendered = user_input                # ❌ 危险：原始字节直接进 HTML
+        label = "❌ safe=0 —— 原始拼接，未做任何编码"
+
+    return (
+        f"<h1>搜索结果</h1>\n"
+        f"<p>{label}</p>\n"
+        f'<div class="search">你搜索了：{rendered}</div>\n'
+        # 顺便演示"属性上下文"：属性值必须加引号，且同样要编码
+        f'<input type="text" name="q" value="{rendered}">\n'
+    )
+
+
+def render_guestbook(items: list[str], safe: bool) -> str:
+    """构造 `/guestbook` 的响应体。`items` 是"数据库"里存着的**原文**。
+
+    这里刻意体现"存储型 XSS 的锅在输出、不在存储"：
+    同一个 items 列表，safe=False 时所有访客都会中招，safe=True 时一切正常。
+    数据库里的数据始终没变 —— 这正是不应该在输入处做清洗的原因（见 README 2.2）。
+    """
+    rendered_items = []
+    for i, text in enumerate(items, 1):
+        shown = esc(text) if safe else text      # ← 唯一的分岔点
+        rendered_items.append(f"<li>#{i}: {shown}</li>")
+
+    if not rendered_items:
+        rendered_items.append("<li>（还没有留言）</li>")
+
+    mode = "✅ safe=1 输出已编码" if safe else "❌ safe=0 输出未编码"
+    return (
+        f"<h1>留言板（{mode}）</h1>\n"
+        f"<ul>\n" + "\n".join(rendered_items) + "\n</ul>\n"
+    )
+
+
+def render_dom_page() -> str:
+    """构造 `/dom` 的页面。
+
+    危险写法**只写在 HTML 注释里**，页面真正执行的脚本用的是 textContent。
+    这样既讲清了机制，又不会真的在本机留下一个可利用的 DOM 型 XSS 页面 ——
+    教学靶场也不该给未来翻到这些代码的人埋雷。
+    """
+    return """<h1>DOM 型 XSS 演示页</h1>
+<p>这个页面会把 URL 的 <code>#</code> 后面内容渲染到下面的 div 里。</p>
+<div id="out">（等待渲染）</div>
+<!--
+  ❌ 危险写法（教学演示，本脚本不会执行它）：
+      document.getElementById('out').innerHTML = decodeURIComponent(location.hash.slice(1));
+  因为 innerHTML 把字符串当 **HTML** 解析，所以 URL 里带的标签会被真的创建出来，
+  其中的事件处理器一旦被触发就会执行脚本。
+
+  ✅ 安全写法：用 textContent，它把字符串当**纯文本**，永远不解析标签。
+-->
+<script>
+  // 本演示页用的是安全写法，避免产生可被利用的页面：
+  document.getElementById('out').textContent =
+      decodeURIComponent(location.hash.slice(1) || '（没有 fragment）');
+</script>"""
 
 
 def page(title: str, body: str) -> str:
@@ -165,24 +252,13 @@ class DemoHandler(http.server.BaseHTTPRequestHandler):
 
         '反射'的意思是：payload 像镜子一样进来又立刻弹回去，不落库。
         修复只需要改这一处代码，所以它比存储型好修。
+
+        【这个方法"很薄"是刻意的】它只做两件事：从 query 里取值、
+        交给 render_reflect 渲染。于是"HTTP 处理"和"HTML 渲染"能被分开测试，
+        这也是真实框架"路由 / 模板"分层的缩影。
         """
         user_input = q.get("q", [""])[0]
-
-        if safe:
-            rendered = esc(user_input)
-            label = "✅ safe=1 —— 已做 HTML 输出编码（html.escape）"
-        else:
-            rendered = user_input            # ❌ 危险：原始字节直接进 HTML
-            label = "❌ safe=0 —— 原始拼接，未做任何编码"
-
-        body = (
-            f"<h1>搜索结果</h1>\n"
-            f"<p>{label}</p>\n"
-            f'<div class="search">你搜索了：{rendered}</div>\n'
-            # 顺便演示"属性上下文"：属性值必须加引号，且同样要编码
-            f'<input type="text" name="q" value="{rendered}">\n'
-        )
-        self._send_html(page("搜索", body))
+        self._send_html(page("搜索", render_reflect(user_input, safe)))
 
     # ── 端点 2：存储型 ────────────────────────────────────────
     def _handle_guestbook(self, safe: bool) -> None:
@@ -191,46 +267,17 @@ class DemoHandler(http.server.BaseHTTPRequestHandler):
         和反射型的唯一区别是数据来源：一个是"这次的请求参数"，
         一个是"之前存进去的数据"。但后果完全不同——每个访问者都会中招。
         """
-        items = []
-        for i, text in enumerate(GUESTBOOK, 1):
-            shown = esc(text) if safe else text      # ← 唯一的分岔点
-            items.append(f"<li>#{i}: {shown}</li>")
-
-        if not items:
-            items.append("<li>（还没有留言）</li>")
-
-        mode = "✅ safe=1 输出已编码" if safe else "❌ safe=0 输出未编码"
-        body = (
-            f"<h1>留言板（{mode}）</h1>\n"
-            f"<ul>\n" + "\n".join(items) + "\n</ul>\n"
-        )
-        self._send_html(page("留言板", body))
+        self._send_html(page("留言板", render_guestbook(GUESTBOOK, safe)))
 
     # ── 端点 3：DOM 型 ────────────────────────────────────────
     def _handle_dom(self) -> None:
         """DOM 型 XSS：服务器**完全没有参与**。
 
-        下面这个页面把 location.hash（# 后面的内容）直接写进 innerHTML。
-        fragment 不会被浏览器发给服务器 —— 所以服务端日志、WAF、
-        服务端输出编码，一个都救不了它。必须在客户端 JS 里修。
+        响应体里不含任何用户数据 —— 危险发生在浏览器本地：前端 JS 把
+        location.hash 写进了危险信宿。fragment 不会随请求发给服务器，所以
+        服务端日志、WAF、服务端输出编码，一个都救不了它。
         """
-        body = """<h1>DOM 型 XSS 演示页</h1>
-<p>这个页面会把 URL 的 <code>#</code> 后面内容渲染到下面的 div 里。</p>
-<div id="out">（等待渲染）</div>
-<!--
-  ❌ 危险写法（教学演示，本脚本不会执行它）：
-      document.getElementById('out').innerHTML = decodeURIComponent(location.hash.slice(1));
-  因为 innerHTML 把字符串当 **HTML** 解析，所以 URL 里带的标签会被真的创建出来，
-  其中的事件处理器一旦被触发就会执行脚本。
-
-  ✅ 安全写法：用 textContent，它把字符串当**纯文本**，永远不解析标签。
--->
-<script>
-  // 本演示页用的是安全写法，避免产生可被利用的页面：
-  document.getElementById('out').textContent =
-      decodeURIComponent(location.hash.slice(1) || '（没有 fragment）');
-</script>"""
-        self._send_html(page("DOM 型演示", body))
+        self._send_html(page("DOM 型演示", render_dom_page()))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -314,7 +361,7 @@ def post_form(url: str, data: dict) -> str:
         return resp.read().decode("utf-8")
 
 
-def main() -> None:
+def demo() -> None:
     httpd, port = start_server()
     base = f"http://127.0.0.1:{port}"
     print(f"演示服务已启动: {base}  （只监听本机，用完即关）")
@@ -389,5 +436,180 @@ def main() -> None:
     print("演示服务已关闭。")
 
 
+# ══════════════════════════════════════════════════════════════
+# ⑤ 自测（--self-test）：完全离线、确定性、零依赖
+# ══════════════════════════════════════════════════════════════
+# 【为什么自测不启动 HTTP 服务？】
+#   `--self-test` 的定位是"任何环境里都能一秒跑完的回归检查"：
+#   不建 socket、不联网、不需要 sudo、不需要第三方库，因此结果**必然确定**。
+#   被验证的"渲染逻辑"和"DOM 语义模拟"本来就是纯函数，完全可以在内存里断言。
+#   真实的 HTTP 往返由默认运行（`python3 01-xss-types-basics.py`）负责演示。
+#   两者分工明确：**自测证明逻辑正确，演示证明端到端可用。**
+
+class _SelfTest:
+    """极简断言收集器：把"期望 vs 实际"都记下来，最后一次性汇报。
+
+    【为什么不用 assert？】
+      1) `python3 -O` 会把所有 assert 优化掉 —— 安全/质量检查不能建在这上面；
+      2) assert 会在第一个失败点抛异常，看不到"一共有几处不对"。
+    收集式自测能一次给出全貌，并且失败时清楚打印"期望值 vs 实际值"。
+    """
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.failures: list[str] = []
+
+    def check(self, label: str, ok: bool, expect: str, actual: str) -> None:
+        self.total += 1
+        if ok:
+            print(f"  ✅ {label}")
+        else:
+            self.failures.append(label)
+            print(f"  ❌ {label}")
+            print(f"       期望: {expect}")
+            print(f"       实际: {actual}")
+
+    def eq(self, label: str, actual, expect) -> None:
+        self.check(label, actual == expect, repr(expect), repr(actual))
+
+    def contains(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle in haystack, f"包含 {needle!r}", _clip(haystack))
+
+    def absent(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle not in haystack, f"不包含 {needle!r}", _clip(haystack))
+
+
+def _clip(text: str, limit: int = 160) -> str:
+    """把长文本截断成一行，避免自测失败时刷屏。"""
+    flat = " ".join(text.split())
+    return repr(flat[:limit] + ("…" if len(flat) > limit else ""))
+
+
+def _extract_script(html_text: str) -> str:
+    """取出 <script> 与 </script> 之间的内容。
+
+    只用于自测断言，被测字符串是本文件自己生成的，正则在这里足够可靠。
+    """
+    m = re.search(r"<script>(.*?)</script>", html_text, re.S)
+    return m.group(1) if m else ""
+
+
+def self_test() -> int:
+    """离线自测。全部通过返回 0 并打印 SELF-TEST OK；否则返回 1。"""
+    banner("自测（--self-test）：离线验证渲染逻辑与 DOM 语义模拟")
+    t = _SelfTest()
+
+    # ── A. 输出编码器本身 ─────────────────────────────────────
+    print("\n[A] HTML 输出编码 esc()")
+    t.eq("esc() 把尖括号变成实体", esc(PROBE), "&lt;x152probe&gt;")
+    t.absent("编码后不再出现裸的 <", esc(PROBE), "<")
+    t.contains("esc() 把双引号也变成实体", esc('" onfocus="x152()"'), "&quot;")
+    t.absent("编码后属性里没有裸引号（否则能凭空造出事件处理器）",
+             esc('" onfocus="x152()"'), '"')
+    t.eq("esc() 做的是「编码」而不是「去重」：对已编码文本再编码会变成 &amp;amp;（双重编码的来源）",
+         esc("&amp;"), "&amp;amp;")
+
+    # ── B. 反射型渲染：危险版 vs 安全版 ───────────────────────
+    print("\n[B] 反射型：同一个输入，两条渲染路径")
+    vuln = render_reflect(PROBE, safe=False)
+    good = render_reflect(PROBE, safe=True)
+    t.contains("未编码版：探测标记原样出现在响应体里（存在标签注入能力）", vuln, PROBE)
+    t.absent("已编码版：响应体里没有裸的探测标记", good, PROBE)
+    t.contains("已编码版：出现的是实体形式", good, "&lt;x152probe&gt;")
+    t.contains("未编码版：属性上下文也被注入（value 被闭合）",
+               vuln, 'value="<x152probe>"')
+    t.contains("已编码版：属性值被正确编码", good, 'value="&lt;x152probe&gt;"')
+    t.contains("两条路径的 HTML 骨架完全一致，只差被渲染的那一个位置",
+               vuln, '<div class="search">你搜索了：')
+    t.contains("安全版骨架同样一致（说明修复只改数据、不改结构）",
+               good, '<div class="search">你搜索了：')
+
+    # ── C. 存储型渲染 ─────────────────────────────────────────
+    print("\n[C] 存储型：数据库存原文，输出时才编码")
+    items = [PROBE, "大家好，我是正常用户"]
+    t.contains("未编码版：留言原样输出（每个访客都会中招）",
+               render_guestbook(items, safe=False), PROBE)
+    t.absent("已编码版：留言被编码后才输出",
+             render_guestbook(items, safe=True), PROBE)
+    t.contains("空留言板有占位提示",
+               render_guestbook([], safe=True), "（还没有留言）")
+    t.eq("存储层 GUESTBOOK 是列表（原样保存，从不做输入清洗）",
+         isinstance(GUESTBOOK, list), True)
+    t.eq("存储型与反射型共享同一个编码器 esc()（修复点不同，原理相同）",
+         esc(PROBE) in render_guestbook(items, safe=True), True)
+
+    # ── D. DOM 型页面本身必须是安全的 ─────────────────────────
+    print("\n[D] DOM 型页面：脚本块必须用 textContent，不能有 innerHTML 赋值")
+    dom = render_dom_page()
+    script = _extract_script(dom)
+    t.contains("页面里有 <script>", dom, "<script>")
+    t.contains("脚本从 location.hash 取数据（DOM 型的污点源）",
+               script, "location.hash")
+    t.contains("脚本用 textContent 写入（安全信宿）", script, "textContent")
+    t.absent("脚本里没有 innerHTML 赋值 —— 危险写法只允许出现在注释里",
+             script, "innerHTML")
+    t.contains("危险写法确实以注释形式保留下来（教学价值）", dom, "innerHTML")
+
+    # ── E. DOM sink 语义模拟器 ────────────────────────────────
+    print("\n[E] ElementCollector：同一个字符串在两套 sink 下的命运")
+    p1 = ElementCollector()
+    p1.feed(PROBE)
+    t.eq("innerHTML 语义：字符串被解析成 1 个元素", len(p1.elements), 1)
+    t.eq("解析出的标签名", p1.elements[0][0] if p1.elements else None, "x152probe")
+    t.eq("该元素没有属性", len(p1.elements[0][1]) if p1.elements else -1, 0)
+
+    p2 = ElementCollector()
+    p2.feed('<x152probe onload="x152()">')
+    t.eq("带事件处理器的标签会被解析出属性",
+         p2.elements[0][1] if p2.elements else None, [("onload", "x152()")])
+
+    p3 = ElementCollector()
+    p3.feed(esc(PROBE))
+    t.eq("编码之后再进 innerHTML：解析不出任何元素（数据不再被当成代码）",
+         len(p3.elements), 0)
+
+    p4 = ElementCollector()
+    p4.feed("纯文本，没有标签")
+    t.eq("纯文本在 innerHTML 语义下也不产生元素（本例只收集标签）",
+         len(p4.elements), 0)
+
+    # ── 汇总 ──────────────────────────────────────────────────
+    print("\n" + "─" * BANNER_WIDTH)
+    if t.failures:
+        print(f"❌ SELF-TEST FAILED：{len(t.failures)}/{t.total} 项不通过")
+        for name in t.failures:
+            print(f"   · {name}")
+        return 1
+    print(f"✅ SELF-TEST OK（{t.total} 项断言全部通过；无网络、无 sudo、无第三方依赖）")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """命令行入口。
+
+    两种运行方式，用途完全不同：
+        python3 01-xss-types-basics.py              → 起本地靶场，演示三种 XSS（联网=回环）
+        python3 01-xss-types-basics.py --self-test  → 纯离线自测，秒级返回
+    """
+    parser = argparse.ArgumentParser(
+        description="Day 152 示例 01：三种 XSS 的最小复现（本地教学靶场）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例:\n"
+            "  python3 01-xss-types-basics.py              # 演示（只绑定 127.0.0.1）\n"
+            "  python3 01-xss-types-basics.py --self-test  # 离线自测，输出 SELF-TEST OK\n"
+        ),
+    )
+    parser.add_argument("--self-test", action="store_true",
+                        help="只跑离线自测（不建 socket / 不联网 / 无第三方依赖）")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        return self_test()
+
+    demo()
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

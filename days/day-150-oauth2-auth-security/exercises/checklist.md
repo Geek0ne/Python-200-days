@@ -3,6 +3,15 @@
 > 主题：OAuth2 授权流程 / CSRF 攻击与防护 / SSRF 漏洞检测
 > 实战：认证系统安全审计
 > 预计用时：90~150 分钟（不含思考题）
+>
+> ✅ **本批次新增的验收入口**：三个脚本都支持 `--self-test`（离线、确定性）。
+> 一键验收：
+> ```bash
+> cd /root/code/Learn-Python
+> for f in days/day-150-oauth2-auth-security/code/*.py; do
+>   python3 -B "$f" --self-test | tail -1; done
+> # 三行都必须输出: SELF-TEST OK
+> ```
 
 ---
 
@@ -26,17 +35,29 @@
 
 ### 动手实践（跑代码 + 改代码）
 - [ ] 运行 `code/01-oauth2-auth-code-flow.py`，观察两种模式（机密 / PKCE）的输出差异
+- [ ] 运行三个脚本的离线自检，全部必须 `SELF-TEST OK` 且退出码 0：
+      ```bash
+      for f in code/*.py; do python3 -B "$f" --self-test | tail -1; echo "exit=$?"; done
+      ```
+      预期：`01` 27 项 / `02` 37 项 / `03` 47 项断言全部通过
 - [ ] 把 `01` 里的 `MiniAuthServer.CODE_TTL` 改成 `1`，再运行一次，观察"授权码过期"分支
 - [ ] 故意把 `01` 里的 `state` 校验注释掉，观察漏洞版行为，然后改回来
+      （改回来后重跑 `--self-test`，关掉 state 校验会让"state 不匹配 → 回调返回 None"那条断言变红）
 - [ ] 运行 `code/02-oauth2-csrf-pitfalls.py`，把 4 个坑的"修复前/后"输出都看懂
 - [ ] 在 `02` 的 `Bank` 里加一个 `enable_origin_check` 参数，实现 Origin 校验层
 - [ ] 运行 `code/03-auth-security-audit.py`，理解 13 个 FAIL 分别对应哪一类问题
 - [ ] 运行 `python3 code/03-auth-security-audit.py --json`，把报告存成文件并解析
+- [ ] 运行 `python3 code/03-auth-security-audit.py --save`，确认报告落在 `/tmp/auth-audit-*`
+      临时目录，且仓库 `git status` 依然干净（不污染工作树）
+- [ ] 用 `--self-test` 验证你修的 SSRF 判定：把 `_is_blocked_ip()` 里的
+      `ipv4_mapped` 那段临时注释掉，观察 `http://[::ffff:127.0.0.1]/` 那条断言变红
+      （这就是本次升级修掉的真实漏判）
 - [ ] 修改 `03` 的 `demo_config()`，把失败项逐个修好，直到 FAIL 数为 0
 
 ### 输出物
 - [ ] `days/day-150-oauth2-auth-security/` 目录下 4 类文件齐全（README / code / diagrams / exercises）
 - [ ] 3 个 `.py` 全部能 `python3` 直接跑通，无第三方依赖
+- [ ] 3 个 `.py` 的 `--self-test` 全部离线通过（不联网、不依赖 DNS、不依赖 sleep）
 - [ ] 能对着 `diagrams/README.md` 给别人讲一遍授权码 + PKCE 流程
 
 ---
@@ -118,6 +139,9 @@ http://app.com/cb            ← 非 https，应拒绝
 为 `code/03-auth-security-audit.py` 的 `check_url_ssrf()` 增加两项检测：
 
 1. **IPv6 映射检测**：`http://[::ffff:127.0.0.1]/`、`http://[::1]/` 必须报警
+   > ✅ 提示：本批次已经**实现了 `[::1]` 与 `[::ffff:127.0.0.1]` 的判定**
+   > （见 `_is_blocked_ip()` 里的 `ipv4_mapped` 处理），并在 `--self-test` 里
+   > 各有一条断言锁死。你可以先把那段临时删掉，观察自检变红，真正体会"漏判"长什么样。
 2. **短域名/重定向链检测**：如果 URL 主机是已知短链服务
    （`bit.ly`、`t.cn`、`tinyurl.com` 等），输出 WARN 提示"最终目标不可控"
 

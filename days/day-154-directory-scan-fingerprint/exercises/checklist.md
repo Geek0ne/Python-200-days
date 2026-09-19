@@ -21,16 +21,26 @@
 
 ### 操作层面（动手做过才算过）
 
-- [ ] 跑通 `code/01-dir-brute-basics.py --url http://127.0.0.1/`
+- [ ] 起靶场：`python3 code/00-local-lab.py --port 8080`（纯标准库，不需要装任何东西）
+- [ ] 跑通 `code/01-dir-brute-basics.py --url http://127.0.0.1:8080`
 - [ ] 对比单线程 30 条 vs 线程池全量的耗时差，记录倍率：________
-- [ ] 跑通 `code/02-fingerprint-pitfalls.py --self-test`（全部断言通过）
-- [ ] 跑通 `code/03-asset-discovery.py --url http://127.0.0.1:8080`
-- [ ] 打开生成的 `out/asset-discovery-*.md`，读懂每一栏
-- [ ] 用 `--workers 5 --delay 0.2` 再跑一次，感受限速参数的影响
+- [ ] 跑通四个自检（**离线、不联网、不装第三方库，必须以 `SELF-TEST OK` 结尾**）：
+      `python3 -B code/00-local-lab.py --self-test`（32 项）
+      `python3 -B code/01-dir-brute-basics.py --self-test`（34 项）
+      `python3 -B code/02-fingerprint-pitfalls.py --self-test`（42 项）
+      `python3 -B code/03-asset-discovery.py --self-test`（54 项）
+- [ ] 用 `--mode strict404` / `--mode wildcard` 再起一次靶场，
+      对比 `02` 的 catch-all 形态判定（soft404 vs wildcard vs normal）
+- [ ] 跑通 `code/03-asset-discovery.py --url http://127.0.0.1:8080`，
+      报告默认落在系统临时目录（`--out-dir` 可指定）；打开生成的
+      `asset-discovery-*.md`，读懂每一栏
+- [ ] 用 `--workers 5 --delay 0.02` 再跑一次，感受限速参数的影响
+- [ ] 用 `python3 code/00-local-lab.py --rate-limit 3` + `03 --workers 1`
+      观察 429 退避行为（退避值翻倍 → 成功后减半）
 
 ### 产出物
 
-- [ ] 一份 JSON 报告
+- [ ] 一份 JSON 报告（在临时目录里，别提交进仓库）
 - [ ] 一份 Markdown 报告
 - [ ] 一张自己画的"扫描决策流程图"（可手绘，拍照也行）
 

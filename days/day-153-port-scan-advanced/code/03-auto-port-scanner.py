@@ -45,12 +45,15 @@ from __future__ import annotations
 
 import argparse
 import csv
+import errno
 import http.server
+import io
 import json
 import os
 import re
 import socket
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -227,6 +230,29 @@ def identify_service(raw_banner: bytes) -> str:
 # 核心：单端口扫描
 # ══════════════════════════════════════════════════════════════════════════
 
+def state_for_errno(code: int | None) -> str:
+    """把 socket 错误码映射成三态状态（**纯函数**，便于离线自测）。
+
+    【为什么这里只有两个分支？】因为 connect 层面的错误只有两类含义：
+
+        ECONNREFUSED (111)  → 对方**明确回了 RST**：主机在、这个端口没监听。
+                              → closed（确定的结论）
+        其它一切 errno      → 我们**没有得到任何有效响应**：
+                              ETIMEDOUT(110)    超时（流量被 DROP）
+                              EHOSTUNREACH(113) 主机不可达
+                              ENETUNREACH(101)  网络不可达
+                              ECONNRESET(104)   连接被重置
+                              → 统一归为 filtered（不确定，但绝对不是"确定关闭"）
+
+    【为什么这个区分值得单独写个函数？】**把 filtered 误报成 closed 是扫描器最
+    常见的错误**：用户看到"关闭"就放心了，而实际上那是被防火墙静默丢弃的端口，
+    背后可能正跑着不该暴露的服务。测试这条映射，比测试"能不能连上"重要得多。
+    """
+    if code == errno.ECONNREFUSED:
+        return "closed"
+    return "filtered"
+
+
 def scan_one_port(host: str, port: int, timeout: float, want_banner: bool = True) -> PortResult:
     """扫描单个端口，返回 PortResult。**这个函数被线程池并发调用。**
 
@@ -292,8 +318,9 @@ def scan_one_port(host: str, port: int, timeout: float, want_banner: bool = True
         result.state = "filtered"
         result.error = f"resolve error: {exc}"
     except OSError as exc:
-        # 其它 errno（如 EHOSTUNREACH=113、ENETUNREACH=101）统一归为 filtered
-        result.state = "filtered"
+        # 统一走 state_for_errno()：万一某个平台把 ECONNREFUSED 以裸 OSError 抛出，
+        # 也能被正确判成 closed，而不是误报成 filtered。
+        result.state = state_for_errno(exc.errno)
         result.error = f"errno={exc.errno}"
 
     result.latency_ms = round((time.perf_counter() - started) * 1000, 2)
@@ -536,11 +563,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ports", default="top", help="端口：top / 1-1024 / 22,80,443 / 混合")
     p.add_argument("--workers", type=int, default=64, help="并发线程数（默认 64，建议不超过 200）")
     p.add_argument("--timeout", type=float, default=0.6, help="单端口超时秒数（默认 0.6）")
-    p.add_argument("--out-dir", default="./scan-output", help="结果输出目录")
+    # 默认 None ⇒ 运行时装进系统临时目录（tempfile.mkdtemp），
+    # 避免演示产物污染代码仓库工作树；需要固定位置就显式传 --out-dir。
+    p.add_argument("--out-dir", default=None,
+                   help="结果输出目录（默认写入系统临时目录 day153-scan-XXXX）")
     p.add_argument("--show-closed", action="store_true", help="同时打印关闭/过滤的端口")
     p.add_argument("--no-demo", action="store_true", help="不启动本机演示服务")
     p.add_argument("--i-own-this-target", action="store_true",
                    help="声明目标为自有/已授权资产（非本机目标时必须显式加上）")
+    p.add_argument("--self-test", action="store_true",
+                   help="只跑离线自测：验证解析/指纹/三态/导出逻辑（不扫描任何目标）")
     return p
 
 
@@ -571,8 +603,259 @@ def enforce_scope(args: argparse.Namespace) -> None:
         sys.exit(130)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 自测（--self-test）：离线验证"解析 / 指纹 / 三态 / 导出"四块纯逻辑
+# ══════════════════════════════════════════════════════════════════════════
+# 【为什么扫描器的自测不真的扫一遍？】
+#   一个端口扫描器里，"容易写错"的部分全都不在 socket 上：
+#       · parse_ports()        —— 端口表达式解析（"80-79" 这种要报错，不能静默变空）
+#       · identify_service()   —— 12 条指纹正则，写错一条就永远识别不出某类服务
+#       · state_for_errno()    —— 三态判定（把 filtered 误判成 closed 会漏掉防火墙事实）
+#       · export_*()           —— 导出格式（JSON 少了 meta 就没人知道这份数据从哪来）
+#   这些全部是纯函数，用**人造数据**就能精确断言，结果完全确定。
+#   而"真的能并发扫出本机开放端口"由默认运行验证（内置演示服务 + 回环扫描）。
+#   ⚠️ 特别注意：自测里的导出测试写在 tempfile 临时目录里，**不污染工作树**。
+#
+#   ⚠️ 一个容易踩的坑：自测不能依赖 /etc/services 里恰好有什么条目。
+#      所以下面凡是涉及 service_name() 的断言，要么用"必然认识"的端口（22/80），
+#      要么**动态探测**出一个系统不认识的端口再断言，而不是写死一个端口号。
+
+class _SelfTest:
+    """极简断言收集器：失败时打印「期望 vs 实际」，最后汇总。"""
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.failures: list[str] = []
+
+    def check(self, label: str, ok: bool, expect: str, actual: str) -> None:
+        self.total += 1
+        if ok:
+            print(f"   ✅ {label}")
+        else:
+            self.failures.append(label)
+            print(f"   ❌ {label}")
+            print(f"        期望: {expect}")
+            print(f"        实际: {actual}")
+
+    def eq(self, label: str, actual, expect) -> None:
+        self.check(label, actual == expect, repr(expect), repr(actual))
+
+    def contains(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle in haystack, f"包含 {needle!r}", _clip(haystack))
+
+    def absent(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle not in haystack, f"不包含 {needle!r}", _clip(haystack))
+
+    def true(self, label: str, cond: bool, detail: str = "") -> None:
+        self.check(label, cond, "True", f"False {detail}".strip())
+
+    def raises(self, label: str, fn, exc_type) -> None:
+        """断言 fn() 抛出指定异常（用来验证"非法输入必须报错"）。"""
+        try:
+            got = fn()
+        except exc_type:
+            self.total += 1
+            print(f"   ✅ {label}")
+            return
+        except Exception as exc:                     # noqa: BLE001
+            self.check(label, False, f"抛 {exc_type.__name__}", f"抛了 {exc!r}")
+            return
+        self.check(label, False, f"抛 {exc_type.__name__}", f"没有抛异常，返回 {got!r}")
+
+
+def _clip(text: str, limit: int = 200) -> str:
+    flat = " ".join(str(text).split())
+    return repr(flat[:limit] + ("…" if len(flat) > limit else ""))
+
+
+def self_test() -> int:
+    """离线自测，返回失败项数量。0 = 全部通过。"""
+    t = _SelfTest()
+
+    # ══ A. 端口表达式解析 ═════════════════════════════════════════
+    print("\n[A] parse_ports()：端口表达式的解析与校验")
+    t.eq("top → 内置常用端口表（去重 + 升序）",
+         parse_ports("top"), sorted(set(TOP_PORTS)))
+    t.eq("大小写无关：TOP / Common 都认", parse_ports("TOP"), parse_ports("common"))
+    t.eq("单个端口", parse_ports("80"), [80])
+    t.eq("连续范围展开", parse_ports("8000-8003"), [8000, 8001, 8002, 8003])
+    t.eq("逗号分隔", parse_ports("443,80,22"), [22, 80, 443])
+    t.eq("混合写法（清单 + 范围）", parse_ports("22,8000-8002"), [22, 8000, 8001, 8002])
+    t.eq("重复端口被去重（确定性输出）", parse_ports("80,80,22,80"), [22, 80])
+    t.eq("容忍空格与空片段（用户手写时很常见）", parse_ports(" 22 , , 80 "), [22, 80])
+    t.eq("单端口范围视为该端口本身", parse_ports("8080-8080"), [8080])
+
+    t.raises("端口 0 越界 → ValueError（不静默忽略）", lambda: parse_ports("0"), ValueError)
+    t.raises("端口 65536 越界 → ValueError", lambda: parse_ports("65536"), ValueError)
+    t.raises("倒序范围 80-79 → ValueError", lambda: parse_ports("80-79"), ValueError)
+    t.raises("非数字 abc → ValueError", lambda: parse_ports("abc"), ValueError)
+    t.raises("范围上界越界 1-70000 → ValueError",
+             lambda: parse_ports("1-70000"), ValueError)
+    t.raises("浮点端口 80.5 → ValueError", lambda: parse_ports("80.5"), ValueError)
+
+    # ══ B. 服务指纹识别 ═══════════════════════════════════════════
+    print("\n[B] identify_service()：12 条指纹逐条回归")
+    fingerprint_cases = [
+        (b"HTTP/1.1 200 OK\r\nServer: nginx\r\n", "http"),
+        (b"HTTP/1.0 400 Bad Request\r\n", "http"),
+        (b"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1\r\n", "ssh"),
+        (b"220 mail.example.com ESMTP Postfix\r\n", "smtp"),
+        (b"220 ProFTPD 1.3.5 Server ready\r\n", "ftp"),
+        (b"+OK Dovecot ready.\r\n", "pop3"),
+        (b"* OK [CAPABILITY IMAP4rev1] ready\r\n", "imap"),
+        (b"\x00\x00\x00\x0a5.7.38-0ubuntu\x00mysql_native_password", "mysql"),
+        (b"-NOAUTH Authentication required.\r\n", "redis"),
+        (b"+PONG\r\n", "redis"),
+        (b"isdbgrid", "mongodb"),
+        (b"RFB 003.008\n", "vnc"),
+        (b"\x03\x00\x00\x13\x0e\xe0\x00\x00\x00\x00\x00", "rdp"),
+        (b"\xff\xfb\x01\xff\xfb\x03", "telnet"),
+        (b"", ""),
+        (b"some unknown private protocol payload", ""),
+    ]
+    for banner, expect in fingerprint_cases:
+        got = identify_service(banner)
+        label = f"{expect or '（未识别）'} ← {_clip(banner.decode('utf-8', 'replace'))}"
+        t.eq(label, got, expect)
+
+    t.eq("HTTP 指纹要求是行首且状态码是 3 位数（避免把正文里的 HTTP 字样当协议）",
+         identify_service(b"not at line start HTTP/1.1 200 OK"), "")
+    t.eq("SMTP 与 FTP 都是 220 开头，靠关键字区分：ESMTP → smtp",
+         identify_service(b"220 mx.example.com ESMTP\r\n"), "smtp")
+    t.eq("220 且含 FTP → ftp", identify_service(b"220 FTP Service\r\n"), "ftp")
+
+    # ══ C. 探针选择策略 ═══════════════════════════════════════════
+    print("\n[C] choose_probe()：三级探针策略")
+    t.true("80 在 Web 端口清单 → 发 HTTP 请求",
+           (choose_probe(80) or b"").startswith(b"GET / HTTP/1.0"))
+    t.true("8080 同样 → 发 HTTP 请求",
+           (choose_probe(8080) or b"").startswith(b"GET / HTTP/1.0"))
+    t.eq("6379（Redis 默认端口）→ 发 PING", choose_probe(6379), b"PING\r\n")
+    t.eq("22（协议自己会先打招呼）→ 只读，不发探针", choose_probe(22), None)
+    t.eq("25（SMTP）→ 只读", choose_probe(25), None)
+    t.true("HTTP 探针带 Host 头并以空行结束（合法的最小请求）",
+           (choose_probe(443) or b"").endswith(b"\r\n\r\n"),
+           f"{choose_probe(443)!r}")
+
+    # 动态找一个"系统与内置表都不认识"的高位端口，验证第 3 级启发式
+    unknown_port = next(
+        (p for p in range(49152, 65000)
+         if not service_name(p) and p not in HTTP_HINT_PORTS),
+        None,
+    )
+    t.true("能找到 /etc/services 与内置表都不认识的端口（动态探测，不写死）",
+           unknown_port is not None)
+    t.true(f"未知高位端口 {unknown_port} → 猜它是 Web（现代服务常跑在随机高位端口）",
+           (choose_probe(unknown_port) or b"").startswith(b"GET / HTTP/1.0"),
+           f"{choose_probe(unknown_port)!r}") if unknown_port else None
+
+    # ══ D. 三态判定 ═══════════════════════════════════════════════
+    print("\n[D] state_for_errno()：closed / filtered 绝不能混淆")
+    t.eq("ECONNREFUSED(111) → closed（对方回了 RST，说明主机在、端口没监听）",
+         state_for_errno(errno.ECONNREFUSED), "closed")
+    t.eq("ETIMEDOUT(110) → filtered（被 DROP，静默丢弃）",
+         state_for_errno(errno.ETIMEDOUT), "filtered")
+    t.eq("EHOSTUNREACH(113) → filtered", state_for_errno(errno.EHOSTUNREACH), "filtered")
+    t.eq("ENETUNREACH(101) → filtered", state_for_errno(errno.ENETUNREACH), "filtered")
+    t.eq("ECONNRESET(104) → filtered（连接被重置，没有正常的服务响应）",
+         state_for_errno(errno.ECONNRESET), "filtered")
+    t.eq("未知 errno → filtered（保守：不把不确定的情况说成 closed）",
+         state_for_errno(12345), "filtered")
+    t.eq("errno 为 None（平台未提供）→ filtered 而不是崩溃",
+         state_for_errno(None), "filtered")
+
+    # ══ E. 导出格式（写在临时目录，不污染工作树） ═════════════════
+    print("\n[E] 导出：JSON / CSV / Markdown 三件套")
+    sample = [
+        PortResult(host="127.0.0.1", port=22, state="open", service="ssh",
+                   banner="SSH-2.0-OpenSSH_8.9p1", latency_ms=1.23),
+        PortResult(host="127.0.0.1", port=80, state="open", service="http",
+                   banner="HTTP/1.0 200 OK | extra", latency_ms=0.45),
+        PortResult(host="127.0.0.1", port=8080, state="filtered",
+                   error="timeout", latency_ms=600.0),
+    ]
+    with tempfile.TemporaryDirectory(prefix="day153-selftest-") as td:
+        t.true("自测的临时目录在系统 temp 下（不写进仓库工作树）",
+               td.startswith(tempfile.gettempdir()), td)
+
+        json_path = os.path.join(td, "r.json")
+        csv_path = os.path.join(td, "r.csv")
+        md_path = os.path.join(td, "r.md")
+        export_json(sample, "127.0.0.1", 1.5, json_path)
+        export_csv(sample, csv_path)
+        export_markdown(sample, "127.0.0.1", 1.5, md_path)
+
+        for p in (json_path, csv_path, md_path):
+            t.true(f"生成了 {os.path.basename(p)}", os.path.exists(p))
+
+        # JSON：可被 json.loads 解析，且有 meta 段（溯源信息）
+        payload = json.loads(io.open(json_path, encoding="utf-8").read())
+        t.eq("JSON 含 meta 段（报告必须自带上下文）", "meta" in payload, True)
+        t.eq("meta.host 正确", payload["meta"]["host"], "127.0.0.1")
+        t.eq("meta.total_ports 正确", payload["meta"]["total_ports"], 3)
+        t.eq("meta.open_ports 统计正确（2 个 open）",
+             payload["meta"]["open_ports"], 2)
+        t.eq("results 条数正确", len(payload["results"]), 3)
+        t.eq("PortResult 字段完整（dataclass → asdict 无损）",
+             sorted(payload["results"][0]),
+             ["banner", "error", "host", "latency_ms", "port", "service", "state"])
+
+        # CSV：表头固定，行数 = 数据行 + 1，且能被 DictReader 读回来
+        csv_text = io.open(csv_path, encoding="utf-8").read()
+        t.eq("CSV 表头固定（Excel / pandas 的对接契约）",
+             csv_text.splitlines()[0],
+             "host,port,state,service,latency_ms,banner,error")
+        t.eq("CSV 行数 = 数据行 3 + 表头 1", len(csv_text.strip().splitlines()), 4)
+        with io.open(csv_path, encoding="utf-8", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+        t.eq("DictReader 读回的端口顺序与输入一致",
+             [int(r["port"]) for r in rows], [22, 80, 8080])
+        t.eq("CSV 里 filtered 端口保留了错误原因（便于排查）",
+             rows[2]["error"], "timeout")
+
+        # Markdown：给人和 wiki 看，管道符必须转义，否则表格会错位
+        md = io.open(md_path, encoding="utf-8").read()
+        t.contains("Markdown 含目标信息（可溯源）", md, "`127.0.0.1`")
+        t.contains("Markdown 有开放端口小节", md, "## 开放端口")
+        t.contains("Markdown 有过滤/关闭端口小节", md, "## 关闭 / 过滤端口")
+        t.absent("banner 里的裸管道符被转义（否则表格列错位）",
+                 md, "OK | extra")
+        t.contains("转义后的管道符写法", md, r"OK \| extra")
+        t.contains("报告带免责声明（工具自身也要守边界）", md, "未授权")
+
+    # ══ F. 内置端口表自洽性 ═══════════════════════════════════════
+    print("\n[F] TOP_PORTS 表自洽性")
+    t.eq("TOP_PORTS 无重复", len(TOP_PORTS), len(set(TOP_PORTS)))
+    t.eq("TOP_PORTS 升序", TOP_PORTS, sorted(TOP_PORTS))
+    t.true("TOP_PORTS 全在合法范围", all(1 <= p <= 65535 for p in TOP_PORTS),
+           f"{[p for p in TOP_PORTS if not 1 <= p <= 65535]}")
+    t.true("覆盖了数据库/中间件的高危默认端口",
+           {3306, 5432, 6379, 9200, 27017, 11211} <= set(TOP_PORTS))
+    t.true("FALLBACK_SERVICES 的键都是合法端口",
+           all(1 <= p <= 65535 for p in FALLBACK_SERVICES))
+    t.eq("FALLBACK_SERVICES 里 redis 指向 6379",
+         FALLBACK_SERVICES.get(6379), "redis")
+
+    print(f"\n   断言总数: {t.total}，失败: {len(t.failures)}")
+    return len(t.failures)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # ⚠️ --self-test 必须在 enforce_scope() 之前处理：离线自测不扫任何目标，
+    #    也就不该被"授权护栏"拦下（否则自测会莫名其妙地要求 --i-own-this-target）。
+    if args.self_test:
+        failures = self_test()
+        print()
+        if failures:
+            print(f"❌ SELF-TEST FAILED：{failures} 项断言未通过"
+                  "（请回看上面打印的「期望 / 实际」）")
+            return 1
+        print("✅ SELF-TEST OK（解析 / 指纹 / 三态 / 导出断言全部通过；"
+              "未扫描任何目标，未污染工作树）")
+        return 0
+
     enforce_scope(args)
 
     if not (1 <= args.workers <= 500):
@@ -624,10 +907,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  open={len(opens)}  filtered={len(filtered)}  closed={len(closed)}")
 
     # ── 导出 ──
-    os.makedirs(args.out_dir, exist_ok=True)
-    json_path = os.path.join(args.out_dir, "scan-result.json")
-    csv_path = os.path.join(args.out_dir, "scan-result.csv")
-    md_path = os.path.join(args.out_dir, "scan-report.md")
+    # 【为什么默认写临时目录？】扫描产物是演示/中间数据，不该落进代码仓库：
+    #   ① 工作树永远是脏的（git status 一堆 noise）；
+    #   ② 扫描报告里含内网端口/服务信息，误提交等于把资产清单推到远端。
+    if args.out_dir:
+        out_dir = args.out_dir
+        os.makedirs(out_dir, exist_ok=True)
+    else:
+        out_dir = tempfile.mkdtemp(prefix="day153-scan-")
+    json_path = os.path.join(out_dir, "scan-result.json")
+    csv_path = os.path.join(out_dir, "scan-result.csv")
+    md_path = os.path.join(out_dir, "scan-report.md")
     export_json(results, args.target, elapsed, json_path)
     export_csv(results, csv_path)
     export_markdown(results, args.target, elapsed, md_path)
@@ -635,6 +925,9 @@ def main(argv: list[str] | None = None) -> int:
     print("已导出：")
     for p in (json_path, csv_path, md_path):
         print(f"  {p}  ({os.path.getsize(p)} 字节)")
+    if not args.out_dir:
+        print(f"  （默认落在系统临时目录 {out_dir}，不污染仓库；"
+              f"用 --out-dir 可指定固定位置）")
 
     if opens:
         print("\n开放端口一览：")

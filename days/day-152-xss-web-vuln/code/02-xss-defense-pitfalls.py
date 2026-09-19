@@ -28,11 +28,13 @@ Day 152 · 示例 02：XSS 防护原理与常见坑（进阶用法）
     python3 02-xss-defense-pitfalls.py
 """
 
+import argparse
 import html
 import http.server
 import json
 import re
 import secrets
+import sys
 import threading
 import urllib.parse
 import urllib.request
@@ -446,63 +448,219 @@ def demo_pitfalls() -> None:
     pitfall_7_innerhtml()
 
 
+class _SelfTest:
+    """极简断言收集器：把「期望 vs 实际」都记下来，最后一次性汇报。
+
+    【为什么不用 assert？】
+      1) `python3 -O` 会把 assert 整条优化掉 —— 质量检查不能建在这上面；
+      2) assert 在第一个失败点就抛异常，看不到"一共有几处不对"。
+    收集式自测能一次给出全貌，失败时明确打印期望值与实际值。
+    """
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.failures: list[str] = []
+
+    def check(self, label: str, ok: bool, expect: str, actual: str) -> None:
+        self.total += 1
+        if ok:
+            print(f"   ✅ {label}")
+        else:
+            self.failures.append(label)
+            print(f"   ❌ {label}")
+            print(f"        期望: {expect}")
+            print(f"        实际: {actual}")
+
+    def eq(self, label: str, actual, expect) -> None:
+        self.check(label, actual == expect, repr(expect), repr(actual))
+
+    def contains(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle in haystack, f"包含 {needle!r}", _clip(haystack))
+
+    def absent(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle not in haystack, f"不包含 {needle!r}", _clip(haystack))
+
+
+def _clip(text: str, limit: int = 160) -> str:
+    """把长文本压成一行并截断，避免自测失败时刷屏。"""
+    flat = " ".join(str(text).split())
+    return repr(flat[:limit] + ("…" if len(flat) > limit else ""))
+
+
+class _SanitizedOutputChecker(HTMLParser):
+    """把"净化后的 HTML"再解析一遍，找出其中残留的**可执行结构**。
+
+    判据有三条（任何一条命中都算不安全）：
+        ① 出现了白名单之外的标签（含 script / iframe / svg / object …）；
+        ② 出现了 on* 事件处理器属性，或该标签不允许的属性；
+        ③ href/src 用了 http/https/mailto 之外的协议（javascript: / data: …）。
+    注意：`handle_data` 收到的文本即使写着 "onerror=" 也只是**文本**，不算命中 ——
+    这正是"要看解析结果、不要看字符串"的原因。
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.bad: list[str] = []
+
+    def _inspect(self, tag: str, attrs: list) -> None:
+        tag = tag.lower()
+        if tag not in MiniSanitizer.ALLOWED_TAGS:
+            self.bad.append(f"非白名单标签 <{tag}>")
+            return
+        allowed = MiniSanitizer.ALLOWED_ATTRS.get(tag, set())
+        for name, value in attrs:
+            name = name.lower()
+            if name.startswith("on"):
+                self.bad.append(f"事件处理器属性 <{tag} {name}>")
+            elif name not in allowed:
+                self.bad.append(f"越权属性 <{tag} {name}>")
+            elif name in {"href", "src"} and value:
+                cleaned = "".join(ch for ch in value if ord(ch) > 32).lower()
+                scheme = cleaned.split(":", 1)[0] if ":" in cleaned else ""
+                if scheme and scheme not in MiniSanitizer.ALLOWED_SCHEMES:
+                    self.bad.append(f"危险协议 {cleaned!r}")
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        self._inspect(tag, attrs)
+
+    def handle_startendtag(self, tag: str, attrs: list) -> None:
+        self._inspect(tag, attrs)
+
+
+def _scan_for_executable(html_text: str) -> list[str]:
+    """返回净化结果里残留的可执行结构列表（空列表 = 安全）。"""
+    checker = _SanitizedOutputChecker()
+    checker.feed(html_text)
+    checker.close()
+    return checker.bad
+
+
 def self_test() -> int:
-    """用自测样例验证"编码 / 净化"是否真的生效。返回失败数量。"""
-    banner("③ 自测：用样本验证防护是否真的生效")
+    """离线自测：验证"编码 / 净化"是不是真的按预期工作。返回失败项数量。
 
-    failures = 0
+    【为什么自测不需要起 HTTP 服务？】
+    因为它验证的全部是**纯函数**（编码器、净化器、CSS 白名单），
+    没有 socket、没有文件、没有第三方依赖，所以：
+        · 任何环境都能跑（包括没网的 CI、容器、沙箱）；
+        · 结果**完全确定**，不会因为端口占用/防火墙而随机失败；
+        · 毫秒级返回，可以放在每次提交前跑。
+    "响应头是否真的下发到浏览器" 那部分由 demo_headers() 在**默认运行**里验证，
+    两者分工：**自测证明逻辑，演示证明链路**。
+    """
+    banner("③ 自测（--self-test 复用的同一套断言）：防护是否真的生效")
 
-    # ① 上下文编码：编码后不能再出现裸的 < > " 这三个字符
-    sub("测试 A：四种上下文编码后都不含裸的控制字符")
-    for name, fn in [
-        ("HTML 文本", enc_html_text),
-        ("HTML 属性", enc_html_attr),
-        ("URL 参数", enc_url_param),
-        ("JS 字符串", enc_js_string),
+    t = _SelfTest()
+
+    # ══ 测试 A：四种上下文的编码器 ═══════════════════════════════
+    sub("测试 A：上下文编码器 —— 编码后不能再出现该上下文里的危险字符")
+    for name, fn, forbidden in [
+        ("HTML 文本（含引号一起转义）", enc_html_text, "<>\""),
+        ("HTML 属性值（引号必须转义）", enc_html_attr, "<>\""),
+        ("URL 查询参数（percent-encoding）", enc_url_param, "<>\""),
+        # ⚠️ JS 上下文特殊：json.dumps 产出的字面量**两端必须带引号**，
+        #    所以这里只禁止裸的 < 和 >（它们能提前闭合 </script>）。
+        ("JS 字符串字面量（JSON 转义 + 硬编码转义）", enc_js_string, "<>"),
     ]:
-        ok = True
-        for label, sample in ATTACK_SAMPLES.items():
+        bad: list[tuple[str, str]] = []
+        for sample_name, sample in ATTACK_SAMPLES.items():
             out = fn(sample)
-            if fn in (enc_url_param, enc_js_string):
-                # 这两种上下文里 '<' 已经被转成 %3C / \u003c 形式，不会裸出现
-                if "<" in out:
-                    ok = False
-            else:
-                if any(ch in out for ch in "<>\""):
-                    ok = False
-        print(f"   {'✅' if ok else '❌'} {name}")
-        failures += 0 if ok else 1
+            hit = [ch for ch in forbidden if ch in out]
+            if hit:
+                bad.append((sample_name, f"残留 {hit} → {out!r}"))
+        t.check(f"{name}：{len(ATTACK_SAMPLES)} 个样本均无危险字符残留",
+                not bad,
+                "全部样本编码后不含 " + forbidden,
+                "；".join(f"{n}: {d}" for n, d in bad) if bad else "无残留")
 
-    # ② 净化器：危险标签/属性必须消失，安全标签必须保留
-    sub("测试 B：净化器（白名单）行为")
-    cases = [
-        # (输入, 必须出现, 必须不出现)
-        ("<b>加粗</b>", "<b>加粗</b>", None),
-        ("<script>x152()</script>你好", "你好", "<script>"),
-        ('<a href="javascript:x152()">链接</a>', "<a", "javascript:"),
-        # img 不在白名单：整个标签被丢弃（连属性一起），事件处理器随之消失。
-        # 若业务需要图片，必须显式加白 img 并校验 src 协议 + 限制尺寸。
-        ('<img src=x onerror="x152()">', "", "onerror"),
-        ("<p onclick='x152()'>点我</p>", "<p>点我</p>", "onclick"),
-        ("<!-- 注释 -->正文", "正文", "<!--"),
-        ("<iframe src='//evil.example'></iframe>安全", "安全", "iframe"),
-        ('<a href="https://ok.example/" title="t">好链接</a>',
-         'href="https://ok.example/"', None),
-    ]
-    for src, must_have, must_not in cases:
-        out = sanitize(src)
-        ok = must_have in out and (must_not is None or must_not not in out)
-        print(f"   {'✅' if ok else '❌'} {src!r}  →  {out!r}")
-        failures += 0 if ok else 1
+    # 属性上下文专项：引号必须被编码（否则闭合引号造事件处理器）
+    attr_out = enc_html_attr(ATTACK_SAMPLES["闭合属性造事件"])
+    t.absent('属性编码把 " 变成实体（攻击者无法闭合 value="）', attr_out, '"')
+    t.contains('属性编码结果里出现 &quot;', attr_out, "&quot;")
 
-    # ③ CSS 值白名单
+    # URL 上下文专项：& 和 = 也必须编码，否则会被"劈成"两个参数
+    t.eq("URL 编码把 & 转义（防参数注入）",
+         enc_url_param("a&b=c"), "a%26b%3Dc")
+    t.eq("URL 编码把空格转成 %20", enc_url_param("a b"), "a%20b")
+    t.eq("URL 编码把 / 也编码（safe='' 的用意）", enc_url_param("a/b"), "a%2Fb")
+
+    # JS 上下文专项：既要"不能提前闭合 <script>"，又要"数据不走样"
+    js_sample = "</script><img src=x onerror=x152()>"
+    js_out = enc_js_string(js_sample)
+    t.absent("JS 字面量里没有裸的 </script>（不会提前闭合脚本块）", js_out, "</script>")
+    t.contains("危险字符改用 \\u003c 形式表达", js_out, "\\u003c")
+    t.eq("JS 编码后仍可用 json.loads 还原出原始数据（无损，不是「洗掉」）",
+         json.loads(js_out), js_sample)
+    t.eq("U+2028 / U+2029 被显式转义（旧 JS 引擎会把它们当换行，可用来逃逸）",
+         enc_js_string("a\u2028b").count("\\u2028"), 1)
+
+    # CSS 上下文专项
     sub("测试 C：CSS 值只允许白名单格式")
-    ok_css = enc_css_value("#1a2b3c") == "#1a2b3c" and enc_css_value("red; } body{") == "#000000"
-    print(f"   {'✅' if ok_css else '❌'} 合法值保留、非法值回落默认")
-    failures += 0 if ok_css else 1
+    t.eq("合法 6 位十六进制颜色原样保留", enc_css_value("#1a2b3c"), "#1a2b3c")
+    t.eq("大写十六进制也合法", enc_css_value("#AABBCC"), "#AABBCC")
+    for bad_css in ["red; } body{", "#12345", "expression(alert(1))", "#gggggg"]:
+        t.eq(f"非法 CSS 值回落默认色: {bad_css!r}",
+             enc_css_value(bad_css), "#000000")
 
-    print(f"\n   自测失败项: {failures}")
-    return failures
+    # ══ 测试 B：白名单净化器 ═════════════════════════════════════
+    sub("测试 B：HTML 净化器（白名单）行为")
+    cases = [
+        # (输入, 必须出现, 必须不出现, 说明)
+        ("<b>加粗</b>", "<b>加粗</b>", None, "白名单标签保留"),
+        ("<script>x152()</script>你好", "你好", "<script>", "script 连内容一起丢"),
+        ('<a href="javascript:x152()">链接</a>', "<a", "javascript:",
+         "危险协议被拒绝"),
+        ('<img src=x onerror="x152()">', "", "onerror",
+         "img 不在白名单 → 整标签丢弃（含事件处理器）"),
+        ("<p onclick='x152()'>点我</p>", "<p>点我</p>", "onclick",
+         "事件处理器属性一律丢弃"),
+        ("<!-- 注释 -->正文", "正文", "<!--", "注释一律丢弃"),
+        ("<iframe src='//evil.example'></iframe>安全", "安全", "iframe",
+         "iframe 连内容一起丢"),
+        ('<a href="https://ok.example/" title="t">好链接</a>',
+         'href="https://ok.example/"', None, "合法链接保留"),
+        ("<b>半开的标签", "<b>半开的标签</b>", None, "未闭合标签被补全（输出始终合法）"),
+        ("&lt;script&gt;", "&lt;script&gt;", "<script>",
+         "实体化的输入不会被「复活」成真标签"),
+        ("<div><script>坏</script>安全文字</div>", "安全文字", "script",
+         "嵌套在允许标签里的 script 依然被丢弃"),
+        ("<svg><script>x152()</script></svg>ok", "ok", "svg",
+         "svg/math 等外来命名空间整体丢弃（mXSS 常见入口）"),
+        ('<a href="java\tscript:x152()">带制表符</a>', "<a", "javascript:",
+         "协议解析前先剥掉控制字符（java\\tscript: 是经典绕过）"),
+    ]
+    for src_html, must_have, must_not, why in cases:
+        out = sanitize(src_html)
+        ok = must_have in out and (must_not is None or must_not not in out)
+        t.check(f"净化 {why}: {src_html!r}",
+                ok,
+                f"含 {must_have!r}" + (f" 且不含 {must_not!r}" if must_not else ""),
+                f"{out!r}")
+
+    # 语料级断言：不靠字符串匹配，而是**把净化结果再解析一遍**找可执行结构。
+    # 【为什么这样更可靠？】字符串里出现 "onmouseover=" 未必是属性（可能只是文本），
+    # 而"解析后是否存在事件处理器属性 / 非白名单标签 / 危险协议"才是真正的判据。
+    leftovers = []
+    for name, sample in ATTACK_SAMPLES.items():
+        out = sanitize(sample)
+        leftovers += [f"{name} → {item}" for item in _scan_for_executable(out)]
+    t.check("所有攻击样本净化后：再解析也不含可执行结构（事件属性/非白名单标签/危险协议）",
+            not leftovers, "无残留", "；".join(leftovers) if leftovers else "无残留")
+
+    # 定式（幂等）属性：净化器的输出再净化一次必须一模一样 —— 否则说明
+    # "净化后的内容"还有第二遍才消失的东西，不能直接当可信 HTML 使用。
+    non_idempotent = []
+    for name, sample in ATTACK_SAMPLES.items():
+        once = sanitize(sample)
+        twice = sanitize(once)
+        if once != twice:
+            non_idempotent.append(f"{name}: 第一次 {once!r} ≠ 第二次 {twice!r}")
+    t.check("净化是幂等的（净化输出再净化不变 → 可以直接标记为可信 HTML）",
+            not non_idempotent, "两次结果相同",
+            "；".join(non_idempotent) if non_idempotent else "相同")
+
+    # ══ 汇总 ═════════════════════════════════════════════════════
+    print(f"\n   断言总数: {t.total}，失败: {len(t.failures)}")
+    return len(t.failures)
 
 
 def demo_headers() -> None:
@@ -572,14 +730,54 @@ def conclusion() -> None:
 """)
 
 
-def main() -> None:
+def demo() -> None:
+    """默认运行：完整教学演示。
+
+    顺序是刻意安排的：先看**错误的做法**（坑），再用自测断言证明
+    **正确的做法真的有效**，最后把"配置"落到真实的 HTTP 响应头上验证。
+    """
     demo_pitfalls()
     failures = self_test()
     demo_headers()
     conclusion()
 
     print(f"自测失败项合计: {failures}（0 表示全部通过）")
+    if failures:
+        print("⚠️ 有失败项：请回看上面带 ❌ 的断言，它打印了「期望 vs 实际」。")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """命令行入口。
+
+        python3 02-xss-defense-pitfalls.py              → 完整演示（含回环服务）
+        python3 02-xss-defense-pitfalls.py --self-test  → 纯离线自测
+    """
+    parser = argparse.ArgumentParser(
+        description="Day 152 示例 02：XSS 防护原理、常见坑与最小净化器",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例:\n"
+            "  python3 02-xss-defense-pitfalls.py              # 完整演示\n"
+            "  python3 02-xss-defense-pitfalls.py --self-test  # 离线自测，输出 SELF-TEST OK\n"
+        ),
+    )
+    parser.add_argument("--self-test", action="store_true",
+                        help="只跑离线自测（纯函数断言，无网络、无第三方依赖）")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        failures = self_test()
+        print()
+        if failures:
+            print(f"❌ SELF-TEST FAILED：{failures} 项断言未通过"
+                  "（请回看上面打印的「期望 / 实际」）")
+            return 1
+        print("✅ SELF-TEST OK（全部断言通过；离线运行，无 sudo、无第三方依赖）")
+        return 0
+
+    demo()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

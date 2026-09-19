@@ -7,6 +7,15 @@
 >
 > ⚠️ 全部练习只针对**本地 sqlite3 内存靶场**或**你自己的代码**。
 > 禁止对任何未授权系统做注入测试。
+>
+> ✅ **本批次新增的验收入口**：三个脚本都支持 `--self-test`（离线、确定性、不依赖计时）。
+> 一键验收：
+> ```bash
+> cd /root/code/Learn-Python
+> for f in days/day-151-sql-injection/code/*.py; do
+>   python3 -B "$f" --self-test | tail -1; done
+> # 三行都必须输出: SELF-TEST OK
+> ```
 
 ---
 
@@ -32,14 +41,23 @@
 - [ ] 能回答"能参数化 / 不能参数化"速查表（尤其是标识符那三行）
 
 ### 动手实践（跑代码 + 改代码）
+- [ ] 运行三个脚本的离线自检，全部必须 `SELF-TEST OK` 且退出码 0：
+      ```bash
+      for f in code/*.py; do python3 -B "$f" --self-test | tail -1; echo "exit=$?"; done
+      ```
+      预期：`01` 29 项 / `02` 34 项 / `03` 22 项断言全部通过
 - [ ] 运行 `code/01-sql-injection-basics.py`，看懂每个 payload 实际执行的 SQL 长什么样
 - [ ] 记录 `03` 布尔盲注的提取结果（应为 `tk9xq2`）和请求次数
 - [ ] 记录时间盲注的两组耗时（恒真 ≈ 几十~百 ms，恒假 ≈ 0ms）
+      ⚠️ 这两组数字是本日输出里唯一会浮动的部分；要确定性结论就跑 `--self-test`，
+      它用"一执行就报错的表达式"代替计时来证明同一个结论
 - [ ] 运行 `code/02-parameterized-pitfalls.py`，把 7 个坑的"❌/✅"输出都看懂
 - [ ] 在 `02` 里给 `insecure_sort()` 加一个"只允许 3 种字段"的白名单版本，并自测
 - [ ] 在 `02` 里把二次注入的 `UPDATE ... WHERE username='{stored}'` 改成按 id 定位
 - [ ] 运行 `code/03-sqli-detector.py`，数一数内置样本报了几处 HIGH（应为 7）
 - [ ] 运行 `python3 code/03-sqli-detector.py --no-dynamic`，确认静态检测独立可用
+- [ ] 把本日靶场源码自己喂给检测器，数一数报了几处 HIGH（应为 13 ——
+      全部来自故意写错的 `insecure_*` 函数，这正好是 PR 门禁的典型现场）
 - [ ] 用检测器扫你自己的任意一个项目文件：
       `python3 code/03-sqli-detector.py /path/to/your.py`
 - [ ] 运行 `echo $?` 确认退出码语义（有 HIGH ⇒ 1，干净 ⇒ 0）
@@ -47,6 +65,7 @@
 ### 输出物
 - [ ] `days/day-151-sql-injection/` 目录下 4 类文件齐全（README / code / diagrams / exercises）
 - [ ] 3 个 `.py` 全部能 `python3` 直接跑通，**无第三方依赖、无省略号**
+- [ ] 3 个 `.py` 的 `--self-test` 全部离线通过（不联网、不写文件、**不依赖计时**）
 - [ ] 能对着 `diagrams/README.md` 给别人讲一遍"拼接 vs 参数化"的协议差异
 - [ ] 能说出你要在自己项目里做的**前三条**整改动作
 

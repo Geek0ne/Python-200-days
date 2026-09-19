@@ -17,7 +17,14 @@ state 怎么比、code_challenge 怎么算、code_verifier 怎么校验。
 
 运行
 ----
-    python3 01-oauth2-auth-code-flow.py
+    python3 01-oauth2-auth-code-flow.py            # 完整流程演示（含 4 秒真实 sleep）
+    python3 01-oauth2-auth-code-flow.py --self-test # 离线自检（不联网、不 sleep，秒出结果）
+
+⚠️ 为什么要有 --self-test？
+    演示模式为了证明"令牌真的会过期"，必须真的 sleep 4 秒；
+    但 CI / 教学验证需要**确定性、快速、可重复**的结果。
+    self-test 用"手动把 expires_at 拨到过去"替代 sleep，
+    用断言把每个安全属性钉死，失败时打印实际值 vs 期望值。
 
 阅读顺序
 --------
@@ -30,6 +37,7 @@ import base64
 import hashlib
 import json
 import secrets
+import sys
 import time
 import urllib.parse
 from dataclasses import dataclass, field
@@ -445,5 +453,173 @@ def main() -> None:
 """)
 
 
+# ══════════════════════════════════════════════════════════════════
+# ④ 离线自检（--self-test）
+# ══════════════════════════════════════════════════════════════════
+
+def self_test() -> None:
+    """离线自检：不联网 / 不用第三方库 / 不 sleep，重复运行结果完全一致。
+
+    自检覆盖的安全属性（每一条都是本文件想教的东西）：
+      1) PKCE 的 S256 变换与 **RFC 7636 附录 B 官方向量**逐字节一致
+         —— 这是"我的实现没写反"的最硬证据（比自说自话强得多）；
+      2) 授权端点的四道关卡：client_id / redirect_uri 精确匹配 /
+         response_type / 公开客户端强制 PKCE(S256)；
+      3) 授权码一次性：重放同一个 code 必须被拒；
+      4) state 必须与会话中一致，否则回调直接返回 None；
+      5) PKCE：verifier 对不上 → 拒；且**拒一次不会把 code 烧掉**
+         （授权服务器在校验通过前不能置 used，否则就是自己制造 DoS 漏洞）；
+      6) 令牌生命周期：过期 / 刷新轮转 / 撤销，三件事都能被验证；
+      7) 审计日志里**不能出现**令牌或授权码原文。
+    """
+    checks: list[tuple[str, object, object]] = []
+
+    def eq(name: str, actual: object, expected: object) -> None:
+        checks.append((name, actual, expected))
+
+    # ── 1) 算法正确性：对照 RFC 7636 附录 B 的官方测试向量 ──────────
+    # 这两行常量来自 RFC 7636 Appendix B，任何实现都必须算出同一个 challenge。
+    # 踩坑点：如果你用了标准 base64（带 '+' '/' '='）或忘了 rstrip('=')，
+    #        这一条会立刻红 —— 而这正是"和第三方服务器对不上"的常见原因。
+    RFC7636_VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    RFC7636_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+    eq("S256 与 RFC 7636 官方向量一致", s256(RFC7636_VERIFIER), RFC7636_CHALLENGE)
+    eq("b64url 去掉了填充等号", b64url(b"a"), "YQ")
+
+    # ── 2) 授权端点的四道关卡 ────────────────────────────────
+    srv = MiniAuthServer()
+    base = {
+        "client_id": "webapp",
+        "redirect_uri": "https://app.example.com/callback",
+        "response_type": "code",
+    }
+    eq("未知 client_id 被拒",
+       srv.authorize({**base, "client_id": "nope"}),
+       "error: unknown client_id='nope'")
+    eq("redirect_uri 追加后缀被拒（前缀匹配是漏洞，精确匹配才拦得住）",
+       srv.authorize({**base, "redirect_uri": "https://app.example.com/callback.evil.com"}),
+       "error: redirect_uri is not exactly registered")
+    eq("response_type=token（隐式模式）被拒",
+       srv.authorize({**base, "response_type": "token"}),
+       "error: only response_type=code is supported")
+    eq("公开客户端缺 PKCE 被拒",
+       srv.authorize({"client_id": "mobileapp", "redirect_uri": "myapp://cb",
+                      "response_type": "code"}),
+       "error: PKCE required for public clients")
+    eq("PKCE plain 模式被拒",
+       srv.authorize({"client_id": "mobileapp", "redirect_uri": "myapp://cb",
+                      "response_type": "code", "code_challenge": "abc",
+                      "code_challenge_method": "plain"}),
+       "error: code_challenge_method must be S256")
+
+    # ── 3) 机密客户端完整流程（无 PKCE）─────────────────────
+    srv = MiniAuthServer()
+    web = OAuthClient(srv, "webapp", "https://app.example.com/callback", use_pkce=False)
+    url = web.build_authorize_url("profile email")
+    eq("授权 URL 使用 response_type=code", "response_type=code" in url, True)
+    eq("授权 URL 带回注册的 redirect_uri",
+       "redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback" in url, True)
+
+    cb = srv.authorize({"response_type": "code", "client_id": web.client_id,
+                        "redirect_uri": web.redirect_uri, "scope": "profile email",
+                        "state": web.session["state"]})
+    code = web.handle_callback(cb)
+    eq("回调拿到授权码（长度足够，非空）", isinstance(code, str) and len(code) >= 32, True)
+    tokens = web.exchange_code(code)
+    eq("拿到 access_token", "access_token" in tokens, True)
+    eq("access_token 只经由后端通道发放（token_type=Bearer）", tokens["token_type"], "Bearer")
+    at, rt = tokens["access_token"], tokens["refresh_token"]
+    eq("用令牌访问 /userinfo 成功",
+       srv.userinfo("Bearer " + at), {"sub": "alice", "email": "alice@example.com",
+                                      "scope": "profile email"})
+    eq("授权码重放被拒（一次性）",
+       srv.token({"grant_type": "authorization_code", "code": code,
+                  "client_id": web.client_id, "redirect_uri": web.redirect_uri,
+                  "client_secret": web.client_secret})["detail"],
+       "code already used")
+    eq("服务端审计日志记下了重放事件",
+       any("code replay" in line for line in srv.audit_log), True)
+
+    # ── 4) state 校验失败必须拒绝回调 ────────────────────────
+    web2 = OAuthClient(srv, "webapp", "https://app.example.com/callback", use_pkce=False)
+    web2.build_authorize_url("profile")
+    # ⚠️ 这里的回调**故意**用错的 state，handle_callback 会往 stdout 打印一行
+    #    "❌ state 校验失败"。自检要的是干净的 PASS/FAIL 列表，所以临时把它
+    #    的输出吞掉；断言本身照旧（这行 ❌ 在演示模式下才是给人看的）。
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        state_result = web2.handle_callback(
+            "https://app.example.com/callback?code=x&state=ATTACKER_STATE")
+    eq("state 不匹配 → 回调返回 None（拦下 CSRF）", state_result, None)
+
+    # ── 5) PKCE 公开客户端流程 ───────────────────────────────
+    srv3 = MiniAuthServer()
+    mob = OAuthClient(srv3, "mobileapp", "myapp://cb", use_pkce=True)
+    mob.build_authorize_url("profile")
+    verifier = mob.session["code_verifier"]
+    cb = srv3.authorize({"response_type": "code", "client_id": "mobileapp",
+                         "redirect_uri": "myapp://cb",
+                         "code_challenge": s256(verifier),
+                         "code_challenge_method": "S256",
+                         "state": mob.session["state"]})
+    pcode = mob.handle_callback(cb)
+    eq("PKCE 流程也能拿到授权码", isinstance(pcode, str) and len(pcode) >= 32, True)
+
+    # 攻击者拿着 code 但不知道 verifier → 换不到令牌
+    eq("PKCE verifier 对不上 → 拒绝",
+       srv3.token({"grant_type": "authorization_code", "code": pcode,
+                   "client_id": "mobileapp", "redirect_uri": "myapp://cb",
+                   "code_verifier": "attacker-guess"})["detail"],
+       "PKCE mismatch")
+    eq("PKCE 缺 verifier → 拒绝",
+       srv3.token({"grant_type": "authorization_code", "code": pcode,
+                   "client_id": "mobileapp", "redirect_uri": "myapp://cb"})["detail"],
+       "code_verifier missing")
+    # ⚠️ 关键细节：上面两次失败**不能**把 code 烧掉（否则攻击者可以故意
+    #    用错 verifier 来 DoS 合法用户）。正确实现只在全部校验通过后才置 used。
+    mob_tokens = mob.exchange_code(pcode)
+    eq("校验失败的尝试不会烧掉授权码（防 DoS）", "access_token" in mob_tokens, True)
+
+    # ── 6) 令牌生命周期：过期 / 刷新轮转 / 撤销（不 sleep）────
+    m_at = mob_tokens["access_token"]
+    m_rt = mob_tokens["refresh_token"]
+    srv3.access_tokens[m_at].expires_at = time.time() - 1     # 手动拨到过去 = 等价于睡了 3 秒
+    eq("过期 access_token 被拒",
+       srv3.userinfo("Bearer " + m_at)["detail"], "expired")
+    fresh = mob.refresh()
+    eq("refresh_token 换到新 access_token", "access_token" in fresh, True)
+    eq("refresh_token 轮转：旧的立刻失效",
+       srv3.token({"grant_type": "refresh_token", "refresh_token": m_rt})["error"],
+       "invalid_grant")
+    eq("新 access_token 可用", srv3.userinfo("Bearer " + fresh["access_token"])["sub"], "alice")
+    srv3.revoke(fresh["access_token"])
+    eq("撤销后 access_token 立刻不可用",
+       srv3.userinfo("Bearer " + fresh["access_token"]), {"error": "invalid_token"})
+
+    # ── 7) 日志卫生：审计日志不得泄漏令牌/授权码原文 ──────────
+    log_text = "\n".join(srv3.audit_log)
+    eq("审计日志不含 access_token 原文", m_at in log_text, False)
+    eq("审计日志不含授权码原文", pcode in log_text, False)
+
+    # ── 汇总输出 ────────────────────────────────────────────
+    bad = 0
+    for name, actual, expected in checks:
+        if actual == expected:
+            print(f"  [PASS] {name}")
+        else:
+            bad += 1
+            print(f"  [FAIL] {name}\n         实际值 = {actual!r}\n         期望值 = {expected!r}")
+    if bad:
+        print(f"\n自检失败：{bad}/{len(checks)} 项与期望不符")
+        sys.exit(1)
+    print(f"\n共 {len(checks)} 项断言全部通过")
+    print("SELF-TEST OK")
+    sys.exit(0)
+
+
 if __name__ == "__main__":
-    main()
+    if "--self-test" in sys.argv[1:]:
+        self_test()
+    else:
+        main()

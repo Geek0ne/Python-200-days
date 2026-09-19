@@ -35,6 +35,12 @@ import ipaddress
 import sys
 import time
 
+import warnings
+
+# scapy 导入时会触发 cryptography 的 FFDH 弃用警告（与本日内容无关），
+# 教学输出里不需要它 —— 只屏蔽这一条**特定消息**，不是全局静音。
+warnings.filterwarnings("ignore", message=".*Diffie-Hellman over finite fields.*")
+
 try:
     from scapy.all import (IP, TCP, UDP, ICMP, Ether, ARP, sr, sr1, srp,  # type: ignore
                            conf, get_if_hwaddr)
@@ -44,13 +50,80 @@ except Exception as _e:
     _SCAPY_ERR = repr(_e)
 
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# 自检辅助：失败时打印「实际值 vs 期望值」
+# ═══════════════════════════════════════════════════════════════
+def check_eq(actual, expected, label: str) -> None:
+    if actual != expected:
+        raise AssertionError(f"{label} 不匹配：实际={actual!r} 期望={expected!r}")
+
+
+def check_true(cond, label: str) -> None:
+    if not cond:
+        raise AssertionError(f"{label} 不成立：期望为真，实际为假")
+
+
+def parse_ports(spec: str) -> list:
+    """解析端口规格："22,80,443" / "80,8000-8002" / "1-3,53"。
+
+    写在模块层级（而不是塞在 main 里）是为了**可测**：
+    自检能直接调它验证边界，而不是只能靠跑一遍 CLI 才敢确认。
+    """
+    out = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            a, b = int(a), int(b)
+            if a > b:
+                a, b = b, a                 # 容错：写反了也接受
+            out += list(range(a, b + 1))
+        else:
+            out.append(int(part))
+    if not out:
+        raise ValueError(f"端口规格解析为空: {spec!r}")
+    if any(not 0 < p < 65536 for p in out):
+        raise ValueError(f"端口越界（必须是 1-65535）: {spec!r}")
+    return out
+
+
+def classify_syn_result(flags: str | None, icmp_type: int | None, timed_out: bool) -> str:
+    """SYN 扫描的结果判定（纯函数 → 可离线验证）。
+
+    这是"半开扫描"的核心逻辑，把它抽成纯函数有两个好处：
+      ① 不需要网卡/root 就能验证判定是否正确；
+      ② 判定规则集中在一处，改阈值不用翻遍代码。
+    """
+    if timed_out:
+        return "filtered"
+    if icmp_type is not None:
+        return f"icmp-unreachable(type={icmp_type})"
+    if flags and "SA" in flags:
+        return "open"
+    if flags and ("RA" in flags or flags == "R"):
+        return "closed"
+    return f"other(flags={flags})"
+
+
 # ═══════════════════════════════════════════════════════════════
 # 合规护栏
 # ═══════════════════════════════════════════════════════════════
 def parse_targets(spec: str) -> list:
-    """支持: 127.0.0.1 / 192.168.1.0/30 / 192.168.1.1-10"""
+    """支持: 127.0.0.1 / 192.168.1.0/30 / 192.168.1.1-10 / ::1
+
+    ⚠️ 坑：IPv6 地址里天然带 ":"，而 IPv6 的"区间"写法（fe80::1-3）
+       无法用"最后一段整数递增"来表达。所以这里先判断"是不是 IPv6"，
+       是就直接当单地址处理 —— 否则 rsplit(".") 会抛 ValueError 把整个脚本搞崩。
+       这是"输入解析必须先分类型"的一个典型例子。
+    """
     out = []
     spec = spec.strip()
+    if ":" in spec:                      # IPv6：不支持区间，按单地址处理
+        return [spec]
     if "/" in spec:
         net = ipaddress.ip_network(spec, strict=False)
         out = [str(ip) for ip in net.hosts()]
@@ -218,88 +291,115 @@ def cmd_ports(target: str, dports: list, timeout: float = 1.5, retry: int = 1) -
 # ═══════════════════════════════════════════════════════════════
 def self_test() -> int:
     print("=" * 72)
-    print("离线自检")
+    print("离线自检：护栏 / 目标解析 / 结果判定 / 报文构造（不需要 root 与网卡）")
     print("=" * 72)
 
-    # 目标解析
-    assert parse_targets("127.0.0.1") == ["127.0.0.1"]
-    assert parse_targets("192.168.1.1-4") == ["192.168.1.1", "192.168.1.2",
-                                              "192.168.1.3", "192.168.1.4"]
-    net = parse_targets("192.168.1.0/30")
-    assert net == ["192.168.1.1", "192.168.1.2"], net
-    print(f"✅ parse_targets(): 单点/区间/网段都正确（/30 → {net}）")
+    # ── 1) 目标解析 ──
+    check_eq(parse_targets("127.0.0.1"), ["127.0.0.1"], "单点解析")
+    check_eq(parse_targets("192.168.1.1-4"),
+             ["192.168.1.1", "192.168.1.2", "192.168.1.3", "192.168.1.4"], "区间解析")
+    check_eq(parse_targets("192.168.1.0/30"), ["192.168.1.1", "192.168.1.2"], "/30 网段")
+    check_eq(parse_targets("::1"), ["::1"], "IPv6 单地址")
+    check_eq(parse_targets("fe80::1-3"), ["fe80::1-3"], "IPv6 不做区间展开（防崩）")
+    check_eq(parse_targets(" 10.0.0.5 "), ["10.0.0.5"], "首尾空格应被去掉")
+    print("✅ parse_targets(): 单点/区间/网段/IPv6 全部正确，且含空格的输入被清理")
 
-    # 护栏
+    # ── 2) 合规护栏 ──
     allowed, rejected = check_targets(
-        ["127.0.0.1", "10.1.2.3", "192.168.0.1", "8.8.8.8", "239.1.1.1", "bad"])
-    assert "127.0.0.1" in allowed and "10.1.2.3" in allowed
-    assert "192.168.0.1" in allowed
-    assert len(allowed) == 3 and len(rejected) == 3, (allowed, rejected)
+        ["127.0.0.1", "10.1.2.3", "192.168.0.1", "172.16.9.9", "8.8.8.8",
+         "1.1.1.1", "239.1.1.1", "224.0.0.1", "bad", ""])
+    check_eq(allowed, ["127.0.0.1", "10.1.2.3", "192.168.0.1", "172.16.9.9"],
+             "放行列表（4 个私网/回环）")
     reasons = dict(rejected)
-    assert reasons["8.8.8.8"].startswith("公网")
-    assert reasons["239.1.1.1"].startswith("组播")
+    check_eq(len(rejected), 6, "拒绝条数")
+    check_true(reasons["8.8.8.8"].startswith("公网"), "公网拒绝原因")
+    check_true(reasons["239.1.1.1"].startswith("组播"), "组播拒绝原因")
+    check_true(reasons["bad"] == "非法 IP", "非法输入原因")
     print(f"✅ check_targets(): 放行 {allowed}")
     for t, r in rejected:
-        print(f"   拒绝 {t}: {r}")
+        print(f"   拒绝 {t!r}: {r}")
 
-    # 端口规格解析
-    def parse_ports(s):
-        out = []
-        for part in s.split(","):
-            part = part.strip()
-            if "-" in part:
-                a, b = part.split("-")
-                out += list(range(int(a), int(b) + 1))
-            elif part:
-                out.append(int(part))
-        return out
-    assert parse_ports("22,80,443") == [22, 80, 443]
-    assert parse_ports("80,8000-8002") == [80, 8000, 8001, 8002]
-    print("✅ parse_ports(): 逗号与区间混写正确")
+    # ── 3) 端口规格解析 ──
+    check_eq(parse_ports("22,80,443"), [22, 80, 443], "逗号分隔")
+    check_eq(parse_ports("80,8000-8002"), [80, 8000, 8001, 8002], "逗号+区间")
+    check_eq(parse_ports("100-102"), [100, 101, 102], "纯区间")
+    check_eq(parse_ports("8080-8080"), [8080], "单元素区间")
+    check_eq(parse_ports("100-98"), [98, 99, 100], "写反的顺序也应容错")
+    check_eq(parse_ports("22,,80"), [22, 80], "多余逗号应被忽略")
+    for bad in ("", "   ", "0", "70000", "abc"):
+        raised = False
+        try:
+            parse_ports(bad)
+        except ValueError:
+            raised = True
+        check_true(raised, f"非法端口规格 {bad!r} 应抛 ValueError")
+    print("✅ parse_ports(): 逗号/区间/顺序容错/越界与非法输入拦截 全部正确")
 
-    # SYN 结果判定逻辑（纯函数版，不联网即可验证）
-    def classify(flags: str | None, icmp_type: int | None, timeout: bool):
-        if timeout:
-            return "filtered"
-        if icmp_type is not None:
-            return f"icmp-unreachable(type={icmp_type})"
-        if flags and "SA" in flags:
-            return "open"
-        if flags and ("RA" in flags or flags == "R"):
-            return "closed"
-        return f"other(flags={flags})"
-    assert classify(None, None, True) == "filtered"
-    assert classify("SA", None, False) == "open"
-    assert classify("RA", None, False) == "closed"
-    assert classify("R", None, False) == "closed"
-    assert classify(None, 3, False).startswith("icmp-unreachable")
-    print("✅ classify(): filtered / open / closed / icmp 判定正确")
+    # ── 4) SYN 扫描结果判定（半开扫描的核心逻辑）──
+    check_eq(classify_syn_result(None, None, True), "filtered", "超时 → filtered")
+    check_eq(classify_syn_result("SA", None, False), "open", "SYN-ACK → open")
+    check_eq(classify_syn_result("RA", None, False), "closed", "RST+ACK → closed")
+    check_eq(classify_syn_result("R", None, False), "closed", "纯 RST → closed")
+    check_eq(classify_syn_result(None, 3, False), "icmp-unreachable(type=3)",
+             "ICMP 不可达")
+    check_eq(classify_syn_result("A", None, False), "other(flags=A)", "异常标志组合")
+    check_true(not classify_syn_result(None, None, True).startswith("open"),
+               "超时绝不能判成 open（否则会把被防火墙挡住的端口报成开放）")
+    print("✅ classify_syn_result(): filtered/open/closed/icmp/other 五种结果判定正确")
 
     if not HAVE_SCAPY:
         print(f"\nℹ️  未安装 scapy（{_SCAPY_ERR}），跳过报文构造自检。")
         return 0
 
-    # 报文构造：TTL 阶梯（traceroute 的核心）
+    # ── 5) 报文构造（离线，只构造不发送）──
     ladder = [IP(dst="127.0.0.1", ttl=t) / ICMP() for t in range(1, 6)]
-    assert [p[IP].ttl for p in ladder] == [1, 2, 3, 4, 5]
-    print("✅ TTL 阶梯构造: ", [p[IP].ttl for p in ladder])
+    check_eq([p[IP].ttl for p in ladder], [1, 2, 3, 4, 5], "TTL 阶梯")
+    print("✅ TTL 阶梯构造:", [p[IP].ttl for p in ladder])
 
-    # 一条语句让 Scapy 自动展开 TTL 范围
-    p = IP(dst="127.0.0.1", ttl=(1, 3)) / ICMP()
-    print(f"✅ IP(ttl=(1,3)) 等价写法: {p.summary()}（发送时展开为 3 个包）")
+    # ttl 范围写法在发送时展开成多个包（这里验证展开逻辑本身）
+    from scapy.all import IP as _IP
+    multi = _IP(dst="10.0.0.1", ttl=(1, 3))
+    check_eq([p.ttl for p in multi], [1, 2, 3], "IP(ttl=(1,3)) 的展开结果")
+    print(f"✅ IP(ttl=(1,3)) 展开为 {[p.ttl for p in multi]} 个包（traceroute 的一行写法）")
 
-    # ARP 请求
-    a = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst="192.168.1.0/30")
-    assert a[ARP].op == 1, "默认应是 ARP 请求(1)"
-    print(f"✅ ARP 请求构造: {a.summary()}")
+    # ARP 请求：必须是 op=1、广播、且 hwdst 全 0
+    # 显式给 psrc：否则 scapy 会拿本机默认 IP 当发送方地址，
+    # 自检输出就随环境变化（自检的输出必须可复现，才能写进 README 当"预期输出"）
+    a = Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst="192.168.1.0/30", psrc="10.0.0.1")
+    check_eq(a[ARP].op, 1, "ARP 请求的 op（1=who-has）")
+    check_eq(a[Ether].dst, "ff:ff:ff:ff:ff:ff", "ARP 请求必须是广播帧")
+    # ⚠️ 踩坑点：scapy 的 CIDR 展开和 ipaddress.hosts() **不一样**！
+    #    scapy 把 192.168.1.0/30 展开成全部 4 个地址（含网络号 .0 和广播 .3），
+    #    而本文件的 parse_targets 用 ipaddress.hosts()，只取可用的 .1 和 .2。
+    #    做网段扫描时这两个差异会直接决定"你扫了几个地址"。
+    expanded = list(a)
+    check_eq(len(expanded), 4, "scapy 对 /30 的展开个数（含网络号与广播地址）")
+    check_eq([p[ARP].pdst for p in expanded[:2]], ["192.168.1.0", "192.168.1.1"],
+             "scapy 展开的前两个地址")
+    check_eq(parse_targets("192.168.1.0/30"), ["192.168.1.1", "192.168.1.2"],
+             "本文件 parse_targets 对同一网段的展开（只取可用主机）")
+    print(f"✅ ARP 请求构造: dst={a[Ether].dst} op={a[ARP].op} "
+          f"（scapy 把 /30 展开成 4 个地址，hosts() 只取 2 个）")
 
-    # SYN 包
-    s = IP(dst="127.0.0.1") / TCP(dport=80, flags="S")
-    assert s[TCP].flags == "S"
-    print(f"✅ SYN 构造: {s.summary()}")
+    # SYN 包：半开扫描的最小单元 —— 只有 SYN，没有 ACK
+    syn = IP(dst="127.0.0.1") / TCP(dport=80, flags="S", seq=1000)
+    check_eq(syn[TCP].flags, "S", "SYN 包的标志位")
+    check_true("A" not in str(syn[TCP].flags), "半开扫描的 SYN 不能带 ACK")
+    check_eq(syn[IP].dst, "127.0.0.1", "SYN 包的目的地址")
+    print(f"✅ SYN 构造: {syn.summary()}")
 
-    print("\n全部离线自检通过。")
-    print("\n真实运行（需要 sudo）：")
+    # ICMP Echo Request / Reply 的类型号（ping 的判定依据）
+    check_eq((IP(dst="127.0.0.1") / ICMP(type=8))[ICMP].type, 8, "Echo Request 类型")
+    check_eq((IP(dst="127.0.0.1") / ICMP(type=0))[ICMP].type, 0, "Echo Reply 类型")
+    print("✅ ICMP 类型号: 8=Echo Request / 0=Echo Reply（ping 的判定依据）")
+
+    # 护栏：伪造源 IP 的检查 —— 示例代码里源地址必须落在白名单内
+    for src in ("127.0.0.1", "10.0.0.1", "192.168.1.1"):
+        check_true(check_targets([src])[0] == [src], f"本机/私网源地址 {src} 应放行")
+    check_true(check_targets(["8.8.8.8"])[0] == [], "公网源地址必须被拒绝（不提供伪造功能）")
+    print("✅ 源地址护栏: 只允许本机/私网（本工具不提供任何源 IP 伪造能力）")
+
+    print("\n真实运行（需要 sudo；目标必须是本机或自己的私网）：")
     print("  sudo python3 03-network-probe.py ping 127.0.0.1")
     print("  sudo python3 03-network-probe.py trace 127.0.0.1 --max-hops 5")
     print("  sudo python3 03-network-probe.py ports 127.0.0.1 --dports 22,80,443")
@@ -336,7 +436,16 @@ def main() -> int:
     if args.self_test or not args.cmd:
         if not args.cmd:
             print("ℹ️  未指定子命令，转为离线自检。\n")
-        return self_test()
+        try:
+            self_test()
+        except AssertionError as e:
+            print(f"SELF-TEST FAIL: {e}")
+            return 1
+        except Exception as e:                    # noqa: BLE001
+            print(f"SELF-TEST FAIL: {type(e).__name__}: {e}")
+            return 1
+        print("SELF-TEST OK")
+        return 0
 
     if not HAVE_SCAPY:
         print(f"❌ 未安装 scapy：{_SCAPY_ERR}\npip install scapy")
@@ -370,14 +479,11 @@ def main() -> int:
     if args.cmd == "trace":
         return cmd_trace(args.target, args.max_hops, args.timeout)
     if args.cmd == "ports":
-        dports = []
-        for part in args.dports.split(","):
-            part = part.strip()
-            if "-" in part:
-                a, b = part.split("-")
-                dports += list(range(int(a), int(b) + 1))
-            elif part:
-                dports.append(int(part))
+        try:
+            dports = parse_ports(args.dports)
+        except ValueError as e:
+            print(f"⛔ 端口参数非法：{e}")
+            return 2
         return cmd_ports(args.target, dports, args.timeout)
     return 0
 

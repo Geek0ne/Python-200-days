@@ -29,10 +29,17 @@ import argparse
 import ipaddress
 import sys
 
+import warnings
+
+# scapy 导入时会触发 cryptography 的 FFDH 弃用警告（与本日内容无关），
+# 教学输出里不需要它 —— 只屏蔽这一条**特定消息**，不是全局静音。
+warnings.filterwarnings("ignore", message=".*Diffie-Hellman over finite fields.*")
+
 # ── scapy 是可选的：没装也能看构造结果/跑自检 ──
 try:
     from scapy.all import (Ether, IP, IPv6, TCP, UDP, ICMP, Raw,  # type: ignore
-                           DNS, DNSQR, send, sendp, sr1, sr, conf, hexdump)
+                           DNS, DNSQR, send, sendp, sr1, sr, conf, hexdump,
+                           rdpcap, PcapReader, wrpcap)
     HAVE_SCAPY = True
 except Exception as _e:                       # ImportError 或底层库缺失
     HAVE_SCAPY = False
@@ -40,6 +47,23 @@ except Exception as _e:                       # ImportError 或底层库缺失
 
 # 允许的目标：回环 + 私网 + 链路本地
 ALLOW_PRIVATE = True
+
+
+# ═══════════════════════════════════════════════════════════════
+# 自检辅助：失败时打印「实际值 vs 期望值」，而不是丢一个裸 AssertionError
+# ═══════════════════════════════════════════════════════════════
+def check_eq(actual, expected, label: str) -> None:
+    """断言两者相等。失败信息里必须同时出现实际值和期望值，
+    否则使用者只看到"断言失败"，还得自己去 debug 才知道差在哪。"""
+    if actual != expected:
+        raise AssertionError(f"{label} 不匹配：实际={actual!r} 期望={expected!r}")
+
+
+def check_true(cond, label: str) -> None:
+    """断言为真（用于无法用等值表达的条件）。"""
+    if not cond:
+        raise AssertionError(f"{label} 不成立：期望为真，实际为假")
+
 
 
 def check_target(dst: str) -> tuple:
@@ -214,19 +238,21 @@ def do_send(dst: str) -> None:
 # ═══════════════════════════════════════════════════════════════
 # 离线自检（不需要 root；scapy 未安装时会跳过构造部分）
 # ═══════════════════════════════════════════════════════════════
-def self_test() -> int:
+def self_test() -> None:
     print("=" * 72)
     print("离线自检")
     print("=" * 72)
 
-    # 目标护栏
-    assert check_target("127.0.0.1")[0] is True
-    assert check_target("192.168.1.10")[0] is True
-    assert check_target("10.0.0.5")[0] is True
-    assert check_target("8.8.8.8")[0] is False, "公网地址必须被拒绝"
-    assert check_target("239.0.0.1")[0] is False, "组播必须被拒绝"
-    assert check_target("not-an-ip")[0] is False
-    print("✅ check_target(): 回环/私网放行，公网/组播/非法输入拒绝")
+    # 目标护栏（离线、纯逻辑，不需要网卡/root）
+    for ok_ip in ("127.0.0.1", "192.168.1.10", "10.0.0.5", "172.16.5.5",
+                  "169.254.1.1", "::1"):
+        check_true(check_target(ok_ip)[0], f"应放行的目标 {ok_ip}（实际被拒绝）")
+    for bad_ip in ("8.8.8.8", "1.1.1.1", "239.0.0.1", "224.0.0.1", "not-an-ip", ""):
+        check_true(not check_target(bad_ip)[0], f"应拒绝的目标 {bad_ip}（实际被放行）")
+    check_eq(check_target("8.8.8.8")[1].startswith("8.8.8.8"), True, "公网拒绝原因")
+    check_eq(check_target("239.0.0.1")[1].startswith("组播"), True, "组播拒绝原因")
+    print(f"✅ check_target(): 放行 6 个回环/私网/链路本地地址，"
+          f"拒绝 6 个公网/组播/非法输入（说明：{check_target('8.8.8.8')[1][:24]}…）")
 
     if not HAVE_SCAPY:
         print(f"\nℹ️  未安装 scapy（{_SCAPY_ERR}），跳过构造自检。")
@@ -234,27 +260,30 @@ def self_test() -> int:
         return 0
 
     pkts = build_examples("127.0.0.1")
-    assert "tcp_syn" in pkts and pkts["tcp_syn"].haslayer(TCP)
-    print(f"✅ build_examples(): 构造了 {len(pkts)} 个演示包")
+    check_true("tcp_syn" in pkts and pkts["tcp_syn"].haslayer(TCP), "tcp_syn 演示包应含 TCP 层")
+    check_eq(len(pkts), 7, "演示包个数")
+    print(f"✅ build_examples(): 构造了 {len(pkts)} 个演示包 {sorted(pkts)}")
 
     p = pkts["tcp_syn"]
-    assert p[IP].dst == "127.0.0.1"
-    assert p[TCP].flags == "S", p[TCP].flags
-    assert str(p[TCP].dport) == "80"
+    check_eq(p[IP].dst, "127.0.0.1", "tcp_syn 的目的地址")
+    check_eq(p[TCP].flags, "S", "tcp_syn 的标志位")
+    check_eq(str(p[TCP].dport), "80", "tcp_syn 的目的端口")
     p[IP].ttl = 32
-    assert p[IP].ttl == 32
+    check_eq(p[IP].ttl, 32, "改字段后的 TTL")
     print("✅ 字段读写: dst/flags/dport/ttl 全部正确")
 
     # 分层顺序（注意：要用 layers()，直接 for 遍历包拿不到所有层）
     names = [c.__name__ for c in p.layers()]
-    assert names == ["IP", "TCP"], names
-    print(f"✅ 分层顺序: {names}")
+    check_eq(names, ["IP", "TCP"], "IP/TCP 的分层顺序")
+    check_eq([c.__name__ for c in pkts["tcp_http"].layers()], ["IP", "TCP", "Raw"],
+             "IP/TCP/Raw 的分层顺序")
+    print(f"✅ 分层顺序: {names}；带载荷的包: {[c.__name__ for c in pkts['tcp_http'].layers()]}")
 
     # 序列化 + 自动算长度（注意：build 的结果在字节串里，不在原对象上）
     raw = bytes(p)
     rp = IP(raw)                      # 重新 dissect 才能看到算好的 len/chksum
-    assert rp.len == len(raw), f"{rp.len} != {len(raw)}"
-    assert rp.chksum is not None, "dissect 后校验和应有值"
+    check_eq(rp.len, len(raw), "重新解析后的 IP.len（应等于整包长度）")
+    check_true(rp.chksum is not None, "dissect 后 IP.chksum 应有值（build 不回写原对象）")
     print(f"✅ 序列化: {len(raw)} 字节，IP.len = {rp.len}，"
           f"chksum = 0x{rp.chksum:04x}（build 不回写原对象，需 dissect）")
 
@@ -262,19 +291,85 @@ def self_test() -> int:
     c1 = bytes(IP(dst="127.0.0.1") / ICMP() / b"A")
     c2 = bytes(IP(dst="127.0.0.1") / ICMP() / b"AAAAAAAA")
     r1, r2 = IP(c1), IP(c2)
-    assert len(c1) != len(c2)
-    assert r1.chksum is not None and r2.chksum is not None
+    check_true(len(c1) != len(c2), "不同载荷应产生不同长度")
+    check_eq(len(c2) - len(c1), 7, "载荷长度差（8 - 1 = 7）")
+    check_true(r1.chksum is not None and r2.chksum is not None, "两侧校验和都应有值")
+    check_true(r1.chksum != r2.chksum, "载荷不同 → IP 校验和必须不同")
     print(f"✅ 载荷变化影响长度（{len(c1)} vs {len(c2)}），"
           f"IP.chksum = 0x{r1.chksum:04x} vs 0x{r2.chksum:04x}")
 
     # UDP/DNS 构造
     d = pkts["udp_dns"]
-    assert d.haslayer(UDP) and d.haslayer(DNS)
-    assert d[UDP].dport == 53
+    check_true(d.haslayer(UDP) and d.haslayer(DNS), "udp_dns 包应含 UDP 与 DNS 两层")
+    check_eq(d[UDP].dport, 53, "DNS 目的端口")
+    check_eq(d[DNS].qd.qname, b"example.com.", "DNS 查询名（注意 scaky 会补根域的点）")
     print("✅ UDP/DNS 构造: ", d.summary())
 
-    print("\n全部离线自检通过。")
-    return 0
+    # ── 纯标准库复核校验和（不依赖 scapy 的算法，用来证明"校验和是算出来的"）──
+    def _ones_complement_sum(data: bytes) -> int:
+        """16 位反码求和（纯 Python，和 Day157 的 pcap_lib 是同一套算法）。"""
+        if len(data) & 1:
+            data += b"\x00"
+        total = int.from_bytes(data, "big")
+        while total >> 16:
+            total = (total & 0xFFFF) + (total >> 16)
+        return total & 0xFFFF
+
+    hdr = bytes(IP(dst="10.0.0.1", src="10.0.0.2") / TCP(sport=12345, dport=80,
+                                                         flags="S", seq=1000))[:20]
+    check_eq(_ones_complement_sum(hdr), 0xFFFF,
+             "含校验和的 IPv4 头做反码和（正确校验和应得 0xFFFF）")
+    broken = bytearray(hdr)
+    broken[8] ^= 0x01                    # 改 TTL 一位
+    check_true(_ones_complement_sum(bytes(broken)) != 0xFFFF,
+               "改一位后校验和必须不再自洽")
+    # scapy 对同样的头算出 0x66cd（本文件开发时实测，见 README）
+    check_eq(hdr[10:12].hex(), "66cd", "IPv4 头校验和字节（scapy 计算值）")
+    print(f"✅ 纯标准库复核：IPv4 头反码和 = 0x{_ones_complement_sum(hdr):04x}（应为 0xffff），"
+          f"校验和字段 = 0x{hdr[10:12].hex()}（与 scapy 一致）")
+
+    # ── pcap 往返：用标准库写、用 scapy 读回来（格式理解的双向验证）──
+    import struct as _struct
+    import tempfile as _tempfile
+    import os as _os
+
+    def _write_pcap(path: str, frames, linktype: int = 101) -> None:
+        """最小 pcap 写入器：24 字节全局头 + 每包 16 字节记录头（全小端）。
+
+        linktype=101 是 **DLT_RAW**（裸 IP，没有链路层头）。这里故意用它，
+        因为写起来最省事；同时也是提醒：**pcap 的 network 字段决定了解析起点**
+        —— 同样的字节，标成 1(Ethernet) 就会被当成"有 14 字节以太头"来解析，
+        字段全错位。这就是"换一种抓包方式就读不出字段"的根本原因。
+        """
+        with open(path, "wb") as f:
+            f.write(_struct.pack("<IHHiIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, linktype))
+            for ts, data in frames:
+                sec = int(ts)
+                usec = int(round((ts - sec) * 1_000_000))
+                f.write(_struct.pack("<IIII", sec, usec, len(data), len(data)))
+                f.write(data)
+
+    tmpdir = _tempfile.mkdtemp(prefix="day156-01-")
+    try:
+        pcap_path = _os.path.join(tmpdir, "roundtrip.pcap")
+        frames = [(1700000000.0, bytes(IP(dst="127.0.0.1") / ICMP() / b"day156")),
+                  (1700000000.5, bytes(IP(dst="127.0.0.1") / TCP(dport=80, flags="S")))]
+        _write_pcap(pcap_path, frames)
+        back = rdpcap(pcap_path)          # 让 scapy（外部实现）读我们自己写的文件
+        check_eq(len(back), 2, "scapy 读回的包数")
+        check_eq(back[0][IP].dst, "127.0.0.1", "第 1 包目的 IP")
+        check_eq(len(bytes(back[0])), len(frames[0][1]), "第 1 包长度（字节级一致）")
+        check_eq(back[0][ICMP].type, 8, "第 1 包 ICMP 类型（8=Echo Request）")
+        check_eq(back[0][Raw].load, b"day156", "第 1 包载荷")
+        check_eq(back[1][TCP].dport, 80, "第 2 包目的端口")
+        check_eq(back[1][TCP].flags, "S", "第 2 包 TCP 标志")
+        check_eq(round(float(back[1].time) - float(back[0].time), 6), 0.5,
+                 "两个包的时间差（微秒精度）")
+        print(f"✅ pcap 往返：标准库写入 2 个包 → scapy rdpcap 读回，"
+              f"字段/载荷/时间戳全部一致（linktype=101 DLT_RAW）")
+    finally:
+        import shutil as _shutil
+        _shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def main() -> int:
@@ -286,7 +381,16 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.self_test:
-        return self_test()
+        try:
+            self_test()
+        except AssertionError as e:
+            print(f"SELF-TEST FAIL: {e}")
+            return 1
+        except Exception as e:                    # noqa: BLE001 —— 自检要报告任何异常
+            print(f"SELF-TEST FAIL: {type(e).__name__}: {e}")
+            return 1
+        print("SELF-TEST OK")
+        return 0
 
     if not HAVE_SCAPY:
         print(f"❌ 未安装 scapy：{_SCAPY_ERR}")

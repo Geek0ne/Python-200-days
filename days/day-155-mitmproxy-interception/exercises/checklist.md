@@ -21,14 +21,30 @@
 
 ### 操作层面
 
+**路径 A（真 mitmproxy，需要联网安装）：**
+
 - [ ] `pip install mitmproxy` 成功，`mitmdump --version` 有输出
 - [ ] 运行过 `mitmdump -s code/01-addon-basics.py -p 8080`
 - [ ] 用 `curl -x ... --cacert ~/.mitmproxy/mitmproxy-ca-cert.pem` 成功看到明文
 - [ ] 浏览器访问过 `http://mitm.it` 并安装 CA
-- [ ] 跑通 `python3 code/02-addon-pitfalls.py --self-test`（全绿）
-- [ ] 跑通 `python3 code/03-traffic-tool.py --self-test`（全绿）
-- [ ] 生成过一份 `report.html` 并打开看过
 - [ ] 在 `mitmproxy` TUI 里试过 `e`（编辑）+ `r`（重放）
+
+**路径 B（本地实验台，纯标准库，不需要 mitmproxy）—— 推荐先跑通这条：**
+
+- [ ] `python3 code/00-local-lab.py` 起来后，`curl -x http://127.0.0.1:<代理端口>
+      http://127.0.0.1:<上游端口>/api/users` 能拿到 JSON
+- [ ] 加载 01：`python3 code/00-local-lab.py --addon code/01-addon-basics.py`
+      能在日志里看到 `[#1] → GET ...` 与 `[1] ← 302 ...
+- [ ] 加载 02：`--addon code/02-addon-pitfalls.py --set demo_rewrite=true`，
+      访问 `/mock/users` 看到 mock 响应、访问 `/` 看到注入的 `<script>`
+- [ ] 加载 03：`--addon code/03-traffic-tool.py --set traffic_out_dir=/tmp/tr`，
+      打断点看到 `flows.jsonl` 里 `Authorization: "***"`
+- [ ] 跑通四个自检（**离线、不联网、不装第三方库，必须以 `SELF-TEST OK` 结尾**）：
+      `python3 -B code/00-local-lab.py --self-test`（50 项，含真跑 01/02/03）
+      `python3 -B code/01-addon-basics.py --self-test`（28 项）
+      `python3 -B code/02-addon-pitfalls.py --self-test`（37 项）
+      `python3 -B code/03-traffic-tool.py --self-test`（51 项）
+- [ ] 生成过一份 `report.html` 并打开看过（`03 --report flows.jsonl --out-dir /tmp/tr`）
 
 ### 产出物
 

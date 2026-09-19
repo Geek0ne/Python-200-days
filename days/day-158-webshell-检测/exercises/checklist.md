@@ -5,9 +5,12 @@
 
 ## 已验证的教学程序
 
-- [x] 三个示例的 `--self-test` 全部通过
-- [x] 规则库 20+ 条，覆盖 PHP/JSP/ASPX/ASP 四类语言
+- [x] 四个文件的 `--self-test` 全部通过（`static_scan.py` + 三个示例）
+- [x] 规则库 20 条，覆盖 PHP/JSP/ASPX/ASP 四类语言与 8 个类别
+- [x] 样本集 12 个文件，覆盖 7 类形态：命令执行 / 动态求值 / 编码混淆 /
+      文件上传落盘 / 网络外联 / 动态包含 / 回调，另有正常业务与文档误报对照组
 - [x] 加权评分与分级（clean/low/medium/high/critical）自测通过
+- [x] 命中 ≠ 恶意：`benign-upload.php`（正常上传处理器）评到 high 且被断言
 - [x] 行为信号按 (host, instance) 关联，跨主机/跨实例不误报
 - [x] 时间窗口缺失时拒绝下结论（`--no-window`）
 - [x] 只读性：扫描前后文件哈希一致；不联网、不执行、不自动删除
@@ -31,13 +34,14 @@
 在仓库根目录执行：
 
 ```bash
-python3 days/day-158-webshell-检测/code/01-static-scanner.py --self-test
+python3 days/day-158-webshell-检测/code/static_scan.py        --self-test
+python3 days/day-158-webshell-检测/code/01-static-scanner.py  --self-test
 python3 days/day-158-webshell-检测/code/02-behavior-hunter.py --self-test
 python3 days/day-158-webshell-检测/code/03-webshell-scanner.py --self-test
 python3 days/day-158-webshell-检测/code/03-webshell-scanner.py --rules
 ```
 
-全部应输出 `SELF-TEST OK`（`--rules` 输出规则表）。
+全部应输出 `SELF-TEST OK`（`--rules` 输出 20 条规则表）。
 
 思考题：被悄悄跳过（too_large / not_utf8 / symlink）的文件，比一个误报更危险吗？
 `truncated` 或 `walk_errors` 非空时，扫描结果还能当作"无告警"吗？
