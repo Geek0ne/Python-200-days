@@ -55,6 +55,7 @@ Day 153 · 示例 01：Nmap 基础命令与常用扫描类型（基础用法）
 
 from __future__ import annotations
 
+import argparse
 import http.server
 import shutil
 import socket
@@ -302,6 +303,29 @@ def nmap_version() -> str:
         return "未知"
 
 
+def build_nmap_args(target: str, ports: list[int], do_version: bool = True) -> list[str]:
+    """构造 nmap 的命令行参数（**纯函数**，便于离线自测）。
+
+    【为什么要单独抽出来？】命令行拼错一个开关，结果就会静默地不对：
+      · 少了 `-oX -`   → 拿不到 XML，解析函数返回空列表，报告里"0 个开放端口"，
+                         而你会以为是目标真的没开端口（最坑的一种 bug）；
+      · 少了 `-Pn`     → nmap 先做主机发现，防火墙丢弃 ICMP 时会把存活主机
+                         判成 down，于是"什么都不扫"；
+      · 顺序错了       → nmap 参数有位置语义，`-p` 后面必须紧跟端口表达式。
+
+    【为什么返回 list 而不是拼好的字符串？】
+    subprocess 收到 list 时**不经过 shell**，参数不会被 shell 再解释一次，
+    因此目标地址里就算出现 `;`、`|`、`$(...)` 也不会变成命令注入。
+    安全工具的"安全"，首先是不给自己制造漏洞。
+    """
+    port_arg = ",".join(str(p) for p in ports)
+    cmd = ["nmap", "-sT", "-Pn", "-T3", "-p", port_arg]
+    if do_version:
+        cmd.append("-sV")
+    cmd += ["-oX", "-", target]
+    return cmd
+
+
 def nmap_via_subprocess(target: str, ports: list[int], do_version: bool = True) -> list[dict]:
     """用 subprocess 调 nmap，并解析 `-oX -`（XML 输出到标准输出）的结果。
 
@@ -310,12 +334,7 @@ def nmap_via_subprocess(target: str, ports: list[int], do_version: bool = True) 
     （换个版本就崩）。XML（`-oX -`）是官方稳定接口，有结构、有明确字段名，
     xml.etree 十行代码就能拿全。**能被机器解析的接口，才是好接口。**
     """
-    port_arg = ",".join(str(p) for p in ports)
-    cmd = ["nmap", "-sT", "-Pn", "-T3", "-p", port_arg]
-    if do_version:
-        cmd.append("-sV")
-    cmd += ["-oX", "-", target]
-
+    cmd = build_nmap_args(target, ports, do_version)
     print(f"    $ {' '.join(cmd)}")
     try:
         proc = subprocess.run(
@@ -494,7 +513,226 @@ def connect_scan(target: str, ports: list[int], timeout: float = 0.35) -> list[i
 # ⑦ 主流程
 # ══════════════════════════════════════════════════════════════════════════
 
-def main() -> None:
+# ══════════════════════════════════════════════════════════════════════════
+# ⑧ 自测（--self-test）：纯离线验证"命令构造"与"XML 解析"
+# ══════════════════════════════════════════════════════════════════════════
+# 【为什么自测不真的启动 nmap、也不真的扫描？】
+#   本脚本里真正"有网络副作用"的只有两处：跑 nmap 子进程、connect_scan()。
+#   而真正难写对、最容易出错的地方是**另外两处纯逻辑**：
+#       · build_nmap_args() —— 命令行参数拼得对不对（少一个 -oX 就解析不出东西）；
+#       · parse_nmap_xml()   —— 第三方 XML 解析得对不对（几十行代码里全是字段名）。
+#   自测就盯着这两处：喂进**人造的** nmap XML 样本，断言解析结果精确相等。
+#   于是它不依赖系统装没装 nmap、不依赖端口是否被占用、不产生任何网络流量，
+#   在任何环境里都能一秒跑完并给出确定结论。
+#
+#   ⚠️ 一个真实踩坑点：很多环境（CI 容器）里**没有 nmap**。如果自测依赖 nmap，
+#      它就会变成"时灵时不灵"的测试，最后没人再信它。这也是把它做成纯离线的理由。
+
+class _SelfTest:
+    """极简断言收集器：失败时打印「期望 vs 实际」，最后汇总。"""
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.failures: list[str] = []
+
+    def check(self, label: str, ok: bool, expect: str, actual: str) -> None:
+        self.total += 1
+        if ok:
+            print(f"   ✅ {label}")
+        else:
+            self.failures.append(label)
+            print(f"   ❌ {label}")
+            print(f"        期望: {expect}")
+            print(f"        实际: {actual}")
+
+    def eq(self, label: str, actual, expect) -> None:
+        self.check(label, actual == expect, repr(expect), repr(actual))
+
+    def contains(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle in haystack, f"包含 {needle!r}", _clip(haystack))
+
+    def absent(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle not in haystack, f"不包含 {needle!r}", _clip(haystack))
+
+    def true(self, label: str, cond: bool, detail: str = "") -> None:
+        self.check(label, cond, "True", f"False {detail}".strip())
+
+
+def _clip(text: str, limit: int = 200) -> str:
+    flat = " ".join(str(text).split())
+    return repr(flat[:limit] + ("…" if len(flat) > limit else ""))
+
+
+def _exit_code_of(fn) -> int | None:
+    """调用 fn()，若它 sys.exit() 则返回退出码，否则返回 None。
+
+    用来验证"拒绝执行"这类**安全默认**行为：我们不能让自测真的退出进程，
+    所以用 try/except SystemExit 把它拦下来看码值。
+    """
+    try:
+        fn()
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 1
+    return None
+
+
+# 一份"人造的" nmap XML 样本：故意带上真实 nmap 才有的默认命名空间
+# （xmlns="http://nmap.org/nmap"），因为**能不能正确剥掉命名空间**是这个
+# 解析函数最容易崩的地方 —— 剥不掉，标签就变成 '{http://nmap.org/nmap}port'，
+# find() 全部落空，扫描结果会莫名其妙地"一个端口都没有"。
+SAMPLE_NMAP_XML = '''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<nmaprun scanner="nmap" args="nmap -sT -Pn -T3 -p 22,80,70000-x -sV -oX - 127.0.0.1"
+         start="1" startstr="x" version="7.94" xmloutputversion="1.05"
+         xmlns="http://nmap.org/nmap">
+<host starttime="1" endtime="2">
+  <status state="up" reason="localhost-response"/>
+  <address addr="127.0.0.1" addrtype="ipv4"/>
+  <ports>
+    <port protocol="tcp" portid="22">
+      <state state="open" reason="syn-ack" reason_ttl="64"/>
+      <service name="ssh" product="OpenSSH" version="8.9p1"
+               extrainfo="Ubuntu Linux" method="probed" conf="10"/>
+    </port>
+    <port protocol="tcp" portid="80">
+      <state state="closed" reason="conn-refused" reason_ttl="64"/>
+      <service name="http" method="table" conf="3"/>
+    </port>
+    <port protocol="tcp" portid="6379">
+      <state state="filtered" reason="no-response"/>
+    </port>
+  </ports>
+  <times srtt="63" rttvar="5000" to="100000"/>
+</host>
+</nmaprun>
+'''
+
+
+def self_test() -> int:
+    """离线自测，返回失败项数量。0 = 全部通过。"""
+    t = _SelfTest()
+
+    # ══ A. 目标白名单：默认拒绝（deny by default） ═════════════════
+    print("\n[A] 目标白名单：不在白名单 = 直接退出（而不是「问用户要不要继续」）")
+    for allowed in ("127.0.0.1", "localhost", "::1"):
+        t.eq(f"允许的本地目标 {allowed!r} 不触发退出",
+             _exit_code_of(lambda a=allowed: assert_target_is_allowed(a)), None)
+    t.eq("外部地址 8.8.8.8 → 退出码 2（拒绝执行）",
+         _exit_code_of(lambda: assert_target_is_allowed("8.8.8.8")), 2)
+    t.eq("外部域名 example.com → 退出码 2",
+         _exit_code_of(lambda: assert_target_is_allowed("example.com")), 2)
+    t.true("TARGET 常量必须是本机回环地址（教学脚本的硬约束）",
+           TARGET in ALLOWED_LOCAL_TARGETS, f"TARGET={TARGET!r}")
+
+    # ══ B. 命令构造 build_nmap_args() ═════════════════════════════
+    print("\n[B] 命令构造：参数顺序与开关（拼错一个字就解析不到结果）")
+    args_v = build_nmap_args("127.0.0.1", [22, 80], do_version=True)
+    t.eq("可执行文件是 nmap", args_v[0], "nmap")
+    t.eq("带版本探测时包含 -sV", "-sV" in args_v, True)
+    t.eq("端口列表被拼成逗号分隔的单个参数", args_v[args_v.index("-p") + 1], "22,80")
+    t.eq("-oX - 让 XML 输出到标准输出（而不是写文件）",
+         args_v[args_v.index("-oX") + 1], "-")
+    t.eq("目标放在最后", args_v[-1], "127.0.0.1")
+    t.eq("完整命令（供人工核对）", args_v,
+         ["nmap", "-sT", "-Pn", "-T3", "-p", "22,80", "-sV", "-oX", "-", "127.0.0.1"])
+    args_no_v = build_nmap_args("127.0.0.1", [443], do_version=False)
+    t.eq("关闭版本探测时不出现 -sV", "-sV" in args_no_v, False)
+    t.true("命令是 list[str] 而不是字符串（不经 shell → 没有命令注入面）",
+           isinstance(args_no_v, list)
+           and all(isinstance(x, str) for x in args_no_v),
+           f"{type(args_no_v)}")
+
+    # ══ C. XML 解析 parse_nmap_xml() ══════════════════════════════
+    print("\n[C] XML 解析：把 nmap 的机器可读输出变成结构化数据")
+    rows = parse_nmap_xml(SAMPLE_NMAP_XML)
+    t.eq("解析出 3 条端口记录", len(rows), 3)
+    t.eq("端口号解析正确", [r["port"] for r in rows], [22, 80, 6379])
+    t.eq("协议字段", rows[0]["protocol"], "tcp")
+    t.eq("状态字段（open / closed / filtered 三种都保留）",
+         [r["state"] for r in rows], ["open", "closed", "filtered"])
+    t.eq("服务名 / 产品 / 版本三件套", (rows[0]["service"], rows[0]["product"],
+                                        rows[0]["version"]),
+         ("ssh", "OpenSSH", "8.9p1"))
+    t.eq("缺失的 product/version 回落为空串（不是 None，避免下游拼字符串炸掉）",
+         (rows[1]["product"], rows[1]["version"]), ("", ""))
+    t.eq("整个 <service> 都不存在时 service 也是空串",
+         rows[2]["service"], "")
+    t.true("命名空间被剥掉（否则 root.iter('port') 会一条都找不到）",
+           "http://nmap.org/nmap" not in SAMPLE_NMAP_XML.replace(
+               'xmlns="http://nmap.org/nmap"', ""),
+           "（样本里确实带了 xmlns，这里断言清理后的文本不含它）")
+
+    # 畸形 / 边界输入：解析器必须"优雅降级"而不是抛异常
+    t.eq("非 XML 文本 → 返回空列表（不抛异常）", parse_nmap_xml("这不是 XML"), [])
+    t.eq("空字符串 → 返回空列表", parse_nmap_xml(""), [])
+    t.eq("合法但无 <port> → 返回空列表",
+         parse_nmap_xml("<nmaprun><host><ports/></host></nmaprun>"), [])
+    no_portid = parse_nmap_xml(
+        '<nmaprun><host><ports><port protocol="tcp">'
+        '<state state="open"/></port></ports></host></nmaprun>')
+    t.eq("缺 portid 属性时回落成 0（而不是抛 KeyError）",
+         no_portid[0]["port"] if no_portid else None, 0)
+    no_state = parse_nmap_xml(
+        '<nmaprun><host><ports><port protocol="tcp" portid="9"/></ports></host>'
+        '</nmaprun>')
+    t.eq("缺 <state> 时回落成 unknown",
+         no_state[0]["state"] if no_state else None, "unknown")
+
+    # ══ D. 静态表本身的完整性 ════════════════════════════════════
+    print("\n[D] 内置数据表的自洽性")
+    t.eq("COMMON_PORTS 无重复", len(COMMON_PORTS), len(set(COMMON_PORTS)))
+    t.eq("COMMON_PORTS 升序排列（输出稳定、便于比对）",
+         COMMON_PORTS, sorted(COMMON_PORTS))
+    t.true("COMMON_PORTS 全是合法端口号",
+           all(1 <= p <= 65535 for p in COMMON_PORTS),
+           f"越界: {[p for p in COMMON_PORTS if not 1 <= p <= 65535]}")
+    t.true("COMMON_PORTS 覆盖了几个必须盯住的高危服务端口",
+           {22, 443, 3306, 6379, 27017} <= set(COMMON_PORTS))
+    t.eq("时序模板 T0~T5 齐全（少一个就说明抄错了）",
+         sorted(TIMING_TEMPLATES), ["T0", "T1", "T2", "T3", "T4", "T5"])
+    t.contains("T3 是 Nmap 的默认值（记得写清楚，别让人以为 T4 才是）",
+               TIMING_TEMPLATES["T3"], "默认")
+
+    # ══ 汇总 ═════════════════════════════════════════════════════
+    print(f"\n   断言总数: {t.total}，失败: {len(t.failures)}")
+    return len(t.failures)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """命令行入口。
+
+        python3 01-nmap-basics.py              → 完整演示（含本机 HTTP 靶场 + 真实扫描）
+        python3 01-nmap-basics.py --self-test  → 纯离线自测（不跑 nmap、不发任何包）
+    """
+    parser = argparse.ArgumentParser(
+        description="Day 153 示例 01：Nmap 常用扫描类型与三种调用方式（仅限本机）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例:\n"
+            "  python3 01-nmap-basics.py              # 完整演示\n"
+            "  python3 01-nmap-basics.py --self-test  # 离线自测，输出 SELF-TEST OK\n"
+        ),
+    )
+    parser.add_argument("--self-test", action="store_true",
+                        help="只跑离线自测（不启动 nmap/不发包，纯逻辑断言）")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        failures = self_test()
+        print()
+        if failures:
+            print(f"❌ SELF-TEST FAILED：{failures} 项断言未通过"
+                  "（请回看上面打印的「期望 / 实际」）")
+            return 1
+        print("✅ SELF-TEST OK（命令构造与 XML 解析断言全部通过；"
+              "未启动 nmap、未发起任何网络连接）")
+        return 0
+
+    demo()
+    return 0
+
+
+def demo() -> None:
     assert_target_is_allowed(TARGET)
 
     print(f"目标（硬编码，仅本机）: {TARGET}")
@@ -566,4 +804,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

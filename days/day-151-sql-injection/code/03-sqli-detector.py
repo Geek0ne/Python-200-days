@@ -24,7 +24,16 @@ Day 151 · 示例 03：SQL 注入检测脚本（实战 · 防御工具）
     python3 03-sqli-detector.py                     # 检测内置样本 + 本地动态验证
     python3 03-sqli-detector.py path/to/your.py     # 检测你自己的文件（可多个）
     python3 03-sqli-detector.py --no-dynamic        # 只做静态检测（更快）
+    python3 03-sqli-detector.py --self-test         # 离线自检：验证检测器本身准不准
     echo $?                                         # 0=干净，1=发现高危问题（可接 CI）
+
+⚠️ 为什么要给“检测器”再写一个自检？
+    因为一个只会报警的检测器毫无价值：它要么满屏假阳性（没人看），
+    要么把真漏洞漏掉（更危险）。自检同时测两边：
+      • 坏代码必须被逐个抓出（漏报测试）→ 断言具体行号与级别；
+      • 好代码必须一行不报（假阳性测试）→ 标准库参数化写法必须 0 findings。
+    另外，动态验证里的**计时探针天生不稳定**（换机器就可能漂移），
+    所以 self-test 用 include_time=False 跳过它，只跑三个确定性探针。
 """
 
 import argparse
@@ -367,15 +376,21 @@ def probe_time(fn, conn, repeats: int = 3) -> tuple[bool, str]:
     return False, f"耗时无显著差异（{t_true*1000:.1f}ms / {t_false*1000:.1f}ms）"
 
 
-def dynamic_scan() -> int:
+def dynamic_scan(include_time: bool = True) -> int:
+    """对本地内存靶场跑四个探针（差分法），返回“与预期不符”的项数。
+
+    include_time=False 时跳过计时探针：计时在很多机器/负载下会漂移，
+    适合放进 --self-test 这种要求确定性的场景。
+    """
     print("\n┌─ 动态验证：对本地内存靶场跑注入回归测试 " + "─" * 23)
     conn = make_range()
     probes = [
         ("布尔差分", probe_boolean_diff),
         ("UNION 改写", probe_union),
         ("报错泄漏", probe_error),
-        ("时间差异", probe_time),
     ]
+    if include_time:
+        probes.append(("时间差异", probe_time))
     targets = [
         ("target_vulnerable  (拼接版 ❌)", target_vulnerable, True),
         ("target_parameterized (参数化版 ✅)", target_parameterized, False),
@@ -453,5 +468,130 @@ def main() -> int:
     return 1 if (total_high or total or dynamic_bad) else 0
 
 
+# ════════════════════════════════════════════════════════════════
+# 第 4 部分：离线自检（--self-test）
+# ════════════════════════════════════════════════════════════════
+
+# 一段“完全干净”的代码：全部是标准库参数化写法，检测器**一行也不应该报**。
+# 这是防假阳性测试 —— 它比“能抓到坏代码”更能决定工具能不能进团队流程。
+CLEAN_CODE = '''
+import sqlite3
+
+def count_by_role(conn, role):
+    return conn.execute("SELECT count(*) FROM users WHERE role = ?", (role,)).fetchall()
+
+def get_by_id(conn, uid):
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE id = ?", (uid,))
+    return cur.fetchall()
+'''
+
+# 嵌套字符串加法：必须被递归拆解才看得出来（只看最外层会漏报）。
+NESTED_CONCAT_CODE = '''
+def login(conn, username, password):
+    sql = "SELECT id FROM users WHERE username = '" + username + "' AND password = '" + password + "'"
+    return conn.execute(sql).fetchall()
+'''
+
+FORMAT_INJECTION_CODE = '''
+def report(conn, start):
+    return conn.execute("SELECT * FROM orders WHERE created > '{}'".format(start)).fetchall()
+'''
+
+PERCENT_PLACEHOLDER_CODE = '''
+def find(conn, uid):
+    return conn.execute("SELECT * FROM users WHERE id = %s")
+'''
+
+ORM_RAW_CODE = '''
+def dump(model):
+    return model.objects.raw("SELECT * FROM users")
+'''
+
+
+def self_test() -> None:
+    """自检：验证静态检测（漏报 + 假阳性）与动态探针的判定是否正确。"""
+    checks: list[tuple[str, object, object]] = []
+
+    def eq(name: str, actual: object, expected: object) -> None:
+        checks.append((name, actual, expected))
+
+    def scan(src: str) -> list:
+        return SQLSourceAuditor(src).run()
+
+    # ── A) 静态检测：内置样本的 7 处 HIGH 必须一处不漏 ────────
+    sample = scan(SAMPLE_CODE)
+    eq("内置样本找到 7 处问题", len(sample), 7)
+    eq("内置样本全部判为 HIGH", [f.sev for f in sample], [SEV_HIGH] * 7)
+    eq("命中行号与人工核对一致", [f.line for f in sample], [5, 6, 9, 10, 13, 19, 27])
+    eq("f-string 拼 SQL 被抓（第 9 行）",
+       any("f-string" in f.why for f in sample if f.line == 9), True)
+    eq("字符串加法拼 SQL 被抓（第 5 行）",
+       any("+" in f.why for f in sample if f.line == 5), True)
+    eq("executescript 被抓（多语句风险，第 19 行）",
+       any("堆叠注入" in f.why and f.line == 19 for f in sample), True)
+    eq("靠变量传入的拼 SQL 被追踪到定义行（第 6 行指向第 5 行）",
+       any("第 5 行" in f.why for f in sample if f.line == 6), True)
+
+    # ── B) 静态检测：干净代码必须 0 findings（防假阳性）────────
+    clean = scan(CLEAN_CODE)
+    eq("标准库参数化写法：0 findings（不冤枉好代码）", len(clean), 0)
+
+    # ── C) 各类危险写法逐个命中 ────────────────────────────
+    nested = scan(NESTED_CONCAT_CODE)
+    eq("嵌套字符串加法被识别（1 处拼接 + 1 处执行变量）", len(nested), 2)
+    eq("嵌套加法两处都是 HIGH", [f.sev for f in nested], [SEV_HIGH, SEV_HIGH])
+
+    fmt = scan(FORMAT_INJECTION_CODE)
+    eq("`.format()` 拼接 SQL 被抓", len(fmt), 1)
+    eq("`.format()` 级别为 HIGH", fmt[0].sev, SEV_HIGH)
+
+    pct = scan(PERCENT_PLACEHOLDER_CODE)
+    eq("SQL 里写了 %s 却没传参 → 报 MED", [f.sev for f in pct], [SEV_MED])
+
+    orm = scan(ORM_RAW_CODE)
+    eq("ORM 逃生舱 raw() 被抓（MED 级提醒人工复核）",
+       [f.sev for f in orm], [SEV_MED])
+
+    import contextlib
+    import io
+
+    # 语法错的“源码”必须被优雅处理（抛 SyntaxError 会让 CI 变成一个无用的报错堆栈）
+    with contextlib.redirect_stdout(io.StringIO()):
+        broken_result = audit_static("<坏语法>", "def broken(:")
+    eq("语法错的源码被优雅处理（返回 (0,0)，不崩）", broken_result, (0, 0))
+
+    # ── D) 动态探针：比对拼接版 / 参数化版的判定结果 ──────────
+    conn = make_range()
+    for pname, probe in (("布尔差分", probe_boolean_diff),
+                         ("UNION 改写", probe_union),
+                         ("报错泄漏", probe_error)):
+        eq(f"拼接版：{pname}探针命中", probe(target_vulnerable, conn)[0], True)
+        eq(f"参数化版：{pname}探针无信号", probe(target_parameterized, conn)[0], False)
+
+    # ── E) 完整动态扫描（跳过不稳定计时探针）必须零意外 ────────
+    # 自检只关心结论，扫描函数会刷一大屏，这里临时把 stdout 吞掉。
+    with contextlib.redirect_stdout(io.StringIO()):
+        unexpected = dynamic_scan(include_time=False)
+    eq("动态扫描（含 3 个确定性探针）与预期零偏差", unexpected, 0)
+
+    # ── 汇总 ──────────────────────────────────────────
+    bad = 0
+    for name, actual, expected in checks:
+        if actual == expected:
+            print(f"  [PASS] {name}")
+        else:
+            bad += 1
+            print(f"  [FAIL] {name}\n         实际值 = {actual!r}\n         期望值 = {expected!r}")
+    if bad:
+        print(f"\n自检失败：{bad}/{len(checks)} 项与期望不符")
+        sys.exit(1)
+    print(f"\n共 {len(checks)} 项断言全部通过")
+    print("SELF-TEST OK")
+    sys.exit(0)
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv[1:]:
+        self_test()
     sys.exit(main())

@@ -18,6 +18,14 @@ Day 150 · 示例 03：认证系统安全审计脚本（实战案例）
 运行：
     python3 03-auth-security-audit.py
     python3 03-auth-security-audit.py --json      # 机器可读输出
+    python3 03-auth-security-audit.py --save      # 把 json + 文本报告写进 tempfile 临时目录
+    python3 03-auth-security-audit.py --self-test  # 离线自检（不解析 DNS / 不联网）
+
+⚠️ 关于 --self-test（为什么它不查 DNS）：
+    普通模式下 `check_url_ssrf()` 会用 socket.getaddrinfo() 把域名解析成 IP
+    再判私有段。但自检必须**完全离线且可重复** —— 同一个域名今天的解析结果
+    和明天不一样，离线环境里直接解析失败。所以自检一律传 resolve_dns=False，
+    只验证“文本级混淆、IP 字面量、白名单、协议”这些与网络无关的确定部分。
 
 ⚠️ 本脚本只做**静态配置审计 + 本地 URL 校验**，不会主动去请求任何目标地址。
    真实渗透测试请务必先取得书面授权！
@@ -27,8 +35,10 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import socket
 import sys
+import tempfile
 import urllib.parse
 from dataclasses import dataclass, field, asdict
 from typing import Any
@@ -327,6 +337,26 @@ BLOCKED_NETWORKS = [
 
 
 def _is_blocked_ip(ip: ipaddress._BaseAddress) -> tuple[bool, str]:
+    """判断一个 IP 是否落在受限网段。返回 (是否受限, 命中的网段)。
+
+    ⚠️ 这里有一个**非常容易漏的坑**（本文件初期就漏了）：
+    `::ffff:127.0.0.1` 这种 **IPv4-mapped IPv6** 地址，
+    它的 `version` 是 6，而 `127.0.0.0/8` 的 `version` 是 4，
+    于是 `ip in net` 永远为 False —— 循环跑完就得出"公网地址"的错误结论，
+    而实际上它就是一个指向 127.0.0.1 的地址，SSRF 照样打回环。
+    很多真实产品的 SSRF 防护就死在这一格上。
+
+    修法：先把 IPv4-mapped 地址拆回 IPv4（`ipv4_mapped`），再比。
+    """
+    if isinstance(ip, ipaddress.IPv6Address):
+        mapped = ip.ipv4_mapped          # ::ffff:a.b.c.d → a.b.c.d；其它返回 None
+        if mapped is not None:
+            ip = mapped
+        elif ip.sixtofour is not None:   # 2002::/16（6to4）里包着的也是 IPv4
+            embedded = ip.sixtofour
+            blocked, net = _is_blocked_ip(embedded)
+            if blocked:
+                return True, net
     for net in BLOCKED_NETWORKS:
         if ip.version == net.version and ip in net:
             return True, str(net)
@@ -471,10 +501,15 @@ def check_url_ssrf(raw_url: str, allowed_hosts: set[str] | None = None,
     return findings
 
 
-def audit_ssrf(urls: list[str], allowed_hosts: set[str] | None, rpt: Report) -> None:
+def audit_ssrf(urls: list[str], allowed_hosts: set[str] | None, rpt: Report,
+               resolve_dns: bool = True) -> None:
+    """把一批用户可控 URL 逐个丢给 check_url_ssrf()。
+
+    resolve_dns=False 时**完全离线**（不碰 socket），供 --self-test 使用。
+    """
     for u in urls:
         print(f"    · 检测 URL: {u}")
-        for f in check_url_ssrf(u, allowed_hosts):
+        for f in check_url_ssrf(u, allowed_hosts, resolve_dns=resolve_dns):
             rpt.findings.append(f)
 
 
@@ -526,8 +561,47 @@ def demo_config() -> dict[str, Any]:
     }
 
 
+def save_report(rpt: Report, as_json: bool, save_dir: str | None) -> None:
+    """把报告落盘。
+
+    ✨ 为什么用 tempfile 而不是当前目录？
+    因为仓库工作树必须干净：审计报告是"运行产物"，不是"源码"。
+    写进 tempfile.mkdtemp() 既不会污染 git status，又是可预期的独立目录，
+    CI 里直接把路径传给下游步骤就行。
+
+    传 save_dir=None 时会自动创建一个临时目录，并把实际路径打印出来。
+    """
+    if not save_dir:
+        save_dir = tempfile.mkdtemp(prefix="auth-audit-")
+    os.makedirs(save_dir, exist_ok=True)
+
+    payload = {
+        "target": rpt.target,
+        "counts": rpt.counts,
+        "findings": [asdict(f) for f in rpt.findings],
+    }
+    json_path = os.path.join(save_dir, "audit-report.json")
+    text_path = os.path.join(save_dir, "audit-report.txt")
+    with open(json_path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+    with open(text_path, "w", encoding="utf-8") as fh:
+        fh.write(rpt.render() + "\n")
+
+    print(f"\n💾 报告已写入临时目录（不污染仓库工作树）：\n   {json_path}\n   {text_path}")
+    print(f"   下次清理：rm -rf {save_dir!r}")
+
+
 def main() -> int:
-    as_json = "--json" in sys.argv
+    argv = sys.argv[1:]
+    as_json = "--json" in argv
+    save = "--save" in argv
+    save_dir: str | None = None
+    if save:
+        idx = argv.index("--save")
+        # 支持 `--save`（自动建临时目录）与 `--save DIR` 两种写法
+        if idx + 1 < len(argv) and not argv[idx + 1].startswith("--"):
+            save_dir = argv[idx + 1]
+
     cfg = demo_config()
     rpt = Report(target="demo-app（示例配置，故意做错若干项）")
 
@@ -553,8 +627,192 @@ def main() -> int:
        同时手动设置 Host 头，才能同时防住 DNS Rebinding 与 302 绕过
 """)
 
+    if save:
+        save_report(rpt, as_json, save_dir)
+
     return 1 if rpt.has_failure else 0
 
 
+# ════════════════════════════════════════════════════════════════
+# ✓ 离线自检（--self-test）
+# ════════════════════════════════════════════════════════════════
+
+def self_test() -> None:
+    """审计器自检：证明"它真的能把坏配置抓出来，也不冤枉好配置"。
+
+    三组断言：
+      A) 合规配置 → 0 FAIL（防假阳性：一个只会报警的审计器等于没有价值）；
+      B) 每一项缺陷配置 → 对应检查项必须精准落到 FAIL/WARN（防漏报）；
+      C) SSRF 判定 → 用 resolve_dns=False 跑，完全离线且可重复。
+
+    ⚠️ 注意 C 里为什么全部用 IP 字面量或文本特征：因为它们不依赖 DNS。
+    """
+    checks: list[tuple[str, object, object]] = []
+
+    def eq(name: str, actual: object, expected: object) -> None:
+        checks.append((name, actual, expected))
+
+    def levels(report: Report) -> dict:
+        """把 report 摊平成 {检查项ID: 级别} 方便逐项断言。"""
+        return {f.check: f.level for f in report.findings}
+
+    def ssrf_levels(url: str, hosts: set[str] | None = None) -> dict:
+        # resolve_dns=False：绝不发 DNS 查询，保证自检离线且可重复
+        return {f.check: f.level for f in check_url_ssrf(url, hosts, resolve_dns=False)}
+
+    # ── A) 一份完全合规的 OAuth2 配置 → 不允许出现 FAIL ──────
+    good_oauth2 = {
+        "response_type": "code",
+        "uses_state": True,
+        "state_length": 43,
+        "state_stored_in_session": True,
+        "pkce": {"enabled": True, "method": "S256"},
+        "redirect_uris": ["https://app.example.com/callback"],
+        "registered_redirect_uris": ["https://app.example.com/callback"],
+        "enabled_grants": ["authorization_code", "refresh_token"],
+        "access_token_ttl": 900,
+        "refresh_token_rotation": True,
+        "https_everywhere": True,
+        "revocation_endpoint": True,
+    }
+    r = Report("自检-合规配置")
+    audit_oauth2(good_oauth2, r)
+    eq("合规 OAuth2 配置：FAIL 数为 0", r.counts["FAIL"], 0)
+    eq("合规 OAuth2 配置：9 个检查项全部 PASS", r.counts["PASS"], 9)
+    eq("合规配置 has_failure 为 False（CI 不会误拦发布）", r.has_failure, False)
+
+    # ── B) 每项缺陷都能被精准抓到 ────────────────────────────
+    bad_oauth2 = {
+        "response_type": "token",                       # 隐式模式
+        "uses_state": False,                             # 无 state
+        "state_length": 0,
+        "state_stored_in_session": False,
+        "pkce": {"enabled": True, "method": "plain"}, # 降级案 PKCE
+        "redirect_uris": ["https://app.example.com/callback.evil.com"],
+        "registered_redirect_uris": ["https://app.example.com/callback"],
+        "enabled_grants": ["implicit", "password"],
+        "access_token_ttl": 0,                           # 永不过期
+        "refresh_token_rotation": False,
+        "https_everywhere": False,                       # 非 HTTPS
+        "revocation_endpoint": False,
+    }
+    r2 = Report("自检-坏配置")
+    audit_oauth2(bad_oauth2, r2)
+    lv2 = levels(r2)
+    eq("隐式/密码模式 → OAUTH-01 FAIL", lv2["OAUTH-01"], "FAIL")
+    eq("缺 state → OAUTH-02 FAIL", lv2["OAUTH-02"], "FAIL")
+    eq("PKCE=plain → OAUTH-03 FAIL", lv2["OAUTH-03"], "FAIL")
+    eq("redirect_uri 未注册 → OAUTH-04 FAIL", lv2["OAUTH-04"], "FAIL")
+    eq("非全链路 HTTPS → OAUTH-05 FAIL", lv2["OAUTH-05"], "FAIL")
+    eq("access_token TTL=0 → OAUTH-06 FAIL", lv2["OAUTH-06"], "FAIL")
+    eq("refresh 未轮转 → OAUTH-07 WARN（可疑但不断发布）", lv2["OAUTH-07"], "WARN")
+    eq("无撤销端点 → OAUTH-08 WARN", lv2["OAUTH-08"], "WARN")
+    eq("启用废弃 grant → OAUTH-09 FAIL", lv2["OAUTH-09"], "FAIL")
+    eq("坏配置：共 7 个 FAIL", r2.counts["FAIL"], 7)
+    eq("坏配置：has_failure=True → CI 退出码 1", r2.has_failure, True)
+
+    # state 长度不足但存在，且已绑定会话 → 应该是 WARN（分级必须准确）
+    r3 = Report("自检-state 熵不足")
+    audit_oauth2({**good_oauth2, "state_length": 8}, r3)
+    eq("state 太短（但存在且绑会话）→ WARN 而不是 FAIL",
+       levels(r3)["OAUTH-02"], "WARN")
+
+    # Cookie：一个什么都不配的会话 Cookie
+    r4 = Report("自检-Cookie")
+    audit_cookie({"name": "session", "httponly": False, "secure": False,
+                  "samesite": "None", "domain": "example.com",
+                  "max_age": 40 * 24 * 3600}, r4)
+    lv4 = levels(r4)
+    eq("无 HttpOnly → FAIL", lv4["COOKIE-01"], "FAIL")
+    eq("无 Secure → FAIL", lv4["COOKIE-02"], "FAIL")
+    eq("SameSite=None → FAIL", lv4["COOKIE-03"], "FAIL")
+    eq("设置了 Domain → WARN（作用域被放大）", lv4["COOKIE-04"], "WARN")
+    eq("Max-Age > 30 天 → WARN", lv4["COOKIE-05"], "WARN")
+    r4b = Report("自检-Cookie 合规")
+    audit_cookie({"name": "session", "httponly": True, "secure": True,
+                  "samesite": "Lax", "domain": None, "max_age": 3600}, r4b)
+    eq("合规 Cookie：0 FAIL", r4b.counts["FAIL"], 0)
+    eq("合规 Cookie：4 项 PASS（未超期因此没有第 5 项）", r4b.counts["PASS"], 4)
+
+    # CSRF：一个什么都不配的应用
+    r5 = Report("自检-CSRF")
+    audit_csrf({"token_enabled": False, "token_verified_server_side": False,
+                "tokens_reused": True, "get_has_side_effects": True,
+                "origin_checked": False, "json_only_relied": True}, r5)
+    lv5 = levels(r5)
+    eq("无 CSRF Token → CSRF-01 FAIL", lv5["CSRF-01"], "FAIL")
+    eq("Token 不服务端校验 → CSRF-02 FAIL", lv5["CSRF-02"], "FAIL")
+    eq("Token 长期复用 → CSRF-03 WARN", lv5["CSRF-03"], "WARN")
+    eq("存在有副作用的 GET → CSRF-04 FAIL", lv5["CSRF-04"], "FAIL")
+    eq("无 Origin 校验 → CSRF-05 WARN", lv5["CSRF-05"], "WARN")
+    eq("只靠 Content-Type → CSRF-06 WARN", lv5["CSRF-06"], "WARN")
+
+    # ── C) SSRF 判定（全部离线）───────────────────────────
+    ok = ssrf_levels("https://cdn.example.com/avatar.png", {"cdn.example.com"})
+    eq("白名单内的 https URL：没有任何 FAIL（防假阳性）",
+       any(v == "FAIL" for v in ok.values()), False)
+    eq("白名单内的 https URL：主机命中白名单", ok["SSRF-03"], "PASS")
+
+    evil_cases = {
+        "file:///etc/passwd": "SSRF-01",
+        "gopher://127.0.0.1:6379/_INFO": "SSRF-01",
+    }
+    for url, cid in evil_cases.items():
+        eq(f"危险协议被抓：{url}", ssrf_levels(url)[cid], "FAIL")
+
+    eq("云元数据地址被抓（169.254.169.254）",
+       ssrf_levels("http://169.254.169.254/latest/meta-data/")["SSRF-04"], "FAIL")
+    eq("云元数据地址同时命中受限网段（双重告警）",
+       ssrf_levels("http://169.254.169.254/latest/meta-data/")["SSRF-05"], "FAIL")
+    eq("内网地址被抓（192.168.1.1）",
+       ssrf_levels("http://192.168.1.1/admin")["SSRF-05"], "FAIL")
+    eq("回环地址被抓（IPv4 字面量）",
+       ssrf_levels("http://127.0.0.1:8080/")["SSRF-05"], "FAIL")
+    eq("回环地址被抓（IPv6 字面量 ::1）",
+       ssrf_levels("http://[::1]:8080/")["SSRF-05"], "FAIL")
+    # ⚠️ 这一条是本文件修过的真 bug：::ffff:127.0.0.1 的 version 是 6，
+    #    如果不拆 ipv4_mapped，“version 必须相同”的那层过滤会把它放过去。
+    eq("回环地址被抓（IPv4-mapped IPv6 ::ffff:127.0.0.1）",
+       ssrf_levels("http://[::ffff:127.0.0.1]/")["SSRF-05"], "FAIL")
+    eq("元数据地址也躲不过 IPv4-mapped 写法",
+       ssrf_levels("http://[::ffff:169.254.169.254]/")["SSRF-05"], "FAIL")
+
+    eq("十进制 IP 混淆（2130706433 = 127.0.0.1）被抓",
+       ssrf_levels("http://2130706433:6379/")["SSRF-06"], "FAIL")
+    eq("userinfo 混淆（expected.com@evil.com）被抓",
+       ssrf_levels("http://expected.com@evil.com/x")["SSRF-02"], "FAIL")
+    eq("userinfo 混淆同时被文本嗅探抓到",
+       ssrf_levels("http://expected.com@evil.com/x")["SSRF-06"], "FAIL")
+    eq("空字节混淆被抓", ssrf_levels("http://cdn.example.com/%00.png")["SSRF-06"], "FAIL")
+    eq("白名单外的公网主机被抓（不允许任意 URL）",
+       ssrf_levels("https://evil.com/x", {"cdn.example.com"})["SSRF-03"], "FAIL")
+    eq("域名后缀混淆（cdn.example.com.evil.com）不在白名单里",
+       ssrf_levels("https://cdn.example.com.evil.com/x", {"cdn.example.com"})["SSRF-03"],
+       "FAIL")
+    eq("缺少主机名时直接拒绝（不能兜底）",
+       ssrf_levels("https:///path")["SSRF-02"], "FAIL")
+    eq("每一个 URL 都会附上重定向风险提醒（WARN）",
+       ssrf_levels("https://cdn.example.com/a.png", {"cdn.example.com"})["SSRF-07"],
+       "WARN")
+
+    # ── 汇总 ──────────────────────────────────────────────
+    bad = 0
+    for name, actual, expected in checks:
+        if actual == expected:
+            print(f"  [PASS] {name}")
+        else:
+            bad += 1
+            print(f"  [FAIL] {name}\n         实际值 = {actual!r}\n         期望值 = {expected!r}")
+    if bad:
+        print(f"\n自检失败：{bad}/{len(checks)} 项与期望不符")
+        sys.exit(1)
+    print(f"\n共 {len(checks)} 项断言全部通过")
+    print("SELF-TEST OK")
+    sys.exit(0)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    if "--self-test" in sys.argv[1:]:
+        self_test()
+    else:
+        sys.exit(main())

@@ -212,3 +212,65 @@ def print_rules():
         names = ', '.join(LANG_NAMES[l] for l in langs)
         lines.append(f'{name:24s} w={weight}  {category:12s} {names}')
     return '\n'.join(lines)
+
+
+# ---------------------------------------------------------------- 自测
+def self_test():
+    """规则引擎离线自测：不读磁盘、不联网、不依赖第三方库。
+
+    验证的四件事：规则库结构合法 / 分级阈值正确 / 评分含封顶 / 语言过滤生效。
+    """
+    # 1) 规则库结构合法：名称唯一、权重 1-3、类别与语言非空、pattern 已编译
+    names = [name for name, *_ in RULES]
+    assert len(names) == len(set(names)), '规则名必须唯一'
+    assert len(RULES) >= 20, '规则数不应少于教学基线'
+    for name, pattern, weight, category, langs in RULES:
+        assert 1 <= weight <= 3, f'{name} 权重越界'
+        assert category and langs, f'{name} 缺少类别或语言标签'
+        assert hasattr(pattern, 'finditer'), f'{name} 的 pattern 未编译'
+
+    # 2) 分级阈值边界
+    assert classify_score(0) == 'clean'
+    assert classify_score(1) == 'low'
+    assert classify_score(2) == 'low'
+    assert classify_score(3) == 'medium'
+    assert classify_score(4) == 'medium'
+    assert classify_score(5) == 'high'
+    assert classify_score(7) == 'high'
+    assert classify_score(8) == 'critical'
+
+    # 3) 命中 + 评分：单个命令执行特征 = 权重 3
+    findings = inspect_text("<?php system('id');")
+    assert any(f['rule'] == 'php_cmd_exec' for f in findings), findings
+    assert score_findings(findings) == 3
+
+    # 4) 重复命中：第 2、3 次各 +1，第 4 次起封顶（3 + 2 = 5）
+    repeated = inspect_text("<?php system('a');system('b');system('c');system('d');")
+    hits = [f for f in repeated if f['rule'] == 'php_cmd_exec']
+    assert len(hits) == 4, hits
+    assert score_findings(repeated) == 5, score_findings(repeated)
+
+    # 5) 语言过滤：JSP 文件不应命中 PHP 规则（跨语言误报压制）
+    jsp_findings = inspect_text('Runtime.getRuntime().exec(cmd);', {'jsp'})
+    assert all(f['rule'] != 'php_cmd_exec' for f in jsp_findings), jsp_findings
+    assert any(f['rule'] == 'jsp_runtime_exec' for f in jsp_findings), jsp_findings
+
+    # 6) summarize 按规则聚合，并给出可复核的行号
+    summary = summarize(findings)
+    assert 'php_cmd_exec' in summary and summary['php_cmd_exec']['lines'], summary
+
+    # 7) 规则表可打印且包含核心规则
+    assert 'php_cmd_exec' in print_rules()
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='WebShell 静态规则引擎（被 01/02/03 共用）')
+    parser.add_argument('--self-test', action='store_true', help='运行离线自测')
+    args = parser.parse_args()
+    if args.self_test:
+        self_test()
+        print('SELF-TEST OK')
+    else:
+        print(f'规则数: {len(RULES)}（用 03-webshell-scanner.py --rules 查看详情）')

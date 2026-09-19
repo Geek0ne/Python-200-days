@@ -388,12 +388,34 @@ def scan_sinks(report: Report, url: str, timeout: float) -> None:
 
 
 def scan_headers(report: Report, url: str, timeout: float) -> None:
-    """审计响应安全头与 Cookie 标志。"""
+    """取一次响应，然后交给 audit_headers() 做审计。
+
+    【为什么拆成两个函数？】因为"发请求"有副作用、有网络、会失败；
+    而"审计响应头"是纯粹的数据变换。拆开之后，audit_headers() 可以在
+    `--self-test` 里用**人造的响应对象**精确验证（缺 CSP 会不会报 FAIL、
+    Cookie 少 Secure 会不会点名），完全不需要真的连一台服务器。
+    """
     resp = http_get(url, timeout=timeout)
     if resp is None:
         report.add(WARN, "安全头", url, "请求失败，无法审计响应头", "确认目标可达")
         return
+    audit_headers(report, url, resp)
 
+
+def audit_headers(report: Report, url: str, resp: HttpResponse) -> None:
+    """依据一个已拿到的响应，审计安全头 / 信息泄漏 / Cookie 标志。
+
+    纯函数：不发起请求、不读文件、不依赖全局状态（除 report 这个收集器）。
+    判定规则（与 README 的安全基线检查表一一对应）：
+        · 没有 CSP                        → FAIL（第二道防线不存在）
+        · CSP 含 unsafe-inline/unsafe-eval → FAIL（形同虚设）
+        · CSP 缺 object-src/base-uri/      → WARN（半配置）
+          frame-ancestors
+        · 缺少 nosniff / X-Frame-Options / → WARN
+          Referrer-Policy / Permissions-Policy
+        · 暴露 Server / X-Powered-By       → INFO（仅提示）
+        · Cookie 缺 HttpOnly/Secure/SameSite → FAIL
+    """
     h = {k.lower(): v for k, v in resp.headers.items()}
 
     # ── CSP ──
@@ -517,6 +539,253 @@ def print_report(report: Report) -> None:
     print("─" * 74)
 
 
+# ══════════════════════════════════════════════════════════════════
+# 自测（--self-test）：纯离线验证检测逻辑，不发起任何网络请求
+# ══════════════════════════════════════════════════════════════════
+# 【为什么扫描器的自测不真的去扫？】
+#   扫描器的"逻辑"和"网络"应该分开验证：
+#     · 判定逻辑（classify / audit_headers / guard_target）是纯函数，
+#       给它**人造的响应对象**就能断言，结果完全确定，任何环境都能跑；
+#     · 网络链路（能不能连通、靶场端点是否按预期响应）由默认运行
+#       （内置 127.0.0.1 靶场）验证。
+#   这样自测就不会因为"端口被占用""沙箱禁网络"而随机失败 ——
+#   一个会随机失败的自测，等于没有自测。
+
+class _SelfTest:
+    """极简断言收集器：失败时打印「期望 vs 实际」，最后汇总。"""
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.failures: list[str] = []
+
+    def check(self, label: str, ok: bool, expect: str, actual: str) -> None:
+        self.total += 1
+        if ok:
+            print(f"   ✅ {label}")
+        else:
+            self.failures.append(label)
+            print(f"   ❌ {label}")
+            print(f"        期望: {expect}")
+            print(f"        实际: {actual}")
+
+    def eq(self, label: str, actual, expect) -> None:
+        self.check(label, actual == expect, repr(expect), repr(actual))
+
+    def contains(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle in haystack, f"包含 {needle!r}", _clip(haystack))
+
+    def absent(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle not in haystack, f"不包含 {needle!r}", _clip(haystack))
+
+    def true(self, label: str, cond: bool, detail: str = "") -> None:
+        self.check(label, cond, "True", f"False {detail}".strip())
+
+
+def _clip(text: str, limit: int = 200) -> str:
+    flat = " ".join(str(text).split())
+    return repr(flat[:limit] + ("…" if len(flat) > limit else ""))
+
+
+def _fake_response(body: str = "", headers: dict | None = None,
+                   status: int = 200, url: str = "http://127.0.0.1:1/") -> HttpResponse:
+    """造一个假的 HttpResponse —— 自测的关键道具。
+
+    有了它，审计逻辑就不需要真的发请求：想测"缺 CSP"就传一份没有 CSP 的头，
+    想测"Cookie 少了 Secure"就传一份那样的 Set-Cookie。
+    **能被构造函数直接喂数据的代码，才是好测试的代码。**
+    """
+    return HttpResponse(status=status, headers=headers or {}, body=body, final_url=url)
+
+
+def _find(report: Report, level: str, keyword: str) -> list[str]:
+    """在报告里找出「某等级 + 描述里含某关键词」的条目，返回它们的 detail 列表。"""
+    return [f.detail for f in report.findings
+            if f.level == level and keyword.lower() in f.detail.lower()]
+
+
+def self_test() -> int:
+    """离线自测，返回失败项数量。0 = 全部通过。"""
+    global PROGRESS
+    saved_progress = PROGRESS
+    PROGRESS = False          # 自测时不要刷进度行，保持输出干净
+    t = _SelfTest()
+
+    try:
+        # ══ A. 反射判定 classify() ═══════════════════════════════
+        print("\n[A] classify()：同一个探测标记的 5 种「命运」")
+        token, payload = make_probe("HTML 文本上下文（标签注入）")
+        t.contains("probe token 带随机后缀（避免与页面已有内容撞车）",
+                   token, "x152probe")
+        t.contains("payload 里嵌入了 token（这样才能唯一定位回显）",
+                   payload, token)
+
+        # ⚠️ 坑：验证「只转义尖括号」这条分支，必须用**含引号**的 payload。
+        #    纯标签 payload（<x152probe…>）里没有引号，只转尖括号的效果和完整
+        #    编码一模一样，会走到 PASS 分支。这本身就是"文本上下文够用、
+        #    属性上下文不够"的代码级证据。
+        q_token, q_payload = make_probe("双引号属性上下文（属性逃逸）")
+        cases = [
+            ("原样回显 → FAIL（未编码）",
+             f"<div>你搜索了：{payload}</div>", payload, FAIL),
+            ("完整实体化 → PASS（已编码）",
+             f"<div>你搜索了：{html_mod.escape(payload, quote=True)}</div>",
+             payload, PASS),
+            ("纯标签 payload 只转尖括号 → 其实与完整编码等价（无引号可逃逸）",
+             f"<div>{payload.replace('<', '&lt;').replace('>', '&gt;')}</div>",
+             payload, PASS),
+            ("含引号的 payload 只转尖括号 → WARN（引号仍是裸的）",
+             f'<input value="{q_payload.replace("<", "&lt;").replace(">", "&gt;")}">',
+             q_payload, WARN),
+            ("被改写成别的形式 → WARN（需人工确认）",
+             f"<div>{token}</div>", payload, WARN),
+            ("完全没回显 → INFO（不代表安全）",
+             "<div>没有你的输入</div>", payload, INFO),
+        ]
+        for label, body, pl, expect in cases:
+            level, detail = classify(body, token, pl)
+            t.eq(f"{label}", level, expect)
+
+        # 判定顺序陷阱：未编码版里**同时**含裸标记，必须先判 FAIL 而不是先判 PASS
+        both = f"裸的 {payload} 和转义的 {html_mod.escape(payload, quote=True)}"
+        t.eq("body 里同时存在裸标记和转义形式时，先判 FAIL（存在注入能力就要报）",
+             classify(both, token, payload)[0], FAIL)
+
+        # ══ B. context_snippet()：上下文截取 ═══════════════════════
+        print("\n[B] context_snippet()：给人工复核提供证据片段")
+        t.eq("命中并用省略号标出两侧截断", context_snippet("abcdefg", "cde", 1), "…bcdef…")
+        t.eq("未命中时返回空串（不编造证据）", context_snippet("abcdefg", "zzz"), "")
+        t.contains("命中内容一定出现在片段里",
+                   context_snippet("x" * 200 + payload, payload), payload)
+        t.absent("片段里不含换行（保证报告一行一条，便于 grep）",
+                 context_snippet("a\nb\nc", "b", 5), "\n")
+
+        # ══ C. 授权守卫：is_loopback / guard_target ═══════════════
+        print("\n[C] 授权守卫：只放行回环地址，其余必须显式声明授权")
+        for host, expect in [("127.0.0.1", True), ("localhost", True),
+                             ("::1", True), ("127.0.0.2", True),
+                             ("10.0.0.1", False), ("example.com", False),
+                             ("", False)]:
+            t.eq(f"is_loopback({host!r})", is_loopback(host), expect)
+
+        t.eq("回环目标直接放行",
+             guard_target("http://127.0.0.1:8000/", authorized=False), None)
+        t.eq("回环目标 + authorized 也放行",
+             guard_target("http://127.0.0.1:8000/", authorized=True), None)
+        err = guard_target("https://example.com/", authorized=False)
+        t.true("非回环且未声明授权 → 拒绝（返回错误说明）",
+               bool(err) and "拒绝" in err)
+        t.contains("拒绝信息里给出了补救办法（--authorized）", err or "", "--authorized")
+        t.eq("非回环 + 显式声明授权 → 放行",
+             guard_target("https://example.com/", authorized=True), None)
+        t.true("URL 缺主机名 → 报错而不是瞎扫",
+               bool(guard_target("http://", authorized=True)))
+
+        # ══ D. 安全头审计 audit_headers() ═════════════════════════
+        print("\n[D] audit_headers()：用假响应对象验证分级是否正确")
+        # D-1：一个"裸奔"的响应 —— 应该报 FAIL(缺 CSP)
+        r1 = Report()
+        audit_headers(r1, "http://127.0.0.1:1/bare", _fake_response("<h1>hi</h1>"))
+        t.true("缺 CSP → FAIL", bool(_find(r1, FAIL, "Content-Security-Policy")))
+        t.true("缺 X-Frame-Options → WARN",
+               bool(_find(r1, WARN, "X-Frame-Options")))
+        t.true("本次未下发 Cookie → INFO 跳过（不误报）",
+               bool(_find(r1, INFO, "未下发 Cookie")))
+
+        # D-2：CSP 写了但含 unsafe-inline —— 最典型的形式主义配置
+        r2 = Report()
+        audit_headers(r2, "http://127.0.0.1:1/weak", _fake_response(
+            headers={"Content-Security-Policy":
+                     "default-src 'self'; script-src 'unsafe-inline'"}))
+        t.true("CSP 含 'unsafe-inline' → FAIL（形同虚设）",
+               bool(_find(r2, FAIL, "unsafe-inline")))
+        t.true("同时指出缺少 object-src / base-uri",
+               bool(_find(r2, FAIL, "object-src")))
+
+        # D-3：配置完整的响应 —— 应该全 PASS，不出现 CSP 相关 FAIL
+        r3 = Report()
+        audit_headers(r3, "http://127.0.0.1:1/secure", _fake_response(
+            headers={
+                "Content-Security-Policy": (
+                    "default-src 'self'; script-src 'nonce-abc123' 'strict-dynamic'; "
+                    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Permissions-Policy": "camera=()",
+                "Set-Cookie": "sid=x; HttpOnly; Secure; SameSite=Lax; Path=/",
+            }))
+        t.check("CSP 配置良好 → 不再报任何 CSP 问题", not _find(r3, FAIL, "CSP")
+                and not _find(r3, WARN, "CSP 已存在"), "无 CSP 相关 FAIL/WARN",
+                f"FAIL={_find(r3, FAIL, 'CSP')} WARN={_find(r3, WARN, 'CSP')}")
+        t.true("Cookie 三件套齐全 → PASS",
+               bool(_find(r3, PASS, "HttpOnly / Secure / SameSite")))
+        t.eq("一个配置完善的响应不应产生任何 FAIL", r3.counts()[FAIL], 0)
+
+        # D-4：Cookie 少了 Secure —— 必须点名缺哪个标志
+        r4 = Report()
+        audit_headers(r4, "http://127.0.0.1:1/cookie", _fake_response(
+            headers={"Set-Cookie": "sid=x; HttpOnly; SameSite=Lax"}))
+        t.true("Cookie 缺 Secure → FAIL",
+               bool(_find(r4, FAIL, "Secure")))
+
+        # D-5：信息泄漏（Server 版本号）只作 INFO —— 但它**不会**抵消缺 CSP 的 FAIL
+        r5 = Report()
+        audit_headers(r5, "http://127.0.0.1:1/leak", _fake_response(
+            headers={"Server": "nginx/1.18.0"}))
+        t.true("暴露 Server 版本 → INFO（仅提示，不直接判定为漏洞）",
+               bool(_find(r5, INFO, "server")))
+        t.eq("信息泄漏不会掩盖「缺 CSP」这个 FAIL（仍计 1 个 FAIL）",
+             r5.counts()[FAIL], 1)
+
+        # D-6：安全头齐全 + 信息泄漏 → 0 FAIL（INFO 不影响退出码）
+        r6 = Report()
+        audit_headers(r6, "http://127.0.0.1:1/leak2", _fake_response(
+            headers={
+                "Content-Security-Policy": (
+                    "default-src 'self'; script-src 'nonce-abc123' 'strict-dynamic'; "
+                    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Permissions-Policy": "camera=()",
+                "Server": "nginx/1.18.0",
+            }))
+        t.true("安全头齐全时 Server 泄漏仍记 INFO", bool(_find(r6, INFO, "server")))
+        t.eq("只有 INFO 不产生 FAIL → 退出码 0（CI 不会被版本号拌倒）",
+             r6.counts()[FAIL], 0)
+
+        # ══ E. 报告结构与退出码契约 ═══════════════════════════════
+        print("\n[E] Report：计数与 JSON 序列化（CI 依赖的契约）")
+        rep = Report()
+        rep.add(PASS, "X", "t", "ok")
+        rep.add(WARN, "X", "t", "w")
+        rep.add(FAIL, "X", "t", "f")
+        rep.add(INFO, "X", "t", "i")
+        t.eq("counts() 分级计数正确",
+             rep.counts(), {PASS: 1, WARN: 1, FAIL: 1, INFO: 1})
+        dumped = json.dumps(rep.to_dict(), ensure_ascii=False)
+        t.contains("报告可 JSON 序列化（--json 输出依赖它）", dumped, '"counts"')
+        t.contains("findings 字段完整", dumped, '"advice"')
+        t.eq("退出码契约：有 FAIL → 1，否则 0",
+             (1 if rep.counts()[FAIL] else 0), 1)
+
+        # ══ F. 探测模板自检 ═══════════════════════════════════════
+        print("\n[F] 探测标记本身必须「无害」")
+        for ctx_name, tmpl in PROBE_TEMPLATES.items():
+            tok, pl = make_probe(ctx_name)
+            t.contains(f"模板 {ctx_name} 的 payload 含唯一 token", pl, tok)
+            for danger in ("script", "onerror", "alert", "onload", "javascript:"):
+                t.absent(f"模板 {ctx_name} 不含 {danger}", pl.lower(), danger)
+        t.check("三种上下文的模板互不相同",
+                len(set(PROBE_TEMPLATES.values())) == len(PROBE_TEMPLATES),
+                "互不相同", f"{list(PROBE_TEMPLATES.values())}")
+    finally:
+        PROGRESS = saved_progress
+
+    print(f"\n   断言总数: {t.total}，失败: {len(t.failures)}")
+    return len(t.failures)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="本地 XSS 反射检测 + 安全头审计（教学用）",
@@ -530,7 +799,19 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="以 JSON 输出报告")
     parser.add_argument("--authorized", action="store_true",
                         help="声明你已获得目标授权（扫描非回环地址时必须）")
+    parser.add_argument("--self-test", action="store_true",
+                        help="只跑离线自测：验证判定逻辑（不发起任何网络请求）")
     args = parser.parse_args()
+
+    if args.self_test:
+        failures = self_test()
+        print()
+        if failures:
+            print(f"❌ SELF-TEST FAILED：{failures} 项断言未通过"
+                  "（请回看上面打印的「期望 / 实际」）")
+            return 1
+        print("✅ SELF-TEST OK（检测逻辑断言全部通过；未发起任何网络请求）")
+        return 0
 
     global PROGRESS
     PROGRESS = not args.json      # --json 时保持 stdout 干净，只输出机器可读报告

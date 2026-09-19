@@ -22,10 +22,12 @@ Day 151 · 示例 02：参数化查询的边界与 ORM 防注入失效场景（�
 
 运行
 ----
-    python3 02-parameterized-pitfalls.py
+    python3 02-parameterized-pitfalls.py             # 完整演示（7 个坑逐个跑）
+    python3 02-parameterized-pitfalls.py --self-test  # 离线自检（断言 7 个坑的结论）
 """
 
 import sqlite3
+import sys
 
 
 def banner(title: str) -> None:
@@ -434,5 +436,179 @@ def main() -> None:
 """)
 
 
+# ════════════════════════════════════════════════════════════════
+# ✓ 离线自检（--self-test）
+# ════════════════════════════════════════════════════════════════
+
+def self_test() -> None:
+    """断言 7 个坑的结论都成立。全程本地内存库，不联网、不依赖时间。"""
+    checks: list[tuple[str, object, object]] = []
+
+    def eq(name: str, actual: object, expected: object) -> None:
+        checks.append((name, actual, expected))
+
+    def raises(fn) -> tuple[str, str]:
+        try:
+            fn()
+            return "-", ""
+        except Exception as e:
+            return type(e).__name__, str(e)
+
+    conn = make_range()
+
+    # ── 坑 1：占位符只能装“值”，不能装“标识符” ──────────────
+    eq("占位符放到表名位置 → 数据库报语法错误（拒绝把值当结构用）",
+       raises(lambda: conn.execute("SELECT * FROM ? WHERE id = ?", ("users", 1)))[1],
+       'near "?": syntax error')
+
+    ALLOWED_TABLES = {"users": "users", "audits": "audits"}
+
+    def safe_count(table_key: str) -> int:
+        table = ALLOWED_TABLES.get(table_key)
+        if table is None:
+            raise ValueError(f"非法表名: {table_key!r}")
+        return conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+
+    eq("白名单内的表名可以正常查（功能不受影响）", safe_count("users"), 3)
+    eq("白名单外的表名直接拒绝",
+       raises(lambda: safe_count("secrets"))[0], "ValueError")
+    eq("拒绝信息里带着原始输入（便于审计）",
+       raises(lambda: safe_count("secrets"))[1], "非法表名: 'secrets'")
+
+    # ── 坑 2：ORDER BY 拼接 = 另一个盲注信道 ────────────────
+    eq("正常排序作为基线", insecure_sort(conn, "username"),
+       [("admin", "administrator"), ("alice", "user"), ("bob", "user")])
+    true_expr = ("(CASE WHEN (substr((SELECT api_token FROM users WHERE "
+                 "username='admin'),1,1)='t') THEN username ELSE -id END)")
+    false_expr = ("(CASE WHEN (substr((SELECT api_token FROM users WHERE "
+                  "username='admin'),1,1)='x') THEN username ELSE -id END)")
+    order_true = [r[0] for r in insecure_sort(conn, true_expr)]
+    order_false = [r[0] for r in insecure_sort(conn, false_expr)]
+    eq("条件为真时的排序结果", order_true, ["admin", "alice", "bob"])
+    eq("条件为假时的排序结果", order_false, ["bob", "alice", "admin"])
+    eq("两种条件行序**不同** ⇒ 排序结果可当 1 bit 信道",
+       order_true != order_false, True)
+
+    ALLOWED_SORT = {"username", "id", "role"}
+    ALLOWED_DIR = {"ASC", "DESC"}
+
+    def safe_sort(column: str, direction: str = "ASC") -> list:
+        if column not in ALLOWED_SORT:
+            raise ValueError(f"非法排序字段: {column!r}")
+        if direction.upper() not in ALLOWED_DIR:
+            raise ValueError(f"非法排序方向: {direction!r}")
+        return conn.execute(
+            f"SELECT username, role FROM users ORDER BY {column} {direction.upper()}"
+        ).fetchall()
+
+    eq("白名单排序（DESC）可用", [r[0] for r in safe_sort("username", "desc")],
+       ["bob", "alice", "admin"])
+    eq("排序字段走白名单：注入表达式被拒",
+       raises(lambda: safe_sort(true_expr))[0], "ValueError")
+    eq("排序方向也走白名单：`DESC; DROP ...` 这种写法被拒",
+       raises(lambda: safe_sort("username", "DESC; DROP TABLE users"))[0], "ValueError")
+
+    # ── 坑 3：LIKE 通配符注入（参数化拦不住语义滥用）────────
+    def search_naive(kw: str) -> list:
+        return [r[0] for r in conn.execute(
+            "SELECT username FROM users WHERE username LIKE ?", (f"%{kw}%",)).fetchall()]
+
+    def search_escaped(kw: str) -> list:
+        esc = kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return [r[0] for r in conn.execute(
+            "SELECT username FROM users WHERE username LIKE ? ESCAPE '\\'",
+            (f"%{esc}%",)).fetchall()]
+
+    eq("正常关键字搜索", search_naive("a"), ["admin", "alice"])
+    eq("用户传 `%` ⇒ 拉全表（参数化挡不住，因为它不是 SQL 语法）",
+       search_naive("%"), ["admin", "alice", "bob"])
+    eq("用户传 `_` ⇒ 匹配所有单字符模式", search_naive("_"), ["admin", "alice", "bob"])
+    eq("转义后 `%` 被当普通字符", search_escaped("%"), [])
+    eq("转义后 `_` 被当普通字符", search_escaped("_"), [])
+    eq("转义不影响正常搜索", search_escaped("a"), ["admin", "alice"])
+
+    # ── 坑 4：IN 子句只拼占位符 ────────────────────────────
+    def safe_in_clause(names: list) -> list:
+        if not names:
+            return []
+        ph = ", ".join("?" for _ in names)
+        return conn.execute(
+            f"SELECT username, role FROM users WHERE username IN ({ph})", tuple(names)
+        ).fetchall()
+
+    evil = "x') UNION SELECT api_token, 'leak' FROM users--"
+    eq("IN 白名单式写法：正常值可用", safe_in_clause(["alice", "bob"]),
+       [("alice", "user"), ("bob", "user")])
+    eq("空列表必须特判（IN () 是语法错误）", safe_in_clause([]), [])
+    eq("注入串在拼接版里真的把令牌拉走了",
+       insecure_in_clause(conn, [evil]),
+       [("tk9xq2", "leak"), ("u_alice_01", "leak"), ("u_bob_0002", "leak")])
+    eq("同一串在安全版里只是一个普通值", safe_in_clause([evil]), [])
+
+    # ── 坑 5：二次注入（跨请求）───────────────────────────
+    c = make_range()
+    stored_evil = "x' OR '1'='1"
+    c.execute("INSERT INTO users (username, role, api_token) VALUES (?, 'user', 'tk_new')",
+              (stored_evil,))
+    stored = c.execute("SELECT username FROM users WHERE api_token = ?", ("tk_new",)).fetchone()[0]
+    eq("第一次入库完全安全：存的就是那段字符串", stored, stored_evil)
+    eq("入库后没有任何人被提权",
+       c.execute("SELECT count(*) FROM users WHERE role='vip'").fetchone()[0], 0)
+
+    c.execute(f"UPDATE users SET role = 'vip' WHERE username = '{stored}'")
+    eq("第二次拼接 ⇒ WHERE 恒真 ⇒ 全表 4 行被改成 vip",
+       c.execute("SELECT count(*) FROM users WHERE role='vip'").fetchone()[0], 4)
+
+    c.execute("UPDATE users SET role = 'user'")
+    c.execute("UPDATE users SET role = 'admin' WHERE id = 1")
+    uid = c.execute("SELECT id FROM users WHERE api_token = ?", ("tk_new",)).fetchone()[0]
+    c.execute("UPDATE users SET role = 'vip' WHERE id = ?", (uid,))
+    eq("用主键 id 定位 + 参数化 ⇒ 只改目标那一行",
+       dict(c.execute("SELECT username, role FROM users").fetchall()),
+       {"admin": "admin", "alice": "user", "bob": "user", stored_evil: "vip"})
+
+    # ── 坑 6：ORM 的真相 ──────────────────────────────────
+    orm = MiniORM(conn).filter(username="x' OR '1'='1", role="user")
+    eq("ORM 生成的 SQL 里没有用户数据，只有占位符",
+       orm.sql(), "SELECT * FROM users WHERE username = ? AND role = ?")
+    eq("用户数据在参数列表里", orm._params, ["x' OR '1'='1", "user"])
+    eq("恶意串被当成普通值 ⇒ 查不到", orm.all(), [])
+    eq("ORM 白名单之外的表名被拒",
+       raises(lambda: MiniORM(conn, "secrets"))[0], "ValueError")
+    eq("ORM 白名单之外的字段名被拒（防标识符注入）",
+       raises(lambda: MiniORM(conn).filter(**{true_expr: 1}))[0], "ValueError")
+    eq("一旦走 raw() 逃生舱，保护立刻消失（拼接版返回全表）",
+       len(MiniORM(conn).raw(
+           f"SELECT username FROM users WHERE username = '{stored_evil}'")), 3)
+    eq("对照：参数化版同样输入只返回 0 行",
+       MiniORM(conn).filter(username=stored_evil).all(), [])
+
+    # ── 坑 7：日志脱敏 ──────────────────────────────────
+    sql, params = "SELECT username FROM users WHERE role = ?", ("user",)
+    log_line = f"log: sql={sql!r} params=[<{len(params)} value(s) masked>]"
+    eq("日志只记模板与参数个数（参数值被脱敏）",
+       log_line.split("params=")[1], "[<1 value(s) masked>]")
+    eq("脱敏不影响查询功能", conn.execute(sql, params).fetchall(),
+       [("alice",), ("bob",)])
+
+    # ── 汇总 ──────────────────────────────────────────
+    bad = 0
+    for name, actual, expected in checks:
+        if actual == expected:
+            print(f"  [PASS] {name}")
+        else:
+            bad += 1
+            print(f"  [FAIL] {name}\n         实际值 = {actual!r}\n         期望值 = {expected!r}")
+    if bad:
+        print(f"\n自检失败：{bad}/{len(checks)} 项与期望不符")
+        sys.exit(1)
+    print(f"\n共 {len(checks)} 项断言全部通过")
+    print("SELF-TEST OK")
+    sys.exit(0)
+
+
 if __name__ == "__main__":
-    main()
+    if "--self-test" in sys.argv[1:]:
+        self_test()
+    else:
+        main()

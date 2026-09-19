@@ -35,8 +35,10 @@ Banner 抓取要回答：**门后面是谁？**
 
 from __future__ import annotations
 
+import argparse
 import http.server
 import socket
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -170,6 +172,65 @@ def start_probe_http(port: int = 0) -> tuple[http.server.ThreadingHTTPServer, in
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# ②-a 判读层的三个纯函数（从 grab_banner 里抽出来，便于离线自测）
+# ══════════════════════════════════════════════════════════════════════════
+# 【为什么要把这几行抽成函数？】
+#   它们和"发不发包"完全无关，只关心"拿到字节之后怎么判读"。
+#   抽出来之后，`--self-test` 就能在**没有任何网络**的情况下把判读逻辑钉死：
+#   二进制 banner 会不会炸？读到哪里算收工？errno 到底代表 open 还是 filtered？
+#   这几条恰恰是踩坑最多的地方，而它们本来就不需要联网才能验证。
+
+def decode_banner(raw: bytes) -> str:
+    """把原始字节解码成可读文本，**任何字节都不允许抛异常**。
+
+    【为什么必须 errors="replace"？】
+    banner 里出现非 UTF-8 字节是常态：
+      · Telnet 的协商指令（0xFF 0xFB …）；
+      · 老设备的 Latin-1 主机名；
+      · MySQL/MongoDB 的二进制握手包。
+    如果直接用 raw.decode("utf-8")，一个字节就能抛 UnicodeDecodeError，
+    在线程池里会变成"某个端口的结果凭空消失"，非常难查。
+    errors="replace" 用 U+FFFD 顶替坏字节：**信息会损失一点，但流程永远不中断**。
+    （另一个可行选择是 latin-1，它永不失败且字节可逆；代价是可读性差。）
+
+    返回空串而不是 None：调用方可以统一 `or None` 把"没读到"显式化。
+    """
+    return raw.decode("utf-8", errors="replace") if raw else ""
+
+
+def banner_is_complete(chunk: bytes) -> bool:
+    """启发式判断"这一段读完之后，banner 是不是已经够用了"。
+
+    【为什么要有这个判据？】这里对应坑 3：
+        TCP 是**字节流**，不是消息流 —— 一次 recv() 拿到的可能只是半行，
+        也可能是好几行拼在一起。反过来，如果傻等到超时，每个开放端口都要
+        白等一个完整的 timeout（扫描几万个端口时这是灾难）。
+    实践中的折中：**看到换行符就认为"至少拿到了一行标识"，可以收手**。
+    对 SMTP/SSH/HTTP 这类文本协议，第一行恰恰就是最有信息量的那行。
+    对二进制协议（如不认识的私有协议）这个启发式可能提前收手 ——
+    但要记住：banner 抓取的目的是**识别服务**，不是完整读取会话。
+    """
+    return b"\n" in chunk
+
+
+# connect_ex() 返回值的含义表。
+# 【为什么要区分这三态？】见坑 8：closed（RST）和 filtered（DROP）在
+# 安全上意义完全不同 —— 前者说明对方明确拒绝，后者说明流量被静默丢弃，
+# 很可能存在防火墙。把它们混为一谈，就会漏掉"被防火墙保护"这个事实。
+CONNECT_CODE_MEANING = {
+    0: "open",                 # 连接建立成功 → 端口开放
+    111: "closed/rejected",    # ECONNREFUSED → 有主机、无监听（对方回了 RST）
+    110: "filtered/timeout",   # ETIMEDOUT → 无响应（被 DROP，扫描器只能等到超时）
+    113: "host unreachable",   # EHOSTUNREACH → 路由 / ACL 阻断
+}
+
+
+def describe_connect_code(code: int) -> str:
+    """把 connect_ex 的返回值翻译成人类可读的状态结论（纯函数）。"""
+    return CONNECT_CODE_MEANING.get(code, f"其它 errno {code}")
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # ② 抓 banner 的核心函数（正确版本，后面逐个坑都拿它对比）
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -228,11 +289,13 @@ def grab_banner(
                 chunks.append(data)
                 total += len(data)
                 # 启发式：读到换行就认为 banner 到齐了，提前退出省时间
-                if b"\n" in data:
+                # （判据抽成了 banner_is_complete()，理由见该函数注释）
+                if banner_is_complete(data):
                     break
 
             raw = b"".join(chunks)
-            return raw.decode("utf-8", errors="replace") if raw else None
+            # 解码容错统一走 decode_banner()：二进制 banner 不许炸线程
+            return decode_banner(raw) or None
     except (ConnectionRefusedError, socket.timeout, OSError):
         return None
 
@@ -514,8 +577,10 @@ def pitfall_8_filtered_vs_closed() -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(1.0)
         code = sock.connect_ex((TARGET, probe_port))
-    meaning = {0: "open", 111: "closed/rejected", 110: "filtered/timeout", 113: "host unreachable"}
-    print(f"    实测 {TARGET}:{probe_port} → connect_ex 返回 {code}（{meaning.get(code, '其它')}）")
+    print(f"    实测 {TARGET}:{probe_port} → connect_ex 返回 {code}"
+          f"（{describe_connect_code(code)}）")
+    print("    【注意】本机没有中间防火墙，所以这里几乎只会看到 111/0 这两种；")
+    print("    要观察 110（DROP）请在有安全组的云主机或本机 iptables DROP 规则下实测。")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -559,7 +624,173 @@ def combined_demo(ports: dict[str, int]) -> None:
 # ⑤ 主流程
 # ══════════════════════════════════════════════════════════════════════════
 
-def main() -> None:
+# ══════════════════════════════════════════════════════════════════════════
+# ⑨ 自测（--self-test）：把"能离线验证的部分"从"必须联网的部分"里拆出来
+# ══════════════════════════════════════════════════════════════════════════
+# 【设计思路：抽取纯函数】
+#   grab_banner() 里真正容易写错的并不是 socket 调用本身，而是**判读逻辑**：
+#       · 收到的字节怎么解码？（二进制 banner 会不会把线程炸掉）
+#       · 什么时候算"这个 banner 读完了"？
+#       · connect_ex 的返回值各自代表什么状态？
+#   这三件事全部可以做成**不碰网络的纯函数**（decode_banner / banner_is_complete /
+#   describe_connect_code），于是自测可以在完全离线的环境里把它们逐一钉死。
+#   而"真的能连上本机服务并抓到 banner"由默认运行（本机三个性格不同的演示服务）
+#   来验证 —— 两者分工：**自测证明判读正确，演示证明链路打通**。
+
+class _SelfTest:
+    """极简断言收集器：失败时打印「期望 vs 实际」，最后汇总。"""
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.failures: list[str] = []
+
+    def check(self, label: str, ok: bool, expect: str, actual: str) -> None:
+        self.total += 1
+        if ok:
+            print(f"   ✅ {label}")
+        else:
+            self.failures.append(label)
+            print(f"   ❌ {label}")
+            print(f"        期望: {expect}")
+            print(f"        实际: {actual}")
+
+    def eq(self, label: str, actual, expect) -> None:
+        self.check(label, actual == expect, repr(expect), repr(actual))
+
+    def contains(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle in haystack, f"包含 {needle!r}", _clip(haystack))
+
+    def absent(self, label: str, haystack: str, needle: str) -> None:
+        self.check(label, needle not in haystack, f"不包含 {needle!r}", _clip(haystack))
+
+    def true(self, label: str, cond: bool, detail: str = "") -> None:
+        self.check(label, cond, "True", f"False {detail}".strip())
+
+
+def _clip(text: str, limit: int = 200) -> str:
+    flat = " ".join(str(text).split())
+    return repr(flat[:limit] + ("…" if len(flat) > limit else ""))
+
+
+def self_test() -> int:
+    """离线自测，返回失败项数量。0 = 全部通过。"""
+    t = _SelfTest()
+
+    # ══ A. 解码容错（坑 4 的回归测试） ═══════════════════════════
+    print("\n[A] decode_banner()：任何字节都不能让解码抛异常")
+    t.eq("正常 UTF-8 banner 原样还原",
+         decode_banner("220 你好 ESMTP\r\n".encode("utf-8")), "220 你好 ESMTP\r\n")
+    t.eq("空字节流 → 空字符串（而不是 None，便于统一处理）",
+         decode_banner(b""), "")
+
+    binary = b"\xff\xfd\x01\xff\xfb\x01\x00\x9c"
+    try:
+        decoded = decode_banner(binary)
+        raised = None
+    except Exception as exc:          # noqa: BLE001 —— 这里就是要把任何异常都抓住
+        decoded, raised = "", repr(exc)
+    t.eq("二进制 banner（Telnet 协商字节之类）不会抛 UnicodeDecodeError",
+         raised, None)
+    t.contains("解码失败的部分用 U+FFFD 顶替（errors='replace' 的效果）",
+               decoded, "\ufffd")
+    t.eq("解码后仍是 str 类型（下游 .splitlines() 才不会炸）",
+         isinstance(decoded, str), True)
+
+    # ══ B. "banner 读完了吗" 的判据（坑 3 的回归测试） ═════════════
+    print("\n[B] banner_is_complete()：什么时候可以停止 recv")
+    t.eq("含换行 → 认为一行 banner 已到齐，可以提前收手",
+         banner_is_complete(b"SSH-2.0-OpenSSH_8.9p1\r\n"), True)
+    t.eq("不含换行 → 还要继续读（一个 TCP 段不等于一条完整 banner）",
+         banner_is_complete(b"220 mail.example.com"), False)
+    t.eq("只有 \\n 也算（有些服务不发 \\r）",
+         banner_is_complete(b"+OK\n"), True)
+    t.eq("空片段 → 不要死循环，交给调用方 break",
+         banner_is_complete(b""), False)
+
+    # ══ C. connect 返回值的三态语义（坑 8 的回归测试） ════════════
+    print("\n[C] describe_connect_code()：把 errno 翻译成三态结论")
+    t.eq("0 → open（连接成功）", describe_connect_code(0), "open")
+    t.eq("111 (ECONNREFUSED) → closed/rejected（有主机、没监听，被 REJECT）",
+         describe_connect_code(111), "closed/rejected")
+    t.eq("110 (ETIMEDOUT) → filtered/timeout（被 DROP，静默丢弃）",
+         describe_connect_code(110), "filtered/timeout")
+    t.eq("113 (EHOSTUNREACH) → host unreachable（路由/ACL 阻断）",
+         describe_connect_code(113), "host unreachable")
+    t.contains("未知 errno 也要给出可读说明（不要把数字直接丢给人）",
+               describe_connect_code(999), "999")
+    t.contains("未知 errno 的说明里带「其它」标记，便于日志检索",
+               describe_connect_code(999), "其它")
+
+    # ══ D. 演示服务的"性格"是否与文档一致 ════════════════════════
+    print("\n[D] 三个演示服务的协议特征（它们是后面指纹识别的素材）")
+    greeting = ChatterboxServer.GREETING
+    t.eq("话痨服务的问候是 SMTP 风格（220 开头）",
+         greeting.startswith(b"220 "), True)
+    t.eq("SMTP 多行协议必须以 CRLF 结尾（否则客户端会一直等下一行）",
+         greeting.endswith(b"\r\n"), True)
+    t.contains("问候里带 ESMTP 关键字 —— 这正是指纹规则 ^220.*(E?SMTP|Mail) 依赖的特征",
+               greeting.decode("ascii", "replace"), "ESMTP")
+    t.eq("话痨服务的 banner 是单行（读一次 recv 就能拿到，方便对照坑 3）",
+         len(greeting.strip().splitlines()), 1)
+    t.true("DEFAULT_TIMEOUT 是正数（不设超时的坑就是「它必须存在」）",
+           DEFAULT_TIMEOUT > 0, f"DEFAULT_TIMEOUT={DEFAULT_TIMEOUT}")
+    t.true("MAX_BANNER_BYTES 有限且至少能装下一条 ordinary banner",
+           1024 <= MAX_BANNER_BYTES <= 1024 * 1024,
+           f"MAX_BANNER_BYTES={MAX_BANNER_BYTES}")
+
+    # ══ E. probes 组合的完整性（综合演示用到的三种探针策略） ══════
+    print("\n[E] 探针策略：三种服务性格对应三种探法")
+    probes = {
+        "话痨型（主动打招呼）": None,
+        "哑巴型（必须主动问）": b"PING\r\n",
+        "请求-响应型（HTTP）": b"GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n",
+    }
+    t.eq("话痨型：只读，不发任何探针（发了反而可能被当成非法指令断开）",
+         probes["话痨型（主动打招呼）"], None)
+    t.true("哑巴型：探针以 CRLF 结尾（很多文本协议按行解析）",
+           probes["哑巴型（必须主动问）"].endswith(b"\r\n"))
+    t.true("HTTP 型：探针是一个合法请求（请求行 + Host + 空行）",
+           probes["请求-响应型（HTTP）"].startswith(b"GET / HTTP/1.0\r\n")
+           and probes["请求-响应型（HTTP）"].endswith(b"\r\n\r\n"))
+
+    print(f"\n   断言总数: {t.total}，失败: {len(t.failures)}")
+    return len(t.failures)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """命令行入口。
+
+        python3 02-banner-grab-pitfalls.py              → 完整演示（本机三个演示服务）
+        python3 02-banner-grab-pitfalls.py --self-test  → 纯离线自测（不建任何连接）
+    """
+    parser = argparse.ArgumentParser(
+        description="Day 153 示例 02：Banner 抓取与服务识别的 8 个坑（仅限本机回环）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例:\n"
+            "  python3 02-banner-grab-pitfalls.py              # 完整演示\n"
+            "  python3 02-banner-grab-pitfalls.py --self-test  # 离线自测\n"
+        ),
+    )
+    parser.add_argument("--self-test", action="store_true",
+                        help="只跑离线自测（判读逻辑断言，不发起任何连接）")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        failures = self_test()
+        print()
+        if failures:
+            print(f"❌ SELF-TEST FAILED：{failures} 项断言未通过"
+                  "（请回看上面打印的「期望 / 实际」）")
+            return 1
+        print("✅ SELF-TEST OK（banner 判读逻辑断言全部通过；未建立任何 socket 连接）")
+        return 0
+
+    demo()
+    return 0
+
+
+def demo() -> None:
     assert TARGET == "127.0.0.1", "教学示例只允许扫描本机回环地址"
 
     print(f"目标（硬编码）: {TARGET}")
@@ -604,4 +835,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
