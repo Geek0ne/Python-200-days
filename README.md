@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-162%2F200-81.00%25-blue) ![Commits](https://img.shields.io/badge/Commits-1375-brightgreen) ![Phase](https://img.shields.io/badge/Phase-10_%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8%E5%8F%91%E5%B1%95-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-162%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1375-brightgreen) ![Phase](https://img.shields.io/badge/Phase-10_%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8%E5%8F%91%E5%B1%95-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -285,20 +285,17 @@
 ## 🏗️ 项目结构
 
 ```
-📁 python-200-days/
-├── 📓 days/                    # 每日学习代码（day-001 ~ day-200）
+📁 Python-200-days/
+├── 📓 days/                    # 每日学习内容（day-001 ~ day-162，共 162 个主题）
 │   ├── day-001-hello-python/
 │   ├── day-002-variables-and-datatypes/
 │   ├── ...
-│   └── day-156-scapy-packet-craft/
-├── 📁 projects/                # 阶段项目实战
-├── 📁 tools/                   # 学习工具脚本
-│   ├── daily_runner.sh         # 每日执行脚本
-│   └── generate_daily.py       # 每日模板生成
+│   └── day-162-安全审计工具箱-part1/
+├── 📁 docs/                    # 补充文档
 ├── 📄 ROADMAP.md               # 完整学习路线图
 ├── 📄 PLAN.md                  # 详细执行计划
-├── 📊 progress.json            # 进度数据
 ├── 📄 CONTRIBUTING.md          # 贡献指南
+├── 📄 .gitignore
 └── 📖 README.md                # 本文件
 ```
 
@@ -309,13 +306,13 @@
 ```bash
 # 克隆仓库
 git clone git@github.com:Geek0ne/Python-200-days.git
-cd python-200-days
+cd Python-200-days
 
-# 查看当天学习内容
-cd days/day-153-port-scan-advanced
+# 进入某一天的学习目录
+cd days/day-160-日志安全分析
 
-# 运行代码
-python main.py
+# 运行示例代码（多数脚本支持 --self-test 离线自检）
+python3 code/01-log-parser.py --self-test
 
 # 查看完整计划
 cat PLAN.md
