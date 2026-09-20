@@ -202,3 +202,142 @@ urljoin(base, word)  →  scope.check_url(url)  →  通过才允许发请求
 一个不可证伪的断言会让人**无法反驳、也难以复核**。
 把"证据 + 推断 + 置信度"三件套写在一起，
 复核者才能独立判断"这个推断值不值得信"。
+
+## 4. 核心机制详解
+
+### 4.1 端口扫描：三态与"服务推断"的两步走
+
+```text
+目标 host:port
+   │
+   ├─ connect_ex == 0        → open       → 抓 banner（只读服务主动发的问候语）
+   ├─ errno == 111 (ECONNREFUSED) → closed → 主机存活，该端口无服务
+   ├─ timeout / errno == 11  → filtered   → 不可判定（被过滤或链路问题）
+   └─ 其他 OSError           → error      → 本轮无有效结论
+```
+
+**服务名是两步推断的**：
+
+1. **banner 优先**：`SSH-2.0-…` → ssh；`HTTP/1.1 …` → http；
+   `220 …ESMTP` → smtp。banner 是服务自报家门，比端口号可靠。
+2. **端口号兜底**：没有 banner 时用 IANA 端口对照表（80 → http），
+   但要在报告里标注 `service_source="port_map"`（**低置信**），
+   因为端口可以随意改（把 SSH 放到 443 是很常见的做法）。
+
+为什么必须标注来源？因为"8080 是 HTTP"和"8080 的 banner 自称 HTTP"
+是两个完全不同可信度的断言。
+
+### 4.2 目录爆破的完整判定流水线
+
+```mermaid
+flowchart TD
+    A[base URL + 词表] --> B[基线探测<br/>3 个随机路径]
+    B --> C[取基线: 状态码 + 长度分布]
+    C --> D{对每个词条}
+    D --> E[urljoin 拼接]
+    E --> F[scope.check_url<br/>越界即拒绝]
+    F --> G[限速 + GET 只读]
+    G --> H{状态码}
+    H -->|200| I{长度接近基线?}
+    I -->|是| J[soft_404_suspect<br/>可疑，人工复核]
+    I -->|否| K[hit: 200 可访问]
+    H -->|301/302| L[redirect: 记 Location<br/>不自动跟随]
+    H -->|401/403| M[protected: 存在但需权限<br/>★ 重点线索]
+    H -->|429| N[throttled: 指数退避<br/>并记覆盖缺口]
+    H -->|404| O[absent]
+    H -->|5xx| P[server_error: 记下<br/>可能是异常分支]
+    J --> Q[结果汇总]
+    K --> Q
+    L --> Q
+    M --> Q
+    N --> Q
+    O --> Q
+    P --> Q
+    Q --> R[报告: 事实 + 推断 + 待验证]
+```
+
+### 4.3 指数退避的数学：为什么是 ×2 而不是 ×1.5
+
+被限速（429）时，目标是"在不加剧压力的前提下尽快恢复"。退避序列：
+
+```text
+第 1 次 429 → 等 0.5s
+第 2 次     → 等 1.0s
+第 3 次     → 等 2.0s
+第 4 次     → 等 4.0s（上限）
+```
+
+为什么翻倍？因为 429 通常来自**滑动窗口限流**：如果窗口是 60 秒 100 次，
+等待时间必须与"超出量"同量级才能复原。×2 的增长在 4 次内就能覆盖 8 倍量级，
+而 ×1.5 需要约 5~6 次；同时 ×2 的实现最简单（一个乘法），不容易写出 bug。
+
+**上限 4 秒的意义**：防止退避退到"扫描实际停止"。
+如果连续 429 到上限仍然被拒，正确动作是**停止并把"未完成的词条数"写进报告**，
+而不是无限等待（那会变成对目标的持久占用）。
+
+### 4.4 指纹信号聚合：为什么用"清单 + 打分"而不是"if-else 大判断"
+
+朴素写法：
+
+```python
+if "nginx" in server: tech = "nginx"
+elif "apache" in server: tech = "apache"
+```
+
+它的问题：**无法表达多信号、无法表达置信度、无法表达证据**。
+本课改成"信号清单"结构：
+
+```text
+Signals = [ (tech, source, value, weight), ... ]
+
+Server: lab-nginx/1.18.0     → (nginx, "header:Server", "lab-nginx/1.18.0", 0.4)
+Set-Cookie: LABSESSID=…      → (lab-cms, "cookie", "LABSESSID", 0.3)
+<meta generator="lab-cms 0.9">→ (lab-cms, "html:meta", "lab-cms 0.9", 0.5)
+/server-status 200 Apache 风格→ (apache, "path:/server-status", "…", 0.6)
+
+聚合：按 tech 累加 weight（上限 0.95）
+  置信度 = high ≥0.8 ；medium ≥0.5 ；low ≥0.2 ；info <0.2
+```
+
+好处：**可解释**。报告能写出"因为看到 A、B、C，所以推断 X（权重合计 0.7）"。
+复核者可以逐条反驳——这就是 3.5 节说的"可证伪"。
+
+### 4.5 统一报告：三模块结果如何合并
+
+三个模块产出三类不同结构，报告层用一个**统一的 Finding 模型**收敛：
+
+```text
+Finding(key, title, severity, confidence, target, evidence, detail)
+priority = (severity+1) × (confidence+1) → P0/P1/P2/P3
+```
+
+| 模块 | 产出 Finding 的示例 | severity / confidence |
+|---|---|---|
+| 端口扫描 | `unexpected_open_port`（高位端口暴露） | info / medium |
+| 端口扫描 | `cleartext_service`（http/telnet） | high / medium |
+| 目录爆破 | `protected_path`（403/401） | medium / **high**（状态码是硬事实） |
+| 目录爆破 | `backup_artifact`（`/backup.zip` 可下载） | high / medium |
+| 目录爆破 | `soft_404_noise`（基线一致） | info / high |
+| 指纹识别 | `tech_fingerprint`（多信号） | info / medium |
+| 指纹识别 | `version_disclosure` | low / medium |
+
+**注意 `protected_path` 的置信度是 high**：`403` 这个状态码本身是硬事实
+（服务器明确说了"存在但禁止"），只是"它是否重要"需要人工判断。
+**事实的置信度**和**重要性的置信度**是两回事，报告里必须分开。
+
+### 4.6 退出码与覆盖缺口
+
+沿用 Day 159–161 的语义：
+
+```text
+2  用法/范围错误（越界 URL、参数非法）        → 不可执行
+4  覆盖不完整（存在 429/timeout/filtered）    → 本轮无结论
+3  有 P0/P1 发现                              → 进入人工复核
+0  干净完成                                   → 归档
+优先级：2 > 4 > 3 > 0
+```
+
+**新增一条与 429 相关的规则**：目录爆破只要出现 **≥1 次 429**，
+整轮就标记 `coverage.incomplete=True`，退出码至少为 4。
+理由：429 说明"目标认为我在压它"，此时任何"未发现"的结论都不成立——
+**漏掉的路径可能就在被限速的那段时间里。**
