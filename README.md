@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-158%2F200-79.00%25-blue) ![Commits](https://img.shields.io/badge/Commits-1254-brightgreen) ![Phase](https://img.shields.io/badge/Phase-10_%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8%E5%8F%91%E5%B1%95-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-162%2F200-81.00%25-blue) ![Commits](https://img.shields.io/badge/Commits-1375-brightgreen) ![Phase](https://img.shields.io/badge/Phase-10_%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8%E5%8F%91%E5%B1%95-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -54,9 +54,9 @@
 | 指标 | 数据 |
 |:----|:----:|
 | 📅 已完成天数 | **162 天** |
-| 📝 总提交次数 | **1,308 commits** |
-| 📄 总代码行数 | **159,121 行** |
-| 📂 总文件数 | **1,114 个** |
+| 📝 总提交次数 | **1,375 commits** |
+| 📄 总代码行数 | **158,849 行** |
+| 📂 总文件数 | **1,107 个** |
 | 🏗️ 当前阶段 | **Phase 10 — 网络安全开发** |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
