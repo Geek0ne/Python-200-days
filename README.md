@@ -8,7 +8,7 @@
 
 ![Progress](https://img.shields.io/badge/Progress-158%2F200-79.00%25-blue) ![Commits](https://img.shields.io/badge/Commits-1254-brightgreen) ![Phase](https://img.shields.io/badge/Phase-10_%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8%E5%8F%91%E5%B1%95-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-[📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [📊 进度追踪](progress.json) · [🤝 贡献指南](CONTRIBUTING.md)
+[📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
 </div>
 
