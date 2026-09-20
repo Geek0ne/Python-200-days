@@ -480,29 +480,43 @@ priority_score = (severity + 1) × (confidence + 1)
 
 ## 6. 实战代码案例：一次完整的框架运行
 
-下面的数字全部来自 `04-pentest-framework.py lab` 的**实测输出**
-（实验服务：8000 伪装 SSH、8080 伪装 HTTP；授权范围回环 + 8000-8099）。
+下面的输出全部来自 `04-pentest-framework.py` 的**实测输出**（本机 Linux + Python 3.12，
+实验服务：8000 伪装 SSH、8080 伪装 HTTP；授权范围回环 + 8000-8099；扫描端口 8000-8080）。
 
 ### 6.1 正常运行（有开放端口、无可判定缺口）
 
 ```text
-$ python3 code/04-pentest-framework.py lab
-[scope] networks=['127.0.0.1/32'] ports=[[8000, 8099]] ticket=LAB-SELF-001
-[lab]   已启动实验服务: [8000, 8080]
-[collect] 目标 37 个 → open 2 / closed 35 / filtered 0 / error 0  (0.084s)
-[detect]  插件 4 个 → findings 7
-[exploit] skipped：本课不提供利用能力，仅输出人工验证清单
-[report]  已写入 out/day161-report.json / out/day161-report.md
-[exit]    3（有 P0/P1 发现）
+$ python3 code/04-pentest-framework.py lab --ports 8000-8080 --rate 500
+[lab]   启动本机实验服务: [8000, 8080]（仅回环）
+[scope] networks=['127.0.0.1/32'] ports=[(8000, 8099)] ticket=LAB-SELF-001
+[collect] 目标 81 个 → open 2 / closed 79 / filtered 0 / error 0  (throttle_wait=0.981s)
+[detect]  插件 4 个 → findings 9
+[exploit] skipped：本课不提供利用能力；输出人工验证清单，无网络行为
+[report]  已写入 days/day-161-渗透测试框架/out/day161-lab-report.json / ...md
+[exit]    3
 ```
+
+`findings 9` 的构成（实测）：7 条来自 4 个检测插件，2 条来自 exploit 占位阶段
+的 `needs_manual_verification`（每台开放端口的主机 1 条）：
+
+| 优先级 | 插件 | 目标 | severity/confidence |
+| --- | --- | --- | --- |
+| P1 | `cleartext_protocol` | 127.0.0.1:8080 | high / medium |
+| P2 | `version_disclosure` | 127.0.0.1:8000 | low / high |
+| P2 | `version_disclosure` | 127.0.0.1:8080 | low / high |
+| P3 | `banner_evidence` | 127.0.0.1:8000 | info / high |
+| P3 | `banner_evidence` | 127.0.0.1:8080 | info / high |
+| P3 | `high_port_service` | 127.0.0.1:8000 | info / medium |
+| P3 | `high_port_service` | 127.0.0.1:8080 | info / medium |
+| P3 | `needs_manual_verification` | 8000 / 8080 | info / info |
 
 报告节选：
 
 ```markdown
 ## 覆盖与结论可信度
 
-- 目标数 37：open 2 / closed 35 / filtered 0 / error 0
-- **可判定 37 条；不可判定 0 条**（filtered = 被过滤或链路问题，不能当作关闭）
+- 目标数 81：open 2 / closed 79 / filtered 0 / error 0
+- **可判定 81 条；不可判定 0 条**（filtered = 被过滤或链路问题，不能当作关闭）
 
 ## 开放端口与服务
 
@@ -516,8 +530,10 @@ $ python3 code/04-pentest-framework.py lab
 
 ```text
 $ python3 code/04-pentest-framework.py scan --hosts 10.0.0.5 --ports 8000
+⚠️ 未指定 --scope，使用默认实验范围（仅回环 8000-8099）。
+[scope] networks=['127.0.0.1/32'] ports=[(8000, 8099)] ticket=LAB-SELF-001
 ⛔ AuthorizationError: 目标不在授权网段内: 10.0.0.5
-   （审计日志：scope_check denied + run_abort exit=2）
+   （已记入审计日志：scope_check denied + run_abort exit=2）
 [exit] 2
 ```
 
@@ -525,17 +541,29 @@ $ python3 code/04-pentest-framework.py scan --hosts 10.0.0.5 --ports 8000
 
 ### 6.3 结果不完整（存在 filtered）时退出码是 4
 
+用**不可路由的文档网段**（192.0.2.0/24，RFC 5737）造出"不可判定"场景：
+让范围文件允许它，但那里没有服务会应答。
+
 ```text
-$ python3 code/04-pentest-framework.py scan --hosts 127.0.0.1 --ports 8000-8002 --timeout 0.001
-[collect] 目标 3 个 → open 0 / closed 0 / filtered 3 / error 0
-[detect]  skipped：上游阶段无可用资产（全部 filtered/error）
+$ cat /tmp/scope192.json
+{"networks": ["192.0.2.0/24"], "ports": [[8000, 8002]], "ticket": "LAB-DEMO"}
+
+$ python3 code/04-pentest-framework.py scan --hosts 192.0.2.1 --ports 8000-8002 \
+      --scope /tmp/scope192.json --timeout 0.2 --tag demo-inconclusive
+[scope] networks=['192.0.2.0/24'] ports=[(8000, 8002)] ticket=LAB-DEMO
+[collect] 目标 3 个 → open 0 / closed 0 / filtered 3 / error 0  (throttle_wait=0.000s)
+[detect] skipped：上游阶段无可用资产（全部 filtered/error）
+[exploit] skipped：上游阶段无可用资产（全部 filtered/error）
 [exit]    4
 ```
 
-**这里最值得看的是 `[detect] skipped`**：不是"发现 0 个问题"，
+**这里最值得看的是 `skipped`**：不是"发现 0 个问题"，
 而是"检测阶段未执行"。同一个空 findings 列表，两种措辞，两种完全不同的含义。
 
-## 7. 常见陷阱（对照表，详细复现见 `code/03-pitfalls.py`）
+（这也是开发期真实踩到的坑：早期 `tcp_probe` 忘了 `sock.settimeout(timeout)`，
+回环测试完全正常，一遇到不可达目标就卡住几十秒——详见坑 13。）
+
+## 7. 常见陷阱（13 个，对照表；详细复现见 `code/03-pitfalls.py`）
 
 | # | 陷阱 | 症状 | 正确做法 |
 |---|---|---|---|
@@ -551,6 +579,7 @@ $ python3 code/04-pentest-framework.py scan --hosts 127.0.0.1 --ports 8000-8002 
 | 10 | 直接写 banner 进报告 | 目标注入控制字符/Markdown | 净化 + 截断 + 标注不可信 |
 | 11 | 用 `time.time()` 计时 | 校时/改时钟导致负数 | 计时用 `perf_counter` |
 | 12 | 报告不回显范围与参数 | 结论不可复核 | 范围/参数/覆盖/审计统计必有 |
+| 13 | 收了 `timeout` 却没 `settimeout` | 回环正常、遇到不可达目标就卡死 | `sock.settimeout(timeout)`；用不可达目标验证耗时≈timeout |
 
 ## 8. 局限与伦理边界（必须写进交付报告，不能省略）
 
