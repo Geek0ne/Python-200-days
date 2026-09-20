@@ -341,3 +341,219 @@ priority = (severity+1) × (confidence+1) → P0/P1/P2/P3
 整轮就标记 `coverage.incomplete=True`，退出码至少为 4。
 理由：429 说明"目标认为我在压它"，此时任何"未发现"的结论都不成立——
 **漏掉的路径可能就在被限速的那段时间里。**
+
+## 5. API 速查
+
+### 5.1 `audit_core` 模块速查
+
+| 名称 | 类型 | 作用 | 关键点 |
+|---|---|---|---|
+| `Scope(networks, ports, http_bases, ticket)` | dataclass | 授权范围 | `check_host_port` / `check_url` 是仅有的两个出口 |
+| `Scope.check_url(url)` | 方法 | **HTTP 层门禁** | 协议/主机/端口 + 基址前缀三重校验 |
+| `parse_host_spec(spec)` | 函数 | IP/CIDR → 主机表 | **拒绝域名**（避免 DNS 外发） |
+| `parse_port_spec(spec)` | 函数 | `"8080,8000-8002"` → 端口表 | 有序去重 |
+| `LabHTTP(port, throttle_after)` | 类 | 本机实验服务 | `throttle_after=N`：第 N 个请求后返回 429 |
+| `fetch(url, timeout)` | 函数 | **只读 GET** | 不跟随重定向、不带凭据、体只读 4KB |
+| `HttpResult` | dataclass | 响应快照 | `status/length/headers/redirect_to/error` |
+| `scan_port(host, port, timeout, retries)` | 函数 | 单端口探测 | 三态 + banner + `service_source` |
+| `scan_ports(hosts, ports, scope, ...)` | 函数 | 批量探测 | 内部先过门禁，再限速 |
+| `TokenBucket(rate, capacity).acquire()` | 类 | 限速 | 默认 5 请求/秒（目录爆破） |
+| `build_baseline(base, scope, samples=3)` | 函数 | **软 404 基线** | 随机路径取 (状态码, 长度) |
+| `Baseline.matches(status, length)` | 方法 | 容差判定 | `max(32, 5% × baseline)` |
+| `dir_brute(base, words, scope, rate, max_backoff)` | 函数 | 目录爆破 | 返回 (条目, 基线, 覆盖统计)；429 指数退避 |
+| `classify(status, length, baseline, soft)` | 函数 | 状态码分类 | 8 个分类，见 5.2 |
+| `collect_signals(main, probes)` | 函数 | 指纹信号采集 | 每条信号带 `source` 与 `weight` |
+| `score_signals(signals, cap=0.95)` | 函数 | 指纹打分 | 上限 0.95：永不"确定" |
+| `Finding.priority` | 属性 | `(sev+1)×(conf+1)` | P0≥20 / P1≥12 / P2≥6 / P3 |
+| `build_report(...)` / `render_markdown(...)` | 函数 | 报告 | JSON + Markdown 双份 |
+
+### 5.2 目录分类速查（8 类）
+
+| 分类 | 触发条件 | 报告措辞 | 典型置信度 |
+|---|---|---|---|
+| `accessible` | 200 且长度**不接近**基线 | "可访问，需确认内容与权限" | 状态码 high，内容 medium |
+| `soft_404` | 200 且长度**接近**基线 | "软 404 可疑（疑似不存在）" | high（但含义是"不存在"） |
+| `protected` | 401 / 403 | "存在但当前身份无权限" | **high**（状态码是硬事实） |
+| `redirect` | 301/302/303/307/308 | "重定向至 X（未跟随）" | high |
+| `missing` | 404 | "不存在" | high |
+| `throttled` | 429 | "**未完成**：目标限速" | high（覆盖缺口） |
+| `server_error` | 5xx | "响应异常，可能是错误处理分支" | medium |
+| `error` | 网络异常（status=0） | "本轮无有效结论" | — |
+
+### 5.3 指纹信号权重表（实现值）
+
+| 信号 | source 前缀 | 权重 | 单信号置信度 |
+|---|---|---|---|
+| `Server` 头 | `header:Server` | 0.40 | low |
+| `X-Powered-By` 头 | `header:X-Powered-By` | 0.25 | low |
+| `Set-Cookie` 名 | `cookie` | 0.20 | low |
+| `<meta name="generator">` | `html:meta` | 0.30 | low |
+| `<title>` | `html:title` | 0.10 | info |
+| 特有路径（`/server-status` + Apache 风格输出） | `path:…` | 0.60 | medium |
+| ZIP 魔数 `PK` | `path:…` | 0.50 | medium |
+
+分档：`high ≥0.80`｜`medium ≥0.50`｜`low ≥0.20`｜`info <0.20`；
+**上限 0.95**（永不 1.0）。实测：`lab-cms` = cookie 0.20 + meta 0.30 = **0.50 → medium**。
+
+### 5.4 退出码
+
+| 码 | 触发 | 处理 |
+|---|---|---|
+| 2 | 范围/参数错误（越界 URL、域名、非法端口） | 不可执行，修范围重跑 |
+| 4 | 覆盖不完整：**任意 429**、端口 filtered/error、目录错误 | 本轮无结论，缩小词表/降速重跑 |
+| 3 | 有 P0/P1 发现 | 进入人工复核队列 |
+| 0 | 干净完成 | 归档 |
+
+优先级 `2 > 4 > 3 > 0`。**429 必须把退出码抬到 4**，因为漏掉的路径可能就在被限速那段时间里。
+
+## 6. 实战代码案例：一次完整的工具箱运行
+
+以下输出为 `03-audit-toolkit.py lab` 的**实测结果**（本机 Linux + Python 3.12，
+实验服务 `LabHTTP` 绑定 `127.0.0.1:8080`，词表 30 条，20 请求/秒）。
+
+### 6.1 正常运行
+
+```text
+$ python3 code/03-audit-toolkit.py lab
+[lab]    实验 HTTP 服务已启动：http://127.0.0.1:8080
+[ports]  目标 3 个 → open 1 (127.0.0.1:8080)
+[dirs]   完成 30/30｜限速 0｜退避事件 0｜耗时 1.46s
+[dirs]   基线：status=200 len=77（随机路径实测，用于识别软 404）
+[fp]     信号 7 条 → 推断 6 项：apache(0.6/medium), lab-cms(0.5/medium),
+         zip-artifact(0.5/medium), lab-nginx(0.4/low), php(0.25/low), lab portal(0.1/info)
+[find]   发现 33 条：{'P3': 27, 'P1': 4, 'P2': 2}
+         P1 protected_path     受保护路径（403）: /admin/
+         P1 backup_artifact    可下载的备份/归档文件: /backup.zip
+         P1 protected_path     受保护路径（403）: /config.json
+         P1 protected_path     受保护路径（401）: /logs/
+         P2 version_disclosure Server 暴露版本: lab-nginx/1.18.0
+[exit]   3
+```
+
+**三条 P1 的构成很值得看**：
+
+- `protected_path × 3`（`/admin/` 403、`/config.json` 403、`/logs/` 401）
+  —— 这正是"只认 200 的工具会全部漏掉"的那一类；它们是**最值得人工跟进的入口**。
+- `backup_artifact`（`/backup.zip` 可下载）—— 报告只写"可下载"这一**事实**，
+  **不去下载、不去解包**（那会越界，也可能触碰真实数据）。
+
+### 6.2 软 404：19 条"200"其实是"不存在"
+
+同一轮里，30 条词条的分类实测分布：
+
+```text
+accessible  5 条：healthz, login, backup.zip, api/v1/users, index.html
+missing     1 条：phpinfo.php
+protected   3 条：admin/, config.json, logs/
+redirect    2 条：admin, portal
+soft_404   19 条：robots.txt, sitemap.xml, favicon.ico, server-status, dashboard, …
+```
+
+**19 条 `soft_404`** 就是这个实验服务的价值所在：它模拟了真实世界里
+"重写规则把未匹配路径统统交给同一页面"的常见错误配置。
+没有基线的脚本会把这 19 条全部报成"发现"。
+
+> ⚠️ 一个诚实的小坑（实测可见）：`/server-status`（len=65）与 `/robots.txt`（len=54）
+> 因为长度落在基线容差内，被标成了 `soft_404_suspect`，而它们**其实存在**。
+> 这说明容差参数是**误报/漏报的滑块**；本课的做法是同时保留
+> `soft_404_suspect` 与原始长度，让人工复核时能看到"它到底有多像基线"。
+
+### 6.3 429：覆盖缺口必须抬到退出码 4
+
+```text
+$ python3 code/03-audit-toolkit.py lab --http-port 8085 --throttle-after 8
+[lab]    实验 HTTP 服务已启动：http://127.0.0.1:8085（429 限速演示：第 8 个请求后开始限速）
+[ports]  目标 3 个 → open 0 (无)
+[dirs]   完成 5/30｜限速 25｜退避事件 25｜耗时 91.79s
+[find]   P1 coverage_gap  目录爆破未完成：目标限速
+[exit]   4（覆盖不完整 → 本轮无结论）
+```
+
+三个数字连起来读：
+
+- `限速 25` —— 30 条词条里有 25 条**没拿到有效结果**；
+- `耗时 91.79s` —— 25 次退避 × 最长达 4 秒，这就是"礼貌"的代价；
+- `exit 4` —— **"未发现"这个结论不成立**，必须重跑（降速、缩词表，或与客户约定窗口）。
+
+### 6.4 越界：URL 层门禁
+
+```text
+$ python3 code/03-audit-toolkit.py dirs --base http://192.0.2.1:8080 --rate 500
+⛔ AuthorizationError: 主机不在授权网段内: 192.0.2.1（URL: http://192.0.2.1:8080）
+   （越界是策略拒绝：不重试、不跳过、整轮终止）
+退出码：2
+```
+
+词表里出现 `//evil.example/x` 时也是同样的结果——`urljoin` 会
+**正确地**拼出 `http://evil.example/x`，所以拼接后必须再过一次门禁（见 6.5）。
+
+### 6.5 各子命令速览
+
+```bash
+D="days/day-162-安全审计工具箱-part1/code"
+python3 "$D/03-audit-toolkit.py" ports --hosts 127.0.0.1 --ports 8080-8082
+python3 "$D/03-audit-toolkit.py" dirs  --base http://127.0.0.1:8080 --rate 20
+python3 "$D/03-audit-toolkit.py" fingerprint --base http://127.0.0.1:8080
+python3 "$D/03-audit-toolkit.py" scan --hosts 127.0.0.1 --ports 8080 \
+        --base http://127.0.0.1:8080 --rate 20 --tag day162-scan
+```
+
+报告落在 `out/<tag>-report.json` 与 `out/<tag>-report.md`（`out/` 已在 `.gitignore`）。
+
+## 7. 常见陷阱（对照表）
+
+| # | 陷阱 | 症状 | 正确做法 |
+|---|---|---|---|
+| 1 | 只认 200 | 满屏假发现；漏掉 403/401 的真正入口 | 分类 + 软 404 基线 |
+| 2 | 不取基线就先扫 | 无法判断"200 是否存在" | 先随机路径取基线（samples≥3） |
+| 3 | 基线长度用**相等**判定 | 有噪声的软 404 被当成发现 | 容差 `max(32, 5%)`，并保留原始长度 |
+| 4 | 容差过大 | 真实小页面被误判为软 404（漏报） | 保留双标记，人工复核 |
+| 5 | 429 记成 404 | 报告谎称"扫描完成、无发现" | 429 单列 + 退出码抬到 4 |
+| 6 | 429 后继续猛冲 | 加剧目标压力，可能被拉黑 | 指数退避 0.5→1→2→4（上限） |
+| 7 | 自动跟随重定向 | 真实状态码被隐藏；可能被引到范围外 | 自定义 handler 捕获而不跟随 |
+| 8 | 词条字符串相加 | 拼出坏 URL（问题被掩盖） | `urljoin` + **拼接后复检范围** |
+| 9 | 词表无上限、无限速 | 事实上的压力测试 | 内置短词表 + 默认 5 请求/秒 |
+| 10 | 把响应头当事实 | 指纹置信度虚高（头可任意伪造） | 多信号交叉 + 写明"需人工确认" |
+| 11 | 把 banner/HTML 原样写进报告 | 目标可注入控制字符/Markdown | `sanitize()` 净化 + 截断 |
+| 12 | 登录后再扫（带 Cookie） | 触碰真实业务数据、可能锁账号 | 本课只做**匿名视角**，并在报告声明覆盖边界 |
+| 13 | 报告写"发现漏洞" | 措辞越界，责任无法界定 | 只到"事实/推断/待验证"三档 |
+
+## 8. 局限与边界（必须写进交付报告）
+
+**能力局限**
+
+- **只有资产面**：本工具产出的都是"线索"，**没有任何"已验证漏洞"**。
+  漏洞面在 Day 163，验证与利用必须由人工在单独授权的窗口完成。
+- **匿名视角**：不使用任何凭据，因此**认证后可见的路径完全不在覆盖范围内**。
+- **词表只有 30 条**：真实审计需要按业务定制词表（并单独授权）。
+- **指纹低置信**：单信号不可信；`Server` 头可被任意伪造。
+- **无 WAF 绕过能力**：本课刻意不做绕过。遇到 403/429 就记录并停下，交给人工。
+- **不评测检出率**：没有带标签的基准集，**不能**作为合规审计的唯一依据。
+
+**刻意不做（设计选择）**
+
+| 不做 | 原因 |
+|---|---|
+| 登录 / 凭据爆破 / 带 Cookie 扫描 | 需要单独书面授权；错误尝试可能导致账号锁定（生产事故） |
+| POST / 上传 / 参数注入 | 会修改目标数据，超出"只读审计"边界 |
+| 下载备份文件、解包查看 | 可能触碰真实敏感数据；报告只写"可下载"这一事实 |
+| 绕过 403/429（改头、代理轮换、并发压制） | 绕过防护 = 攻击能力；授权测试应留下痕迹而非隐藏自己 |
+| 自动处置（封 IP、改配置） | 误报会升级为生产事故；处置必须走独立授权流程 |
+| 扩大范围（"顺手扫一下邻居网段"） | 越界不是技术失误，是合规事故 |
+
+## 9. 思考题
+
+1. 软 404 基线用"随机路径"取。如果服务器的 404 页面**每次都带一个随机 token**，
+   长度会在 ±40 字节内跳动。你的容差策略要如何调整，才能既不误报又不漏报？
+   有没有比"随机路径"更可靠的基线取法（提示：两次请求同一条不存在的路径）？
+2. 本课把 `protected_path`（403/401）定为**高置信度**，但严重度只有 medium。
+   请说明"事实置信度"与"影响严重度"为什么必须分开评估。
+   如果 403 出现在 `/admin/` 而不是 `/logs/`，你会怎么调整严重度，依据是什么？
+3. 429 出现时必须把退出码抬到 4。如果客户明确说"我不在乎完整覆盖，
+   我只要你在 5 分钟内给我能扫到的部分"，你会怎么设计报告与退出码才既不撒谎又不碍事？
+4. 指纹识别的信号全部可被目标伪造。请设计一个**不增加请求、不越界**的方法，
+   把"lab-nginx"这条推断从 `low` 提升到 `medium`，并说明为什么它仍然不能到 `high`。
+5. 本课刻意不做"带 Cookie 扫描"。如果业务方要求覆盖认证后区域，
+   你会要求哪些前置条件（授权、环境、账号、时间窗、回滚）？至少 4 条，并说明各自对应什么风险。
+6. 把这三个模块接入 CI（每次发布前对测试环境跑一遍）时，
+   `429` 和 `soft_404` 两类结果会怎么影响流水线稳定性？你会如何取舍？
