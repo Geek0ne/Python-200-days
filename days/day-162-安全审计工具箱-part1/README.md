@@ -290,16 +290,20 @@ elif "apache" in server: tech = "apache"
 ```text
 Signals = [ (tech, source, value, weight), ... ]
 
-Server: lab-nginx/1.18.0     → (nginx, "header:Server", "lab-nginx/1.18.0", 0.4)
-Set-Cookie: LABSESSID=…      → (lab-cms, "cookie", "LABSESSID", 0.3)
-<meta generator="lab-cms 0.9">→ (lab-cms, "html:meta", "lab-cms 0.9", 0.5)
-/server-status 200 Apache 风格→ (apache, "path:/server-status", "…", 0.6)
+Server: lab-nginx/1.18.0     → (lab-nginx, "header:Server", "lab-nginx/1.18.0", 0.40)
+X-Powered-By: PHP/7.4.33     → (php, "header:X-Powered-By", "PHP/7.4.33", 0.25)
+Set-Cookie: LABSESSID=…      → (lab-cms, "cookie", "LABSESSID", 0.20)
+<meta generator="lab-cms 0.9">→ (lab-cms, "html:meta", "lab-cms 0.9", 0.30)
+/server-status 200 Apache 风格→ (apache, "path:/server-status", "…", 0.60)
 
 聚合：按 tech 累加 weight（上限 0.95）
+  lab-cms   = 0.20 + 0.30 = 0.50 → medium   （cookie 与 meta 两个信号交叉）
+  apache    = 0.60            → medium
+  lab-nginx = 0.40            → low
   置信度 = high ≥0.8 ；medium ≥0.5 ；low ≥0.2 ；info <0.2
 ```
 
-好处：**可解释**。报告能写出"因为看到 A、B、C，所以推断 X（权重合计 0.7）"。
+好处：**可解释**。报告能写出"因为看到 A、B、C，所以推断 X（权重合计 0.5）"。
 复核者可以逐条反驳——这就是 3.5 节说的"可证伪"。
 
 ### 4.5 统一报告：三模块结果如何合并
