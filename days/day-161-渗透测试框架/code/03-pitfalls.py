@@ -1,4 +1,4 @@
-"""常见陷阱与避坑：12 个真实会踩的坑（Day 161 — 渗透测试框架）。
+"""常见陷阱与避坑：13 个真实会踩的坑（Day 161 — 渗透测试框架）。
 
 每个坑都是"跑起来能看见"的，不是清单口号。结构：
     现象 → 原因 → 可运行的最小复现 → 正确做法
@@ -249,17 +249,43 @@ def pitfall_12() -> None:
     print("  " + json.dumps(keys, ensure_ascii=False))
 
 
+# ── 坑 13：传了 timeout 却没用到 socket 上（实测踩到） ─────────────────
+def pitfall_13() -> None:
+    head(13, "参数收了但没生效：timeout 没有 set 到 socket 上")
+    print("这是本课开发过程中**真的踩到**的坑，值得单独写一条。")
+    print("现象：回环实验全部正常，一旦遇到不可达目标（如 192.0.2.1）整轮扫描卡住。")
+    print("原因：connect_ex() 走的是 OS 默认超时（几十秒级），入口参数被接收但从未使用。\n")
+
+    print("反面写法：")
+    print("    code = sock.connect_ex((host, port))       # timeout 参数在哪里？")
+    print("正确写法：")
+    print("    sock.settimeout(timeout)                   # ★ 必须显式设置")
+    print("    code = sock.connect_ex((host, port))")
+
+    print("\n实测对比（回环上的关闭端口 vs 不可达的文档网段地址）：")
+    for host, port in (("127.0.0.1", 8001),):
+        r = tcp_probe(Target(host, port), timeout=0.2)
+        print(f"  {host}:{port} → {r.state}（{r.elapsed_ms}ms；关闭端口会立刻 RST，看不出问题）")
+    t0 = time.perf_counter()
+    r = tcp_probe(Target("192.0.2.1", 8000), timeout=0.2, retries=0)
+    elapsed = time.perf_counter() - t0
+    print(f"  192.0.2.1:8000 → {r.state}（实测 {elapsed:.3f}s；等于 timeout 才算参数真的生效）")
+    print("\n自检建议：不要只用回环验证——回环太快，会把『参数没接上』完全掩盖掉。")
+    print("用一个**缓慢或不可达**的目标跑一次，看耗时是否≈timeout。")
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Day 161 十二个陷阱演示")
+    parser = argparse.ArgumentParser(description="Day 161 十三个陷阱演示")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         return _self_test()
     for fn in (pitfall_01, pitfall_02, pitfall_03, pitfall_04, pitfall_05, pitfall_06,
-               pitfall_07, pitfall_08, pitfall_09, pitfall_10, pitfall_11, pitfall_12):
+               pitfall_07, pitfall_08, pitfall_09, pitfall_10, pitfall_11, pitfall_12,
+               pitfall_13):
         fn()
     print("\n" + "=" * 68)
-    print("十二个坑的共同点：它们都让『结论』比『事实』更自信。")
+    print("十三个坑的共同点：它们都让『结论』比『事实』更自信。")
     print("框架的价值就是把这种差距压到最小：回显参数、区分三态、留痕、拒绝静默失败。")
     print("=" * 68)
     return 0
@@ -309,6 +335,12 @@ def _self_test() -> int:
     report = build_report(default_lab_scope(), [], [], [], {}, Framework(default_lab_scope()).audit)
     for key in ("generated_at", "scope", "params", "coverage", "findings", "exit_code"):
         assert key in report, key
+    # 坑13：timeout 必须真的生效（耗时 ≈ timeout，而不是 OS 默认超时）
+    t0 = time.perf_counter()
+    r = tcp_probe(Target("192.0.2.1", 8000), timeout=0.3, retries=0)
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 2.0, elapsed          # 若没设 socket 超时这里会是几十秒
+    assert r.state in {"filtered", "error", "closed"}, r.state
     print("SELF-TEST OK")
     return 0
 
