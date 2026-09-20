@@ -91,14 +91,14 @@ open 0 ｜ closed 0  ｜ filtered 3 ｜ error 0        （可判定 0 → 无结
 ## 4. 指纹识别：信号 → 打分 → 置信度
 
 ```text
-信号采集                      权重        聚合
+信号采集                      权重        聚合（按 tech 累加）
 ─────────────────────────────────────────────────────────────
-Server: lab-nginx/1.18.0      0.40  ┐
-X-Powered-By: PHP/7.4.33      0.30  │
-Set-Cookie: LABSESSID=…       0.30  ├─▶ tech=lab-cms  合计 0.60 → medium
-<meta generator="lab-cms 0.9">0.50  │   tech=nginx    合计 0.40 → low
-<title>Lab Portal</title>     0.20  │   tech=php      合计 0.30 → low
-/server-status（Apache 风格） 0.60  ┘   tech=apache   合计 0.60 → medium
+Server: lab-nginx/1.18.0      0.40 ─▶ lab-nginx = 0.40 → low
+X-Powered-By: PHP/7.4.33      0.25 ─▶ php       = 0.25 → low
+Set-Cookie: LABSESSID=…       0.20 ┐
+<meta generator="lab-cms 0.9">0.30 ┴▶ lab-cms   = 0.50 → medium ★交叉验证
+<title>Lab Portal</title>     0.10 ─▶ lab portal= 0.10 → info
+/server-status（Apache 风格） 0.60 ─▶ apache    = 0.60 → medium
 ─────────────────────────────────────────────────────────────
 置信度分档：high ≥0.80 ｜ medium ≥0.50 ｜ low ≥0.20 ｜ info <0.20
 上限 0.95：**永不给出"确定使用 X"的断言**（所有信号都可被伪造）
