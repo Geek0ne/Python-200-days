@@ -417,3 +417,178 @@ capacity = 5, rate = 2/s
 
 最后一条是安全设计原则：**越界错误绝不能进入重试路径**，
 否则"重试逻辑"会变成"绕过范围校验的旁路"。
+
+## 5. API 速查
+
+### 5.1 `pentest_core` 模块速查
+
+| 名称 | 类型 | 作用 | 关键点 |
+|---|---|---|---|
+| `Scope` | dataclass | 授权范围 | 黑名单优先；`allow_raw_sockets/allow_write_actions` 恒为 False |
+| `Scope.check(target)` | 方法 | **唯一的越界出口** | 不通过抛 `AuthorizationError` |
+| `Scope.load(path)` | 类方法 | 从 JSON 载入 | 缺 `networks`/`ports` 直接 `ScopeError` |
+| `parse_host_spec(spec)` | 函数 | IP/CIDR → 主机列表 | **拒绝域名**（避免 DNS 外发） |
+| `parse_port_spec(spec)` | 函数 | `"80,8000-8010"` → 端口列表 | 有序去重，越界端口报错 |
+| `Target(host, port)` | frozen dataclass | 探测单元 | frozen ⇒ 可进 `set` 去重 |
+| `AuditLog.record(event, subject, result, **detail)` | 方法 | 写过程证据 | 可选 JSONL 落盘 |
+| `tcp_probe(target, timeout, retries)` | 函数 | 只读探测 | 只读 banner，**不发送任何字节** |
+| `TokenBucket(rate, capacity).acquire()` | 类 | 限速 | 返回本次等待秒数 |
+| `Framework.build_targets(hosts, ports)` | 方法 | 表达式 → 去重 Target 列表 | 只做解析，不校验 |
+| `Framework.authorize(targets)` | 方法 | 批量校验 | **fail-fast**：任一越界即中止 |
+| `Framework.probe_many(targets)` | 方法 | 线程池 + 限速探测 | 结果顺序与输入一致 |
+| `Framework.run_phases(phases, assets)` | 方法 | 阶段编排 | 空资产 ⇒ 下游 `skipped` |
+| `Finding` | dataclass | 发现项 | `priority = f(severity, confidence)` |
+| `build_report(...)` / `render_markdown(...)` | 函数 | 报告 | 必含范围/参数/覆盖/审计统计 |
+| `LabServer({port: greeting})` | 类 | 回环实验服务 | 仅用于自测 |
+
+### 5.2 三态 + 退出码语义对照（最容易记混的两组）
+
+| 概念 | 取值 | 判据 | 报告措辞 |
+|---|---|---|---|
+| 端口状态 | `open` | `connect_ex == 0` | 有服务在监听 |
+| | `closed` | `errno == 111` | 主机存活、该端口无服务 |
+| | `filtered` | timeout / `errno == 11` | **不可判定**（被过滤或链路问题） |
+| | `error` | 其他 OSError / gaierror | 本轮无有效结论 |
+| 退出码 | `2` | 越界 / 参数非法 | 不可执行，修范围重跑 |
+| | `4` | 存在 filtered / error | 无结论，需换路径复测 |
+| | `3` | 有 P0/P1 发现 | 进人工复核队列 |
+| | `0` | 干净完成 | 归档 |
+
+优先级：`2 > 4 > 3 > 0`。
+
+### 5.3 优先级公式
+
+```text
+severity   ∈ {info=0, low=1, medium=2, high=3, critical=4}
+confidence ∈ {info=0, low=1, medium=2, high=3}
+priority_score = (severity + 1) × (confidence + 1)
+  ≥ 20 → P0      ≥ 12 → P1      ≥ 6 → P2      其余 → P3
+```
+
+例：`version_disclosure` = low + high = 2×4 = 8 → **P2**；
+`cleartext_protocol` = high + medium = 4×3 = 12 → **P1**；
+`banner_evidence` = info + high = 1×4 = 4 → **P3**（事实记录，不丢弃）。
+
+### 5.4 参数速查（报告必须回显这几个）
+
+| 参数 | 默认 | 含义 | 调大的后果 | 调小的后果 |
+|---|---|---|---|---|
+| `timeout` | 0.5 s | 单次 connect 等待 | 扫描变慢 | 假 `filtered` 增多 |
+| `workers` | 8 | 同时在途连接数 | 本地端口耗尽、目标压力大 | 慢 |
+| `rate` | 50 /s | 每秒新增连接数 | 触发 IDS/客户投诉 | 慢但礼貌 |
+| `retries` | 1 | 抖动类错误重试次数 | 超时类错误被掩盖 | 抖动被记为不可判定 |
+
+## 6. 实战代码案例：一次完整的框架运行
+
+下面的数字全部来自 `04-pentest-framework.py lab` 的**实测输出**
+（实验服务：8000 伪装 SSH、8080 伪装 HTTP；授权范围回环 + 8000-8099）。
+
+### 6.1 正常运行（有开放端口、无可判定缺口）
+
+```text
+$ python3 code/04-pentest-framework.py lab
+[scope] networks=['127.0.0.1/32'] ports=[[8000, 8099]] ticket=LAB-SELF-001
+[lab]   已启动实验服务: [8000, 8080]
+[collect] 目标 37 个 → open 2 / closed 35 / filtered 0 / error 0  (0.084s)
+[detect]  插件 4 个 → findings 7
+[exploit] skipped：本课不提供利用能力，仅输出人工验证清单
+[report]  已写入 out/day161-report.json / out/day161-report.md
+[exit]    3（有 P0/P1 发现）
+```
+
+报告节选：
+
+```markdown
+## 覆盖与结论可信度
+
+- 目标数 37：open 2 / closed 35 / filtered 0 / error 0
+- **可判定 37 条；不可判定 0 条**（filtered = 被过滤或链路问题，不能当作关闭）
+
+## 开放端口与服务
+
+| 目标 | 服务 | banner（截断） |
+| --- | --- | --- |
+| 127.0.0.1:8000 | ssh | SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.4 |
+| 127.0.0.1:8080 | http | HTTP/1.1 200 OK Server: lab-nginx/1.18.0 |
+```
+
+### 6.2 越界必须立即终止（这是重点）
+
+```text
+$ python3 code/04-pentest-framework.py scan --hosts 10.0.0.5 --ports 8000
+⛔ AuthorizationError: 目标不在授权网段内: 10.0.0.5
+   （审计日志：scope_check denied + run_abort exit=2）
+[exit] 2
+```
+
+**注意 `denied` 这一条也被写进了审计日志**——"我拒绝了一个请求"同样是证据。
+
+### 6.3 结果不完整（存在 filtered）时退出码是 4
+
+```text
+$ python3 code/04-pentest-framework.py scan --hosts 127.0.0.1 --ports 8000-8002 --timeout 0.001
+[collect] 目标 3 个 → open 0 / closed 0 / filtered 3 / error 0
+[detect]  skipped：上游阶段无可用资产（全部 filtered/error）
+[exit]    4
+```
+
+**这里最值得看的是 `[detect] skipped`**：不是"发现 0 个问题"，
+而是"检测阶段未执行"。同一个空 findings 列表，两种措辞，两种完全不同的含义。
+
+## 7. 常见陷阱（对照表，详细复现见 `code/03-pitfalls.py`）
+
+| # | 陷阱 | 症状 | 正确做法 |
+|---|---|---|---|
+| 1 | 把 `filtered` 当 `closed` | 报告谎称"仅 N 个端口开放" | 三态分开统计，回显不可判定数量 |
+| 2 | 先连接再判断范围 | 越界包已经发出去了 | 校验在 `socket()` **之前** |
+| 3 | 把 `ECONNREFUSED` 当"主机不存在" | 丢失"主机存活"情报 | `closed` ⇒ 主机存活 + 该端口无服务 |
+| 4 | 超时拍脑袋设 0.05s | 假 `filtered` 遍地 | 按网络距离选值并回显 |
+| 5 | 并发拉满无限速 | 事实上的拒绝服务边缘 | 令牌桶 + 由客户许可决定 rate |
+| 6 | 重试策略写反 | 抖动被误判 / 越界被重试 | 只重试抖动类；越界**绝不重试** |
+| 7 | 范围里写域名 | 解析即外发 | 只接受 IP/CIDR |
+| 8 | 空输入算出 0 个问题 | "无结论"伪装成"没问题" | 上游无资产 ⇒ 下游 `skipped` |
+| 9 | 重复探测不缓存 | 审计日志污染 | `Target` 去重 + 结果缓存 |
+| 10 | 直接写 banner 进报告 | 目标注入控制字符/Markdown | 净化 + 截断 + 标注不可信 |
+| 11 | 用 `time.time()` 计时 | 校时/改时钟导致负数 | 计时用 `perf_counter` |
+| 12 | 报告不回显范围与参数 | 结论不可复核 | 范围/参数/覆盖/审计统计必有 |
+
+## 8. 局限与伦理边界（必须写进交付报告，不能省略）
+
+**能力上的局限**
+
+- **只做阶段 1–2**：不做利用、不做后渗透，因此**任何 Finding 都不是"已验证的漏洞"**，
+  只是"需要人工验证的点位"。措辞上必须区分"疑似"与"确认"。
+- **探测量级有限**：只有 TCP connect 与 banner 读取，没有 UDP、没有 SNMP、
+  没有认证类探测。资产盘点必然是**不完整**的。
+- **无情报关联**：不知道某个 IP/服务版本在真实世界里的被利用情况，
+  置信度天花板因此较低。
+- **未评测检出率**：没有在带标签的授权环境中计算 precision/recall，
+  **不能**替代商业扫描器，也不能作为合规审计的唯一依据。
+
+**刻意不做（设计选择，不是遗漏）**
+
+| 不做的事 | 为什么不做 |
+|---|---|
+| 提供 exploit / 载荷 | 教材不承担武器化风险；授权测试的瓶颈在流程与证据，不在载荷 |
+| 提供规避检测（encoder/混淆） | 规避能力只对"未授权攻击"有意义；授权测试应留下痕迹 |
+| 自动处置（封 IP、改配置） | 误报会直接升级为生产事故；处置必须走独立的授权与变更流程 |
+| raw socket / SYN 扫描 | 需 root、扩大攻击面、行为特征与攻击工具难以区分 |
+| 自动扩大范围（"顺手扫一下邻居"） | 越界不是技术失误，是合规事故 |
+
+## 9. 思考题
+
+1. 本框架把 `filtered` 单列并让退出码变成 4。如果客户只想要一个"扫描结果"，
+   为什么"本次无结论"这个结论反而更重要？请从**责任边界**角度回答。
+2. 范围校验选择 **fail-fast**（一个越界就整轮终止）而不是"跳过越界目标继续"。
+   在什么情况下你会反过来选择"跳过并记警告"？这两种选择分别让谁承担风险？
+3. 插件注册表让"加检测项"变容易了，但也让"执行顺序"变得隐式依赖 `priority`。
+   如果两个插件分别需要"先有 banner"和"先有服务推断"，你如何用**数据结构**
+   而不是文档约定来保证顺序？（提示：声明式依赖 vs 数字优先级）
+4. 审计日志会记录"我对哪个 IP 的哪个端口做了什么"。这份日志本身也是敏感数据：
+   如果它泄露，攻击者能获得什么？你会在**留存期限**和**脱敏粒度**上怎么设计？
+5. 本课刻意不提供利用能力。假设某天你所在的团队要加上"验证性利用"，
+   你会要求哪些**前置条件**（授权、隔离环境、回滚方案、审批留痕）才允许合并？
+   列出至少 4 条，并说明每条对应哪一类风险。
+6. `rate` 参数决定了扫描压力。假如客户说"我们的 WAF 会把超过 20 连接/秒
+   的来源封禁 1 小时"，你如何设计一个既能完成扫描、又不会被封的策略？
+   （提示：不要试图规避 WAF —— 应该去和客户约定白名单或维护窗口。）
