@@ -586,6 +586,224 @@ python3 vuln_core.py --self-test                                   # 引擎自�
 
 ---
 
+## 6. 实战代码案例
+
+本日代码全部在 `code/` 下，**每个文件都能单独 `python3` 运行**。
+
+### 6.1 `code/vuln_core.py` — 共享引擎（1016 行）
+
+包含：范围门禁 → 本机靶标（8 个端点）→ 只读 HTTP 客户端 → 限速 → 两个检测器
+→ Finding/报告/退出码 → `--self-test` 端到端自检。
+
+靶标的 8 个端点（**故意**安排的"有缺陷 / 安全对照 / 陷阱"三组对照）：
+
+| 端点 | 设计意图 | 期望检测结果 |
+|---|---|---|
+| `/product?id=1` | 字符串拼接（缺陷） | `error_based` ✅ |
+| `/safe-product?id=1` | 参数化（安全对照） | `none`（必须沉默） |
+| `/search?q=x` | 原样反射进文本节点 | `text_node` / medium |
+| `/safe-search?q=x` | `html.escape` + CSP（安全对照） | 已转义 / 0 缺口 |
+| `/profile?name=x` | 反射进双引号属性 | `attr_quoted_double` / medium |
+| `/greeting?name=x` | 反射进 `<script>` 块 | `script_block` / **high** |
+| `/comment?note=x` | 反射进 HTML 注释 | `html_comment` / low |
+| `/echo?id=x` | **已转义**但原样回显（陷阱） | SQLi 与 XSS 都必须 `none` |
+
+### 6.2 `code/01-sqli-detect.py` — 基础用法
+
+展示"探针表 + 三段判定"，用四个断言把结论钉死：
+
+```python
+r1 = show("① 有缺陷的端点 /product（字符串拼接）", f"{base}/product?id=1", scope)
+assert r1.technique == "error_based"      # 单引号 → 报错特征
+r2 = show("② 安全对照 /safe-product（参数化）", ...)
+assert r2.technique == "none"             # 同一业务的两种写法，结论相反
+r3 = show("③ 假阳性陷阱 /echo（原样回显，已转义）", ...)
+assert r3.technique == "none"             # 长度变了 ≠ 注入
+```
+
+实测输出（节选）：
+
+```text
+③ 假阳性陷阱 /echo（原样回显，已转义）
+  参数: id   基准值: '1'
+  探针        注入值                      状态     长度
+  baseline  1                       200    114
+  error     1'                      200    120
+  true      1 AND 1=1               200    122
+  false     1 AND 1=2               200    122
+  判定技术: none
+  证据    : 探针未触发报错，且布尔对未形成「贴近基线 / 偏离基线」的差值
+```
+
+**如果去掉 baseline 锚定**，`true=122 ≠ false=122` 不成立，
+但把探针换成 `1 OR 1=1` / `1 AND 1=2` 就会出现差值 → 直接误报。
+这就是"锚定 baseline"的实际价值。
+
+### 6.3 `code/02-xss-detect.py` — 进阶用法与避坑
+
+逐层打印四层判定，覆盖全部四种上下文 + 两个安全对照 + 缓解措施对比：
+
+```text
+① 有缺陷 /search（反射进文本节点）   → text_node / medium
+② 有缺陷 /profile（反射进双引号属性）→ attr_quoted_double / medium
+③ 最危险 /greeting（反射进 <script>）→ script_block / high
+④ 上下文 /comment（反射进 HTML 注释）→ html_comment / low
+⑤ 安全对照 /safe-search（escape+CSP）→ 已转义 / 0 缺口
+⑥ 假阳性陷阱 /echo（回显但已转义）   → 已转义 / 沉默
+```
+
+实测（`/comment` 一节）：
+
+```text
+  探针      : 'zq163x7"\'><zq163>'
+  ① 反射确认: reflected=True
+  ② 转义判定: raw_tag=True  raw_full=True  escaped=False
+  ③ 上下文  : html_comment
+  ④ 缓解措施: 2 项缺口
+  → 严重度  : low   置信度: medium
+```
+
+**同一个探针，四处上下文，三档严重度**——这就是第 3 层的意义：
+没有上下文判定，`/comment`（low）会被和 `/greeting`（high）评成一样。
+
+### 6.4 `code/03-vuln-scan-cli.py` — 实战流水线 CLI
+
+三个真实跑过的场景：
+
+```bash
+# ① 正常：9 个目标 → 18 个探针 → 13 条发现 → 退出码 3
+$ python3 03-vuln-scan-cli.py --lab --tag day163-lab
+[summary] 发现 13 条 · 优先级分布 {'P0': 0, 'P1': 4, 'P2': 5, 'P3': 4}
+[coverage] 全部目标均取得有效结论
+[exit] 3
+
+# ② 覆盖缺口：靶标第 6 个请求后全返 429 → 退出码 4（不是 0！）
+$ python3 03-vuln-scan-cli.py --lab --throttle-after 6 --tag day163-throttle
+[summary] 发现 9 条 · 优先级分布 {'P0': 0, 'P1': 9, ...}
+[coverage] 覆盖不完整：存在 429/网络异常，未取得结论的目标需降速重跑
+[exit] 4
+
+# ③ 越界：门禁在构造请求之前拒绝 → 退出码 2，不重试
+$ printf 'http://192.0.2.1:8086/product?id=1 id sqli\n' > /tmp/oop.txt
+$ python3 03-vuln-scan-cli.py --base http://127.0.0.1:18092 --targets /tmp/oop.txt
+⛔ AuthorizationError: 主机不在授权网段内: 192.0.2.1
+$ echo $?
+2
+```
+
+产物落在 `out/`（已随仓库提交，作为"实测证据快照"）：
+
+```text
+out/day163-lab-report.{json,md}        # 正常一轮：13 条发现，覆盖完整
+out/day163-throttle-report.{json,md}   # 限速一轮：18 探针其中 12 个 429，退出码 4
+out/day163-targets-report.{json,md}    # 用 targets 清单跑出与 ① 一致的结果（可复现性验证）
+```
+
+### 6.5 两个由"实测"驱动的修复（真实踩坑记录）
+
+写这两个脚本时踩到并修掉的两个真问题，都值得记住：
+
+**坑 1：`--targets` 不支持行尾注释。**
+第一版 `load_targets()` 只在 `line.startswith("#")` 时跳过，
+于是 `targets.example.txt` 里带行尾说明的行会炸：
+
+```text
+⛔ ScopeError: targets.example.txt:14 字段过多: '/product?id=1   id  sqli   # 有缺陷…'
+```
+
+修复：先剥掉第一个 `#` 之后再切字段。
+**教训**：清单类输入格式必须支持行尾注释——否则使用者不敢写"为什么测这条"，
+清单就退化成一堆无法维护的魔法字符串。
+
+**坑 2：清单里写完整 URL 会被拼成垃圾。**
+第一版无条件 `target = base + url`，于是清单里写完整 URL 会变成
+`http://127.0.0.1:18092http://192.0.2.1:...`。
+修复：以 `http://` / `https://` 开头的按完整 URL 走门禁，其余按路径拼接。
+**教训**：**"拼接"和"校验"的顺序决定了工具能不能被信任**——
+门禁必须看到**最终的** URL。
+
 ---
 
-> 实战代码与 API 速查见下一节（`## 6` 起）。
+## 7. 自检与验证
+
+```bash
+cd days/day-163-安全审计工具箱-part2/code
+
+python3 vuln_core.py --self-test     # → SELF-TEST OK（7 组断言）
+python3 01-sqli-detect.py            # → 三类结果：error_based / none / none
+python3 02-xss-detect.py             # → 四层判定 + 四种上下文 + 假阳性沉默
+python3 03-vuln-scan-cli.py --lab    # → 退出码 3，报告落盘 out/
+```
+
+`--self-test` 的 7 组断言（这就是"教学代码可验证"的样子）：
+
+```text
+① 有缺陷 /product       → error_based, sql_error_hit=True
+② 安全对照 /safe-product → none
+③ 反射型 /search         → raw_tag & text_node
+④ XSS 安全对照 /safe-search → 未注入 & 已转义
+⑤ /greeting             → script_block & severity=high
+⑥ /echo 双陷阱          → XSS 已转义、SQLi none
+⑦ 越界必须 AuthorizationError；探针上限必须 ScopeError
+```
+
+**为什么把断言写进 `--self-test`？** 因为检测器的"沉默"（判 none）
+和"报警"（判有缺陷）**同样重要**。只测"能不能报出洞"的测试，
+无法发现"到处乱报"的回归——而误报才是这类工具在真实环境里最先失去信任的原因。
+
+---
+
+## 8. 思考题
+
+1. **布尔差分的容差**：`close()` 用 `max(tol_abs, tol_rel×max(a,b))`。
+   如果目标页面里有随机广告位（每次长度差 200~400 字节），
+   在 `tol_abs=32`、`tol_rel=5%` 下会发生什么？你会怎么改检测策略？
+   （提示：想想"多次采样取分布"与"锚定不变量"两条路。）
+
+2. **`/safe-product` 的假警报风险**：参数化端点里 `error` 探针长度 139
+   明显偏离 baseline 167。如果检测器**只看**"error 探针长度变化"就下结论，
+   它会把这台**安全**的服务报成高危。请写出你会用什么证据组合来避免它，
+   并说明为什么"报错特征"比"长度变化"可靠得多。
+
+3. **探针是载荷吗**：假设你把探针换成 `<script>alert(document.domain)</script>`，
+   请列出至少三个**具体**的负面影响（考虑：浏览器复核、日志留存、
+   WAF/浏览器拦截对结论的污染、URL 被分享）。本课的 `<zq163>` 各避免了哪一个？
+
+4. **覆盖完整性 vs 通过**：为什么"限速后没测到"必须用独立退出码，
+   而不能合并进"无发现"？如果你的 CI 里只有"退出码 0 才算通过"，
+   把 429 当作 0 会造成什么后果？请给出一个具体场景。
+
+5. **上下文判定的边界**：`classify_context()` 用"最近的未闭合结构"判断位置。
+   如果页面把输入放进 `<div data-x='…' title="…">`（外层单引号、内层双引号），
+   我们的正则只会匹配**最近的那个 `=`**。请构造一个能让它判错的输入，
+   并说明为什么"简化判定 + 保守严重度"是比"追求完美解析"更工程化的选择。
+
+6. **（进阶）从检测到验证的边界**：本工具停在"疑似"。请列出"从疑似到确认"
+   需要的额外动作，并逐条说明为什么它们**不应该**进自动化扫描工具。
+
+---
+
+## 9. 边界与合规（每一条都是设计决策，不是场面话）
+
+| 边界 | 为什么这样做 |
+|---|---|
+| 只发 `GET` | `GET` 语义是幂等只读；`POST` 会改数据，越出"检测"范畴 |
+| 不跟随重定向 | 避免被引到范围外，也避免掩盖真实状态码（3xx 也是信息） |
+| 不带任何凭据 | 未授权访问下的检测结果不可信，也避免触发账号锁定 |
+| 域名直接拒绝 | **解析域名本身就是一次外发**（DNS 也是一次信息暴露） |
+| 不时间盲注 | `SLEEP` 是在目标上"占用资源"，且容易压垮服务 |
+| 每参数 ≤4 探针 | 探针会进入业务逻辑；硬闸门让"越界"无法被悄悄放宽 |
+| 默认 2 req/s | 比目录爆破更克制：每个探针都是一次真实业务调用 |
+| 只匹配报错特征、不抄全文 | 报错页可能带出表名/列名，抄进报告 = 顺手泄密 |
+| 报告只写"疑似/待验证" | 工具不能声称"已验证漏洞"；验证动作必须由人在授权窗口内完成 |
+| 全部实验跑回环自建靶标 | 可复现、零依赖、**不可能**误伤真实系统 |
+
+---
+
+## 10. 今日完成清单
+
+见 `exercises/checklist.md`（含 3 道基础题 + 2 道进阶题 + 自检命令）。
+图解补充见 `diagrams/README.md`。
+
+**下一篇（Day 164）**：流量面——代理中间人（mitmproxy 原理）+ 流量分析，
+把"扫描出来的疑似"放到真实流量里验证。
