@@ -790,3 +790,388 @@ flow = Flow(path=safe_path, url=raw_url, ...)
 ```
 
 ---
+
+## 4. 图解
+
+> 完整的字符画与 Mermaid 图在 **[`diagrams/README.md`](diagrams/README.md)**（7 张）。
+> 这里只贴最核心的两张。
+
+### 4.1 三层观测的关系（为什么流量面补的是结构性缺失）
+
+```text
+资产面（Day 162）  门锁有没有装              → 快照
+漏洞面（Day 163）  这把锁看起来像能撬         → 推断（有假阳性）
+流量面（Day 164）  刚才有人拿钥匙开了门       → 事实（可复核、可留证）
+                        ↑
+                  它不需要**制造**任何输入，只是把已发生的对话录下来
+                  → 所以它能用在生产环境（漏洞扫描器做不到）
+```
+
+### 4.2 `CONNECT` 之后：代理能看见什么
+
+```text
+   客户端                  AuditProxy                 服务端 :443
+      │  CONNECT host:443     │                          │
+      │ ─────────────────────▶│  TCP connect             │
+      │ ◀─────────────────────│                          │
+      │ ═══ TLS 握手（看不懂）══▶│ ═══ 原样转发 ═══════════▶│
+      │ ═══ 加密 HTTP（看不懂）═▶│ ═══ 原样转发 ═══════════▶│
+                              │                          │
+                     能记录：host:port ✅ 字节数 ✅ 时间 ✅
+                     看不到：路径 ❌ 头 ❌ 体 ❌
+                              │
+                              ▼
+                    Flow(inspected=False) → 覆盖缺口 +1 → 退出码 4
+```
+
+---
+
+## 5. 定义与使用方法（API 速查表）
+
+### 5.1 `mitm_core.py` 模块速查
+
+| 名称 | 类型 | 作用 |
+|---|---|---|
+| `Scope` | dataclass | 授权范围：`hosts` / `ports` / `ticket`；`check_url()` 越界抛异常 |
+| `AuthorizationError` | 异常 | 越界（映射退出码 2）；`AuditProxy` 监听非回环也抛这个 |
+| `Flow` | dataclass | 一条 flow 的完整档案（23 个字段，见 5.3） |
+| `FlowStore` | 类 | JSONL 档案馆：`append()` / `load()` / `next_id()` |
+| `LabOrigin` | 上下文管理器 | 自建实验网站，只绑 `127.0.0.1`，含 9 个演示端点 |
+| `LabOpaqueTCP` | 上下文管理器 | 假 TLS 服务（纯文本回声），演示"隧道不可见" |
+| `AuditProxy` | 上下文管理器 | 正向代理；`url` 属性给客户端用；**拒绝绑定非回环** |
+| `LabSession` | 类 | 脚本化客户端：走代理发请求，默认**不跟随重定向** |
+| `FlowAnalyzer` | 类 | 14 条规则 → `Finding`；`facts` / `exit_code()` |
+| `Finding` | dataclass | `rule` / `severity` / `confidence` / `priority` / `level` / `evidence` / `why` / `fix` |
+| `render_json()` / `render_markdown()` | 函数 | 两种报告渲染 |
+| `EXIT_*` / `EXIT_MEANING` | 常量 | 语义化退出码与其含义 |
+
+### 5.2 顶层常量
+
+| 常量 | 值 | 说明 |
+|---|---|---|
+| `SEVERITY_SCORE` | critical 4.0 / high 3.0 / medium 2.0 / low 1.0 / info 0.5 | 优先级的乘数 |
+| `SENSITIVE_KEYS` | 30 个字段名 | 命中则**值**换指纹 |
+| `REDACT_HEADERS` | 7 个头名 | 命中则整个值换指纹 |
+| `HOP_BY_HOP` | 9 个头名 | 转发前必须剔除 |
+| `ERROR_SIGNATURES` | 4 类正则 | 报错回显特征（SQL / 堆栈 / 调试页 / 路径） |
+| `PII_PATTERNS` | 3 类正则 | 邮箱 / 手机号(CN) / 身份证(CN) |
+| `MAX_BODY_BYTES` | 65536 | 档案里正文的截断上限 |
+| `SLOW_MS` | 300.0 | 慢响应阈值（毫秒） |
+| `TUNNEL_SECONDS` | 1.5 | 隧道盲转发的时长上限（教学用，生产应无限） |
+| `DOC_NET` / `LOOPBACK_HOSTS` | `192.0.2.` / 回环三种写法 | 允许的目标范围 |
+
+### 5.3 `Flow` 字段语义（重点字段）
+
+| 字段 | 类型 | 语义 | 是否脱敏 |
+|---|---|---|---|
+| `fid` | str | 流编号，报告的证据锚点 | — |
+| `scheme` | str | `http` / `https`（判定"是否明文"的第一依据） | — |
+| `method` / `host` / `port` / `path` | str/int | 定位 | `path` 的查询串**脱敏** |
+| `url` | str | 完整 URL | 查询串**脱敏** |
+| `query_keys` | list | 命中的敏感参数**名**列表 | 只有名字 |
+| `request_headers` | dict | 请求头 | 凭据类**整条**脱敏 |
+| `request_body` | str | 请求体 | 值**脱敏** + PII **擦除** |
+| `response_headers` | list[list] | 响应头（**保序保重复**，因为 `Set-Cookie` 可重复） | `Set-Cookie` 等脱敏 |
+| `response_body` | str | 响应体 | 值脱敏 + PII 擦除 + 截断 |
+| `response_body_truncated` | bool | 是否被截断（**影响结论完整性**） | — |
+| `inspected` | bool | **这条流的内容到底看没看见** | — |
+| `error` | str | 传输层异常（"没结论"≠"没问题"） | — |
+| `note` | str | "命中过哪些敏感字段"（只写**字段名**） | — |
+| `pii_labels` | list | 出现过的 PII **类别**（擦除时必须当场记） | 只有类别 |
+
+### 5.4 `FlowAnalyzer` 用法速查
+
+```python
+scope    = Scope(ticket="TICKET-164")
+analyzer = FlowAnalyzer(scope=scope)
+
+findings = analyzer.analyze(FlowStore("flows.jsonl").load())
+
+analyzer.facts          # {'flows':14,'inspected':13,'uninspected':1,
+                        #  'coverage_percent':92.9,'rules_hit':{...},...}
+analyzer.findings_by_severity   # 按 critical→info 排好序的 Finding 列表
+analyzer.findings[0].priority   # 3.0 * 0.95 = 2.85
+analyzer.findings[0].level      # 'P0' / 'P1' / 'P2' / 'P3'
+analyzer.coverage_incomplete    # True  → 有隧道或传输错误
+analyzer.exit_code()            # 2 / 4 / 3 / 0
+```
+
+### 5.5 CLI 速查
+
+```bash
+# 全自动：起靶场(18081) + 代理(18080) → 抓会话 → 分析 → 出报告
+python3 03-traffic-audit-cli.py
+
+# 只分析已有档案（CI 友好，不起任何服务）
+python3 03-traffic-audit-cli.py --capture out/day164-capture-x.jsonl
+
+# 指定标签与输出目录
+python3 03-traffic-audit-cli.py --out out --tag nightly-2026-09-23
+
+# 只打印两个报告路径（给脚本用）
+python3 03-traffic-audit-cli.py --capture x.jsonl --quiet
+
+# 端口被占用时的告警演示
+python3 03-traffic-audit-cli.py --origin-port 1
+```
+
+| 退出码 | 含义 | 流水线该做什么 |
+|---|---|---|
+| `0` | 干净通过（在已检查流量里无 P0/P1） | 继续 |
+| `2` | 被范围门禁拒绝（根本没开始测） | 找**流程负责人**（工单/范围） |
+| `3` | 有 P0/P1 发现 | 找**开发**修 |
+| `4` | 覆盖不完整（隧道 / 传输错误 / 清单端点未出现） | 找**运维**补采集 |
+
+---
+
+## 6. 实战代码案例
+
+### 6.1 `code/mitm_core.py` — 共享引擎（1906 行）
+
+六个可独立使用的部件，全部纯标准库：
+
+```text
+Scope          范围门禁（主机 + 端口，独立成文件的快照式设计）
+FlowStore      JSONL 档案馆（追加即安全，坏一行只丢一行）
+LabOrigin      实验网站（9 个端点，故意做出"会泄密的流量"）
+LabOpaqueTCP   假 TLS 服务（演示"隧道不可见"）
+AuditProxy     正向代理（socket 级，含 CONNECT、chunked、脱敏、落档）
+FlowAnalyzer   14 条规则 + 覆盖率 + 语义化退出码
+```
+
+自检（**强烈建议先跑这个**）：
+
+```bash
+python3 mitm_core.py --self-test      # 期望输出：SELF-TEST OK
+```
+
+自检里 7 组断言覆盖了"我以为它会怎样"和"它必须怎样"的差距：
+
+| # | 断言 | 抓的是什么问题 |
+|---|---|---|
+| ① | 11 条必要规则全部命中 | 规则被改坏 / 靶场端点被改坏 |
+| ② | 档案里**不含**任何明文口令/token/密钥/PII | 脱敏失效（踩坑 ②③④ 的兜底） |
+| ③ | 隧道被记为 `inspected=False`，覆盖率 < 100% | 覆盖缺口被"算没了" |
+| ④ | 退出码必须是 `4`（不是 3、不是 0） | 优先级顺序被写反 |
+| ⑤ | `AuditProxy(host="0.0.0.0")` 必须抛异常 | 开放代理这种法律风险被放开 |
+| ⑥ | `8.8.8.8` 必须被门禁拦住 | 门禁失效 |
+| ⑦ | 报告含关键小节且 JSON 可解析 | 报告渲染被改坏 |
+
+### 6.2 `code/01-flow-capture.py` — 基础用法
+
+最小可运行闭环。**为什么第一个例子就要三方齐备？**
+因为代理是三方系统，缺一方你就无法判断"是我写错了，还是源站本来就这么回"。
+
+```bash
+python3 01-flow-capture.py                       # 完整闭环
+python3 01-flow-capture.py --no-tunnel           # 覆盖率会变成 100%
+python3 01-flow-capture.py --hold                # 只起服务，手工 curl
+```
+
+实测输出（节选）：
+
+```text
+📊 捕获汇总
+总 flow        : 14
+已检查         : 13
+未检查（隧道）  : 1
+传输错误       : 0
+覆盖率         : 92.9%
+
+状态码分布：
+  2xx 成功        9
+  4xx 客户端错     3
+  3xx 重定向      1
+  5xx 服务端错     1
+```
+
+它还会把**登录那条 flow 的档案原文**完整打出来，让你亲眼看到三件事：
+口令值变成了指纹、`note` 里保住了"命中过 password"的结论、
+`Set-Cookie` 的值也被换成了指纹。
+
+### 6.3 `code/02-flow-analyze.py` — 进阶用法与避坑
+
+```bash
+python3 02-flow-analyze.py                  # 分析 + 四个踩坑现场复现
+python3 02-flow-analyze.py --no-pitfalls    # 只看分析结果
+```
+
+实测输出（节选）：
+
+```text
+🔎 规则引擎输出
+分析 flow  : 14 条
+覆盖率     : 92.9%（已检查 13 / 未检查 1 / 传输错误 0）
+命中规则   : {'server-banner': 15, 'missing-security-headers': 3,
+              'pii-in-request': 2, 'state-changing-method': 2,
+              'cleartext-credential': 2, 'cookie-missing-flags': 2,
+              'server-error': 1, 'error-disclosure': 1, ...}
+严重度分布 : {'info': 19, 'medium': 7, 'low': 4, 'high': 4}
+
+🟧 1. [P1 · high] cleartext-credential
+    flow     : f-000005  http://127.0.0.1:18081/login
+    证据     : POST /login 的请求体含敏感字段（值已脱敏为指纹）
+    优先级   : 2.85
+```
+
+四个踩坑演示的实测结果：
+
+```text
+坑 ①  默认 opener     : 404（❌ 已被跟随：/login 是 404）
+      显式 _NoRedirect: 302（✅ 停在第一跳，可被 R9 记录）
+坑 ②  朴素检测 if 'redacted:' in body   → False    ← 规则全线沉默
+      正确检测 'redacted:' 或 'redacted%3a' → True
+坑 ③  只脱敏 URL、忘了 path → 档案里还有明文 token → True
+坑 ④  擦除后重扫正文 → []（空！PII 已经不在了）
+      正确做法：擦除时当场记进 flow.pii_labels
+```
+
+### 6.4 `code/03-traffic-audit-cli.py` — 实战流水线
+
+```bash
+# ① 全自动：正常路径 → 退出码 4（覆盖率 92.9%，因为它诚实地承认有隧道）
+python3 03-traffic-audit-cli.py --tag demo
+#   覆盖率（流量层）  : 92.9%（已检查 13 / 未检查 1 / 传输错误 0）
+#   覆盖率（业务层）  : 100.0%（清单 9 个端点，命中 9，未见 0）
+#   🚦 退出码 = 4
+
+# ② 只分析样例档案（CI 友好）
+python3 03-traffic-audit-cli.py --capture flows.example.jsonl --tag fixture
+#   覆盖率（流量层）  : 100.0%   ← 样例档案里没有隧道
+#   🚦 退出码 = 4   ← 但业务层有 9 个端点从未出现 → 仍判为不完整
+
+# ③ 手工构造的越界档案 → 退出码 2（拒绝出结论）
+python3 03-traffic-audit-cli.py --capture out/day164-scope-violation.jsonl
+#   ❌ 档案中出现越界主机：evil.example.com（拒绝出结论）
+#   🚦 退出码 = 2 → 被范围门禁拒绝（根本没开始测）
+```
+
+**第 ② 条特别值得体会**：流量层 100%、没有任何问题——
+但它仍然是 `4`，因为**业务层的 9 个端点从来没被访问过**。
+如果只看第一层，这里就会得出"100% 覆盖、干净通过"的假象。
+
+### 6.5 五个由"实测"驱动的修复（真实踩坑汇总）
+
+| # | 现象 | 根因 | 修复 |
+|---|---|---|---|
+| ① | 302 在档案里记成 404，R9 永不命中 | `build_opener()` 自动补默认重定向处理器 | 显式传 `redirect_request()` 返回 `None` 的子类 |
+| ② | 所有 form 表单的明文凭据都不命中 | `urlencode` 把 `:` 变成 `%3A` | 两种写法都认 |
+| ③ | 自检报"明文 token 泄漏进档案" | 只脱敏了 `url`，忘了 `path` 带同一份查询串 | `_redact_query_in_path()` |
+| ④ | 响应体里的密钥原样落进档案 | 只对**请求**体做了脱敏 | 响应体也跑 `redact_body` |
+| ⑤ | 业务层覆盖率恒为 0% | 靶站端口随机，与清单里的 `:18081` 对不上 | 固定端口 + 占用时退回并**明确告警** |
+
+**这五条的共性**：它们都不是"写错了逻辑"，而是"**假设错了事实**"。
+对策只有一个：把假设变成断言（第 ①②③④ 条现在都在 `--self-test` 里）。
+
+---
+
+## 7. 自检与验证
+
+```bash
+cd days/day-164-安全审计工具箱-part3/code
+
+# ① 引擎自检（7 组断言，含"档案不得含明文"这条硬线）
+python3 mitm_core.py --self-test
+#    期望：SELF-TEST OK
+
+# ② 基础闭环
+python3 01-flow-capture.py | tail -20
+
+# ③ 规则引擎 + 踩坑复现
+python3 02-flow-analyze.py --no-pitfalls | tail -20
+
+# ④ 完整 CLI（三种模式）
+python3 03-traffic-audit-cli.py --tag verify ;          echo "exit=$?"   # → 4
+python3 03-traffic-audit-cli.py --capture flows.example.jsonl --quiet ; echo "exit=$?"  # → 4
+python3 03-traffic-audit-cli.py --capture out/day164-scope-violation.jsonl; echo "exit=$?"  # → 2
+```
+
+**额外的"防泄密"验证**（推荐每次改完脱敏逻辑都跑一遍）：
+
+```bash
+# 用一组明文样本扫描整份档案，任何一个出现都说明脱敏漏了
+python3 - <<'EOF'
+import json, pathlib
+BAD = ["Sup3rSecret!", "tk_live_164_fake", "sk_live_164_FAKE_NOT_REAL", "13800138000"]
+for p in pathlib.Path("out").glob("*.jsonl"):
+    blob = p.read_text(encoding="utf-8")
+    hits = [b for b in BAD if b in blob]
+    print(f"{p.name}: {'❌ ' + str(hits) if hits else '✅ 无明文'}")
+EOF
+```
+
+---
+
+## 8. 思考题
+
+1. **框架默认值**：踩坑 ① 里 `build_opener()` 替你装了重定向处理器。
+   请举出另外两个"框架默认行为与直觉相反"的例子（不限 Python），
+   并说明"怎么才能在写代码时**发现**它"。
+   *提示：`dict.get` 的默认值、`re.match` vs `re.search`、
+   `float` 的相等判断、`argparse` 的 `required`…*
+
+2. **只脱敏一处 vs 穷尽同源**：踩坑 ③ 里同一个 token 同时出现在 `url` 与 `path`。
+   请设计一个**机制**（不是"更仔细地检查"）来保证"同一个秘密的所有落点都被处理"。
+   *思考方向：是先归一化成一个结构、所有落点都从它派生？
+   还是在出口做一次全文扫描断言？两种各有什么代价？*
+
+3. **覆盖率的"两层"还不够**：本课算了流量层与业务层。还有第三层吗？
+   *提示：如果目标是 HTTPS，隧道 flow 会让"流量层"下降；
+   但如果目标机器上**同时**跑着一个你完全不知道的高危端点，哪一层能发现它？
+   这一层应该由谁负责（Day 162 的哪一步）？*
+
+4. **`pii_labels` 的取舍**：本课选择只记 PII **类别**，不记值。
+   但假设真实需求是"审计发现某员工把客户数据外传"——需要**值**才能举证。
+   请写出一个既满足举证、又不让档案变成泄密源的方案，并列出它的**残余风险**。
+   *思考方向：加密存储 + 访问审计 + 保留期；残余风险 = 密钥持有者本人。*
+
+5. **退出码的语义**：为什么本课把"覆盖不完整"（4）排在"有发现"（3）前面？
+   请构造一个反例：**什么时候应该反过来**（先报发现、再报覆盖）？
+   *提示：如果目的是"立刻止血"而不是"出具报告"，顺序可能反过来——
+   这说明退出码的优先级其实取决于**谁在消费这个信号**。*
+
+6. **规则的假阳性**：R11 `state-changing-method` 把"非豁免 POST"报成 info。
+   `_is_benign_post()` 的豁免条件是"请求体里既没有敏感字段、也没有 PII"。
+   请构造一个**漏报**场景（真实写操作被豁免掉了），
+   并说明为什么本课**宁可漏报**也不加更激进的规则。
+   *提示：报告的可信度 > 报告的完备性。*
+
+---
+
+## 9. 边界与合规（每一条都是设计决策，不是场面话）
+
+| # | 边界 | 为什么它必须是硬约束 |
+|---|---|---|
+| 1 | **只监听回环**（`0.0.0.0` 直接抛异常） | 开放 HTTP 代理会在几分钟内被扫到并滥用，这是**实际法律责任**，不是"配置选项" |
+| 2 | **门禁校验 request-target 的主机**，不是 `Host` 头 | 信任 `Host` 头 = 允许 Host 头投毒绕过门禁 |
+| 3 | **只发幂等方法** | 写操作会让"审计"变成"操作"，两者授权等级不同 |
+| 4 | **不伪造证书、不降级 TLS、不破解隧道** | 客户端装自签 CA 在**自己设备**上合法，在**别人设备**上就是劫持 |
+| 5 | **不改包、不重放、不注入响应** | 观测与利用的分界线。跨过去，同一份代码性质就变了 |
+| 6 | **档案默认不含明文凭据** | 审计工具若是泄密渠道，比不审计更糟（它把秘密集中并长期保存了） |
+| 7 | **PII 当场擦除，只留类别** | 最小必要原则；审计记录应证明"发生过"，而不是复制"内容" |
+| 8 | **隧道如实记账，计入覆盖缺口** | "没看"≠"没问题"。这是整份报告诚实性的基准线 |
+| 9 | **传输错误也算覆盖缺口** | "连不上"和"没问题"在报告里长得一样，不区分就是撒谎 |
+| 10 | **报告先讲覆盖率，再讲发现** | 覆盖率低时，所有结论都要打折——顺序本身就是信息 |
+
+**一句话总结**：本工具的全部价值，建立在"**它说的话都能被复核**"之上。
+任何一条边界被放开，这个前提就没了。
+
+---
+
+## 10. 今日完成清单
+
+- [x] `mitm_core.py` 共享引擎（`Scope` / `FlowStore` / `LabOrigin` /
+      `LabOpaqueTCP` / `AuditProxy` / `FlowAnalyzer` / 报告渲染 / `--self-test`）
+- [x] 正向代理：绝对 URI 与源站形式、逐跳头处理、chunked、`CONNECT` 隧道
+- [x] 脱敏流水线：URL / path / 头 / 体 / PII，**先脱敏再检测**
+- [x] 14 条规则 + 优先级（严重度 × 置信度）+ 语义化退出码
+- [x] 两层覆盖率（流量层 + 业务层）与"清单端点从未出现"报警
+- [x] `01-flow-capture.py` 基础用法（三方闭环 + 档案原文展示）
+- [x] `02-flow-analyze.py` 进阶用法（规则引擎 + 四个真实踩坑现场复现）
+- [x] `03-traffic-audit-cli.py` 实战 CLI（两种模式 + 三种退出码实测）
+- [x] `targets.example.txt` 目标清单 · `flows.example.jsonl` 样例档案
+- [x] `diagrams/README.md` 七张图（含两层覆盖率与退出码决策树）
+- [x] `exercises/checklist.md` 完成清单 + 基础练习 + 进阶挑战
+
+**明天（Day 165）**：交付面 —— 报告生成（把 Day 162/163/164 的产出汇总成一份
+可交付的资产审计报告）+ Docker 部署（一键复现整条流水线）。
