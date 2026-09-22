@@ -399,3 +399,394 @@ username=ada&password=%3Credacted%3A9f8e7d6c%2F11B%3E
 不显式区分，报告就在撒谎。
 
 ---
+
+## 3. 原理解释
+
+### 3.1 代理的字节级工作流
+
+把 `_ProxyHandler.handle()` 拆成 7 步，每一步都对应一个真实会出问题的地方：
+
+```text
+① 读请求行          readline() → "GET http://h:p/pa?q=1 HTTP/1.1"
+                    坑：行太长；用 readline(65537) 限制单行上限
+② 读请求头          loop readline() 直到空行
+                    坑：头可以有重复键（Set-Cookie）；必须存成列表不是 dict
+③ 判断是否 CONNECT  是 → 走隧道分支（记录"不可见"），结束
+④ 解析目标          _resolve()：绝对 URI 形式 / 源站形式，两种都要认
+                    坑：门禁必须校验 request-target 的主机，不是 Host 头
+⑤ 门禁检查          主机 + 端口双重白名单；越界 → 403，不建立任何连接
+⑥ 读请求体          Content-Length 或 chunked
+                    坑：不实现 chunked 会静默截断请求体（表单变空）
+⑦ 转发 + 记录       剔除逐跳头 → http.client 发出去 → 读全响应
+                    → 脱敏 → 落 flow → 回给客户端
+```
+
+**为什么"顺序"本身是设计？** 因为第 ⑤ 步必须在第 ⑦ 步**之前**：
+门禁如果放在"已经在转发过程中"再检查，就等于"先连上了再说不该连"，
+那已经构成了对越界目标的实际访问。**门禁是前置条件，不是事后审计。**
+
+### 3.2 逐跳头（hop-by-hop）：为什么必须剔除
+
+HTTP 头分两类，这个区分是代理正确性的基础：
+
+| 类别 | 含义 | 例子 |
+|---|---|---|
+| **端到端（end-to-end）** | 描述**消息本身**，两端之间不该改动 | `Content-Type`、`Authorization` |
+| **逐跳（hop-by-hop）** | 只描述**这一段连接**，不该被转发 | `Connection`、`Keep-Alive`、`Transfer-Encoding` |
+
+**不剔除会怎样？** 举三个真实后果：
+
+```text
+① 转发 Connection: keep-alive
+   代理告诉客户端"我要保持这条连接"，同时又把它转给服务端。
+   两端各自的连接状态开始互相污染 → 出现"响应错位"
+   （客户端读到的响应其实是上一个请求的）。
+
+② 转发 Transfer-Encoding: chunked，同时又自己加了 Content-Length
+   两条互相矛盾的长度声明 → 客户端按哪个走？
+   这就是 HTTP 请求走私（request smuggling）的经典土壤。
+
+③ 转发 Proxy-Authorization
+   把"客户端给代理的凭据"原样发给源站 →
+   源站日志里出现了一个它根本不该看到的凭据。
+```
+
+本课对请求方向的处理是：剔除 `HOP_BY_HOP` 集合里的头，然后**自己重算**
+`Content-Length` 并显式加 `Connection: close`。对响应方向同样处理。
+
+**为什么选 `Connection: close` 而不是实现 keep-alive？** 见 3.3 末尾的取舍说明。
+
+### 3.3 分块传输与压缩：代理为什么主动去掉 `Accept-Encoding`
+
+这一节讲两个"看起来是优化、实际是坑"的东西。
+
+#### （一）chunked：长度不写在头里
+
+`Transfer-Encoding: chunked` 的意思是"我边生成边发，长度事先不知道"：
+
+```text
+1a\r\n
+{"user":"ada","role":"user"}\r\n
+0\r\n
+\r\n
+```
+
+**为什么代理必须实现它？** 因为**不实现就会静默截断**：
+请求体读到 0 字节，但客户端明明发了数据。
+表现为"服务端收到的表单是空的"——一个查一整天也查不出来的 bug。
+
+**但注意一个不对称**：
+
+| 方向 | 本课处理 | 原因 |
+|---|---|---|
+| 客户端 → 代理 | **解析** chunked（`_read_chunked`） | 不发出去就没法转发 |
+| 代理 → 客户端 | **不用** chunked，统一用 `Content-Length` | 我们手里已有完整字节，长度是已知的 |
+
+**为什么回给客户端时不重新分块？** 因为分块是"流式生成"的产物。
+我们的数据已经完整躺在内存里了，再用分块只是无谓的复杂度。
+
+#### （二）压缩：一个必须承认的取舍
+
+`Content-Encoding: gzip` 的意思是"响应体是 gzip 压过的"。
+
+**问题**：`gzip` 压缩后的字节流是**二进制**，
+落到档案里就是一堆乱码——规则引擎看不懂，正则也匹配不到任何东西。
+
+**三种处理方式，各带代价**：
+
+| 做法 | 好处 | 代价 | 适合 |
+|---|---|---|---|
+| **透传**（不改） | 完全透明，客户端行为不变 | 档案里是二进制，规则失效 | 纯转发代理 |
+| **透传 + 按需解压** | 两者兼得 | 代码复杂（要处理 gzip/deflate/br 三种） | 生产代理 ✅ |
+| **代理主动去掉 `Accept-Encoding`** | 最简单，拿到的一定是纯文本 | 流量变大；**改变了客户端的观测** | 本课 ✅ |
+
+**本课选第三种，理由与代价都写在这里**：
+
+```python
+# 转发前，从请求头里**删掉** Accept-Encoding
+if low == "accept-encoding":
+    continue
+```
+
+- **收益**：服务端返回身份编码（identity，即不压缩）→ 档案永远是纯文本 → 规则可靠；
+- **代价 ①**：响应体体积变大（少则 2–3 倍），代理链路带宽占用上升；
+- **代价 ②**：**它改变了客户端原本会看到的东西**——原本客户端可能期望压缩。
+  这在"帮你省流量"的角度是负优化。
+
+> **生产环境该怎么做？** 透传 `Accept-Encoding`，
+> 然后在**归档前**对 `Content-Encoding` 做解压（只解不支持的编码就原样存二进制 + 标记）。
+> 本课选"简化 + 明说"，而不是"假装没有这个取舍"。
+> **教学代码最忌讳的就是把取舍藏起来。**
+
+#### （三）为什么干脆不支持 keep-alive
+
+真实代理要处理长连接上的**多个**请求（甚至流水线）。
+本课每个连接**只处理一个请求**，然后回 `Connection: close`。
+
+理由很直接：**换来 60 行能读懂的核心逻辑**。
+代价是：每个请求多一次 TCP 三次握手（`/slow` 那类请求里，握手开销占比很小）。
+
+这符合 HTTP/1.1 规范——`Connection: close` 是**明文允许**的行为，
+标准客户端（`urllib`、`requests`、浏览器）都会正确降级，不会出错。
+
+### 3.4 14 条规则的判定逻辑总表
+
+规则引擎的核心问题是：**"什么样的一个 flow，算是一个发现？"**
+每条规则都是对这个问题的一个回答。总表如下：
+
+| # | 规则 | 严重度 | 判定条件（看 flow 的哪个字段） |
+|---|---|---|---|
+| R1 | `cleartext-credential` | high | `scheme==http` ∧ 请求体含敏感字段标记 |
+| R2 | `sensitive-in-url` | medium | `query_keys` 非空（敏感参数名出现在查询串） |
+| R3 | `auth-header-cleartext` | high | `scheme==http` ∧ 请求头有 `Authorization` |
+| R4 | `cookie-missing-flags` | medium | 响应 `Set-Cookie` 缺 `HttpOnly` 或 `Secure` |
+| R5 | `missing-security-headers` | low | HTML 200 响应缺 `nosniff`/`CSP`/`HSTS` |
+| R6 | `error-disclosure` | high | 响应体命中报错特征（SQL/堆栈/调试页/路径） |
+| R7 | `secret-in-response-body` | high | 响应体含敏感字段名（值已脱敏） |
+| R8 | `server-error` | medium | `response_status >= 500` |
+| R9 | `redirect-chain` | info | `response_status` ∈ {301,302,303,307,308} |
+| R10 | `tls-tunnel-uninspected` | medium | `inspected == false` 或 `method == CONNECT` |
+| R11 | `state-changing-method` | info | 方法 ∈ {PUT,PATCH,DELETE} 或非豁免的 POST |
+| R12 | `slow-response` | low | `duration_ms >= 300` |
+| R13 | `pii-in-request` | medium | `pii_labels` 非空 |
+| R14 | `server-banner` | info | 响应头有 `Server`/`X-Powered-By`/`X-AspNet-Version` |
+
+**R10 为什么第一个判定、并且直接 `return`？**
+因为它决定"**其他规则的结果是否可信**"。
+一条隧道 flow 没有任何可分析内容，对它跑剩下 13 条规则只会产生无意义的空转——
+更重要的是，它是唯一一条"关于覆盖面"的规则，
+语义上和"关于内容"的规则不在一个层面。
+
+**R11 的"豁免"为什么必须显式写出来？**
+因为登录、搜索这类业务本身就是 POST。如果全报成"破坏只读"，
+报告会被噪音淹没，运维会直接忽略整份报告。
+`_is_benign_post()` 的判定是：请求体里**既没有敏感字段、也没有 PII** → 视为常规业务。
+**代价写在这里**：真实的写操作如果恰好不带敏感字段，会被漏掉。
+这是一个**显式**的取舍，不是一个"没考虑到"。
+
+### 3.5 明文凭据判定：为什么用"字段名 + 指纹"而不是匹配明文
+
+`_body_has_sensitive_marker()` 是整个引擎里原理最需要讲清的一个函数。
+它回答的是：**在值已经被脱敏掉之后，怎么还能判定"这里传了口令"？**
+
+看它在实际数据上面对的东西：
+
+```text
+username=ada&password=%3Credacted%3A9f8e7d6c%2F11B%3E
+```
+
+判定分两步：
+
+```text
+第 1 步：文本里有没有脱敏标记？
+        "redacted:" 出现  或  "redacted%3a" 出现        ← ⚠️ 见 3.9 的踩坑 ②
+        ├─ 没有 → 返回 False（这个 flow 里没有任何被脱敏的值）
+        └─ 有   ↓
+第 2 步：这些标记是挂在哪个字段名上的？
+        password= / "api_key": / 'token': …  是否命中 SENSITIVE_KEYS / SECRET_BODY_KEYS？
+        ├─ 命中 → True（存在敏感字段，且值确实被脱敏了）
+        └─ 未命中 → False
+```
+
+**为什么"存在标记"是必要条件？** 因为它区分了两种情况：
+
+| 情况 | 文本长什么样 | 应该判定为 |
+|---|---|---|
+| 字段**有值**且被脱敏 | `password=<redacted:…>` | ✅ 明文传了口令 |
+| 字段**空值**或字段名恰好出现在别处 | `password=` / 文本里提到 "password" | ❌ 不能判定 |
+
+**为什么值指纹（`sha256 前 8 位`）要保留下来，而不是全部删成固定字符串？**
+因为它支撑一类**只能在流量层发现的结论**：
+
+```text
+同一个口令的指纹 a1b2c3d4 出现在 3 个不同端点的请求里
+        ↓
+结论：这个口令被重复使用（横向移动风险的信号）
+```
+
+这个结论**不需要明文**就能得出。这是"先脱敏"设计的直接收益：
+**脱敏不是把信息扔掉，而是把信息降维到"结构性信号"。**
+
+### 3.6 优先级 = 严重度 × 置信度
+
+```python
+priority = SEVERITY_SCORE[severity] * confidence
+level    = P0(≥3.0) / P1(≥2.0) / P2(≥1.0) / P3(<1.0)
+```
+
+**为什么不是"只看严重度"？** 看两个例子就明白了：
+
+| 发现 | 严重度 | 置信度 | 优先级 | 该不该马上处理 |
+|---|---|---|---|---|
+| 明文传输口令 | high (3.0) | 0.95 | **2.85 → P1** | ✅ 马上 |
+| 隧道不可见 | medium (2.0) | 1.00 | 2.00 → P1 | ⚠️ 这是覆盖问题 |
+| 缺安全头 | low (1.0) | 0.80 | 0.80 → P3 | 排期做 |
+| **疑似**时间盲注痕迹 | high (3.0) | 0.30 | **0.90 → P3** | 先复核，别慌 |
+
+最后一行是关键：**一个"严重但很可能是假阳性"的发现，
+优先级必须低于"不严重但确定"的发现。**
+否则每次扫描都会把运维拉去追一堆幻觉，几轮之后他们就不再读报告了——
+**报告没人读，等于没有报告。**
+
+**乘法还能表达"双重打折"**：严重度高、置信度也高 → 相乘后被放大；
+两项都低 → 相乘后被压到几乎看不见。这正是我们想要的排序行为。
+
+### 3.7 语义化退出码
+
+```python
+def exit_code(self) -> int:
+    if self.scope_violation:      return 2   # 越界（根本没开始测）
+    if self.coverage_incomplete:  return 4   # 覆盖缺口（结论不可信）
+    if any(f.level in ("P0","P1") for f in self.findings): return 3
+    return 0
+```
+
+**判定顺序就是优先级顺序**，理由各自不同：
+
+```text
+2  越界            → 这是**配置/流程**问题，不是安全问题。要人改工单，不是改代码。
+4  覆盖不完整      → 这是**结论可信度**问题。必须先说"这轮结果别信"，再谈发现。
+3  有 P0/P1 发现   → 这是**安全结果**。要人去看、去修。
+0  干净            → 唯一一个"可以自动通过"的信号。
+```
+
+**为什么不用 `0/1`？** 因为 CI 流水线的后续动作完全不同：
+
+| 退出码 | 流水线该做什么 |
+|---|---|
+| 0 | 继续，自动合并 |
+| 2 | 停下来，找**流程负责人**（工单/范围不对） |
+| 3 | 停下来，找**开发负责人**（有洞要修） |
+| 4 | 停下来，找**运维**（采集方案有盲区，结论不可用） |
+
+**注意退出码 `3` 的判定用的是 `level`（P0/P1）而不是"有任何发现"。**
+因为 `info` 级发现（重定向、服务端指纹）数量可能上百，
+如果它们能让流水线失败，这条流水线一周内就会被关掉。
+
+### 3.8 覆盖率与"结论可信度"
+
+```python
+facts["coverage_percent"] = 100.0 * inspected / total    # 只算"内容看得见"的
+coverage_incomplete = (uninspected > 0) or (transport_errors > 0)
+```
+
+**为什么 `transport_errors`（连不上/超时）也算不完整？**
+因为一次超时意味着"**我们对这个端点一无所知**"。
+它不是"没问题"，是"没有结论"。把两者分开是报告诚实性的基准线。
+
+**覆盖率低到什么程度就不能出结论了？** 本课不设硬阈值——
+因为"低"的容忍度取决于审计目的（合规取证 vs 内部自检完全不同）。
+本课的做法是：**把数字和事实摆出来，让决策者自己判断**，
+并保证"报告不会在覆盖率低的时候假装通过"（退出码 `4`）。
+
+### 3.9 三个由"实测"驱动的修复（真实踩坑记录）
+
+**这一节是本课最有价值的部分。** 下面三条不是"设计时的考虑"，
+而是本模块**第一版真的写错了、跑起来才发现**的问题。
+它们都已经变成 `mitm_core.py --self-test` 里的断言。
+
+#### 踩坑 ①：`build_opener()` 会"偷偷"装上重定向处理器
+
+**症状**：`/redirect?to=/login` 这条 flow，报告里记的状态码是 `404` 而不是 `302`。
+`redirect-chain` 规则永远沉默。
+
+**根因**：
+
+```python
+# ❌ 看起来像"我没装重定向处理器，所以不会跟随"
+opener = urllib.request.build_opener(ProxyHandler(...), HTTPHandler())
+```
+
+但 `build_opener()` 的语义是"**在默认处理器的基础上**加上你给的"：
+你没提供 `HTTPRedirectHandler`，它就**自动补上默认实现** →
+302 被悄悄跟随到 `/login` → 最终记录的是 404。
+
+**修复**：提供子类并让 `redirect_request()` 返回 `None`：
+
+```python
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None          # 返回 None → urllib 把 3xx 当 HTTPError 抛出来
+
+opener = urllib.request.build_opener(ProxyHandler(...), _NoRedirect(), ...)
+```
+
+**教训**：
+
+> **"我没有做某件事"和"某件事不会发生"是两回事。**
+> 遇到"框架替你做了默认选择"的场景，必须验证**默认值**，
+> 而不是推理"我传了什么"。
+
+#### 踩坑 ②：脱敏标记在 `urlencode` 之后变形了
+
+**症状**：`cleartext-credential` 规则对**所有 form 表单**都不命中。
+
+**根因**：请求体是 `application/x-www-form-urlencoded`，
+脱敏后值变成 `<redacted:9f8e7d6c/11B>`，
+但 `urlencode()` 会把 `:` 转义成 `%3A`：
+
+```text
+password=<redacted:9f8e7d6c/11B>      ← 脱敏时
+password=%3Credacted%3A9f8e7d6c%2F11B%3E   ← 落进档案时
+```
+
+而检测代码里写的是 `if "redacted:" in body` → **永远不匹配**。
+
+**修复**：两个写法都认。
+
+```python
+if "redacted:" not in lowered and "redacted%3a" not in lowered:
+    return False
+```
+
+**教训**：
+
+> **序列化会改变字面量。** 任何"写入 → 编码 → 再读出比对"的链路，
+> 都要在**真实编码之后**的字面量上做匹配，而不是在"我构造时的样子"上做。
+
+#### 踩坑 ③：只脱敏了 URL，忘了 `path` 里也带着查询串
+
+**症状**：自检里的"档案不得包含明文 token"断言失败：
+
+```text
+AssertionError: 明文 token 泄漏进了档案！   # tk_live_164_fake
+```
+
+**根因**：`_forward()` 里做了两件事：
+
+```python
+raw_url, query_keys = redact_url(url)     # ✅ url 脱敏了
+flow = Flow(path=path, url=raw_url, ...)  # ❌ path 还是**原始**的（带查询串）
+```
+
+`path` 是 `/search?q=python&token=tk_live_164_fake`，
+**同一个秘密在两处出现，只脱敏了一处。**
+
+**修复**：脱敏 `path` 里同一份查询串。
+
+```python
+safe_path = _redact_query_in_path(path)   # 值 → 指纹
+flow = Flow(path=safe_path, url=raw_url, ...)
+```
+
+**教训**：
+
+> **脱敏必须"穷尽同源数据"。**
+> 同一个秘密可能同时出现在 URL、path、Referer、日志字段、异常栈里。
+> 只处理你知道的那一处，等于没处理。
+> **写一条断言去扫整个档案文件**（本课自检就是干这个的），
+> 是唯一可靠的兜底手段。
+
+#### 这三个坑的共同结构
+
+```text
+①  假设了框架的默认行为（其实是别的）
+②  假设了字面量在编码后不变（其实会变）
+③  假设了"处理了一处 = 处理了全部"（其实不是）
+        ↓
+共同点：**都是关于"我以为"的假设，而不是关于"实际数据"的观测。**
+        ↓
+对策：把假设变成**断言**，让它在 CI 里替你记住。
+```
+
+---
