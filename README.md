@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-162%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1375-brightgreen) ![Phase](https://img.shields.io/badge/Phase-10_%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8%E5%8F%91%E5%B1%95-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-164%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1111-brightgreen) ![Phase](https://img.shields.io/badge/Phase-10_%E7%BD%91%E7%BB%9C%E5%AE%89%E5%85%A8%E5%8F%91%E5%B1%95-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,14 +49,14 @@
 
 ## 📊 当前进度
 
-> **Day 163 / 200** · 进度的 81.5% · 当前：Phase 10 网络安全开发
+> **Day 164 / 200** · 进度的 82.0% · 当前：Phase 10 网络安全开发
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **163 天** |
-| 📝 总提交次数 | **1,099 commits** |
-| 📄 总代码行数 | **160,601 行** |
-| 📂 总文件数 | **1,115 个** |
+| 📅 已完成天数 | **164 天** |
+| 📝 总提交次数 | **1,111 commits** |
+| 📄 总代码行数 | **163,398 行** |
+| 📂 总文件数 | **1,124 个** |
 | 🏗️ 当前阶段 | **Phase 10 — 网络安全开发** |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
@@ -277,6 +277,7 @@
 - ✅ 渗透测试框架：范围门禁 + 阶段编排 + 只读探测 + 审计留痕（Day 161）
 - ✅ 安全审计工具箱（一）：端口扫描 + 目录爆破 + 指纹识别（Day 162）
 - ✅ 安全审计工具箱（二）：SQLi 检测（错误回显 + 布尔差分）+ XSS 检测（四层判定 + 上下文分级）（Day 163）
+- ✅ 安全审计工具箱（三）：代理中间人（正向代理 + CONNECT 隧道）+ 流量分析（先脱敏再检测 + 14 条规则 + 两层覆盖率）（Day 164）
 - ⏳ 后续课程进行中
 
 </details>
@@ -287,11 +288,11 @@
 
 ```
 📁 Python-200-days/
-├── 📓 days/                    # 每日学习内容（day-001 ~ day-163，共 163 个主题）
+├── 📓 days/                    # 每日学习内容（day-001 ~ day-164，共 164 个主题）
 │   ├── day-001-hello-python/
 │   ├── day-002-variables-and-datatypes/
 │   ├── ...
-│   └── day-162-安全审计工具箱-part1/
+│   └── day-164-安全审计工具箱-part3/
 ├── 📁 docs/                    # 补充文档
 ├── 📄 ROADMAP.md               # 完整学习路线图
 ├── 📄 PLAN.md                  # 详细执行计划
