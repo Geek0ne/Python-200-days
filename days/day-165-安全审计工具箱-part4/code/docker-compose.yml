@@ -1,0 +1,98 @@
+# docker-compose.yml — 安全审计工具箱（Day 165）
+#
+# 用法：
+#     docker compose build
+#     docker compose run --rm report --input /data/findings.json --format all
+#     docker compose run --rm gate      # 带门禁的示例（高危即拦截）
+#
+# ─── 这里的每一行安全配置都在回答同一个问题 ──────────────────────────
+# "如果这个容器里的代码是恶意的（或被我写错了），它能造成多大破坏？"
+#
+# 设计原则：**默认拒绝**。
+# 需要的能力一项一项显式加回来，而不是从一个全权限容器开始做减法。
+# 因为"做减法"永远会漏掉一项，而"做加法"漏掉的那项是关着的。
+
+services:
+  report:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: audit-toolbox:1.0
+    container_name: audit-report
+
+    # ── 输入：只读挂载，容器改不了原始观测数据 ──
+    volumes:
+      - ./findings.example.json:/data/findings.json:ro
+      - ./out:/out
+
+    # ── 默认无网络 ──
+    # 报告生成器**本来就不需要网络**：它只读 JSON、写文件。
+    # 断网之后，即使镜像里藏了后门，也没有回传信道。
+    # 需要联网的只有"扫描阶段"（Day 162–164），那是**别**的容器。
+    network_mode: none
+
+    # ── 根文件系统只读 ──
+    read_only: true
+    # 只读根文件系统下仍有程序需要写临时目录，用 tmpfs 精确开一个口子：
+    # noexec + 小容量（16M），既是写口也是执行阻断点。
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    # 没有 /etc/passwd 写权限时某些库会报错，这里显式给一个已存在用户的写法
+    user: "10001:10001"
+
+    # ── 能力：全丢 ──
+    # 一个纯 Python 文本处理程序不需要任何 Linux capability。
+    # 注意 cap_drop: [ALL] 之后**不要**再 add 回来——
+    # 一旦 add 了 NET_RAW 之类，前面所有努力都会打折。
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # ── 资源上限：防止畸形输入把宿主拖死 ──
+    # （例如一个 200 万条 findings 的 JSON 会让渲染器吃光内存）
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          memory: 64M
+
+    # ── 退出码透传 ──
+    # compose run 会把入口进程的退出码原样返回，
+    # 所以 `--fail-on high` 的门禁在 compose 下同样有效。
+    stdin_open: false
+    tty: false
+    restart: "no"
+
+  # 门禁示例：专门用来演示"退出码 1 让 CI 挂掉"的用法
+  gate:
+    image: audit-toolbox:1.0
+    profiles: ["gate"]          # 不指定 profile 时不会启动，避免误跑
+    volumes:
+      - ./findings.example.json:/data/findings.json:ro
+      - ./out:/out
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - --input
+      - /data/findings.json
+      - --format
+      - md
+      - --out-dir
+      - /out
+      - --stem
+      - day165-gate
+      - --fail-on
+      - high
+      - --allow-coverage-gaps
+      - --generated-at
+      - "2026-09-24T06:00:00+08:00"
