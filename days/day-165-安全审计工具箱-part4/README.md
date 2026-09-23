@@ -666,3 +666,255 @@ docker compose --profile gate run --rm gate
 3. **在真数据上跑一遍**，看有没有"只擦一半"的情况（`\S+` 这个坑很常见）
 
 ---
+
+## 6. 实战代码案例
+
+四天项目的收口场景：**把前三天的发现汇成一份可交付报告，并钉进容器里跑。**
+
+### 6.1 文件清单
+
+| 文件 | 行数量级 | 作用 |
+|:----|:---:|:----|
+| `code/report_core.py` | ~560 | 数据模型 + 四种渲染器 + 脱敏（**核心库**） |
+| `code/01-basic-report.py` | ~150 | 基础用法：收集 → 组装 → 渲染 Markdown/JSON |
+| `code/02-determinism-redaction.py` | ~250 | 进阶：确定性验证、脱敏顺序、幂等坑 |
+| `code/03-toolbox-cli.py` | ~300 | 实战：CLI + 四种格式 + 退出码门禁 |
+| `code/findings.example.json` | — | 合成输入（来自 Day 162/163/164 三个面） |
+| `code/Dockerfile` | — | 多阶段构建 + 非 root + exec ENTRYPOINT |
+| `code/docker-compose.yml` | — | 加固编排（无网络/只读/cap_drop/限额） |
+
+### 6.2 场景 A：本地出报告（最常用）
+
+```bash
+cd code
+python3 03-toolbox-cli.py --input findings.example.json --format all \
+    --generated-at 2026-09-24T06:00:00+08:00 --allow-coverage-gaps
+```
+
+实测输出：
+
+```text
+📄 报告：安全审计报告
+   范围　：127.0.0.1 自建靶场（非真实目标；授权演练）
+   摘要　：findings=7 critical=1 high=3 medium=1 low=1 info=1 risk=105 gaps=4
+   时间戳：2026-09-24T06:00:00+08:00
+   ✅ 已写入 .../out/day165-report.md（4431 字节）
+   ✅ 已写入 .../out/day165-report.json（5317 字节）
+   ✅ 已写入 .../out/day165-report.html（5531 字节）
+   ✅ 已写入 .../out/day165-report.sarif（10371 字节）
+✅ 通过
+exit=0
+```
+
+**读一下这几行数字里的信息**：
+- 7 条发现、风险总分 105；
+- critical 1 + high 3 = 4 条在 `--fail-on high` 的拦截范围内（下个场景验证）；
+- **gaps=4**，说明这份报告有四块"未覆盖区域"。
+  四块缺口真的很多吗？不是——它恰好是**诚实度**的体现（TLS 不可见、无授权账号、无 IPv6、代理超时丢包）。
+- 四种格式体积差很大（4.4KB vs 10.4KB），SARIF 最大因为它要把规则、位置、指纹重复表达一遍。
+
+### 6.3 场景 B：CI 门禁
+
+```bash
+python3 03-toolbox-cli.py -i findings.example.json -f md --fail-on high --summary-only
+```
+
+```text
+   门禁　：--fail-on high → 命中 4 条
+      · [critical] WEB-SQLI-ERROR @ http://127.0.0.1:8080/item?id=1
+      · [high] TRAFFIC-CLEARTEXT-CRED @ http://127.0.0.1:8080/login
+      · [high] WEB-XSS-REFLECTED @ http://127.0.0.1:8080/search?q=
+      · [high] TRAFFIC-SUSPICIOUS-UA @ 127.0.0.1:9000
+⛔ 门禁拦截：存在达到阈值的发现
+exit=1
+```
+
+注意最后一行里 **`TRAFFIC-SUSPICIOUS-UA` 是 low 置信度的**，
+但它依然被 `--fail-on high` 拦截。这看起来和 2.7 节"低置信度应该下沉"矛盾？
+
+**不矛盾，但确实是一个真实的取舍**：
+- 风险分（排序）回答"先看哪个"
+- 门禁阈值（拦截）回答"能不能放过"
+
+门禁用的是**原始 severity**，不看置信度，因为：
+门禁一旦引入置信度折扣，就会出现"低置信度高危可以合法放过"的口子，
+而低置信度往往只是"证据不完美"，不代表"不是真的"。
+
+正确的做法是：**门禁看 severity 严卡，人工看 risk 排序排优先级**。
+如果确实要豁免，应该在流程里显式记录豁免原因，而不是把阈值调松。
+
+### 6.4 场景 C：四种退出码全部实测
+
+```text
+exit=0  --allow-coverage-gaps --fail-on 未设   → 通过
+exit=1  --fail-on high（命中 4 条）            → 门禁拦截
+exit=2  --input nope.json                      → ❌ 输入错误：输入文件不存在
+exit=3  容器内写 /out（宿主目录属 root）        → ❌ 写盘失败：Permission denied
+exit=4  --fail-on "" 且存在 gaps               → ⚠️ 覆盖缺口，结论不完整
+```
+
+五种码逐个实测过，这是本课最硬的交付证据之一。
+同时注意 `exit=3` 是在 Docker 场景下真实发生的（见 7.3），
+**不是我编出来的一个示例**。
+
+### 6.5 场景 D：容器里跑完整流水线
+
+```bash
+cd code
+docker build -t audit-toolbox:1.0 .
+
+mkdir -p out && chown 10001:10001 out      # ← 关键一步（否则 exit=3）
+
+docker run --rm --network none --read-only --tmpfs /tmp:size=16m \
+    --cap-drop ALL --security-opt no-new-privileges \
+    -v "$PWD/findings.example.json:/data/findings.json:ro" \
+    -v "$PWD/out:/out" \
+    audit-toolbox:1.0 --input /data/findings.json --format all --out-dir /out \
+    --generated-at 2026-09-24T06:00:00+08:00 --allow-coverage-gaps
+```
+
+实测（修好权限后）：
+
+```text
+   ✅ 已写入 /out/day165-docker.md（4431 字节）
+   ✅ 已写入 /out/day165-docker.json（5317 字节）
+   ✅ 已写入 /out/day165-docker.html（5531 字节）
+   ✅ 已写入 /out/day165-docker.sarif（10371 字节）
+✅ 通过
+exit=0
+```
+
+### 6.6 代码里最值得抄走的三个片段
+
+**（1）稳定 id（三行解决 diff 问题）**
+
+```python
+def stable_id(*parts: Any, length: int = 12) -> str:
+    joined = "\x1f".join("" if p is None else str(p) for p in parts)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:length]
+```
+
+用 `\x1f`（单元分隔符）拼接而不是普通空格：
+因为 `("a b", "c")` 和 `("a", "b c")` 用空格拼出来是同一个字符串，
+用控制字符就能避开这种边界碰撞。
+
+**（2）全序排序键（确定性最后一道锁）**
+
+```python
+def sort_key(self) -> tuple[int, str, str, str]:
+    return (SEVERITY_ORDER[self.severity], -self.risk, self.target, self.rule_id)
+```
+
+末位 `rule_id` 看似多余，实际是防"前三维相等时退化成输入顺序"的保险丝。
+
+**（3）空值也要显式渲染**
+
+```python
+else:
+    lines.append("**证据**：（无证据，属建议项）")
+```
+
+不能因为证据为空就跳过这一行：跳过之后读者会以为"渲染器漏了"，
+而写明白才能传递"这条本来就是建议，不是发现"。
+
+---
+
+## 7. 真机实测验证（不是示例输出，是跑出来的）
+
+本课所有代码与容器配置都在本机（Linux / Python 3.12 / Docker）实际执行过。
+以下记录原始结果，包括一次真实的翻车。
+
+### 7.1 构建
+
+```text
+Step 18/18 : CMD ["--input", "/data/findings.json", "--format", "all", "--out-dir", "/out"]
+Successfully built 8f47278aa60d
+Successfully tagged audit-toolbox:1.0
+build_exit=0
+```
+
+### 7.2 镜像体积（分层收益）
+
+```text
+python:3.12-slim（基础）           179 MB
+audit-toolbox:1.0（我们的）        194 MB   ← 只多出约 15 MB
+```
+
+### 7.3 翻车记录：非 root + 绑定挂载 = EACCES
+
+```text
+📄 报告：安全审计报告
+   摘要　：findings=7 critical=1 high=3 medium=1 low=1 info=1 risk=105 gaps=4
+   时间戳：2026-09-24T06:00:00+08:00
+❌ 写盘失败：[Errno 13] Permission denied: '/out/day165-docker.md'
+exit=3
+```
+
+排查（两句命令）：
+
+```bash
+docker run --rm --entrypoint id audit-toolbox:1.0
+# → uid=10001(app) gid=10001(app) groups=10001(app)
+
+ls -ld out/
+# → drwxr-xr-x root root     ← 10001 写不进去
+```
+
+修复后（`chown 10001:10001 out`）四个格式全部写出，退出码 `0`。
+**详细的三重根因与三种修法见 3.8 节**。这次翻车完整验证了退出码 3 的设计价值。
+
+### 7.4 门禁在容器里的退出码透传
+
+```bash
+docker run … audit-toolbox:1.0 --input /data/findings.json --format json \
+    --fail-on high --generated-at fixed --allow-coverage-gaps
+exit=1        # ← 与本地运行完全一致
+```
+
+这一条是 exec 形式 ENTRYPOINT 的直接证据。
+如果换成 shell 形式（`ENTRYPOINT python …`），退出码会被 `/bin/sh` 包一层，
+CI 里的门禁就不再可靠。
+
+### 7.5 脱敏实测（含一次修复）
+
+```text
+'Authorization: Bearer abcdefgh12345'   -> 'Authorization: <REDACTED>'
+'password=abc123; token=xyz987'         -> 'password=<REDACTED>; token=<REDACTED>'
+'http://alice:qwerty9876@example.com/x' -> 'http://<REDACTED>:<REDACTED>@example.com/x'
+Cookie: sid=deadbeef; theme=dark        -> 'Cookie: <REDACTED>'
+```
+
+每条都验证了**幂等**（二次脱敏与一次相同）。
+第一版规则写成 `\S+` 时，`Authorization: Bearer zzz` 会被擦成
+`Authorization: <REDACTED> zzz`——令牌尾巴漏出去了。
+改成**吃到行尾**（`[^\r\n]+`）才修好。这就是 5.6 节铁律第 3 条的来历。
+
+### 7.6 确定性实测
+
+```text
+两次渲染是否字节一致：True
+顺序 A：['R-SQLI', 'R-CLEARTEXT', 'R-OPEN-PORT']
+顺序 B：['R-SQLI', 'R-CLEARTEXT', 'R-OPEN-PORT']    ← 输入完全反序，输出相同
+已修复（old - new）：['fd50b189af15']
+新增　（new - old）：[]
+```
+
+### 7.7 脱敏顺序实测（误报实证）
+
+```text
+[正确顺序] 凭证复用命中：（无）                 ← 两个不同口令，不误报
+[错误顺序] 指纹：['sha256:70de1811/len=25', 'sha256:70de1811/len=25']
+[错误顺序] 凭证复用命中：{'…': {'bob', 'alice'}}  ← 两个不同口令被擦成同一个 → 误报
+```
+
+这一条比任何文字论证都有说服力：**过度脱敏会制造误报**，
+而误报比漏报更容易骗过只看告警数量的人。
+
+### 7.8 一个诚实的遗留项
+
+`out/` 与 `tools/` 已在 `.gitignore` 中：前者是运行产物（可随时重生成），
+后者含本地进度数据。所以本课提交的是**可重跑的代码与配置**，
+而不是产物快照。这也符合 2.5 节的原则：
+应该提交的是"能生产"，而不是"生产出来的那一份"（后者只有确定性地生成才有意义）。
+
+---
