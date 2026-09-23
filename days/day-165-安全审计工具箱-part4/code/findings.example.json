@@ -1,0 +1,98 @@
+{
+  "scope": "127.0.0.1 自建靶场（非真实目标；授权演练）",
+  "coverage_gaps": [
+    "CONNECT 隧道内容不可见（未解密 TLS），流量面结论仅覆盖明文 HTTP。",
+    "未做认证后越权测试（无有效账号，且超出授权范围）。",
+    "未覆盖 IPv6 目标与 UDP 服务。",
+    "Day 164 代理在目标超时窗口内共丢弃 3 个请求，可能影响覆盖完整性。"
+  ],
+  "findings": [
+    {
+      "rule_id": "ASSET-OPEN-PORT",
+      "title": "发现对外开放的调试端口",
+      "severity": "medium",
+      "target": "127.0.0.1:9000",
+      "phase": "Day 162 资产面",
+      "reason": "端口 9000 可建立 TCP 连接，banner 显示为调试服务，且无任何鉴权提示。",
+      "remediation": "确认该服务是否必须监听；若非必要，改绑 127.0.0.1 或直接关闭。",
+      "confidence": "high",
+      "evidence": ["TCP connect 127.0.0.1:9000 -> open", "banner: 'debug-http/0.3'"],
+      "tags": ["asset", "port"]
+    },
+    {
+      "rule_id": "WEB-DIR-INDEX",
+      "title": "目录列表可公开访问",
+      "severity": "low",
+      "target": "http://127.0.0.1:8080/static/",
+      "phase": "Day 162 资产面",
+      "reason": "静态目录返回了文件索引页，会暴露内部文件名与结构。",
+      "remediation": "关闭 autoindex / directory listing。",
+      "confidence": "high",
+      "evidence": ["GET /static/ -> 200, body contains '<title>Index of /static/'"],
+      "tags": ["asset", "web"]
+    },
+    {
+      "rule_id": "WEB-SQLI-ERROR",
+      "title": "SQL 注入：错误回显型",
+      "severity": "critical",
+      "target": "http://127.0.0.1:8080/item?id=1",
+      "phase": "Day 163 漏洞面",
+      "reason": "注入单引号后服务端返回数据库错误信息，说明参数未做参数化处理。",
+      "remediation": "改用参数化查询（预编译语句），禁止拼接 SQL；同时关闭详细错误回显。",
+      "confidence": "high",
+      "evidence": [
+        "request: GET /item?id=1%27",
+        "response: HTTP 500, 'You have an error in your SQL syntax near ''1'''"
+      ],
+      "tags": ["web", "sqli"]
+    },
+    {
+      "rule_id": "WEB-XSS-REFLECTED",
+      "title": "反射型 XSS：HTML 正文上下文未编码",
+      "severity": "high",
+      "target": "http://127.0.0.1:8080/search?q=",
+      "phase": "Day 163 漏洞面",
+      "reason": "注入的探针字符串未经 HTML 实体编码即回显进正文节点，属可执行上下文。",
+      "remediation": "按输出上下文做 HTML 实体编码；叠加 CSP 作为纵深防御。",
+      "confidence": "medium",
+      "evidence": ["probe: <x>audit-probe</x>", "response body contains: <x>audit-probe</x>"],
+      "tags": ["web", "xss"]
+    },
+    {
+      "rule_id": "TRAFFIC-CLEARTEXT-CRED",
+      "title": "凭证以明文形式在 HTTP 上传输",
+      "severity": "high",
+      "target": "http://127.0.0.1:8080/login",
+      "phase": "Day 164 流量面",
+      "reason": "登录请求体中存在明文口令字段（值指纹已记录，值本身不落盘）。",
+      "remediation": "全站启用 HTTPS 并强制 HSTS；口令只在 TLS 通道内传输。",
+      "confidence": "high",
+      "evidence": ["POST /login body: username=alice&password=<REDACTED> (fingerprint sha256:9f2c1ab3/len=12)"],
+      "tags": ["traffic", "cleartext"]
+    },
+    {
+      "rule_id": "TRAFFIC-SUSPICIOUS-UA",
+      "title": "可疑扫描器 User-Agent",
+      "severity": "high",
+      "target": "127.0.0.1:9000",
+      "phase": "Day 164 流量面",
+      "reason": "UA 命中扫描器特征串，但目标可能只是本机压测脚本，存在误报可能。",
+      "remediation": "结合源 IP 与请求频率复核；如为压测脚本请加入白名单并记录。",
+      "confidence": "low",
+      "evidence": ["ua: 'masscan/1.3'"],
+      "tags": ["traffic", "scanner"]
+    },
+    {
+      "rule_id": "PROCESS-NO-RETENTION",
+      "title": "尚未定义报告留存与访问策略",
+      "severity": "info",
+      "target": "audit-process",
+      "phase": "Day 165 报告层",
+      "reason": "当前流程未规定报告的保存周期、存放位置与可读角色，审计证据可能失效或被越权读取。",
+      "remediation": "约定留存周期（建议 ≥180 天）、存放位置与最小可读角色，并写入流程文档。",
+      "confidence": "high",
+      "evidence": [],
+      "tags": ["process"]
+    }
+  ]
+}
