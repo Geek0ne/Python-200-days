@@ -509,3 +509,160 @@ exit=0
 超出就干净地死掉，而不是把宿主一起拖垮。
 
 ---
+
+## 4. 图解
+
+完整图解见 [`diagrams/README.md`](diagrams/README.md)（6 张图：渲染管线、确定性杀手、
+退出码决策树、容器信任边界、EACCES 排查路径、格式信息损失地图）。
+
+这里放两张最该记住的：
+
+### 4.1 渲染管线（数据流单向）
+
+```text
+  收集（三个面）      归一化（唯一算数的地方）      渲染（零计算）
+ ┌─────────────┐     ┌────────────────────┐     ┌────────────────┐
+ │ 资产 / 漏洞  │ ──► │ 去重 → 排序 → 计数  │ ──► │ JSON / MD /    │
+ │ / 流量      │     │ → 脱敏（幂等）      │     │ HTML / SARIF   │
+ └─────────────┘     └─────────┬──────────┘     └───────┬────────┘
+                               ▼                        ▼
+                      中间表示 model()            退出码 0/1/2/3/4
+```
+
+### 4.2 确定性（Mermaid）
+
+```mermaid
+flowchart LR
+    A[原始观测] --> B[时间戳外部注入]
+    B --> C[统一排序<br/>severity/risk/target/rule_id]
+    C --> D[内容哈希 id]
+    D --> E[字节确定的报告]
+    E --> F[可 diff]
+    E --> G[产物哈希可信]
+    E --> H[回归对比无噪声]
+```
+
+---
+
+## 5. 定义与使用方法（API 速查表）
+
+### 5.1 `Finding` 字段
+
+| 字段 | 类型 | 必填 | 说明 | 为什么需要它 |
+|:----|:----|:---:|:----|:-----------|
+| `rule_id` | str | ✅ | 规则标识（如 `WEB-SQLI-ERROR`） | 机器聚合的键；也是 id 的一部分 |
+| `title` | str | ✅ | 人类可读的一句话 | 报告标题行；**不**参与 id |
+| `severity` | str | ✅ | `critical/high/medium/low/info` | 排序第一维；非法值直接报错 |
+| `target` | str | ✅ | 受影响对象（URL / host:port / 流程名） | 修复者定位用；id 的主键 |
+| `reason` | str | ✅ | **为什么会命中**（事实+推断） | 让读者能自己判断是否认可 |
+| `remediation` | str | — | 修复建议 | 与 reason 分开，避免事实/推断混淆 |
+| `confidence` | str | — | `high/medium/low`（默认 high） | 参与风险分，不改变 severity |
+| `evidence` | tuple[str] | — | 证据切片（可空） | 空时必须渲染成"（无证据，属建议项）" |
+| `tags` | tuple[str] | — | 自由标签 | 后续聚类/过滤 |
+| `phase` | str | — | 来自哪一天/哪一层 | 阶段项目里追溯发现层 |
+
+派生属性（只读）：
+
+| 属性 | 计算 | 用途 |
+|:----|:----|:----|
+| `id` | `stable_id(target, rule_id, severity)[:12]` | 去重键、diff 集合运算的键 |
+| `risk` | `权重[severity] × 系数[confidence]` | 同严重度内的排序、风险总分 |
+| `sort_key` | `(sev序, -risk, target, rule_id)` | **唯一**排序依据 |
+
+严重度权重表：`critical 40 · high 25 · medium 12 · low 5 · info 1`
+置信度系数表：`high ×1.0 · medium ×0.6 · low ×0.3`
+
+### 5.2 `Report` 方法
+
+| 方法 | 签名 | 返回 | 说明 |
+|:----|:----|:----|:----|
+| `add` | `(Finding) -> Report` | self | 链式添加 |
+| `extend` | `(Iterable[Finding]) -> Report` | self | 批量添加 |
+| `ordered_findings` | `() -> list[Finding]` | 去重+排序后的列表 | **每次调用都重算**，不改内部状态 |
+| `counts` | `() -> dict[str,int]` | 五档计数（含 0） | 表格形状稳定 |
+| `total_risk` | `() -> int` | 风险总分 | 报告头展示 |
+| `model` | `() -> dict` | 与格式无关的 IR | 唯一数据源 |
+| `render_json` | `(indent=2) -> str` | JSON 文本 | 机器消费者 |
+| `render_markdown` | `() -> str` | Markdown 文本 | 人类消费者 |
+| `render_html` | `() -> str` | HTML（已转义） | 汇报用 |
+| `render_sarif` | `() -> str` | SARIF 2.1.0 | CI/IDE |
+| `summarize` | 模块级函数 | 单行摘要 | CLI/日志 |
+
+> ⚠️ `ordered_findings()` 每次调用都重新计算。
+> 为什么不做缓存？因为 `Report` 是**可变**的（`add` 会改它），
+> 缓存就要处理失效问题——而这点计算量完全不值得引入失效逻辑。
+> 换来的好处是：任何时刻调用都反映最新状态，不会有"忘了刷新"的隐性 bug。
+
+### 5.3 CLI 参数（`03-toolbox-cli.py`）
+
+| 参数 | 取值 | 默认 | 说明 |
+|:----|:----|:----|:----|
+| `--input` / `-i` | 路径 | 必填 | findings JSON（数组或带 `findings` 的对象） |
+| `--format` / `-f` | `md\|json\|html\|sarif\|all` | `md` | `all` = 四种全出 |
+| `--out-dir` / `-o` | 目录 | `./out` | 输出目录（自动创建） |
+| `--stem` | 文件名主干 | `day165-report` | 输出文件名前缀 |
+| `--title` | 文本 | `安全审计报告` | 报告标题 |
+| `--fail-on` | 严重度 或 `""` | 无 | 达到或**超过**即退出码 1 |
+| `--allow-coverage-gaps` | 开关 | 关 | 有缺口也返回 0（不推荐） |
+| `--generated-at` | ISO-8601 | `SOURCE_DATE_EPOCH` 或当前时间 | 固定时间戳做可复现产物 |
+| `--summary-only` | 开关 | 关 | 只打印摘要，不写文件 |
+
+### 5.4 退出码契约
+
+| 码 | 含义 | 行动项 |
+|:-:|:----|:------|
+| 0 | 通过 | 无需动作 |
+| 1 | 有达到/超过阈值的发现 | 去修 |
+| 2 | 输入/用法错误 | 改调用方式或修数据 |
+| 3 | 渲染或写盘失败 | 查磁盘/权限（本课实测撞到过） |
+| 4 | 存在覆盖缺口 | 补测，或**显式接受盲区** |
+
+### 5.5 常用命令速查
+
+```bash
+# 本地：四种格式全出（时间戳固定，产物可复现）
+cd code
+python3 03-toolbox-cli.py --input findings.example.json --format all \
+    --generated-at 2026-09-24T06:00:00+08:00 --allow-coverage-gaps
+
+# 本地：高危即拦截（CI 门禁形态）
+python3 03-toolbox-cli.py -i findings.example.json -f md --fail-on high --summary-only
+
+# 可复现构建的时间戳来源
+export SOURCE_DATE_EPOCH=1758664800
+
+# Docker：构建
+docker build -t audit-toolbox:1.0 .
+
+# Docker：最保守地跑（无网络 / 只读根 / 无能力）
+docker run --rm --network none --read-only --tmpfs /tmp:size=16m \
+    --cap-drop ALL --security-opt no-new-privileges \
+    -v "$PWD/findings.example.json:/data/findings.json:ro" \
+    -v "$PWD/out:/out" \
+    audit-toolbox:1.0 --input /data/findings.json --format all --out-dir /out
+
+# Docker：看容器里到底是谁在跑（排查权限问题的第一句）
+docker run --rm --entrypoint id audit-toolbox:1.0
+
+# Docker Compose
+docker compose build
+docker compose run --rm report --input /data/findings.json --format all
+docker compose --profile gate run --rm gate
+```
+
+### 5.6 脱敏规则表（`report_core._REDACT_PATTERNS`）
+
+| 顺序 | 匹配 | 替换为 | 为什么这么写 |
+|:--:|:----|:------|:-----------|
+| 1 | `Authorization/Proxy-Authorization/Cookie/Set-Cookie: <值>` | `\1: <REDACTED>` | **吃到行尾**，否则只擦掉第一个词（实测踩坑） |
+| 2 | `Bearer <token>` | `Bearer <REDACTED>` | 兜底独立出现的令牌 |
+| 3 | `password/passwd/pwd/secret/token/api_key = <值>` | `<REDACTED>` | 值里排除 `,;&"'`，避免互相吞并 |
+| 4 | `scheme://user:pass@host` | `scheme://<REDACTED>:<REDACTED>@host` | URL 内嵌凭证 |
+
+写自定义规则时的三条铁律：
+
+1. **先指纹后擦除**（否则检测能力被自己抹掉，甚至产生误报，见 02 号实验）
+2. **保证幂等**（`f(f(x)) == f(x)`），否则多层渲染会反复擦
+3. **在真数据上跑一遍**，看有没有"只擦一半"的情况（`\S+` 这个坑很常见）
+
+---
