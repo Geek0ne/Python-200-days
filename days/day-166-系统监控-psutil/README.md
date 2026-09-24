@@ -446,9 +446,14 @@ def cgroup_memory_limit() -> int | None:
 | `Process.username()` | `/proc/<pid>/status` 的 `Uid:` → `/etc/passwd` 反查 | 需要权限 |
 | `sensors_temperatures()` | `/sys/class/hwmon/*` | 需要驱动支持 |
 
-> **`Process.name()` 会被截断到 15 字符**，这是内核 `/proc/<pid>/comm` 的限制，
-> 不是 psutil 的 bug。想要完整名字必须用 `Process.name()` 之外的手段，
-> 比如解析 `cmdline()[0]`。这个坑见 7.5。
+> **`Process.name()` 与 15 字符截断**（实测过的细节）：
+> 内核的 `/proc/<pid>/comm` 字段上限是 `TASK_COMM_LEN`=16 字节（含结尾 `\0`），
+> 所以**内核层面**最多只保留 15 个可见字符。但 psutil 会在 `len(name) >= 15` 时
+> **回退去读 `cmdline()`**：若 `cmdline[0]` 的 basename 以该截断名开头，就返回完整名字
+> （源码见 `Process.name()` 的 POSIX 分支，动机是 `gnome-keyring-d` → `gnome-keyring-daemon`）。
+> 所以「名字被截断」这个坑，真正会伤到你的场景是：**`cmdline()` 不可用的时候** ——
+> 内核线程（`cmdline` 为空）、僵尸进程（抛 `ZombieProcess`）、无权限（抛 `AccessDenied`）。
+> 完整验证见 `code/03-pitfalls.py --only 5`。
 
 #### 为什么不直接读 `/proc/diskstats` 拿"磁盘使用率"？
 
@@ -699,20 +704,51 @@ except Exception:        # ❌ 吞掉一切：连自己代码里的 TypeError �
 2. **对象成本**：`process_iter()` 为每个进程构造 `Process` 对象。
 3. **sleep 误差**：`time.sleep(1)` 实际可能 1.001~1.05 秒，长跑会漂移。
 
-实测参考（普通云主机，约 100 个进程，见 `code/04-benchmark.py` 可复现）：
+实测参考（本机 Ubuntu / 4 核 / **322 个进程**，可复现脚本 `code/04-benchmark.py`，
+每项取多轮**最小值**）：
 
-| 采集方式 | 相对耗时 | 说明 |
-|:---|:---:|:---|
-| `process_iter()` 只要 pid | 1.0× | 最快，只列 /proc 目录 |
-| `process_iter(['name'])` | ~1.5× | 每进程读 1 个文件 |
-| `process_iter(['name','pid','memory_info'])` | ~2.5× | 每进程多读几个文件 |
-| 逐进程 `Process(pid).name()` | ~2.5× | 每次新建对象，无缓存复用 |
-| 逐进程 `.as_dict(attrs=[...])` | ~2.5× | 等价，但写法更整洁 |
-| `/proc/stat` 手写解析（CPU） | 与 psutil 相近 | psutil 已经很少额外开销 |
+| 采集方式 | 最小耗时 | 相对「只要 pid」 | 说明 |
+|:---|:---:|:---:|:---|
+| `psutil.pids()` | 180 µs | 1.00× | 只列 `/proc` 目录项 |
+| `process_iter()`（不取属性） | 458 µs | 2.54× | 构造迭代器 |
+| `process_iter(['name'])` | 17.2 ms | **95.6×** | 每进程读一次 `comm` |
+| `process_iter([...5 字段含 memory_info])` | 33.3 ms | **184.6×** | 每进程多读几个文件 |
+| 逐进程 `Process(pid).name()` | 22.0 ms | 122.0× | 无迭代器复用，比 `process_iter(['name'])` 还慢 1.28× |
 
-> **结论**：**用 `process_iter(attrs=[...])` 并只取需要的字段**，
-> 比"全量 `as_dict()`"快得多。在 2000 进程的机器上，这个优化能把单轮采集
-> 从数百毫秒压到几十毫秒 —— 直接决定了你能不能用 1 秒的采样周期。
+系统级单项指标则便宜得多（同一台机器、同一轮次）：
+
+| 调用 | 最小耗时 |
+|:---|:---:|
+| `cpu_percent(interval=None)` | 35 µs |
+| 手写解析 `/proc/stat`（同样算一次） | 34 µs —— 说明 psutil 几乎没额外开销 |
+| `virtual_memory()` | 48 µs |
+| `disk_usage('/')` | 5.6 µs（`statvfs` 系统调用） |
+| `net_io_counters()` | 80 µs |
+| `disk_partitions()` | 209 µs |
+| `with p.oneshot()` 读 3 字段 × 200 轮 | 9.8 ms （无 oneshot 12.7 ms → **快 1.3×**） |
+
+```text
+  ┌────────────────────────── 采样周期与采集耗时的硬约束 ───────────────────────────┐
+  │                                                                              │
+  │    采样周期 Δt  必须  ≫  单轮采集耗时 T                                        │
+  │                                                                              │
+  │    Δt=1s, T=33ms   → T/Δt ≈ 3.3%   可接受                                     │
+  │    Δt=1s, T=300ms  → T/Δt ≈ 30%    监控自己就成了主要负载 ❌                    │
+  │    Δt=5s, T=300ms  → T/Δt ≈ 6%     勉强                                      │
+  │                                                                              │
+  │    → 这就是 3.7 节「观测者效应」的量化版本                                    │
+  └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+> ⚠ **诚实记录**：本节最初的「约 1.5 倍 / 2.5 倍」是拍脑袋写的，被自己的基准测试
+> 当场打脸 —— 实测相差**两个数量级**。这就是「先测再写」的意义：
+> `04-benchmark.py` 里所有倍数都是**运行时从实测数据算出来的**，不写死。
+> 你换一台机器跑出来的倍数会不同，但「**进程枚举才是大头，系统级指标可以忽略**」
+> 这个结论是稳的。
+
+> **结论**：**用 `process_iter(attrs=[...])` 并只取需要的字段**。
+> 在 2000 进程的机器上，全量扫描可能轻松破百毫秒 —— 这个数字**直接决定采样周期的下限**，
+> 也决定了你能否在 1 秒周期内做一轮完整采集。
 
 #### 观测者效应
 
@@ -933,15 +969,28 @@ print(psutil.net_io_counters().bytes_sent)   # ❌ 开机以来累计
 
 **修法**：遍历 `disk_partitions()`，并且对每个挂载点 `try/except`。
 
-### 陷阱 5：`Process.name()` 被截断到 15 字符
+### 陷阱 5：`Process.name()` 的 15 字符截断，以及 psutil 的回退
 
 ```text
-  "python3"                     → "python3"        ✅
-  "very-long-application-name"  → "very-long-appl"  ❌ 截断了
+  可执行文件 basename: very-long-application-name-exceeds-comm-limit (45 字符)
+  内核 /proc/<pid>/comm: 'very-long-appli'                            ← 内核截断到 15
+  psutil Process.name(): 'very-long-application-name-...' (45 字符)    ← psutil 回退了
+  cmdline()[0] basename: 完整名字
 ```
 
-**根因**：内核 `/proc/<pid>/comm` 字段长度限制（`TASK_COMM_LEN` = 16 含 `\0`）。
-**修法**：需要完整名就取 `cmdline()[0]` 的 basename，并处理 `cmdline()` 为空。
+**根因**：内核 `/proc/<pid>/comm` 的 `TASK_COMM_LEN`=16 字节（含 `\0`），只能放 15 个字符。
+**psutil 的补偿**：发现 `len(name) >= 15` 时去读 `cmdline()`，若 basename 以截断名开头就返回完整版。
+
+**所以真正的坑不在截断本身**，而在 `cmdline()` 不可用的三种情况：
+
+| 场景 | `name()` | `cmdline()` | 后果 |
+|:---|:---|:---|:---|
+| 内核线程 | 截断值/空 | 空列表 | 拿不到完整身份 |
+| 僵尸进程 | 可能可读 | 抛 `ZombieProcess` | 回退失败，只剩截断值 |
+| 其他用户进程 | 截断值 | 抛 `AccessDenied` | 回退失败，只剩截断值 |
+
+**修法**：优先 `cmdline()[0]` 的 basename，失败回退 `name()`，再失败输出占位符**并计数**
+（`身份不全` 计数是采样完整性的重要指标，见 2.6）。
 
 ```python
 def full_name(p) -> str:
@@ -1018,3 +1067,189 @@ class Threshold:
 ```
 
 ---
+## 6. 实战代码案例
+
+本课的可运行代码全部在 `code/` 下，每个文件都能独立跑、都自带 `--self-test`。
+
+### 6.1 文件清单与用途
+
+| 文件 | 类型 | 讲什么 | 自检命令 |
+|:---|:---|:---|:---|
+| `code/01-system-info.py` | 基础用法 | CPU / 内存 / 磁盘 / 网络 / 系统 / 传感器 六类指标的正确读法 | `--self-test` |
+| `code/02-process-monitor.py` | 进阶用法 | 进程扫描账本、Top-N 排行、进程树、pid 复用防御、优雅停止 | `--self-test` |
+| `code/03-pitfalls.py` | 避坑 | **十条陷阱逐条实测**：从"首调 0.0"到"cgroup 限额" | `--self-test` / `--only N` |
+| `code/04-benchmark.py` | 性能 | 五种进程枚举写法 + oneshot + 系统级指标的**实测耗时** | `--self-test` / `--rounds N` |
+| `code/monitor_core.py` | 实战（库） | `Collector` / `Threshold` / `safe_rate` / 渲染器 | 被 05 调用 |
+| `code/05-monitor-tool.py` | 实战（CLI） | 完整监控工具：采样 + 去抖告警 + JSON/Markdown 报告 + 退出码契约 | `--self-test` |
+
+> 要求：`code/` 下每个脚本都必须能 `python3 <file> --self-test` 输出 `SELF-TEST OK`。
+> 这不是形式主义 —— **自检是别人（和未来的你）判断"这段代码还活着"的最快方式**。
+
+### 6.2 实战：一个完整的监控工具长什么样
+
+`05-monitor-tool.py` 是本课的交付物。它的结构就是第 2.1 节那张图的具体化：
+
+```text
+  ① 采集               ② 时间维度            ③ 判定              ④ 表达/交付
+  Collector.collect()  run_sampling() 的    Threshold.feed()    render_json()
+    · cpu/mem/disk       采样循环              · 滞回带             render_markdown()
+    · net/disk 差分      · monotonic 计时      · 连续次数去抖        · 原子写入
+    · 进程 Top-N         · 绝对下一次时刻       · 僵尸单独判定        · 退出码 0/2/1
+    · cgroup 限额        （防误差累积）
+```
+
+关键实现片段（都对应一条前面讲过的原理）：
+
+```python
+# ① 预热：不预热第一轮 CPU 全是 0.0（陷阱 1）
+collector.warmup()
+
+# ② 采样调度用"绝对下一次时刻"，避免 sleep 误差累积漂移
+start = time.monotonic()
+next_tick = start
+while True:
+    now = time.monotonic()
+    if now - start >= duration:
+        break
+    if next_tick > now:
+        time.sleep(next_tick - now)
+    next_tick += interval          # ★ 累加的是"计划时刻"，不是"实际耗时"
+    sample = collector.collect()
+```
+
+> **为什么是 `next_tick += interval` 而不是 `sleep(interval)`？**
+> 后者会把每次的采集耗时也累加进去：采集本身要 30ms，采 60 次就多漂 1.8 秒。
+> 前者把"什么时候该醒"和"采集花了多久"解耦，长跑不漂。这是所有定时采样的标准做法。
+
+### 6.3 三条"必须写对"的细节
+
+**(1) 计数器差分必须用实测间隔**
+
+```python
+def safe_rate(prev: float, cur: float, dt: float) -> float | None:
+    if dt <= 0:
+        return None
+    delta = cur - prev
+    if delta < 0:
+        return None      # 计数器被重置（网卡/容器重启）→ 丢弃，绝不进速率计算
+    return delta / dt
+```
+
+返回 `None` 而不是 `0.0`，是刻意的：`0.0` 会被误读成"没有流量"，
+而 `None` 会迫使调用方显式处理"这个样本不可信"。
+
+**(2) 告警必须去抖，且"进入告警"与"恢复"阈值不同**
+
+```python
+th = Threshold(name="CPU", high=85, low=80, need=2)
+# high=85 才进入告警，low=80 以下才恢复 → 81%~84% 的抖动无法翻转状态
+```
+
+**(3) 报告要原子落盘**
+
+```python
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    fh.write(content)
+os.replace(tmp, path)      # 原子替换：读者要么看到旧文件，要么看到完整的新文件
+```
+
+监控报告经常被**另一个正在运行的脚本**读取。非原子写入会让它读到半截 JSON
+而解析失败 —— 这种"随机崩溃"最后一定会被归因成"监控系统不稳定"。
+
+### 6.4 退出码契约（再次强调，因为它真的重要）
+
+```text
+  0  ── 采集成功，所有指标在阈值内
+  2  ── 采集成功，但触发了告警
+  1  ── 采集失败 / 参数错误
+
+  为什么这样分？
+    cron/CI/K8s 需要区分"脚本自己坏了"(1) 和"被监控对象有问题"(2)。
+    混用会导致：真正的故障被当成脚本 bug 排查，或者脚本 bug 被当成系统告警
+    反复骚扰运维 —— 两种都会消耗信任。
+```
+
+### 6.5 实测输出样例
+
+```text
+$ python3 05-monitor-tool.py --duration 3 --interval 0.8 --out-dir /tmp/reports
+  · CPU: 告警阈值 ≥85%，恢复阈值 <80%，连续 2 次才翻转
+  · 采样：每 0.8s 一次，共 3.0s，进程排行 Top 5
+
+  [06:05:48] CPU   0.0%  MEM  28.2%  DISK  34.5% (/)  NET ↑  0.0 B/s ↓  0.0 B/s  PROC  317  告警[...]
+  [06:05:49] CPU   1.6%  MEM  28.2%  DISK  34.5% (/)  NET ↑ 52.6 B/s ↓379.1 B/s  PROC  317  告警[...]
+
+  采样完成：5 个样本，0 条告警
+  CPU  平均  1.40%  峰值  1.90%
+  报告已写入：
+    /tmp/reports/monitor-20260925-060551.json
+    /tmp/reports/monitor-20260925-060551.md
+  退出码 0（采集成功，无告警）
+```
+
+（上面是**真机实测**输出。`CPU 0.0%` 出现在第一行是一种巧合而非 bug：
+它是"从预热到第一次 collect"的窗口内平均；窗口极短时确实可能读到 0.0。
+这恰好是陷阱 1 与陷阱 2 的现场演示。）
+
+---
+
+## 7. 思考题
+
+1. **"CPU 使用率 80%" 这句话缺了哪个必要参数？** 没有它，这个数字为什么没有意义？
+   （提示：采样窗口，以及"平均值"这个词本身。）
+
+2. **一进程 `cpu_percent()` 返回 `450%`，要报警吗？** 判断依据是什么？
+   如果机器 4 核、进程是你自己的多线程爬虫，结论变吗？
+   再想一想：**如果这个进程属于别人**，你的判断会怎么变？
+
+3. **为什么"所有进程 RSS 之和"经常超过物理内存？**
+   要回答"现在实际占用多少物理内存"，应该用什么口径（rss/pss/uss）？
+   为什么这个问题在容器里比在物理机上更严重？
+
+4. **连续 3 次采到 CPU 0.0%，你能确定机器空闲吗？**
+   列出至少两种造成"假的 0.0%"的原因。
+
+5. **阈值定 80% 还是 95%？** 这个问题为什么不能只从技术层面回答？
+   "告警疲劳"和"漏报"哪个更危险？为什么"两个都避免"是不可能的
+   （提示：这是统计学的两类错误，不可能同时最小化）？
+
+6. **如果 `psutil` 在某平台上不提供 `sensors_temperatures()`，你的监控脚本应该怎么办？**
+   是报错退出、还是静默跳过？给出你的选择并说明理由
+   （提示：想一想 2.6 节的"采样完整性计数"）。
+
+7. **观测者效应**：如果监控脚本自己排在 CPU 排行第一，这说明了什么？
+   在实际项目里，你会怎么处理这个偏差，又如何在报告里保持诚实？
+
+---
+
+## 8. 参考与延伸
+
+- psutil 官方文档 —— <https://psutil.readthedocs.io/>
+- Linux `/proc` 手册 —— `man 5 proc`（`/proc/stat`、`/proc/meminfo`、`/proc/<pid>/stat` 字段定义）
+- cgroup v2 文档 —— <https://docs.kernel.org/admin-guide/cgroup-v2.html>
+- *Site Reliability Engineering*（Google）第 6 章 "Monitoring Distributed Systems"
+  —— 关于"监控什么才是有用的信号"的经典论述
+- Brendan Gregg, *Systems Performance* —— 关于 counter/gauge 与观测开销的系统方法
+
+---
+
+## 9. 明日预告
+
+**Day 167 — 文件监控（watchdog）**
+
+今天做的是**轮询（polling）**：我每隔一段时间主动去问"现在怎么样了"。
+明天做**事件（event）**：让内核在文件发生变化时**主动通知**我。
+
+两者的取舍是本课的延伸：
+
+| | 轮询（今天） | 事件（明天） |
+|:---|:---|:---|
+| 机制 | 定时主动采样 | 内核回调通知 |
+| 延迟 | 最差 = 采样周期 | 接近实时 |
+| 开销 | 与"被监控对象数量"成正比 | 与"变化次数"成正比 |
+| 漏报风险 | 两次采样之间的短时事件会被整体平均掉 | 几乎不漏 |
+| 复杂度 | 低 | 高（队列溢出、事件合并、重命名竞态） |
+
+预告实例：`watchdog` 的 `FileSystemEventHandler` 与 `inotify` 的队列溢出问题 ——
+"你以为你在监控目录，其实你在监控一个会丢事件的队列"。
