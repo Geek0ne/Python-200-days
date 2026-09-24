@@ -737,24 +737,284 @@ except Exception:        # ❌ 吞掉一切：连自己代码里的 TypeError �
 uptime = time.time() - p.create_time()     # 时钟被回拨时 → 负数
 ```
 
-**更稳的写法**：用系统启动后的**单调时长**做交叉校验：
+**更稳的写法**：只用**同一个时钟基准**做减法的同时，显式检测负值。
 
 ```python
-import time, psutil
+import time
 
-def process_age_seconds(p) -> float:
-    """进程已存活秒数；用 boot_time + monotonic 交叉校验，防止时钟跳变。"""
-    wall = time.time() - p.create_time()
-    mono = (time.monotonic() - psutil.boot_time() * 0)  # 占位：monotonic 与 boot_time 不同基准
-    # 实用做法：只要 wall < 0 就认为时钟跳变，退化为"用当前差值取绝对安全值"
-    if wall < 0:
-        # 时钟被回拨过：退回使用 psutil 的进程生命周期近似
-        return max(0.0, -wall if False else 0.0)
-    return wall
+
+def process_age_seconds(create_time: float) -> float | None:
+    """进程已存活秒数。
+
+    create_time 来自 Process.create_time()，与 time.time() 同为
+    CLOCK_REALTIME 基准，可以直接相减。
+    若系统时钟被回拨，差值会变成负数 —— 此时返回 None（不可信）。
+    """
+    age = time.time() - create_time
+    return age if age >= 0 else None
 ```
 
-> 上面的示例刻意展示了"不要强行拼凑不同时钟基准"。**工程结论**：
-> 用 `time.time() - create_time()` 计算存活时长，**并显式检测负值**；
-> 需要高精度时长请用 `time.monotonic()`，但它**不能**与 `create_time()` 混算。
+> **不要做的两件事**：
+> 1. **不要把 `time.monotonic()` 和 `create_time()` 相减**。
+>    `monotonic()` 的基准是"某个未指定的过去时刻"（Linux 上通常是开机），
+>    而 `create_time()` 是 Unix 时间戳 —— 两者基准不同，相减**没有任何意义**。
+> 2. **不要为了绕过负值而 `abs()`**。时钟被回拨时 `abs()` 会把一个巨大的
+>    错误值伪装成"正常时长"，比返回负数更危险。宁可返回 `None` 并如实上报。
+>
+> **工程结论**：算存活时长用 `time.time() - create_time()` 并**显式检测负值**；
+> 测**采样间隔**用 `time.monotonic()`（它不会被 NTP 校时影响，这正是 2.3 节
+> 求速率时必须用它、而不是 `time.time()` 的原因）。
+
+---
+## 4. API 速查表
+
+### 4.1 CPU
+
+| API | 返回 | 要点 |
+|:---|:---|:---|
+| `psutil.cpu_times()` | `scputimes` | **累计**刻度；差分用 |
+| `psutil.cpu_times(percpu=True)` | `list[scputimes]` | 逐核 |
+| `psutil.cpu_percent(interval=None)` | `float` | **非阻塞**；首次返回 0.0 |
+| `psutil.cpu_percent(interval=1.0)` | `float` | **阻塞** 1s 后返回 |
+| `psutil.cpu_percent(percpu=True)` | `list[float]` | 逐核百分比 |
+| `psutil.cpu_count()` | `int\|None` | 逻辑核数 |
+| `psutil.cpu_count(logical=False)` | `int\|None` | 物理核数（可能返回 None） |
+| `psutil.cpu_stats()` | `scpustats` | 上下文切换/中断/软中断累计数 |
+| `psutil.cpu_freq()` | `scpufreq\|None` | `current/min/max`（MHz） |
+| `psutil.getloadavg()` | `(1m,5m,15m)` | Unix 才有；Windows 上返回最近算出的值 |
+
+> `getloadavg()` 返回的是**运行队列长度**（不是百分比）。
+> 经验阈值：**load > 逻辑核数 × 1.0 即已饱和**；> 核数 × 2 属严重排队。
+
+### 4.2 内存
+
+| API | 关键字段 | 要点 |
+|:---|:---|:---|
+| `psutil.virtual_memory()` | `total/available/used/free/percent` | **优先看 `available`**，见下 |
+| `psutil.swap_memory()` | `total/used/free/percent/sin/sout` | `sin/sout` 是**累计**换入换出页数 |
+| `Process.memory_info()` | `rss/vms/...` | 见 2.7 的四字段对比 |
+| `Process.memory_info().uss` | `int\|None` | Linux 独有 |
+| `Process.memory_info().pss` | `int\|None` | Linux 独有 |
+| `Process.memory_full_info()` | 含 `uss/pss/swap` | 略慢，容器场景值得 |
+| `Process.memory_percent()` | `float` | 相对**总内存**的百分比 |
+
+**`used` vs `available`，一定要用 `available`：**
+
+```text
+  MemTotal ─────────────────────────────────────────────────────────┐
+  │ MemFree │ buffers/cache │ 可回收(slab等) │ 真正不可用            │
+  └─────────────────────────────────────────────────────────────────┘
+        ↑            ↑                  ↑
+      used 只扣掉    Linux 会把          available = MemFree + 可回收
+      MemFree       几乎所有空闲内存     ← 这才是"还能申请多少"
+                    拿去做 page cache
+      → thin-provisioning 让 used 常年 90%+，其实毫无压力
+```
+
+> **为什么"`used` 高"经常是假警报？** 因为 Linux 的设计哲学是"空闲内存就是浪费的内存"，
+> 它会主动把没用到的 RAM 缓存文件页（page cache）。这些页在应用需要时**立刻可回收**。
+> 所以监控内存**看 `available`**，或者看 `percent`（psutil 的 `percent` 用的是
+> `total - available` 口径，这一点和 `free` 命令的"available"列一致）。
+
+### 4.3 磁盘
+
+| API | 关键字段 | 要点 |
+|:---|:---|:---|
+| `psutil.disk_partitions()` | `device/mountpoint/fstype/opts` | 会包含 `tmpfs`/`overlay` 等伪设备 |
+| `psutil.disk_partitions(all=False)` | 同上 | 默认已过滤大部分伪文件系统 |
+| `psutil.disk_usage(path)` | `total/used/free/percent` | **按挂载点**查，`path` 必须是真实存在的路径 |
+| `psutil.disk_io_counters()` | `read_bytes/write_bytes/read_time/write_time` | **累计**，差分求速率 |
+| `psutil.disk_io_counters(perdisk=True)` | `dict[str, sdiskio]` | 逐设备 |
+| `shutil.disk_usage(path)` | `usage` 命名元组 | 标准库替代（无 percent） |
+
+**`disk_usage` 的正确姿势：**
+
+```python
+# ❌ 硬编码 '/'：Windows 上直接炸，容器里可能不是你要的分区
+psutil.disk_usage('/')
+
+# ✅ 遍历真实挂载点
+for part in psutil.disk_partitions(all=False):
+    try:
+        u = psutil.disk_usage(part.mountpoint)
+    except (PermissionError, FileNotFoundError, OSError):
+        continue          # 已卸载/无法访问的挂载点很常见，必须容错
+    print(f"{part.mountpoint:20s} {u.percent:5.1f}%  {u.free/2**30:6.1f} GiB free")
+```
+
+### 4.4 网络
+
+| API | 关键字段 | 要点 |
+|:---|:---|:---|
+| `psutil.net_io_counters()` | `bytes_sent/recv`, `packets_sent/recv`, `errin/errout`, `dropin/dropout` | **累计**，差分求速率 |
+| `psutil.net_io_counters(pernic=True)` | `dict[str, snetio]` | 逐网卡 |
+| `psutil.net_connections(kind='inet')` | `list[sconn]` | kind: `inet`/`tcp`/`udp`/`unix`/`all` |
+| `psutil.net_if_addrs()` | `dict[nic, list[snicaddr]]` | IP/MAC/掩码 |
+| `psutil.net_if_stats()` | `dict[nic, snicstats]` | `isup/speed/mtu/duplex` |
+| `Process.connections(kind='inet')` | 同上 | 需要权限；`AccessDenied` 常见 |
+
+> `errin/errout/dropin/dropout` 是**质量指标**：网卡在丢包/出错时才会增长。
+> 它们天生是"坏消息计数器"，**任何增长都值得记录**（哪怕绝对量很小）。
+
+### 4.5 进程
+
+| API | 说明 |
+|:---|:---|
+| `psutil.pids()` | 当前所有 pid 列表（快照） |
+| `psutil.process_iter(attrs=[...])` | 迭代器；`proc.info` 只含请求的字段（**性能关键**） |
+| `psutil.Process(pid)` | 构造句柄；pid 不存在时**不报错**（首次调用方法时才报） |
+| `p.pid` / `p.ppid()` | 自身/父进程 pid |
+| `p.name()` / `p.exe()` / `p.cmdline()` / `p.cwd()` | 身份信息（name 截断 15 字符） |
+| `p.status()` | `running/sleeping/disk-sleep/zombie/stopped/...` |
+| `p.create_time()` | 启动时刻（Unix 时间戳） |
+| `p.cpu_times()` / `p.cpu_percent()` | 累计 CPU 时间 / 百分比（可 >100%） |
+| `p.memory_info()` / `p.memory_percent()` | 内存 |
+| `p.num_threads()` / `p.threads()` | 线程数 / 线程列表 |
+| `p.open_files()` | 打开的文件（需权限） |
+| `p.children(recursive=False)` | 子进程 |
+| `p.parent()` | 父进程（`Process` 或 `None`） |
+| `p.nice()` / `p.ionice()` | 优先级 |
+| `p.username()` | 属主（需权限） |
+| `p.terminate()` / `p.kill()` | SIGTERM / SIGKILL（**危险，本课只用在自己启动的子进程上**） |
+| `p.wait(timeout=...)` | 等待退出（配合 `terminate` 做优雅停止） |
+| `p.as_dict(attrs=[...], ad_value=None)` | 一次性取多字段，异常字段填 `ad_value` |
+| `p.oneshot()` | 上下文管理器，缓存多次读取 |
+| `p.is_running()` | 是否存活 |
+
+### 4.6 其他
+
+| API | 说明 |
+|:---|:---|
+| `psutil.boot_time()` | 开机时间戳 |
+| `psutil.users()` | 登录用户列表 |
+| `psutil.sensors_temperatures()` | 温度（Linux） |
+| `psutil.sensors_battery()` | 电池（笔记本） |
+| `psutil.sensors_fans()` | 风扇转速（Linux） |
+| `psutil.PROCFS_PATH` | 可改写 `/proc` 路径（主要用于测试/特殊挂载） |
+
+---
+
+## 5. 常见陷阱 Top 10
+
+### 陷阱 1：`cpu_percent()` 首次返回 0.0
+
+```python
+print(psutil.cpu_percent())     # 0.0  ← 骗人！
+```
+
+**根因**：没有上一次的参照读数（见 3.2）。
+**修法**：预热一次并丢弃，或用 `interval=`。
+
+```python
+psutil.cpu_percent(interval=None)     # 预热
+time.sleep(1)
+print(psutil.cpu_percent())           # 真实值
+```
+
+### 陷阱 2：以为 `interval=None` 是"瞬时值"
+
+```python
+for _ in range(1000):
+    v = psutil.cpu_percent()      # 非阻塞，但窗口 = 两次调用的间隔
+    # 这里窗口可能只有微秒 → 结果在 0 和 100 之间乱跳，或一直是 0.0
+```
+
+**修法**：非阻塞模式下，**自己保证调用间隔 ≥ 采样窗口**。
+
+### 陷阱 3：把累计值当瞬时值（最致命的坑）
+
+```python
+print(psutil.net_io_counters().bytes_sent)   # ❌ 开机以来累计
+```
+
+**修法**：差分 ÷ 实测 Δt（见 2.3）。
+
+### 陷阱 4：`disk_usage('/')` 在容器里毫无意义 / Windows 直接崩
+
+**修法**：遍历 `disk_partitions()`，并且对每个挂载点 `try/except`。
+
+### 陷阱 5：`Process.name()` 被截断到 15 字符
+
+```text
+  "python3"                     → "python3"        ✅
+  "very-long-application-name"  → "very-long-appl"  ❌ 截断了
+```
+
+**根因**：内核 `/proc/<pid>/comm` 字段长度限制（`TASK_COMM_LEN` = 16 含 `\0`）。
+**修法**：需要完整名就取 `cmdline()[0]` 的 basename，并处理 `cmdline()` 为空。
+
+```python
+def full_name(p) -> str:
+    try:
+        cmd = p.cmdline()
+        if cmd:
+            return os.path.basename(cmd[0]) or p.name()
+    except psutil.Error:
+        pass
+    try:
+        return p.name()
+    except psutil.Error:
+        return f"<pid {p.pid}>"
+```
+
+### 陷阱 6：容器里读到宿主机的内存/核数
+
+见 2.8。**修法**：读 cgroup 限额。
+
+### 陷阱 7：不处理 `NoSuchProcess` / `AccessDenied`
+
+遍历进程时不 catch，脚本会在"某个进程刚好退出"时**随机崩溃**。
+这类 bug 最难复现 —— **它取决于时序**。
+
+### 陷阱 8：用 `time.time()` 算采样间隔
+
+NTP 校时会让 Δt 变成负数或 0 → 速率变 `inf`。**修法**：`time.monotonic()`。
+
+### 陷阱 9：`Process.cpu_percent()` 超过 100% 就报警
+
+多线程/多进程程序的 `cpu_percent()` **上限是 100% × 核数**。
+`800%` 在 8 核机器上表示"打满了全部 8 核"，**不是异常数据**。
+**修法**：阈值按"核数 × 目标利用率"来定，或改用 `cpu_percent()` 的系统级指标。
+
+### 陷阱 10：阈值抖动导致告警风暴
+
+CPU 在 79% 和 81% 之间反复横跳，阈值 80% 会让你收到几百条告警。
+**修法**：**去抖（debounce）** —— 连续 N 次超阈值才告警，连续 M 次恢复才解除。
+
+```python
+class Threshold:
+    """带滞回（hysteresis）与连续次数去抖的阈值判定。
+
+    - high: 超过则计一次"异常"
+    - low:  低于则计一次"正常"（必须 < high，形成滞回带）
+    - need: 连续多少次才真正翻转状态
+    """
+
+    def __init__(self, high: float, low: float, need: int = 3):
+        if low >= high:
+            raise ValueError("low 必须小于 high，否则滞回带为空")
+        self.high, self.low, self.need = high, low, need
+        self.state = False       # False=正常 True=告警
+        self._streak = 0
+
+    def feed(self, value: float) -> bool:
+        """送入一个样本，返回当前（可能已翻转的）告警状态。"""
+        if self.state:
+            # 已告警：需要连续 need 次低于 low 才恢复
+            if value < self.low:
+                self._streak += 1
+                if self._streak >= self.need:
+                    self.state, self._streak = False, 0
+            else:
+                self._streak = 0
+        else:
+            if value >= self.high:
+                self._streak += 1
+                if self._streak >= self.need:
+                    self.state, self._streak = True, 0
+            else:
+                self._streak = 0
+        return self.state
+```
 
 ---
