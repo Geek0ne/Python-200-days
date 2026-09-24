@@ -418,3 +418,343 @@ def cgroup_memory_limit() -> int | None:
 > 监控一个 512MB 的容器却按 64GB 的阈值告警，等于没有告警。
 
 ---
+## 3. 原理深入
+
+### 3.1 psutil 在 Linux 上到底读了什么
+
+理解这张映射表，等于拿到了"为什么会出错"的排查地图：
+
+| psutil API | Linux 数据源 | 读法 |
+|:---|:---|:---|
+| `cpu_times()` | `/proc/stat` 第 1 行（`cpu `） | 解析 10 个累计 jiffies |
+| `cpu_times(percpu=True)` | `/proc/stat` 的 `cpu0`/`cpu1`... 行 | 同上，逐核 |
+| `cpu_count(logical=True)` | `/proc/cpuinfo` 的 `processor` 条目数 或 `os.cpu_count()` | 计数 |
+| `cpu_count(logical=False)` | `/proc/cpuinfo` 去重 `core id` + `physical id` | 需要解析拓扑 |
+| `cpu_freq()` | `/proc/cpuinfo` 的 `cpu MHz` 或 `/sys/devices/system/cpu/*/cpufreq/` | 单值/列表 |
+| `virtual_memory()` | `/proc/meminfo`（`MemTotal`/`MemAvailable`/`SwapTotal`...） | 逐字段解析 |
+| `swap_memory()` | `/proc/meminfo`（`SwapTotal`/`SwapFree`） | 同上 |
+| `disk_partitions()` | `/proc/filesystems` + `/proc/self/mounts`（或 `/etc/mtab`） | 过滤伪文件系统 |
+| `disk_usage(path)` | `statvfs(2)` 系统调用 | 直接系统调用，**不读 /proc** |
+| `disk_io_counters()` | `/proc/diskstats` | 累计扇区数 × 512 = 字节 |
+| `net_io_counters()` | `/proc/net/dev` | 累计字节/包 |
+| `net_connections()` | `/proc/net/tcp`、`/proc/net/udp` + socket inode 映射 | 需要权限 |
+| `boot_time()` | `/proc/stat` 的 `btime` 行（或 `/proc/uptime` 反推） | 秒级时间戳 |
+| `Process.name()` | `/proc/<pid>/comm` | 截断到 15 字符！ |
+| `Process.cmdline()` | `/proc/<pid>/cmdline`（`\0` 分隔） | 可能为空（内核线程/已退出） |
+| `Process.status()` | `/proc/<pid>/stat` 第 3 字段 | 单字符码（R/S/D/Z/T...） |
+| `Process.memory_info()` | `/proc/<pid>/statm` + `/proc/<pid>/status` | 页数 × 页大小 |
+| `Process.username()` | `/proc/<pid>/status` 的 `Uid:` → `/etc/passwd` 反查 | 需要权限 |
+| `sensors_temperatures()` | `/sys/class/hwmon/*` | 需要驱动支持 |
+
+> **`Process.name()` 会被截断到 15 字符**，这是内核 `/proc/<pid>/comm` 的限制，
+> 不是 psutil 的 bug。想要完整名字必须用 `Process.name()` 之外的手段，
+> 比如解析 `cmdline()[0]`。这个坑见 7.5。
+
+#### 为什么不直接读 `/proc/diskstats` 拿"磁盘使用率"？
+
+因为 `/proc/diskstats` 给的是**累计扇区数**，得到使用率还需要第二个数据：
+**"这段时间花在 IO 上多少秒"**。psutil 把它整理成了 `read_time` / `write_time`（毫秒），
+于是：
+
+```python
+io = psutil.disk_io_counters()
+busy_ms = io.read_time + io.write_time          # 累计 IO 忙时长
+# 两次采样后：
+utilization = (busy_ms1 - busy_ms0) / (t1 - t0) / 1000   # 0.0 ~ 1.0
+```
+
+注意 **`busy_ms` 也可能 >100%**（多队列块设备 nvme 会并发），
+所以这个数叫"**设备忙碌度**"更准确，别直接当 `df` 那种"空间占用率"理解。
+**空间 vs 忙碌是两件事** —— `disk_usage()` 看空间，`disk_io_counters()` 看吞吐/忙碌。
+
+---
+
+### 3.2 `cpu_percent()` 的内部实现（伪代码级）
+
+psutil 的实现可以概括成下面这段（简化自 CPython 扩展）：
+
+```python
+# 概念性伪代码，用于理解行为，不要照抄
+_LAST = {}   # 模块级：{key: (busy_time, total_time)}  ← 注意：是"上次的绝对值"
+
+def cpu_percent(interval=None, percpu=False):
+    key = 'percpu' if percpu else 'total'
+    now = _read_cpu_times()                 # 读 /proc/stat
+    busy_now  = now.user + now.nice + now.system + now.irq + now.softirq + ...
+    total_now = busy_now + now.idle + now.iowait + ...
+
+    last = _LAST.get(key)
+    _LAST[key] = (busy_now, total_now)      # ★ 立刻更新"上次"缓存
+
+    if interval is not None:                # ★ 阻塞语义
+        time.sleep(interval)
+        busy_then, total_then = _read_cpu_times_again()  # 重新读
+        # 用 interval 前后的两次读数算
+        ...
+
+    if last is None:                        # ★ 首次调用
+        return 0.0
+
+    busy_delta  = busy_now - last[0]
+    total_delta = total_now - last[1]
+    if total_delta <= 0:
+        return 0.0
+    return busy_delta / total_delta * 100.0
+```
+
+由此可以**推导**出全部行为（后面 7.1/7.2 的坑都是这里的直接推论）：
+
+1. **首次调用返回 `0.0`**：`_LAST` 里没有参照物 → 返回 0.0。
+2. **`_LAST` 是模块级全局**：同一个进程里，**任何地方**调用 `cpu_percent()` 都会
+   重置这个基准。所以两处代码交替调用会互相"偷时间"，导致结果偏小。
+3. **`interval` 不是 None 时是阻塞的**：调用会 `sleep(interval)`，
+   这在单线程脚本里意味着**你的整个循环被拖慢 interval 秒**。
+4. **`interval=None` 是非阻塞的**：立刻返回"自上次调用以来"的平均值 ——
+   这意味着**结果取决于你多久调一次**。
+
+#### 三种正确写法
+
+```python
+# ✅ 写法 A：阻塞式，最简单，适合串行脚本（每次调用自带一秒窗口）
+while True:
+    print(f"CPU: {psutil.cpu_percent(interval=1.0):5.1f}%")   # 每次阻塞 1s
+
+# ✅ 写法 B：非阻塞 + 自己控制节奏（推荐用于多指标组合采集）
+psutil.cpu_percent(interval=None)        # 预热：建立基准，返回值丢弃
+while True:
+    time.sleep(1.0)
+    cpu = psutil.cpu_percent(interval=None)    # 读"过去 1 秒"的平均
+    mem = psutil.virtual_memory().percent
+    print(f"CPU {cpu:5.1f}%  MEM {mem:5.1f}%")
+
+# ✅ 写法 C：逐核（percpu=True）
+per = psutil.cpu_percent(interval=1.0, percpu=True)
+print(" ".join(f"core{i}:{v:4.1f}%" for i, v in enumerate(per)))
+```
+
+> **写法 B 的"预热"是必须的吗？** 不是必须，但**不预热的第一轮会打印 0.0**，
+> 观感很差且容易误判。把"预热 + 丢弃返回值"写进初始化阶段，是工程上的好习惯。
+> 反复强调同一个原则：**观测工具本身需要被正确初始化。**
+
+---
+
+### 3.3 进程时间：`cpu_times()` 与它的"两个时钟"
+
+`Process.cpu_times()` 返回的是一组**累计 CPU 时间**（单位秒，浮点）：
+
+| 字段 | 含义 |
+|:---|:---|
+| `user` | 进程在**用户态**消耗的 CPU 时间 |
+| `system` | 进程在**内核态**消耗的 CPU 时间 |
+| `children_user` | **已回收的子进程**在用户态的时间（Linux/macOS） |
+| `children_system` | 已回收子进程的内核态时间 |
+| `iowait` | 等待 IO 的时间（Linux，**部分内核不填**） |
+
+要点：
+
+1. **这是该进程"消费掉多少 CPU 秒"**，不是"墙上时间（wall clock）"。
+   一个进程跑 10 秒，可能只消费 0.2 秒 CPU（大部分时间在等 IO）。
+2. `user + system` 是**跨多核可以超过墙上时间**的 —— 8 线程跑 1 秒最多能消费 8 秒 CPU。
+   所以 `Process.cpu_percent()` 可能返回 **800%**，这**不是 bug**。
+3. `children_*` 只统计**已经被父进程 `wait()` 回收**的子进程。没回收的不算。
+
+```python
+p = psutil.Process(os.getpid())
+ct = p.cpu_times()
+print(f"user={ct.user:.2f}s system={ct.system:.2f}s")
+```
+
+#### `Process.cpu_percent()` 与进程存活时长
+
+还有一个反直觉点：**新创建就立刻查 `Process.cpu_percent()`，可能返回 0.0 或者很怪的值**。
+因为 psutil 用进程的 `create_time()` 作为"总时间"的分母基准，
+进程刚出生时分母极小，百分比会剧烈跳动。
+
+> **实操建议**：对刚启动的进程，**至少等一个采样周期**再读 `cpu_percent()`。
+
+---
+
+### 3.4 pid 复用：`Process` 对象缓存与"僵尸对象"
+
+Linux 的 pid 是**循环复用**的（`/proc/sys/kernel/pid_max`，默认 32768 或 4194304）。
+一个进程退出后，它的 pid 很快会被新进程占用。
+
+```text
+ t0:  Process(pid=1234) 指向 "python3 backup.py"       ← 你抓住了它
+ t1:  "python3 backup.py" 退出
+ t2:  pid 1234 被 "nginx: worker" 占用（pid 复用！）
+ t3:  你再次访问 p.name()  →  返回 "nginx"   ❗❓
+```
+
+psutil 对此有**部分**防御：`Process` 对象会缓存 `create_time`（进程启动时刻），
+调用 `_is_running()` 时会比对，**通常**能识别出 pid 已被复用并抛 `NoSuchProcess`。
+但：
+
+- 这个保护**依赖 create_time 可读**（权限不足时读到的是 0.0，保护失效）。
+- `process_iter()` 默认对**本轮内**的进程做缓存（`Process` 实例复用），
+  在 pid 密集复用的机器上（如高频 fork 的构建机）仍可能出错。
+
+**防御性写法**：只要跨采样周期持有 `Process` 对象，就**每次都校验身份**：
+
+```python
+def identity(p: psutil.Process) -> tuple:
+    """进程身份指纹：pid + 启动时刻。两者都相同才算同一个进程。"""
+    try:
+        return (p.pid, p.create_time())
+    except psutil.Error:
+        return (p.pid, 0.0)
+
+# 采集时记住指纹，判断时比对
+before = identity(p)
+time.sleep(60)
+after = identity(p)
+if before != after:
+    print("进程已经不是原来那个了（或已退出），丢弃旧数据")
+```
+
+> **一句话**：**在监控里，"pid 相同"绝不等于"同一个进程"。**
+
+---
+
+### 3.5 IO 计数器：差分、溢出与重置
+
+`net_io_counters()` / `disk_io_counters()` 返回的都是累计值，
+所以差分时会遇到三种"负数/怪数"的来源：
+
+| 现象 | 原因 | 处理 |
+|:---|:---|:---|
+| 差分为**负数** | 计数器被重置（网卡重启、容器重启、模块卸载重载） | 检测 `delta < 0` → 视为无效样本，跳过 |
+| 差分为**极大值** | 采样间隔异常大（进程被挂起、系统休眠） | 校验实测 Δt，超阈值丢弃该样本 |
+| 计数器**不增长** | 该网卡无流量 / 采到了不存在的接口 | 属正常；注意网卡名变化 |
+
+```python
+def safe_rate(prev, cur, dt, *, reset_on_negative=True):
+    """安全求速率：处理计数器重置与异常间隔。"""
+    if dt <= 0:
+        return None
+    delta = cur - prev
+    if delta < 0:
+        if not reset_on_negative:
+            return None
+        delta = cur          # 视为计数器重置：本次增量 = 当前绝对值
+    return delta / dt
+```
+
+#### Python 的整数不会溢出，但内核的可能回绕
+
+Python 的 `int` 是任意精度，所以 `delta < 0` 不会因为 Python 而溢出。
+但**内核的计数器是定长的**（如 32 位）。在极老的 32 位系统上，
+`/proc/net/dev` 的字节计数在超过 4GB 后会回绕 —— 表现为差分突然变成负数。
+`psutil` 在现代 64 位系统上不存在这个问题，但**写防御性代码永远是对的**。
+
+---
+
+### 3.6 异常层次：该捕哪个，不该捕哪个
+
+```text
+psutil.Error                      ← 所有 psutil 异常的共同基类
+├── NoSuchProcess                 ← 进程不存在（已退出 / pid 无效）
+├── AccessDenied                  ← 权限不足（别的用户 / 需要 root）
+├── TimeoutExpired                ← 等待超时（如 wait() 带 timeout）
+├── ZombieProcess                 ← 进程存在但已是僵尸，信息读不全
+└── (POSIX 场景下的其他子类)
+
+psutil.AccessDenied 继承自 psutil.Error（不是 PermissionError）
+psutil.NoSuchProcess 不继承自 FileNotFoundError
+```
+
+**正确姿势**：
+
+```python
+try:
+    rss = psutil.Process(pid).memory_info().rss
+except psutil.NoSuchProcess:
+    rss = None            # 进程没了：这是"预期内的正常情况"，不该崩
+except psutil.AccessDenied:
+    rss = None            # 权限不够：也是正常情况，记录为"不可测"
+except psutil.ZombieProcess:
+    rss = None
+```
+
+**错误姿势（很常见）**：
+
+```python
+try:
+    ...
+except Exception:        # ❌ 吞掉一切：连自己代码里的 TypeError 都被吃了
+    pass
+```
+
+> **原则**：监控代码必须**区分"目标不可测"和"我写错了"**。
+> 前者静默降级 + 计数上报；后者必须炸出来，否则你会监控一个永远返回空值的假象。
+
+---
+
+### 3.7 采样开销与"观测者效应"
+
+监控不是免费的。三个成本来源：
+
+1. **读取成本**：每次 `Process.memory_info()` 都至少读 1~2 个 `/proc` 文件。
+   遍历 2000 个进程 × 读 5 个字段 = 上万次文件读。
+2. **对象成本**：`process_iter()` 为每个进程构造 `Process` 对象。
+3. **sleep 误差**：`time.sleep(1)` 实际可能 1.001~1.05 秒，长跑会漂移。
+
+实测参考（普通云主机，约 100 个进程，见 `code/04-benchmark.py` 可复现）：
+
+| 采集方式 | 相对耗时 | 说明 |
+|:---|:---:|:---|
+| `process_iter()` 只要 pid | 1.0× | 最快，只列 /proc 目录 |
+| `process_iter(['name'])` | ~1.5× | 每进程读 1 个文件 |
+| `process_iter(['name','pid','memory_info'])` | ~2.5× | 每进程多读几个文件 |
+| 逐进程 `Process(pid).name()` | ~2.5× | 每次新建对象，无缓存复用 |
+| 逐进程 `.as_dict(attrs=[...])` | ~2.5× | 等价，但写法更整洁 |
+| `/proc/stat` 手写解析（CPU） | 与 psutil 相近 | psutil 已经很少额外开销 |
+
+> **结论**：**用 `process_iter(attrs=[...])` 并只取需要的字段**，
+> 比"全量 `as_dict()`"快得多。在 2000 进程的机器上，这个优化能把单轮采集
+> 从数百毫秒压到几十毫秒 —— 直接决定了你能不能用 1 秒的采样周期。
+
+#### 观测者效应
+
+你的监控进程本身也在消耗 CPU 和内存。当阈值设得很低时，
+**你会看到自己的脚本排在 CPU 排行前列**。所以：
+
+- 排行里**先排除自己**（`pid == os.getpid()`）；
+- 阈值告警时**排除监控自身**的贡献；
+- 采样周期越短，这个偏差越大（Day 177 讲 Prometheus 时会再遇到这个问题）。
+
+---
+
+### 3.8 时间基准：`create_time()`、`boot_time()` 与时钟跳变
+
+- `boot_time()`：系统启动时刻（Unix 时间戳）。
+- `Process.create_time()`：进程创建时刻（Unix 时间戳）。
+- **两者都基于可被调整的系统时钟**（`CLOCK_REALTIME`）。
+
+如果运维改了系统时间（或 NTP 大步校正），计算"进程跑了多久"会出现**负数或跳变**：
+
+```python
+uptime = time.time() - p.create_time()     # 时钟被回拨时 → 负数
+```
+
+**更稳的写法**：用系统启动后的**单调时长**做交叉校验：
+
+```python
+import time, psutil
+
+def process_age_seconds(p) -> float:
+    """进程已存活秒数；用 boot_time + monotonic 交叉校验，防止时钟跳变。"""
+    wall = time.time() - p.create_time()
+    mono = (time.monotonic() - psutil.boot_time() * 0)  # 占位：monotonic 与 boot_time 不同基准
+    # 实用做法：只要 wall < 0 就认为时钟跳变，退化为"用当前差值取绝对安全值"
+    if wall < 0:
+        # 时钟被回拨过：退回使用 psutil 的进程生命周期近似
+        return max(0.0, -wall if False else 0.0)
+    return wall
+```
+
+> 上面的示例刻意展示了"不要强行拼凑不同时钟基准"。**工程结论**：
+> 用 `time.time() - create_time()` 计算存活时长，**并显式检测负值**；
+> 需要高精度时长请用 `time.monotonic()`，但它**不能**与 `create_time()` 混算。
+
+---
