@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-165%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1123-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-166%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1137-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 165 / 200** · 进度的 82.5% · 当前：Phase 11 自动化运维与 DevOps（Phase 10 网络安全开发已收官）
+> **Day 166 / 200** · 进度的 83.0% · 当前：Phase 11 自动化运维与 DevOps（Day 166 系统监控 psutil 已完成）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **165 天** |
-| 📝 总提交次数 | **1,123 commits** |
-| 📄 总代码行数 | **164,559 行** |
-| 📂 总文件数 | **1,137 个** |
-| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（Phase 10 已全部完成 ✅） |
+| 📅 已完成天数 | **166 天** |
+| 📝 总提交次数 | **1,137 commits** |
+| 📄 总代码行数 | **167,334 行** |
+| 📂 总文件数 | **1,146 个** |
+| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 166/185） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -286,7 +286,8 @@
 <details open>
 <summary><b>Phase 11：自动化运维与 DevOps（Day 166–185）— 🔥 进行中</b></summary>
 
-- 🚀 下一课：Day 166 — 系统监控（psutil）
+- ✅ 系统监控（psutil）：三类指标（counter/gauge/state）+ 采样差分原理 + 进程排行与 pid 复用防御 + 十条陷阱实测 + 采集性能基准 + 完整监控工具（滞回去抖告警 + JSON/Markdown 报告 + 退出码契约）（Day 166）
+- 🚀 下一课：Day 167 — 文件监控（watchdog）
 
 </details>
 
