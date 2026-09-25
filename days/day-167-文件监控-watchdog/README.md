@@ -334,3 +334,95 @@ class Debouncer:
 必须 `shutil.move`（它内部会退回 copy+unlink）。
 
 ---
+
+## 4. 定义与使用方法（API 速查表）
+
+### 4.1 观察者 Observer
+
+| 类 | 导入 | 说明 |
+|:---|:---|:---|
+| `Observer` | `from watchdog.observers import Observer` | 自动选平台后端 |
+| `PollingObserver` | `from watchdog.observers.polling import PollingObserver` | 纯轮询，跨网络盘必用 |
+| `InotifyObserver` | `from watchdog.observers.inotify import InotifyObserver` | 强制 Linux 后端 |
+
+| 方法 | 签名 | 说明 |
+|:---|:---|:---|
+| `schedule` | `schedule(handler, path, recursive=False, event_filter=None)` | 注册；`path` 必须是**已存在**的目录，否则抛 `OSError` |
+| `start` | `start()` | 起线程，返回 `self` |
+| `stop` | `stop()` | 通知线程退出（**不阻塞**） |
+| `join` | `join(timeout=None)` | **阻塞**等线程结束；收尾必调 |
+| `unschedule` | `unschedule(watch)` | 取消某个 watch（需保存 schedule 的返回值） |
+| `unschedule_all` | `unschedule_all()` | 取消全部 |
+| `add_handler_for_watch` | `add_handler_for_watch(handler, watch)` | 给已存在的 watch 加 handler |
+
+> `schedule()` 的返回值是 `ObservedWatch`，`watch.path` / `watch.is_recursive` 可取。
+> **保存它**，否则运行时想关掉某些目录只能全关。
+
+### 4.2 事件对象 FileSystemEvent
+
+所有事件都有的属性：
+
+| 属性 | 类型 | 说明 |
+|:---|:---|:---|
+| `event_type` | `str` | `'created'` / `'deleted'` / `'modified'` / `'moved'` / `'closed'` |
+| `src_path` | `str` | 事件主体路径（**绝对路径**，watchdog 已 normalize） |
+| `dest_path` | `str` | 仅 `moved` 事件有；其余是 `''` |
+| `is_directory` | `bool` | 目录事件为 `True` |
+| `is_synthetic` | `bool` | 是否为合成事件（`on_any_event` 的兜底/文件关闭合成） |
+| `event_type` 载体类 | `FileCreatedEvent` / `DirModifiedEvent` / `FileMovedEvent` … | 想 `isinstance` 判断时用 |
+
+速查：**哪些事件有 `dest_path`** → 只有 `moved` 有。
+
+### 4.3 处理器回调
+
+| 回调 | 触发时机 | 备注 |
+|:---|:---|:---|
+| `on_any_event(event)` | **所有**事件，**先于**具体回调 | 统一日志/统计挂这里 |
+| `on_created(event)` | 新建 | 目录新建也走这里（`is_directory=True`） |
+| `on_deleted(event)` | 删除 | 删除时 `src_path` 可能已不存在 |
+| `on_modified(event)` | 内容修改 | **目录的 modified 也会来**（子项增删导致 mtime 变） |
+| `on_moved(event)` | 重命名/移动 | 有 `dest_path` |
+| `on_closed(event)` | 句柄关闭 | 仅 inotify；用它判断"写完了"比防抖更精确 |
+
+**经验法则**：判断"文件写完了"有两种思路 ——
+`on_closed`（精确，但平台相关）或 **debounce**（通用，但要多等 T 毫秒）。
+**生产代码建议 debounce 为主、on_closed 为辅**。
+
+### 4.4 常用配套 API
+
+| 需求 | API |
+|:---|:---|
+| 递归遍历目录 | `os.walk(path)` / `pathlib.Path.rglob('*')` |
+| 读一行式路径匹配 | `fnmatch.fnmatch(name, '*.log')` |
+| 正则匹配 | `re.fullmatch(pattern, name)` |
+| 拿到最后修改时间 | `os.path.getmtime(p)` / `Path(p).stat().st_mtime` |
+| 安全移动（跨设备） | `shutil.move(src, dst)` |
+| 唯一化重名 | `Path(dst).with_stem(name + '_' + ts)` |
+| 临时目录 | `tempfile.mkdtemp(prefix='wm-')` |
+| 立即让 stdout 可见 | `print(..., flush=True)` 或 `python3 -u` |
+
+### 4.5 一个可复制的"防抖处理器"模板
+
+```python
+class DebouncedHandler(FileSystemEventHandler):
+    def __init__(self, delay=0.5, ignore=('.tmp', '.swp', '~')):
+        self.deb = Debouncer(delay, self.on_settled)
+        self.ignore = ignore
+
+    def _skip(self, p):
+        name = os.path.basename(p)
+        return not name or any(name.endswith(s) for s in self.ignore) \
+               or '/__pycache__/' in p or name.startswith('.')
+
+    def on_any_event(self, event):
+        if event.is_directory or self._skip(event.src_path):
+            return
+        key = os.path.abspath(event.dest_path or event.src_path)
+        self.deb.trigger(key, event.event_type)
+
+    def on_settled(self, path, last_event_type):
+        # 到这一步说明该文件已静默 delay 秒，可以安全处理了
+        print(f"[settled] {last_event_type:9s} {path}")
+```
+
+---
