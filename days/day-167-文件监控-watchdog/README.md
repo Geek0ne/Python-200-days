@@ -426,3 +426,222 @@ class DebouncedHandler(FileSystemEventHandler):
 ```
 
 ---
+
+## 5. 图解
+
+### 5.1 两条路线对比
+
+```text
+        ┌──────────────────── 轮询 Polling ─────────────────────┐
+        │                                                        │
+  time  │  t0        t1        t2        t3        t4            │
+        │  ●         ●         ●         ●         ●   ← 扫描点  │
+        │  │←─ Δt ─→│←─ Δt ─→│←─ Δt ─→│←─ Δt ─→│              │
+        │                                                        │
+        │  文件在 (t1, t2) 之间 创建→删除 →  永远发现不了 ❌      │
+        │  空闲也要扫 → 100W 文件 = 100W 次 stat()               │
+        └────────────────────────────────────────────────────────┘
+
+        ┌──────────────────── 事件 Event ──────────────────────┐
+        │                                                        │
+  kernel│  write() ──► IN_MODIFY ──► 队列 ──► read() 唤醒         │
+        │                                                        │
+        │  空闲 0 CPU ✅  延迟 ms 级 ✅  不漏事件 ✅              │
+        │  依赖平台：inotify / FSEvents / RDCW                    │
+        │  网络盘 ❌（要用 PollingObserver）                      │
+        └────────────────────────────────────────────────────────┘
+```
+
+### 5.2 inotify 递归监控的真实结构
+
+```text
+  你在应用层写的：
+      observer.schedule(handler, "/data", recursive=True)
+
+  内核里实际发生的（每个目录一个 watch）：
+
+      /data            wd=1
+        ├── a/         wd=2      ← Observer 启动时遍历补上的
+        │    └── x/    wd=5      ← 运行时 IN_CREATE(is_dir) 后异步补上
+        ├── b/         wd=3
+        └── c/         wd=4
+             └── (新建) ──► IN_CREATE is_directory=True
+                              └─► emitter 内部下发 add_watch(c/d)
+                                  ⚠ 在补 watch 完成前写入 c/d 的文件 → 漏事件
+
+  watch 上限：
+      /proc/sys/fs/inotify/max_user_watches = 65536（示例）
+      20 万目录 → OSError: inotify watch limit reached
+```
+
+### 5.3 一次"保存文件"的完整事件流水
+
+```text
+ 应用层                内核事件                watchdog 事件
+ ─────────────────────────────────────────────────────────────
+ write tmp          → IN_CREATE            → FileCreatedEvent
+ write tmp          → IN_MODIFY            → FileModifiedEvent
+ write tmp          → IN_MODIFY            → FileModifiedEvent
+ close(tmp)         → IN_CLOSE_WRITE       → FileClosedEvent
+ rename(tmp→real)   → IN_MOVED_FROM/TO     → FileMovedEvent(dest_path=real)
+ chmod              → IN_ATTRIB            → FileModifiedEvent(合成/忽略)
+
+ 你的弱 handler：        6 次 on_any_event  → 6 次业务动作 ❌ 灾难
+ 你的 debounced handler：6 次 trigger 全部被 cancel，只剩 1 次 settled ✅
+```
+
+### 5.4 Mermaid：事件流的时序图
+
+```mermaid
+sequenceDiagram
+    participant U as 用户/程序
+    participant K as Linux 内核 (inotify)
+    participant E as Emitter 线程
+    participant D as dispatch 线程
+    participant H as 你的 Handler
+    participant W as 工作线程/队列
+
+    U->>K: write("/data/a.csv")
+    K-->>E: IN_CREATE / IN_MODIFY
+    E->>E: 解析 inotify_event
+    E->>D: event_queue.put(FileSystemEvent)
+    D->>H: on_any_event(event)
+    H->>H: 过滤临时文件 / 防抖定时器
+    H->>W: 静默 0.5s 后投递任务
+    W->>W: 真正处理（解析/上传/归档）
+    Note over H: ⚠ handler 里做重活会让队列溢出
+    Note over W: ✅ 重活丢出 dispatch 线程
+```
+
+### 5.5 Mermaid：自动分类流水线
+
+```mermaid
+flowchart LR
+    A[新文件落到 inbox/] --> B{忽略规则?}
+    B -- 是 .tmp/.swp/隐藏 --> Z[丢弃]
+    B -- 否 --> C[防抖 0.5s]
+    C --> D[按扩展名长度倒序匹配规则表]
+    D --> E{匹配到?}
+    E -- 否 --> F[others/]
+    E -- 是 --> G[目标目录 images/ docs/ archives/...]
+    G --> H{目标已存在同名?}
+    H -- 是 --> I[加时间戳后缀]
+    H -- 否 --> J[shutil.move]
+    I --> J
+    J --> K[写 operations.jsonl 审计日志]
+```
+
+---
+
+## 6. 实战代码案例
+
+本课 `code/` 下共 4 个脚本，建议按顺序读：
+
+| 文件 | 定位 | 学什么 |
+|:---|:---|:---|
+| `01-basic-watch.py` | 基础 | Observer/Handler 骨架、事件字段打印、优雅退出 |
+| `02-pitfalls.py` | 进阶/避坑 | 6 个亲手复现的陷阱与修法 |
+| `03-advanced-watch.py` | 进阶 | 防抖、规则过滤、事件聚合统计、线程池 |
+| `04-auto-classify.py` | 实战 | 文件自动分类工具 + JSON 审计报告 |
+
+### 6.1 实战场景：`04-auto-classify.py`
+
+**需求**：给一个 `inbox/` 目录，谁往里丢文件，就自动分类到 `images/` / `docs/`
+/ `archives/` / `data/` / `others/`，并且：
+
+- 每个文件只处理**一次**（防抖 + 处理后移除 watch 关注）
+- `.tmp`、`.part`、`.crdownload`（浏览器半成品）必须等"写完"再动
+- 重名不覆盖，自动加时间戳
+- 全程写 `operations.jsonl` 审计日志，失败写 `errors.log`
+- `--dry-run` 只打印不移动（**生产上第一次一定要先 dry-run**）
+
+核心代码骨架：
+
+```python
+RULES = [                       # ⚠ 长扩展名在前！
+    ('.tar.gz', 'archives'),
+    ('.tar.bz2', 'archives'),
+    ('.jpg', 'images'), ('.jpeg', 'images'), ('.png', 'images'), ('.webp', 'images'),
+    ('.pdf', 'docs'), ('.md', 'docs'), ('.txt', 'docs'), ('.docx', 'docs'),
+    ('.csv', 'data'), ('.json', 'data'), ('.xlsx', 'data'), ('.parquet', 'data'),
+]
+PARTIAL = ('.tmp', '.part', '.crdownload', '.swp', '.swx', '~', '.filepart')
+
+def classify(name: str) -> str:
+    low = name.lower()
+    for ext, bucket in RULES:           # 长的先匹配
+        if low.endswith(ext):
+            return bucket
+    return 'others'
+```
+
+**为什么 `PARTIAL` 要单独处理**：`.crdownload` 是 Chrome 下载中的临时名，
+它会在下载过程中产生大量 `modified` 事件。**只看"事件到了"就搬走**，会搬走半个文件。
+正确姿势：**同时忽略 `PARTIAL` 规则 + 用防抖（静默 1 秒以上）**，双保险。
+
+### 6.2 运行方法
+
+```bash
+cd days/day-167-文件监控-watchdog/code
+pip install watchdog                     # 唯一依赖
+
+python3 01-basic-watch.py --self-test
+python3 01-basic-watch.py --path ./sandbox --duration 8
+
+python3 02-pitfalls.py --self-test
+python3 02-pitfalls.py                   # 逐条复现 6 个陷阱
+
+python3 03-advanced-watch.py --self-test
+python3 03-advanced-watch.py --path ./sandbox --delay 0.5 --duration 10
+
+python3 04-auto-classify.py --self-test
+python3 04-auto-classify.py --inbox ./sandbox/inbox --out ./sandbox/out \
+        --duration 15 --dry-run
+```
+
+每个脚本都支持 `--self-test`（不依赖外部目录，跑完打印 `SELF-TEST OK`），
+便于你在没有真实业务目录时先验证环境。
+
+---
+
+## 7. 思考题
+
+1. **为什么说"轮询的延迟 = 轮询间隔"是错的？**
+   提示：考虑"轮询进行到一半时文件被修改"这种情况。延迟的**期望值**和**上界**分别是多少？
+
+2. **`recursive=True` 时，新建目录里的文件为什么可能收不到 created 事件？**
+   请从"内核不支持递归"这个事实出发，画出 watch 补齐的时间线，并给出至少两种工程上的缓解办法。
+   （提示：一种和 **先建目录后写文件** 的时序有关，一种和你自己的**兜底扫描**有关。）
+
+3. **为什么你的 handler 里不该做耗时操作？**
+   把"事件队列容量 16384"和"dispatch 线程只有一个"这两个事实串起来，
+   说明一个耗时 5 秒的 handler 在事件洪峰下会发生什么，以及正确的架构长什么样。
+
+4. **假设有人对 `/var/log` 做递归监控，日志每毫秒写一行，会发生什么？**
+   从 inotify 队列、CPU、以及"你到底需不需要每行都知道"三个角度分析，
+   并给出一个更合理的采集方案。
+
+5. **防抖的 T 该设多大？**
+   如果 T=0.1s，上传 500 MB 文件时会发生什么？如果 T=30s，用户体验如何？
+   有没有一种**不靠猜时间、而是靠信号**（提示：`on_closed` / 文件大小稳定 / 独占锁）的方案？
+
+6. **`shutil.move` 和 `os.rename` 在跨设备时行为有何不同？**
+   为什么"自动分类"工具一旦涉及跨磁盘（比如 `/tmp` 是 tmpfs）就必须用前者？
+
+---
+
+## 8. 小结
+
+```text
+  一句话记住 watchdog：
+    它是"内核事件 → 统一 Python 对象"的翻译层，
+    你的业务价值全在 handler 里的过滤 + 聚合 + 处理。
+
+  三条铁律：
+    ① handler 要快，重活丢队列/线程池
+    ② 必须防抖 + 忽略临时文件
+    ③ finally 里 stop() + join()，否则进程不退出
+```
+
+> 下一课 Day 168：**SSH 远程管理（paramiko）** —— 把本课的"本机文件监控"升级成
+> "跨机器的远程执行与文件传输"。
