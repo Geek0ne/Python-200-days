@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 166 / 200** · 进度的 83.0% · 当前：Phase 11 自动化运维与 DevOps（Day 166 系统监控 psutil 已完成）
+> **Day 169 / 200** · 进度的 84.5% · 当前：Phase 11 自动化运维与 DevOps（Day 169 Fabric 批量执行已完成）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **166 天** |
-| 📝 总提交次数 | **1,137 commits** |
-| 📄 总代码行数 | **167,334 行** |
-| 📂 总文件数 | **1,146 个** |
-| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 166/185） |
+| 📅 已完成天数 | **169 天** |
+| 📝 总提交次数 | **1,171 commits** |
+| 📄 总代码行数 | **171,542 行** |
+| 📂 总文件数 | **1,167 个** |
+| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 169/185） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -287,7 +287,10 @@
 <summary><b>Phase 11：自动化运维与 DevOps（Day 166–185）— 🔥 进行中</b></summary>
 
 - ✅ 系统监控（psutil）：三类指标（counter/gauge/state）+ 采样差分原理 + 进程排行与 pid 复用防御 + 十条陷阱实测 + 采集性能基准 + 完整监控工具（滞回去抖告警 + JSON/Markdown 报告 + 退出码契约）（Day 166）
-- 🚀 下一课：Day 167 — 文件监控（watchdog）
+- ✅ 文件监控（watchdog）：轮询 vs 事件驱动（inotify 原理）+ 五类事件与组合关系 + 原子写事件流水 + 防抖/节流 + 六大陷阱实测 + 文件自动分类工具（规则过滤 + 审计 jsonl + dry-run + 跨设备搬运）（Day 167）
+- ✅ SSH 远程管理（paramiko）：协议四层与公钥认证（challenge-response/PFS）+ 三层 API（SSHClient/Transport/Channel）+ TOFU 主机密钥校验 + 三层超时与保活 + SFTP 断点续传（sha256 校验/幂等）+ 六大陷阱离线复现 + 批量运维工具（inventory 解析 + 分片并发 + JSONL 审计 + 退出码契约）（Day 168）
+- ✅ Fabric 批量执行：Invoke/Fabric/Paramiko 三层定位 + Connection 惰性建连与 Result 语义（exited 即退出码）+ ThreadingGroup/SerialGroup 的读写分工 + GroupException 聚合（键为 Connection） + 分片限流 + 跳板机 gateway + 六大陷阱离线复现 + 可回滚部署工具（release 目录 + 原子软链 + 三级健康检查 + 自动回滚）（Day 169）
+- 🚀 下一课：Day 170 — 定时任务（schedule / APScheduler）
 
 </details>
 
