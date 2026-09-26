@@ -124,14 +124,20 @@ from fabric.exceptions import GroupException
 try:
     ThreadingGroup("a", "b", "c").run("false")
 except GroupException as exc:
-    # exc.result 是 dict: {host_str: Exception}
-    for host, err in exc.result.items():
-        print(host, type(err).__name__, err)
+    # exc.result 是 dict: {Connection对象: Exception}   ← 键不是字符串！
+    for conn, err in exc.result.items():
+        print(str(conn.host), conn.port, type(err).__name__, err)
 ```
 
 **为什么需要它**：并发时"部分失败"是常态，但 Python 的异常模型只能抛一个。
 Fabric 的解法是"抛一个装着所有失败的容器异常"。你必须显式遍历它，
 否则会丢掉"另外两台成功/失败的信息"。
+
+⚠ **两个必须记住的细节（本课实测）**：
+1. `.result` 的**键是 `Connection` 对象**（Fabric 3.x），不是 host 字符串。
+   直接 `print(key)` 会得到 `<Connection host=… port=…>`，要取主机名用 `key.host`。
+2. 异常抛出时，**成功主机的 `Result` 不在里面**。想要全集就全部用 `warn=True`
+   （拿到 `{host: Result}`，失败只体现在 `r.ok` 上）。
 
 ### 2.6 `sudo` 与 pty：为什么它要密码参数
 
@@ -373,7 +379,7 @@ for batch in chunks(hosts, 16):          # 每批 16 台
 | `SerialGroup(*hosts, **kwargs)` | 串行 |
 | `.run(cmd, ...)` / `.sudo(...)` / `.put(...)` / `.get(...)` | 返回 `{host: Result}` |
 | `.from_connections([c1, c2])` | 用已有 Connection 构造 Group（可带各自参数） |
-| 失败行为 | 任一主机失败 → 抛 `GroupException`；其 `.result` 是 `{host: Exception}` |
+| 失败行为 | 任一主机失败 → 抛 `GroupException`；其 `.result` 是 `{Connection对象: Exception}` |
 
 ### 4.4 `Config` 与 task
 
@@ -547,10 +553,10 @@ if not r.ok:
 except GroupException as exc:
     print(exc)
 
-# ✅ 遍历 exc.result
+# ✅ 遍历 exc.result（键是 Connection 对象！）
 except GroupException as exc:
-    for host, err in exc.result.items():
-        print(f"❌ {host}: {type(err).__name__}: {err}")
+    for conn, err in exc.result.items():
+        print(f"❌ {conn.host}:{conn.port}: {type(err).__name__}: {err}")
 ```
 **关键认知**：异常抛出时，**成功主机的 Result 不在异常里**。
 要么所有操作都 `warn=True`（拿到完整 dict），要么接受"异常时只知道失败的"。
