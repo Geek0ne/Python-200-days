@@ -357,3 +357,295 @@ paramiko.RejectPolicy()      # 默认：未知主机 → SSHException
 paramiko.AutoAddPolicy()     # 自动接受并写入（开发方便，生产慎用）
 paramiko.WarningPolicy()     # 接受但打印警告
 ```
+
+---
+
+## 5. 图解
+
+### 5.1 一次 `exec_command` 的完整旅程
+
+```text
+ 你的脚本                paramiko                    TCP/加密隧道                远端 sshd
+    │                       │                             │                        │
+    │ exec_command("uptime")│                             │                        │
+    ├──────────────────────▶│                             │                        │
+    │                       │ open channel (session)       │                        │
+    │                       ├──── CHANNEL_OPEN ──────────▶│───────────────────────▶│
+    │                       │◀─── CHANNEL_OPEN_CONFIRM ───│◀───────────────────────┤
+    │                       │ exec 请求 "uptime"            │                        │
+    │                       ├──── CHANNEL_REQUEST(exec) ─▶│───────────────────────▶│
+    │                       │                             │       fork /bin/sh -c  │
+    │                       │◀──── CHANNEL_DATA("...") ───│◀───────────────────────┤
+    │  stdout.read()  ⏳    │◀──── CHANNEL_DATA ──────────│                        │
+    │                       │◀──── CHANNEL_EOF ───────────│◀──── 进程退出 ──────────┤
+    │                       │◀──── CHANNEL_REQUEST(exit-status=0)
+    │  recv_exit_status()=0 │                             │                        │
+    │◀──────────────────────┤                             │                        │
+```
+
+### 5.2 三层 API 与"连接复用"的真实结构
+
+```text
+一次 TCP 连接（一次 KEX、一次认证）
+│
+Transport
+├── channel#1  session  ── exec_command("uptime")        ← 用完就关
+├── channel#2  session  ── exec_command("df -h")
+├── channel#3  session  ── invoke_shell()（交互式）
+├── channel#4  session  ── sftp 子系统（open_sftp）
+└── channel#5  direct-tcpip ── 本地 8080 → 远端 80（端口转发）
+
+❌ 错误模式：每台机器每条命令都 SSHClient().connect()
+   → 200 台 × 5 条 = 1000 次密钥交换 + 1000 次认证
+   → 目标机 auth.log 刷屏，安全设备告警，自己也慢 10 倍
+
+✅ 正确模式：每台机器 1 条 Transport，命令都挂在它上面
+```
+
+### 5.3 Mermaid：批量运维的执行时序
+
+```mermaid
+sequenceDiagram
+    participant M as 主控脚本
+    participant P as 线程池(16)
+    participant H as 目标主机 × 200
+
+    M->>M: 读取 inventory（host/user/key）
+    loop 每台主机
+        M->>P: submit(run_on_host, host)
+    end
+    P->>H: connect(timeout=10) + 认证
+    Note over H: 建连失败的机器直接标记 unreachable
+    P->>H: 执行命令（带 channel.settimeout）
+    H-->>P: stdout / stderr / exit_status
+    P->>P: 收集结果（线程安全队列）
+    M->>M: 汇总 → 表格 / JSON / 退出码
+```
+
+### 5.4 Mermaid：SFTP 上传与断点续传
+
+```mermaid
+flowchart TD
+    A[本地文件 local] --> B[远端 stat remotepath]
+    B -->|不存在| C[put 全量上传]
+    B -->|存在| D{大小是否一致?}
+    D -->|一致| E[跳过：幂等]
+    D -->|不一致| F[从末尾 offset 打开远端文件]
+    F --> G[本地 seek offset]
+    G --> H[分块读写续传]
+    H --> I[chmod 0644 修复权限]
+    C --> I
+    E --> I
+    I --> J[远端 md5/sha256sum 校验]
+```
+
+### 5.5 命令注入：一次 `; rm -rf /` 的解构
+
+```text
+  脚本拼接：cmd = f"tar -czf /backup/{name}.tar.gz /data"
+  攻击输入：name = "x; rm -rf /"
+  ────────────────────────────────────────────────
+  远端 /bin/sh -c 看到的：
+      tar -czf /backup/x; rm -rf /.tar.gz
+                            └── 分号把命令切成两条！第二条真的会跑
+
+  修法（二选一）：
+   ① shlex.quote(name) → 'x; rm -rf /' 被包成单引号整体参数
+   ② 不接受用户输入，只接受白名单 ID → 查表得到固定命令
+```
+
+---
+
+## 6. 常见陷阱 Top 8
+
+### 陷阱 1：把 paramiko 当 `ssh` 命令用，指望它读 `~/.ssh/config`
+
+```python
+# ❌ 你在命令行 `ssh prod` 能通，是因为 ssh 命令读了 config
+client.connect("prod")           # paramiko: 会去解析 DNS "prod" → 失败
+
+# ✅ 自己解析 config（04 实战里有 30 行实现），或显式传 host/port/user
+```
+
+`~/.ssh/config` 里的 `Host alias` / `ProxyJump` / `IdentityFile` paramiko **一概不管**。
+
+### 陷阱 2：`AutoAddPolicy()` 一把梭
+
+它等价于"任何主机我都信"。一旦你在中间有个 DNS 污染/ARP 欺骗的环境，
+就是把自己的凭据交给攻击者。生产里改成加载受信 `known_hosts` + `RejectPolicy`。
+
+### 陷阱 3：忘记超时 → 脚本永久挂起
+
+```python
+# ❌ 三个超时全都没有
+client.connect(host, username=u, key_filename=k)
+stdin, stdout, stderr = client.exec_command("tail -f /var/log/app.log")  # 永不返回
+out = stdout.read()
+
+# ✅ 建连超时 + channel 超时 + keepalive
+client.connect(host, username=u, key_filename=k,
+               timeout=10, banner_timeout=15, auth_timeout=15)
+tr = client.get_transport(); tr.set_keepalive(30)
+stdin, stdout, stderr = client.exec_command("tail -f ...", timeout=10)
+try:
+    out = stdout.read()
+except socket.timeout:
+    print("读超时，放弃")
+```
+
+### 陷阱 4：不读 `stderr` 导致"远端缓冲区写满 → 命令挂死"
+
+```text
+远端进程往 stderr 写了很多（例如 100 MB 报错日志），
+你没读 stderr，TCP 接收窗口填满 → 远端进程 write() 阻塞
+→ 你的 stdout.read() 也永远读不到 EOF
+→ 双向死锁。
+```
+
+**修法**：要么同时读两个流，要么用 `stdout.channel` 分别带超时读；
+批量场景推荐"边执行边 drain"（`04` 里用 select/轮询读）。
+
+### 陷阱 5：`get_pty=True` 后 stdout 与 stderr 混在一起
+
+开了 pty，`stderr` 通道永远为空，全部内容跑到 `stdout` 里，
+还会多出 `\r` 和回显。除非远端强制要求 tty（sudo、部分交互命令），否则别开。
+
+### 陷阱 6：把密码/私钥口令硬编码进代码
+
+```python
+# ❌ Git 历史会永久保留
+client.connect(host, username="root", password="P@ssw0rd!")
+
+# ✅ 从环境变量/密钥文件/ssh-agent 取
+import os
+pkey = paramiko.Ed25519Key.from_private_key_file(
+    os.path.expanduser("~/.ssh/id_ed25519"), password=os.environ.get("KEY_PASSPHRASE"))
+client.connect(host, username="deploy", pkey=pkey)
+```
+
+### 陷阱 7：SFTP 传完不校验，传了个"半个文件"上去
+
+网络抖动/磁盘满会让 `put` 静默截断。**必须**在传完后校验：
+- 小文件：远端 `md5sum` 比对
+- 大文件：至少比对 `stat().st_size`
+- 关键发布：本地算 sha256 → 远端 `sha256sum`
+
+### 陷阱 8：并发度无上限 → 把目标机打死
+
+`ThreadPoolExecutor(max_workers=200)` 会在 1 秒内对 200 台机器发起认证。
+`sshd_config` 的 `MaxStartups 10:30:100` 表示"超过 10 个未认证连接就开始随机丢弃"，
+你的脚本会看到一堆 `Connection reset by peer`，还以为是网络问题。
+**默认 8~16，大集群也不要超过 32。**
+
+---
+
+## 7. 实战代码案例
+
+`code/` 下 4 个脚本，都与真实运维任务对齐：
+
+| 文件 | 定位 | 你会学到 |
+|:---|:---|:---|
+| `01-basic-ssh.py` | 基础 | connect/exec_command/SFTP 的最小正确写法 + `--self-test` |
+| `02-pitfalls.py` | 避坑 | 离线复现 6 个坑（超时、stderr 死锁、注入、pty、并发上限、幂等） |
+| `03-advanced-ssh.py` | 进阶 | 连接复用 + channel 池 + keepalive + 断点续传上传 |
+| `04-batch-ops.py` | 实战 | **批量运维工具**：inventory 解析 + 并发执行 + 审计 + JSON/表格报告 |
+
+### 7.1 运行方法
+
+```bash
+cd days/day-168-ssh-远程管理/code
+pip install paramiko                 # 唯一依赖
+
+# 离线自检（不需要真的 SSH 服务器）
+python3 01-basic-ssh.py --self-test
+python3 02-pitfalls.py --self-test      # 只演示"正确解法"，不真连
+python3 03-advanced-ssh.py --self-test
+python3 04-batch-ops.py --self-test
+
+# 真机联调（把 dev 换成你自己的主机）
+python3 01-basic-ssh.py --host dev --user deploy --key ~/.ssh/id_ed25519 --cmd "uptime"
+python3 04-batch-ops.py --inventory ./inventory.ini --cmd "df -h /" --workers 8 --out ./reports
+```
+
+> 没有可用的 SSH 目标机时，可以在本机起一个：
+> `sudo apt install openssh-server && sudo systemctl start ssh`，
+> 然后 `ssh-keygen -t ed25519` + `ssh-copy-id localhost` 自连自测。
+
+### 7.2 批量运维工具的"三条设计红线"
+
+```text
+① 幂等优先：同一批命令重复执行 N 次，结果必须一致（跳过已完成的）
+   → 部署类任务里，先 stat/比对 hash，再决定要不要传
+
+② 结果必须可审计：每台机器、每条命令、开始时间、结束时间、退出码、输出摘要
+   → 落盘 JSONL，出问题能翻账
+
+③ 退出码必须能表达"部分失败"：
+   0 = 全部成功     1 = 全部/多数失败     2 = 部分失败（有告警）
+   → 让 CI/上游自动化能据此决策，而不是人去数日志
+```
+
+### 7.3 实测输出样例（04 的表格报告）
+
+```text
+================================================================================
+主机                 状态        耗时(s)  退出码  摘要
+--------------------------------------------------------------------------------
+web-01               ok             0.42       0  Filesystem      Size  Used Avail Use%
+web-02               ok             0.51       0  Filesystem      Size  Used Avail Use%
+db-01                unreachable   10.00     -1  connect timeout (timeout=10s)
+web-03               warn           0.63       2  /dev/sda1        98% full
+================================================================================
+汇总：成功 2 / 告警 1 / 失败 1 / 总计 4        退出码 = 2（部分失败）
+```
+
+---
+
+## 8. 思考题
+
+1. **为什么"公钥认证"能让私钥永不离开客户端？**
+   请描述 challenge-response 的完整三步，并说明"服务端拿到的是签名而不是私钥"
+   为什么在数学上是安全的（提示：签名的不可逆性与随机数的作用）。
+
+2. **`timeout=10` 为什么不能阻止脚本永久挂起？**
+   请分别说出"建连阶段"、"认证阶段"、"命令执行阶段"、"空闲等待阶段"
+   四类阻塞各需要哪个参数/机制来兜底。
+
+3. **为什么批量运维脚本的并发上限不是越大越好？**
+   从目标机 `sshd` 的 `MaxStartups`、防火墙的"连接速率触发"，以及
+   你自己脚本的内存占用（每个线程栈 + socket 缓冲）三个角度量化说明。
+
+4. **`recv_exit_status()` 和 `stdout.read()` 谁应该先调用？**
+   给出两种顺序各自可能死锁的场景，并解释为什么"同时 drain stdout 与 stderr"
+   能同时解决两个方向的死锁。
+
+5. **如果远端有 500 台机器、要分发一个 200 MB 的包，你会怎么设计？**
+   提示：考虑"先推到几台中继机再 P2P"、"rsync 增量"、"压缩"、
+   "并发上限"与"校验与回滚"这五个维度。
+
+6. **为什么 SFTP 上传 1000 个 1 KB 文件比上传 1 个 1 MB 文件慢得多？**
+   请从"每文件至少几次协议往返"出发估算，并给出工程上的合并策略。
+
+---
+
+## 9. 小结
+
+```text
+  一句话记住 paramiko：
+    它是"把加密隧道包装成 Python 对象"的库；
+    Transport 是连接本体，Channel 是逻辑流，SSHClient 是便利门面。
+
+  四条铁律：
+    ① 连接要复用（一台机一条 Transport），并发要有上限（8~16）
+    ② 超时三层齐全（connect / channel / keepalive），否则必挂
+    ③ stdout 与 stderr 都要读，命令拼接一律 shlex.quote
+    ④ 结果落盘审计 + 退出码表达"部分失败"，让自动化能接力
+
+  三个最常见的生产事故：
+    · AutoAddPolicy + 硬编码密码  → 安全事故
+    · 没超时 + 不读 stderr        → 脚本永久挂起
+    · 并发 200 无上限             → 目标机不可用（自己造成 DDoS）
+```
+
+> 下一课 Day 169：**Fabric 批量执行** —— 把本课手写的"线程池 + 连接复用 + 审计"
+> 换成更高层的声明式任务框架，并学会多服务器并行与错误处理。
