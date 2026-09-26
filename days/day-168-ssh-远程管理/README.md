@@ -162,3 +162,198 @@ client.set_missing_host_key_policy(paramiko.RejectPolicy())
 台200 ──1.2s──▶                ≈ 13 批 × 1.2s ≈ 15.6s
 总计 ≈ 240s                    吞吐提升 ≈ 15×
 ```
+
+---
+
+## 3. 原理深入
+
+### 3.1 SSH 协议的分层（RFC 4251~4254）
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ ④ 连接层 Connection Protocol (RFC 4254)                      │
+│    把一条隧道切成多个 channel：session / direct-tcpip /       │
+│    forwarded-tcpip / x11。每个 channel 有自己的流控窗口。      │
+├─────────────────────────────────────────────────────────────┤
+│ ③ 用户认证 User Auth (RFC 4252)                              │
+│    publickey / password / keyboard-interactive / hostbased   │
+│    认证发生在**加密隧道已建立之后** —— 密码本来就受保护        │
+├─────────────────────────────────────────────────────────────┤
+│ ② 密钥交换 Key Exchange (RFC 4253)                           │
+│    协商算法套件 + 交换临时密钥 → 派生会话密钥                   │
+│    支持 ECDH/DH/curve25519 → 前向保密（PFS）                  │
+├─────────────────────────────────────────────────────────────┤
+│ ① 传输层 Transport (RFC 4253)                                │
+│    加密、压缩、MAC、重传；本质是 TCP 之上的一层安全封装        │
+└─────────────────────────────────────────────────────────────┘
+        ▲ 版本交换："SSH-2.0-OpenSSH_9.6"（**明文**，别放敏感信息）
+```
+
+**为什么要分层**：认证方式可以升级（从密码到公钥到 FIDO2）而不动传输层；
+通道类型可以扩展（新增 `session` 子类型）而不动认证层。
+
+### 3.2 密钥交换与"前向保密"
+
+```text
+❌ 不用 PFS（老式 RSA 传输）：
+   client 生成随机会话密钥 → 用 server 的 RSA 公钥加密 → 发给 server
+   ⇒ 攻击者今天录下全部流量，三年后拿到 server 私钥 → **全部历史流量被解**
+
+✅ 用 PFS（ECDH / curve25519）：
+   client 与 server 各生成**临时**密钥对，交换公钥，各自算出同一个共享密钥
+   ⇒ 临时私钥用完即弃；即使 server 长期私钥泄露，历史流量依然无法解
+```
+
+因此现代 `sshd_config` 应该优先 `KexAlgorithms curve25519-sha256,ecdh-*`。
+`paramiko` 会自动协商，你通常不用管——但要**知道**你在享受 PFS。
+
+### 3.3 伪终端（pty）：为什么"没有输出"
+
+```text
+不开 pty（默认 exec_command）：
+    sshd 把远端进程的 stdout 直接接到 channel 上
+    ⇒ 输出是"字节流"，没有回显、没有行缓冲、颜色/TTY 探测失败
+
+开 pty（get_pty=True）：
+    sshd 分配一个伪终端（/dev/pts/N）
+    ⇒ 有回显、有行缓冲、`ls --color` 有效
+    ❌ 但 stdout 与 stderr **被合并**在一起（都在 pty 上），且会多出 \r\n
+```
+
+**踩坑实例**：`sudo` 通常要求 tty。不开 pty 时 `sudo -n cmd` 可能报
+`sudo: sorry, you must have a tty to run sudo`。
+工程上两条路：① `get_pty=True`（牺牲 stdout/stderr 分离）；
+② 配置 `sudoers` 的 `!requiretty`（推荐，保持流纯净）。
+
+### 3.4 退出状态码：`exit_status` 从哪来
+
+```python
+stdin, stdout, stderr = client.exec_command("exit 3")
+status = stdout.channel.recv_exit_status()   # 阻塞直到远端进程结束 → 3
+```
+
+三个必须知道的点：
+
+1. `recv_exit_status()` 会**阻塞**。如果远端命令永不退出，你的脚本也永不退出
+   —— 必须配合 `channel.settimeout()` 或用 `channel.status_event.wait(timeout)`。
+2. `stdout.read()` 也可能**永远阻塞**（远端还在写）。
+   稳妥写法：`read()` 之后才 `recv_exit_status()`，或用 `channel.recv_exit_status()` 前先关写端。
+3. 远端命令的退出码 **127** = 命令不存在，**126** = 不可执行，
+   **128+N** = 被信号 N 杀死（如 137 = SIGKILL，常见于 OOM）。
+   **自定义退出码契约**（0 成功 / 2 有告警 / 1 失败）能让你的运维脚本被上游自动化消费。
+
+### 3.5 保活（keepalive）与"卡死"
+
+```text
+问题场景：NAT/防火墙 300 秒无流量就静默丢弃连接映射
+   → 你的脚本 5 分钟不执行任何东西，然后下一次 read() 永远阻塞
+   （TCP 层面认为连接还活着，因为没人发 RST）
+
+解法三层：
+   ① transport.set_keepalive(30)      # SSH 层：每 30s 发一个加密空包
+   ② channel.settimeout(10)           # 应用层：单次 IO 超时
+   ③ 全局 connect(timeout=10, banner_timeout=15, auth_timeout=15)
+                                      # 连接建立三阶段的分别超时
+```
+
+**为什么三层都要**：第①层防"空闲被掐"，第②层防"对端假死"，
+第③层防"连一个不响应的 IP 时卡在三次握手"。缺任何一层都有对应的故障姿势。
+
+### 3.6 SFTP 是独立子系统
+
+```text
+SSH 连接
+ ├── channel(session)  → 交互式 shell / exec_command
+ ├── channel(session)  → sftp 子系统（ssh usr@host -s sftp）
+ └── channel(direct-tcpip) → 端口转发
+
+paramiko:  client.open_sftp()  ← 新开一个 channel 并请求 "sftp" 子系统
+           → 之后的 sftp.put/get/listdir 都是在这个 channel 上发
+             带二进制头的 SFTP 协议包（SSH_FXP_*）
+```
+
+**性能结论**：SFTP 有**每文件一次往返**的开销（open/write/close）。
+传 1000 个小文件时，往返延迟会主导总耗时 —— 这时应先用
+`tar` + 一次上传，而不是 1000 次 `sftp.put`。
+
+### 3.7 命令拼装：为什么 `shell=True` 式的拼接是灾难
+
+```python
+# ❌ 危险
+cmd = f"ls {user_input}"        # user_input = "; rm -rf /"  → 完蛋
+cmd = f"grep {pattern} /var/log/app.log"   # pattern 含空格/管道 → 命令被改写
+
+# ✅ 安全
+from shlex import quote
+cmd = f"ls {quote(user_input)}"          # 转义成单个参数
+# 或者干脆把参数固定，不接受用户输入（白名单）
+```
+
+**原理**：`exec_command` 把字符串交给远端 `/bin/sh -c`，
+远端 shell 会**再次解释**它。所以"转义一次"不够，要按远端 shell 的规则转义
+（`shlex.quote` 就是干这个的）。这也是"命令注入"在生产运维脚本里最常见的原因。
+
+---
+
+## 4. 定义与使用方法（API 速查表）
+
+### 4.1 `SSHClient` —— 最常用入口
+
+| 方法 | 作用 | 关键参数 |
+|:---|:---|:---|
+| `connect(hostname, port=22, username=None, password=None, pkey=None, key_filename=None, timeout=None, allow_agent=True, look_for_keys=True, compress=False, banner_timeout=None, auth_timeout=None)` | 建立连接并认证 | `timeout` 只作用于 TCP 建连；`banner_timeout` 等 banner；`auth_timeout` 等认证 |
+| `exec_command(command, bufsize=-1, timeout=None, get_pty=False, environment=None)` | 执行命令 | 返回 `(stdin, stdout, stderr)`，都是 `ChannelFile` |
+| `open_sftp()` | 打开 SFTP | 返回 `SFTPClient` |
+| `get_transport()` | 拿到底层 Transport | 用于设 keepalive |
+| `set_missing_host_key_policy(policy)` | 未知主机策略 | `RejectPolicy`(默认) / `AutoAddPolicy` / `WarningPolicy` |
+| `load_system_host_keys(filename=None)` | 从文件加载受信主机密钥 | 传路径才生效 |
+| `close()` | 关闭连接 | 别忘了 `finally` |
+
+### 4.2 命令执行三件套
+
+```python
+stdin, stdout, stderr = client.exec_command("uname -a", timeout=10)
+out = stdout.read().decode("utf-8", errors="replace")
+err = stderr.read().decode("utf-8", errors="replace")
+status = stdout.channel.recv_exit_status()
+```
+
+| 对象 | 方法 | 说明 |
+|:---|:---|:---|
+| `ChannelFile` | `read()` / `readline()` / `readlines()` | **读到 EOF 才返回**（远端进程结束） |
+| `Channel` | `recv_exit_status()` | 阻塞式取退出码 |
+| `Channel` | `settimeout(sec)` | 单次 IO 超时（超时抛 `socket.timeout`） |
+| `Channel` | `get_pty()` 参数 | 见 3.3 |
+| `Channel` | `shutdown_write()` | 关掉 stdin，常用于让远端 `cat` 之类收尾 |
+
+### 4.3 `SFTPClient` 速查
+
+| 方法 | 说明 |
+|:---|:---|
+| `put(localpath, remotepath, callback=None, confirm=True)` | 上传；`confirm=True` 会额外 `stat` 一次校验 |
+| `get(remotepath, localpath, callback=None)` | 下载 |
+| `putfo(fileobj, remotepath, file_size=None)` | 从内存中的文件对象上传（省一次落盘） |
+| `listdir(path)` / `listdir_attr(path)` | 列目录；后者带属性、少一次往返 |
+| `stat(path)` / `lstat(path)` | 属性；`lstat` 不跟随软链 |
+| `mkdir` / `rmdir` / `remove` / `rename` / `chmod` / `symlink` | 文件系统操作 |
+| `open(path, mode)` | 返回远端文件对象，可 `seek`（断点续传基础） |
+| `sftp.get_channel().settimeout(sec)` | 给 SFTP 设超时 |
+
+### 4.4 `Transport` 精细控制
+
+| 方法/属性 | 说明 |
+|:---|:---|
+| `set_keepalive(seconds)` | 空闲保活；`0` 关闭 |
+| `open_session()` | 手动开 channel |
+| `is_active()` | 连接是否还活着 |
+| `use_compression()` | 开压缩（CPU 换带宽，内网大文本传输有用） |
+| `auth_publickey` / `auth_password` / `auth_none` | 手动认证序列 |
+| `get_security_options()` | 查/改本端支持的算法列表 |
+
+### 4.5 常用策略类
+
+```python
+paramiko.RejectPolicy()      # 默认：未知主机 → SSHException
+paramiko.AutoAddPolicy()     # 自动接受并写入（开发方便，生产慎用）
+paramiko.WarningPolicy()     # 接受但打印警告
+```
