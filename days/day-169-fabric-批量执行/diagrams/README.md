@@ -53,14 +53,14 @@
    │ return_code  0                                │
    │ ok / failed  True / False   ← 用这个表达意图   │
    │ exited       True           ← 被信号杀死也 True│
-   │ tail         末尾 10 行（排查最常用）          │
+   │ tail(stream,count) 方法：r.tail("stdout") ← 最常用    │
    └──────────────────────────────────────────────┘
 
    判断建议：
      成功？        if r.ok
      具体错误码？  if r.return_code == 2
      被信号杀？    if r.exited and r.return_code in (-1, -9, 137)
-     看日志尾巴？  print(r.tail)  （比切 splitlines() 稳）
+     看日志尾巴？  print(r.tail("stdout"))  （比切 splitlines() 稳）
 ```
 
 ---

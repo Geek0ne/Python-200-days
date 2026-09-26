@@ -359,7 +359,7 @@ for batch in chunks(hosts, 16):          # 每批 16 台
 | `exited` | 进程是否已退出 |
 | `command` | 原始命令 |
 | `shell` | 执行用的 shell 包装 |
-| `tail` | `stdout.splitlines()[-10:]`，看末尾最方便 |
+| `tail(stream, count=10)` | **方法**（不是属性）：取某个流末尾 N 行。`r.tail("stdout")` / `r.tail("stderr")`，排查最常用 |
 | `__str__` | 还原为"命令 + 输出"的可读文本 |
 
 ### 4.3 `Group`
