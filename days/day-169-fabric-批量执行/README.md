@@ -83,9 +83,10 @@ r.failed         # False
 r.exited         # True   （进程已退出）
 ```
 
-**为什么要看 `ok` 而不是 `return_code == 0`**：
-`ok` 是 `return_code == 0` 的语义化别名；而 `exited` 在"被信号杀死"时为 `True`
-但 `return_code` 可能是 `-1`。用 `ok`/`failed` 表达意图，用 `return_code` 做精细判断。
+**为什么要看 `ok` 而不是 `exited == 0`**：两者等价，但 `ok` 表达了意图。
+⚠ **API 陷阱（本课实测踩到）**：`Result.exited` **不是布尔**，它就是退出码整数，
+没跑完时为 `None`。所以 `if not r.exited:` 会把**成功**的命令（exited=0）误判成“没跑完”。
+正确写法是 `if r.ok:` 或 `if r.exited == 0:`，要判“没跑完”请写 `if r.exited is None:`。
 
 ### 2.4 `Group`：多机原语
 
@@ -356,11 +357,13 @@ for batch in chunks(hosts, 16):          # 每批 16 台
 | `stdout` / `stderr` | 字符串（pty 模式下 stderr 为空） |
 | `return_code` | 退出码；被信号杀死时可能是负数 |
 | `ok` / `failed` | `return_code == 0` 的语义别名 |
-| `exited` | 进程是否已退出 |
+| `exited` | **就是退出码本身**（`int`，不是 bool！）；命令没跑完时为 `None` |
+| `return_code` | `exited` 的别名（property），值完全相同 |
+| `ok` / `failed` | `ok` = `exited == 0`；`failed` = `not ok` |
 | `command` | 原始命令 |
 | `shell` | 执行用的 shell 包装 |
 | `tail(stream, count=10)` | **方法**（不是属性）：取某个流末尾 N 行。`r.tail("stdout")` / `r.tail("stderr")`，排查最常用 |
-| `__str__` | 还原为"命令 + 输出"的可读文本 |
+| `__str__` / `__bool__` | 可读文本；`bool(r)` 等价于 `r.ok` |
 
 ### 4.3 `Group`
 

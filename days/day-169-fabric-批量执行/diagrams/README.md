@@ -50,16 +50,17 @@
    │ command      'systemctl is-active nginx'      │
    │ stdout       'active\n'                       │
    │ stderr       ''                               │
-   │ return_code  0                                │
+   │ return_code  0          （= exited，别名）          │
    │ ok / failed  True / False   ← 用这个表达意图   │
-   │ exited       True           ← 被信号杀死也 True│
+   │ exited       0          ← 就是退出码(int)，没跑完为 None│
    │ tail(stream,count) 方法：r.tail("stdout") ← 最常用    │
    └──────────────────────────────────────────────┘
 
    判断建议：
      成功？        if r.ok
      具体错误码？  if r.return_code == 2
-     被信号杀？    if r.exited and r.return_code in (-1, -9, 137)
+     没跑完？      if r.exited is None        （超时/自动应答失败）
+     被信号杀？    if r.exited is not None and (r.exited < 0 or r.exited >= 128)
      看日志尾巴？  print(r.tail("stdout"))  （比切 splitlines() 稳）
 ```
 
