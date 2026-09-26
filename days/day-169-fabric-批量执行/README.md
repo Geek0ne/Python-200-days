@@ -398,3 +398,292 @@ def check(c, hosts="web-01,web-02"):
 | `fab -l` | 列出所有任务（含 docstring） |
 | `fab -H h1,h2 task` | 临时指定主机（需任务里读取 `c.hosts`） |
 | `hide`/`warn` 也可在 `@task(hide=True)` 指定 | 任务级默认值 |
+
+---
+
+## 5. 图解
+
+### 5.1 Fabric 三层与"谁负责什么"
+
+```text
+  你写的代码            fab CLI / @task
+  ──────────────────────────────────────────────────
+  from fabric import …   ← Invoke 层：参数、任务、上下文
+  Connection / Group     ← Fabric 层：会话与多机原语
+  Transport / Channel    ← Paramiko 层：协议与加密
+  ──────────────────────────────────────────────────
+  排查顺序（自下而上）：
+    连不上？        → paramiko 层（超时/密钥/known_hosts）
+    连上但不执行？  → fabric 层（warn/hide/pty/gateway）
+    执行了但没跑对？→ invoke 层（参数没传进去 / task 覆盖了默认值）
+```
+
+### 5.2 `ThreadingGroup` vs `SerialGroup`
+
+```text
+ThreadingGroup（并发）                       SerialGroup（串行）
+
+ t=0  ┌─h1─┐                                 t=0  ─h1─▶ done
+      ├─h2─┤                                 t=1        ─h2─▶ done
+      ├─h3─┤  总耗时 ≈ 单台耗时               t=2             ─h3─▶ done
+      └─h4─┘  失败 = 一堆并发错误的聚合                    失败 = 立刻停在"哪一台"很明确
+
+ 用途：读、查、采集（快、可容忍单点失败）      用途：写、改、重启（安全、可判定停点）
+```
+
+### 5.3 Mermaid：一次可回滚的部署
+
+```mermaid
+sequenceDiagram
+    participant Dev as 本地/CI
+    participant G as gateway(跳板)
+    participant W as web-01..N
+
+    Dev->>G: 建连（gateway）
+    G->>W: 隧道转发 SSH
+    Dev->>W: put app-<rev>.tar.gz → /tmp
+    Dev->>W: mkdir -p /opt/app/releases/<rev>
+    Dev->>W: tar -xzf → releases/<rev>
+    Dev->>W: 建 shared 软链（.env / logs）
+    Dev->>W: 跑迁移（可失败 → 直接回滚）
+    Dev->>W: ln -sfn releases/<rev> current  （原子）
+    Dev->>W: systemctl restart app
+    Dev->>W: 健康检查 /healthz（重试 N 次）
+    alt 健康检查通过
+        W-->>Dev: 200 OK
+        Dev->>W: 清理旧 release（保留最近 3 版）
+    else 健康检查失败
+        W-->>Dev: timeout / 5xx
+        Dev->>W: ln -sfn releases/<prev> current
+        Dev->>W: systemctl restart app（回滚完成）
+        Dev->>Dev: 退出码 1 + 告警
+    end
+```
+
+### 5.4 Mermaid：`GroupException` 的信息流
+
+```mermaid
+flowchart TD
+    A["ThreadingGroup(h1..h5).run(cmd)"] --> B{逐台执行}
+    B -->|h1 ok| C[results h1]
+    B -->|h2 网络超时| D[异常收集]
+    B -->|h3 exit 1| E[UnexpectedExit 收集]
+    B -->|h4 ok| F[results h4]
+    B -->|h5 认证失败| G[异常收集]
+    D --> H{有异常?}
+    E --> H
+    G --> H
+    H -->|是| I[抛 GroupException]
+    H -->|否| J[返回 dict host→Result]
+    I --> K["except GroupException as e:
+遍历 e.result 逐台报告"]
+    K --> L["⚠ 注意：h1/h4 的成功结果在异常里拿不到
+必须各自 warn=True 或在异常里区分"]
+```
+
+### 5.5 限流分片：把 N 台切成每批 16 台
+
+```text
+  hosts = [h1 .. h200]
+
+  batch 1  ┌h1 … h16┐   ThreadingGroup → 16 线程
+  batch 2  ┌h17…h32┐   ThreadingGroup → 16 线程
+  ...
+  batch 13 ┌h193…h200┐
+
+  单批耗时 ≈ 单台耗时（假设 1.2s）→ 总耗时 ≈ 13 × 1.2 ≈ 15.6s
+  对比"一次 200 并发"：目标机 MaxStartups 限流 → 大量 Connection reset
+```
+
+---
+
+## 6. 常见陷阱 Top 8
+
+### 陷阱 1：以为 `Connection(...)` 就会连（其实惰性）
+
+```python
+c = Connection("不存在的域名")     # ✅ 不报错（只是记参数）
+c.run("uptime")                   # ❌ 这里才炸
+```
+**修法**：`try/except` 包住**第一次 run**；或显式 `c.open()` 提前暴露问题。
+
+### 陷阱 2：`run()` 默认 `warn=False` → 一台失败中断整批
+
+```python
+# ❌ nginx 没装 → UnexpectedExit → 后面的机器全不执行
+group.run("systemctl is-active nginx")
+
+# ✅ 巡检场景：warn=True，自己判断 r.ok
+results = group.run("systemctl is-active nginx", warn=True, hide=True)
+down = [h for h, r in results.items() if not r.ok]
+```
+**但**：变更场景**不要**无脑 `warn=True` —— 那会让你漏掉真故障。用 `SerialGroup` + 默认
+`warn=False` 更安全（失败即停，停点清晰）。
+
+### 陷阱 3：`pty=True` 后 `r.stderr` 永远是空的
+
+见 Day 168 陷阱 3。**修法**：只在 `sudo` 等确需 tty 的场合开 pty；
+其他场景用 `run("sudo -n cmd")` 或配置 `!requiretty`。
+
+### 陷阱 4：`hide=True` 吞掉了诊断信息，出事时无从排查
+
+```python
+# ❌ 出问题时你什么都看不到
+r = c.run("./deploy.sh", hide=True)
+
+# ✅ 失败时把输出捞回来
+r = c.run("./deploy.sh", hide=True, warn=True)
+if not r.ok:
+    print(r.stdout, r.stderr)     # 或者写进审计文件
+```
+
+### 陷阱 5：把 `GroupException` 当成"一个异常"
+
+```python
+# ❌ 只打印 str(exc)，丢掉 per-host 细节
+except GroupException as exc:
+    print(exc)
+
+# ✅ 遍历 exc.result
+except GroupException as exc:
+    for host, err in exc.result.items():
+        print(f"❌ {host}: {type(err).__name__}: {err}")
+```
+**关键认知**：异常抛出时，**成功主机的 Result 不在异常里**。
+要么所有操作都 `warn=True`（拿到完整 dict），要么接受"异常时只知道失败的"。
+
+### 陷阱 6：`ThreadingGroup` 无并发上限
+
+200 台就是 200 线程同时认证。**修法**：见 3.4 的分片写法，
+每批 8~16 台。**顺便**：Fabric 的 Group 也没有"单机超时"概念，
+`connect_timeout` 必须在 `connect_kwargs` 里逐台设置。
+
+### 陷阱 7：忘了关连接 → 脚本结束时不退出
+
+```python
+# ❌ 进程可能 hang（paramiko 后台线程未收尾）
+c = Connection("h")
+c.run("uptime")
+
+# ✅ 用上下文管理器
+with Connection("h") as c:
+    c.run("uptime")
+```
+`Group` 对象也有 `close()`；批量脚本结束前 `group.close()`。
+
+### 陷阱 8：把 Fabric 当 Ansible 用（追求幂等/状态收敛）
+
+Fabric 不会帮你判断"这个包装没装"。写一次部署脚本你可以接受；
+一旦你要维护 30 个服务的"最终状态"，就该换 Ansible。
+**判断标准**：脚本里出现大量"先查再决定"的分支 → 你在手写 Ansible，换成 Ansible 吧。
+
+---
+
+## 7. 实战代码案例
+
+`code/` 下 4 个脚本：
+
+| 文件 | 定位 | 你会学到 |
+|:---|:---|:---|
+| `01-basic-fabric.py` | 基础 | Connection/run/sudo/put/get + Result 解析 + `--self-test` |
+| `02-pitfalls.py` | 避坑 | 6 个可离线复现的坑（惰性建连、warn 语义、pty、GroupException、限流、幂等） |
+| `03-advanced-fabric.py` | 进阶 | 分片并发 + 串行滚动 + 跳板机 + 分组巡检 |
+| `04-deploy-tool.py` | 实战 | **批量部署脚本**：release 目录 + 原子软链 + 健康检查 + 回滚 |
+
+### 7.1 运行方法
+
+```bash
+cd days/day-169-fabric-批量执行/code
+pip install fabric            # 会自动带上 invoke + paramiko
+
+python3 01-basic-fabric.py --self-test
+python3 01-basic-fabric.py --host <h> --user <u> --key <k> --cmd "uname -a"
+
+python3 02-pitfalls.py --self-test
+python3 02-pitfalls.py
+
+python3 03-advanced-fabric.py --self-test
+python3 03-advanced-fabric.py --hosts h1,h2,h3 --user u --key k --cmd "uptime" --batch 16
+
+python3 04-deploy-tool.py --self-test
+python3 04-deploy-tool.py --hosts h1,h2 --user u --key k --artifact ./app.tar.gz \
+        --release 20260927 --root /opt/app --dry-run
+```
+
+> **没机器也能练**：`docker run -d -p 2222:22 linuxserver/openssh-server`，
+> 或用前一课的本地 sshd 起两三个实例；`--hosts` 里重复 `127.0.0.1:2222` 即可。
+
+### 7.2 部署脚本的"三条红线"（与 Day 168 呼应，但更严格）
+
+```text
+① 切换必须原子：ln -sfn（rename 语义），永远别 rm -rf current && ln -s ...
+② 失败必须能回滚：保留上一版 release，回滚 = 一次软链 + 一次重启
+③ 成功必须被验证：健康检查（进程/端口/业务三级），不通过就是失败
+```
+
+### 7.3 实测输出样例（04 的 dry-run）
+
+```text
+🚀 发布 20260927 → 2 台
+--------------------------------------------------------------------------------
+[local-a:2222] ① 准备目录 /opt/app/releases/20260927
+[local-a:2222] ② 上传 app.tar.gz (12.3 KB)
+[local-a:2222] ③ 解包
+[local-a:2222] ④ shared 软链
+[local-a:2222] ⑤ 原子切换 current → releases/20260927
+[local-a:2222] ⑥ 重启 + 健康检查
+[local-a:2222] ✅ 发布完成（dry-run，未真实执行）
+--------------------------------------------------------------------------------
+汇总：成功 2 / 失败 0      退出码 = 0
+```
+
+---
+
+## 8. 思考题
+
+1. **为什么 `ThreadingGroup` 比 `SerialGroup` "快"，但部署时却应该用后者？**
+   请从"失败的可判定性"与"集群中间态"两个角度回答。
+
+2. **`warn=True` 到底是"更健壮"还是"更危险"？**
+   分别给出一个必须用 `warn=True` 的场景和一个绝对不能用它的场景，
+   并说明判断依据是什么。
+
+3. **`ln -sfn` 为什么是原子的？**
+   它底层实际执行了哪个系统调用？（提示：`symlink` + `rename`）。
+   如果换成 `rm -f current && ln -s ...`，会出现什么竞态窗口？
+
+4. **Fabric 没有"并发上限"，这会带来什么风险？**
+   请设计一个"既并发又限流"的实现，并说出为什么不能简单地把
+   `ThreadingGroup` 的 `hosts` 分批就完事（提示：失败后想重试怎么办）。
+
+5. **如果发布必须跨 200 台机器、每台 3 个服务，你会怎么组织？**
+   从"分片并发 + 串行滚动 + 健康检查 + 回滚 + 审计"五个维度给出方案。
+   并说明什么时候你会放弃 Fabric 改用 Ansible。
+
+6. **为什么健康检查要分三级（进程 / 端口 / 业务）？**
+   各举一个"只有本级能发现"的故障例子。
+
+---
+
+## 9. 小结
+
+```text
+  一句话记住 Fabric：
+    它是"paramiko + 任务 CLI"的组合，
+    用 Connection 管一台，用 Group 管多台，
+    但**不**负责幂等、不负责状态收敛。
+
+  五条铁律：
+    ① 读用 ThreadingGroup，写用 SerialGroup
+    ② 并发必须自己分片限流（每批 8~16）
+    ③ 巡检 warn=True 拿全集，变更保持默认（失败即停）
+    ④ 部署 = release 目录 + 原子软链 + 健康检查 + 可回滚
+    ⑤ 一律用 with Connection(...) / group.close()，否则脚本不退出
+
+  和 paramiko 的分工（Day 168）：
+    paramiko → 你要"精细控制每一项"时用
+    Fabric   → 你要"快速表达一批操作"时用
+```
+
+> 下一课 Day 170：**定时任务** —— `schedule` 库与 `APScheduler`，
+> 以及"任务持久化"这个在生产里最容易翻车的点。
