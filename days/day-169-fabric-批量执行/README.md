@@ -182,3 +182,219 @@ c.sudo("systemctl restart nginx", password="...", pty=True)
 
 Fabric 是**过程式**的：你写的是"先 A 再 B"。
 Ansible 是**声明式**的：你写的是"最终应该是 X"。这两种诉求不会互相替代。
+
+---
+
+## 3. 原理深入
+
+### 3.1 Fabric 内部：一次 `c.run("uptime")` 到底发生了什么
+
+```text
+  你的代码                Fabric                    Invoke                 Paramiko
+    │                       │                         │                      │
+    │ c.run("uptime")       │                         │                      │
+    ├──────────────────────▶│                         │                      │
+    │                       │ 组装上下文（env/hide/   │                      │
+    │                       │ warn/pty/echo…）        │                      │
+    │                       ├────────────────────────▶│                      │
+    │                       │                         │ 选 runner（Local/Remote）
+    │                       │                         ├─────────────────────▶│
+    │                       │                         │  open_session()      │
+    │                       │                         │  exec_command()      │
+    │                       │                         │◀── stdout/stderr ────┤
+    │                       │◀── Result(stdout, ...) ─┤                      │
+    │◀── Result ────────────┤                         │                      │
+
+  要点：Connection 自己持有一个 paramiko.SSHClient（惰性建连 + 复用），
+        所以同一个 Connection 上的 100 次 run 只做 1 次 KEX/认证。
+```
+
+**惰性建连**：`Connection(...)` 只是记下参数，**不**发网络包；
+直到第一次 `run()` / `put()` 才真正连接。所以"构造 Connection 不写 try"
+是安全的，而"run 不写 try"是危险的。
+
+### 3.2 跳板机（gateway）：Fabric 帮你做的事
+
+```python
+jump = Connection("bastion", user="ops", connect_kwargs={"key_filename": "~/.ssh/id_rsa"})
+
+inner = Connection("10.0.0.11", user="deploy", gateway=jump,
+                   connect_kwargs={"key_filename": "~/.ssh/id_ed25519"})
+inner.run("hostname")     # 实际链路：本机 → bastion → 10.0.0.11
+```
+
+**原理**：Fabric 在 gateway 上开一个 `direct-tcpip` channel（Day 168 图 3 提到的
+第四种 channel 类型），把内网的 TCP 流"隧道"过去，然后在隧道里跑完整的 SSH。
+
+**为什么重要**：手工 `ssh -o ProxyJump` 无法在 Python 里编排多跳；
+Fabric 把这件事变成一行参数。这也是"为什么不用系统 ssh 命令"的现实理由之一。
+
+### 3.3 `warn` / `hide` / `echo` / `pty`：四个高频参数的真实语义
+
+| 参数 | 默认 | 语义 | 误用后果 |
+|:---|:---|:---|:---|
+| `warn` | `False` | `False`：非 0 退出码 → 抛 `UnexpectedExit`；`True`：只记录不抛 | 批量场景里用默认值，第一台失败就中断整批；反过来全用 `True` 会**静默吞掉**真故障 |
+| `hide` | `False` | `True`：不打印命令与输出；也可 `hide="stdout"` / `hide="both"` | 部署时把整个文件内容 echo 出来，日志刷屏还泄露内容 |
+| `echo` | `False` | `True`：把执行的命令本身打到本地输出 | 调试神器；但会泄露命令里的敏感参数 |
+| `pty` | `False` | `True`：远端分配伪终端 | 见 Day 168 陷阱 3：stdout/stderr 合流、多出 `\r` |
+
+**推荐组合**：
+
+```python
+c.run("systemctl is-active nginx", hide=True, warn=True)   # 巡检：静默 + 不中断
+c.run("tar -xzf /tmp/app.tar.gz", echo=True)               # 变更：打印命令便于审计
+c.sudo("systemctl restart nginx", pty=True)                # 需要 tty：只在这时才开
+```
+
+### 3.4 并发模型的真相：`ThreadingGroup` 没有"连接池"
+
+```text
+  ThreadingGroup("h1".."h200").run("uptime")
+
+  构造时：为每台机器**预先**创建一个 Connection 对象（含 connect_kwargs）
+  run 时：  每台一个线程，各自连接 + 执行
+
+  ⇒ 并发度 = 机器数，没有上限概念
+  ⇒ 200 台就是 200 个线程同时发起认证 → 目标侧 MaxStartups 限流
+  ⇒ Fabric 没有 "workers" 参数；要限流必须**自己分片**
+```
+
+**限流写法（生产必备）**：
+
+```python
+import itertools
+from fabric import ThreadingGroup
+
+def chunks(seq, n):
+    it = iter(seq)
+    while (batch := list(itertools.islice(it, n))):
+        yield batch
+
+for batch in chunks(hosts, 16):          # 每批 16 台
+    try:
+        ThreadingGroup(*batch, **opts).run("uptime")
+    except GroupException as exc:
+        ...                              # 逐批处理失败，别让一批拖垮全局
+```
+
+### 3.5 幂等：Fabric 不提供，你必须自己写
+
+```text
+   ❌ 不幂等
+   c.run("mkdir /opt/app/releases/20260927")     # 重跑一次 → 报错 exist
+   c.run("systemctl restart nginx")              # 重跑 → 服务抖动
+
+   ✅ 幂等
+   c.run("mkdir -p /opt/app/releases/20260927")  # -p 容忍存在
+   c.run("test -f /opt/app/current/.deployed-20260927 || systemctl restart nginx")
+```
+
+**为什么要强调**：Fabric 的定位是"远程命令执行器"，它**不理解**你的目标状态。
+幂等必须由你在命令层与脚本层保证（`-p`、`||`、先查后改、版本标记文件）。
+
+### 3.6 部署事务：release 目录 + 软链切换
+
+```text
+ /opt/app/
+ ├── releases/
+ │   ├── 20260926-1830/     ← 上一版（保留，用于回滚）
+ │   └── 20260927-0600/     ← 本次发布
+ ├── current -> releases/20260927-0600     ← 原子切换点（ln -sfn）
+ └── shared/
+     ├── .env               ← 配置不进 release 目录
+     └── logs/              ← 日志目录软链进 release
+
+ 部署步骤：
+   ① 上传 → ② 解包到新 release 目录
+   ③ 装上 shared 软链 → ④ 跑迁移/预热
+   ⑤ ln -sfn 原子切换 current → ⑥ 重启服务 → ⑦ 健康检查
+   ⑧ 失败 → ln -sfn 回上一版 → 重启（回滚，秒级）
+
+ 为什么这么设计：
+   · 新版本在切换前**不影响**正在服务的旧版本 → 出错不影响线上
+   · 软链切换是**原子**的（rename 语义），不会出现"半个版本"
+   · 旧目录保留 N 版 → 回滚只需要一次 ln + 一次 restart
+```
+
+### 3.7 健康检查与"假成功"
+
+```text
+  重启服务返回 exit 0 ≠ 服务真的起来了。
+  systemctl restart 成功只代表"进程被拉起了"，不代表它能接受请求。
+
+  三级健康检查：
+    ① 进程级：systemctl is-active --quiet nginx        （最快，最弱）
+    ② 端口级：ss -ltn | grep -q ':80 '                 （中等）
+    ③ 业务级：curl -fsS -m 5 http://127.0.0.1/healthz  （最真实）
+
+  部署脚本必须等到 ③ 通过才算成功；并设置**超时**与**重试间隔**：
+    失败了要回滚，不能让"半启动"的服务继续对外。
+```
+
+---
+
+## 4. 定义与使用方法（API 速查表）
+
+### 4.1 `Connection`
+
+| 成员 | 说明 |
+|:---|:---|
+| `Connection(host, user=None, port=None, config=None, gateway=None, forward_agent=None, connect_timeout=None, connect_kwargs=None, inline_ssh_env=None)` | 惰性建连；`connect_kwargs` 传给 paramiko |
+| `run(command, warn=False, hide=False, echo=False, pty=False, timeout=None, watchers=(), env=None, replace_env=False)` | 执行命令 → `Result` |
+| `sudo(command, password=None, user=None, ...)` | sudo 执行（内部偏 pty） |
+| `local(command, ...)` | 在**本地**执行（同一套 Result 语义） |
+| `put(local, remote=None, preserve_mode=True)` | SFTP 上传 |
+| `get(remote, local=None, preserve_mode=True)` | SFTP 下载 |
+| `is_connected` | 是否已建连 |
+| `open()` / `close()` | 显式控制连接生命周期 |
+| `cd(path)` / `prefix(cmd)` | 上下文管理器：`with c.cd("/opt/app"):` |
+
+### 4.2 `Result`（`invoke.runners.Result`）
+
+| 属性 | 说明 |
+|:---|:---|
+| `stdout` / `stderr` | 字符串（pty 模式下 stderr 为空） |
+| `return_code` | 退出码；被信号杀死时可能是负数 |
+| `ok` / `failed` | `return_code == 0` 的语义别名 |
+| `exited` | 进程是否已退出 |
+| `command` | 原始命令 |
+| `shell` | 执行用的 shell 包装 |
+| `tail` | `stdout.splitlines()[-10:]`，看末尾最方便 |
+| `__str__` | 还原为"命令 + 输出"的可读文本 |
+
+### 4.3 `Group`
+
+| 成员 | 说明 |
+|:---|:---|
+| `ThreadingGroup(*hosts, **kwargs)` | 并发；`kwargs` 与 `Connection` 相同 |
+| `SerialGroup(*hosts, **kwargs)` | 串行 |
+| `.run(cmd, ...)` / `.sudo(...)` / `.put(...)` / `.get(...)` | 返回 `{host: Result}` |
+| `.from_connections([c1, c2])` | 用已有 Connection 构造 Group（可带各自参数） |
+| 失败行为 | 任一主机失败 → 抛 `GroupException`；其 `.result` 是 `{host: Exception}` |
+
+### 4.4 `Config` 与 task
+
+```python
+from fabric import Config, task, Connection
+
+# 配置分层
+cfg = Config(overrides={"run": {"warn": True, "hide": True},
+                        "ssh": {"connect_kwargs": {"timeout": 10}}})
+
+@task
+def check(c, hosts="web-01,web-02"):
+    """巡检：fab check --hosts=web-01,web-02"""
+    for h in hosts.split(","):
+        with Connection(h, config=cfg) as conn:
+            r = conn.run("uptime", hide=True)
+            print(h, r.stdout.strip())
+
+# 命令行：fab -f tasks.py check --hosts=web-01
+```
+
+| 要点 | 说明 |
+|:---|:---|
+| `@task` 函数第一个参数是 `Context`（习惯叫 `c`） | 不是 Connection！对本地用 `c.run`，对远端用 `Connection(...)` |
+| `fab -l` | 列出所有任务（含 docstring） |
+| `fab -H h1,h2 task` | 临时指定主机（需任务里读取 `c.hosts`） |
+| `hide`/`warn` 也可在 `@task(hide=True)` 指定 | 任务级默认值 |
