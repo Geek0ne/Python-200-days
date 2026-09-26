@@ -132,3 +132,55 @@ web-01                        → 报错（缺少用户，不允许"猜"用户�
 </details>
 
 ---
+
+## 🚀 进阶挑战题（4–5）
+
+### 练习 4：把串行批处理改成"有背压的流水线"
+
+现在 `04` 是"先全部提交给线程池，再等全部完成"。改成**有背压**的版本：
+
+1. 并发上限 `workers`
+2. 但结果**边完成边打印**（不要等全部跑完才出表格）
+3. 每完成一台，就把它的行追加写入 `batch-audit.jsonl`（流式落盘，进程被打断也不丢已完成的结果）
+4. 增加 `--stop-on-fail <n>`：连续 n 台 unreachable 就**停止派发新任务**，
+   并打印"疑似网络/凭证问题，已中止"
+
+**思考并写下**：为什么"流式落盘"比"最后一次性写"更适合运维脚本？
+（提示：想想你按下 Ctrl+C 的那一刻希望留下什么。）
+
+<details>
+<summary>💡 提示</summary>
+
+用 `concurrent.futures.as_completed()` 而不是 `wait()`：前者每完成一个就 yield。
+"停止派发"用 `ThreadPoolExecutor.shutdown(cancel_futures=True)`（Python 3.9+）
+或自己维护一个 `threading.Event` 让未开始的任务立刻返回。
+</details>
+
+---
+
+### 练习 5：写一个"声明式"的巡检任务
+
+把"一堆命令"升级成"任务清单"，每条任务有自己的判定规则：
+
+```python
+CHECKS = [
+    {"name": "磁盘使用率", "cmd": "df -P / | awk 'NR==2{print $5}'",
+     "ok": lambda out: int(out.strip().rstrip('%')) < 85,
+     "level": "warn"},
+    {"name": "负载", "cmd": "cat /proc/loadavg | awk '{print $1}'",
+     "ok": lambda out: float(out.strip()) < os.cpu_count() * 2,
+     "level": "warn"},
+    {"name": "服务存活", "cmd": "systemctl is-active nginx", "ok": lambda o: o.strip() == "active",
+     "level": "fail"},
+]
+```
+
+要求：
+
+1. 每台机器输出 `host × check` 的**矩阵**结果（用 ASCII 表格）
+2. `fail` 级别的检查失败 → 该主机整体 status 变 `fail` 并让整批退出码变成 1（若全失败）或 2
+3. 所有失败项汇总成一节"需要人工关注"的清单，放在报告最前面
+4. 支持 `--only 磁盘使用率` 只跑指定检查
+
+**为什么值得做**：运维的终点不是"把命令跑一遍"，而是"把**期望状态**表达出来，
+让机器告诉你哪台偏离了"。这就是从"脚本"走向"配置管理与可观测"的第一步。
