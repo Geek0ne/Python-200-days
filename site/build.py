@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -390,6 +391,28 @@ def render_index_html(days: list[Day], phases: list[Phase], prog: dict, info: di
 """
 
 
+def ascii_name(name: str, used: set) -> str:
+    """把文件名转成纯 ASCII，避免 GitHub Pages 整站构建失败。
+
+    实测教训：全量版首次发布时，站点里有 33 个含中文名的文件
+    （如 `01-ast基础操作.py`），GitHub Pages 直接不重建——**整站挂掉**，
+    连完全没有中文名的目录也 404。B 版能上是因为它只有 4 个 ASCII 文件名。
+
+    所以站点副本一律用 ASCII 名，原始中文名以注释形式保留在文件头，
+    不丢信息。冲突时补 -2 / -3 序号。
+    """
+    import re as _re
+    stem, ext = os.path.splitext(name)
+    safe = _re.sub(r"[^A-Za-z0-9._-]", "", stem) or "file"
+    safe = safe.strip("-.") or "file"
+    cand, n = safe, 1
+    while cand.lower() in used:
+        n += 1
+        cand = f"{safe}-{n}"
+    used.add(cand.lower())
+    return cand + ext
+
+
 def build_lessons(repo: Path, out: Path, days: list[Day]) -> dict:
     """为每一门课生成独立 HTML 页面，并把 code/ 源码拷进去供下载。"""
     by_num = {d.num: d for d in days}
@@ -439,17 +462,26 @@ def build_lessons(repo: Path, out: Path, days: list[Day]) -> dict:
         if cdir.is_dir():
             target = dst / "code"
             target.mkdir(exist_ok=True)
-            for py in cdir.glob("*.py"):
+            used: set = set()
+            listing = []
+            for py in sorted(cdir.glob("*.py")):
                 try:
-                    shutil.copy2(py, target / py.name)
+                    ascii_nm = ascii_name(py.name, used)
+                    text = py.read_text(encoding="utf-8")
+                    if ascii_nm != py.name:
+                        # 原始中文名写进文件头，信息不丢
+                        text = f"# 原文件名：{py.name}\n{text}"
+                    (target / ascii_nm).write_text(text, encoding="utf-8")
                     stats["code_files"] += 1
+                    listing.append((ascii_nm, py.name))
                 except Exception as e:
                     stats["errors"].append(f"{day.slug}/{py.name} 拷贝失败: {e}")
-            # code/ 目录页，方便浏览器里点开看
-            names = sorted(p.name for p in target.glob("*.py"))
-            if names:
+            if listing:
                 rows = "".join(
-                    f'<li><a href="{n}">{n}</a></li>' for n in names)
+                    f'<li><a href="{a}">{a}</a>'
+                    + (f'<span class="orig">原名：{html.escape(o)}</span>' if a != o else "")
+                    + "</li>"
+                    for a, o in listing)
                 (target / "index.html").write_text(
                     f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
                     f'<meta name="viewport" content="width=device-width,initial-scale=1">'
