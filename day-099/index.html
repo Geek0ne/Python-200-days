@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 99 — 扩展 Python：Cython、Pybind11 与 C++ 混合编程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 99 — 扩展 Python：Cython、Pybind11 与 C++ 混合编程</h1>
+  <div class="lmeta">
+    <span class="badge">进阶与性能优化</span>
+    <span class="badge">263 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-099-扩展-python" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📌 今日目标</a>
+<a class="toc-l2" href="#cython">一、Cython 深入</a>
+<a class="toc-l3" href="#11-cython">1.1 什么是 Cython？</a>
+<a class="toc-l3" href="#12-cython">1.2 Cython 的类型系统</a>
+<a class="toc-l3" href="#13-pyx">1.3 .pyx 文件结构</a>
+<a class="toc-l3" href="#14-python-vs-cython">1.4 性能对比：纯 Python vs Cython</a>
+<a class="toc-l2" href="#pybind11">二、Pybind11</a>
+<a class="toc-l3" href="#21-pybind11">2.1 什么是 Pybind11？</a>
+<a class="toc-l3" href="#22">2.2 基本用法</a>
+<a class="toc-l3" href="#23">2.3 暴露类</a>
+<a class="toc-l3" href="#24-numpy">2.4 NumPy 集成</a>
+<a class="toc-l2" href="#python-c">三、嵌入 Python 到 C++</a>
+<a class="toc-l3" href="#31-python">3.1 为什么要嵌入 Python？</a>
+<a class="toc-l3" href="#32">3.2 嵌入步骤</a>
+<a class="toc-l3" href="#33">3.3 关键注意事项</a>
+<a class="toc-l2" href="#python-c_1">四、Python + C++ 混合编程实战</a>
+<a class="toc-l3" href="#41">4.1 项目结构</a>
+<a class="toc-l3" href="#42-cmakeliststxt">4.2 CMakeLists.txt</a>
+<a class="toc-l3" href="#43">4.3 构建与使用</a>
+<a class="toc-l2" href="#_2">五、三种方式对比</a>
+<a class="toc-l2" href="#_3">六、最佳实践与避坑</a>
+<a class="toc-l2" href="#_4">🤔 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-099-pythoncythonpybind11-c">Day 099 — 扩展 Python：Cython、Pybind11 与 C++ 混合编程</h1>
+<h2 id="_1">📌 今日目标</h2>
+<p>Python 虽然开发效率高，但在某些场景（数值计算、系统调用、高性能库）中，C/C++ 的执行速度远超 Python。今天我们将学习如何<strong>将 Python 与 C/C++ 结合</strong>，掌握三种主流扩展方式。</p>
+<hr>
+<h2 id="cython">一、Cython 深入</h2>
+<h3 id="11-cython">1.1 什么是 Cython？</h3>
+<p>Cython 是一个<strong>将 Python 代码编译为 C 代码</strong>的编译器。它在 Python 语法基础上扩展了类型声明，生成的 C 代码可以直接编译为 CPython 扩展模块。</p>
+<p><strong>核心价值</strong>：<br>
+- 保留 Python 语法的简洁性<br>
+- 通过类型声明获得 C 级别性能<br>
+- 无缝调用 C/C++ 库<br>
+- 生成的 <code>.so</code>/<code>.pyd</code> 文件可直接被 Python import</p>
+<h3 id="12-cython">1.2 Cython 的类型系统</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">cython</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c"># cdef: 声明 C 级别变量（不暴露给 Python）</span>
+<span class="k">cdef</span> <span class="kt">int</span> <span class="nf">x</span> <span class="o">=</span> <span class="mf">10</span>
+<span class="k">cdef</span> <span class="kt">double</span> <span class="nf">result</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+<span class="c"># def: 声明 Python 可调用函数</span>
+<span class="k">def</span> <span class="nf">my_function</span><span class="p">(</span><span class="nb">int</span> <span class="n">a</span><span class="p">,</span> <span class="nb">int</span> <span class="n">b</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+
+<span class="c"># cpdef: 同时生成 C 和 Python 版本（性能最佳选择）</span>
+<span class="k">cpdef</span> <span class="kt">int</span> <span class="nf">fast_add</span><span class="p">(</span><span class="nb">int</span> <span class="n">a</span><span class="p">,</span> <span class="nb">int</span> <span class="n">b</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+</code></pre></div>
+<h3 id="13-pyx">1.3 .pyx 文件结构</h3>
+<pre class="plain"><code>my_module/
+├── my_module.pyx      # Cython 源码
+├── setup.py           # 构建配置
+└── my_module.c        # 生成的 C 代码（可选查看）
+</code></pre>
+<h3 id="14-python-vs-cython">1.4 性能对比：纯 Python vs Cython</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 纯 Python</span>
+<span class="k">def</span> <span class="nf">fibonacci_py</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+    <span class="k">return</span> <span class="n">a</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">cython</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c"># Cython 版本</span>
+<span class="k">cpdef</span> <span class="kt">long</span> <span class="kt">long</span> <span class="nf">fibonacci_cy</span><span class="p">(</span><span class="nb">int</span> <span class="n">n</span><span class="p">):</span>
+    <span class="k">cdef</span> <span class="kt">long</span> <span class="kt">long</span> <span class="nf">a</span> <span class="o">=</span> <span class="mf">0</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="mf">1</span>
+    <span class="k">cdef</span> <span class="kt">int</span> <span class="nf">i</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+    <span class="k">return</span> <span class="n">a</span>
+</code></pre></div>
+<p>典型加速比：<strong>10x ~ 100x</strong>（取决于计算密集程度）</p>
+<hr>
+<h2 id="pybind11">二、Pybind11</h2>
+<h3 id="21-pybind11">2.1 什么是 Pybind11？</h3>
+<p>Pybind11 是一个<strong>轻量级头文件库</strong>，用纯 C++ 代码暴露 C++ 函数/类给 Python。它的 API 设计灵感来自 Boost.Python，但无需 Boost 依赖。</p>
+<p><strong>核心优势</strong>：<br>
+- 纯头文件，无需预编译库<br>
+- 自动类型转换<br>
+- 支持 STL 容器、智能指针、NumPy 数组<br>
+- 支持 C++11/14/17 特性</p>
+<h3 id="22">2.2 基本用法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">cpp</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;pybind11/pybind11.h&gt;</span>
+
+<span class="k">namespace</span><span class="w"> </span><span class="nn">py</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nn">pybind11</span><span class="p">;</span>
+
+<span class="c1">// 暴露一个普通函数</span>
+<span class="kt">int</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">a</span><span class="p">,</span><span class="w"> </span><span class="kt">int</span><span class="w"> </span><span class="n">b</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="n">PYBIND11_MODULE</span><span class="p">(</span><span class="n">example</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">doc</span><span class="p">()</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;example module&quot;</span><span class="p">;</span><span class="w">   </span><span class="c1">// 模块文档</span>
+<span class="w">    </span><span class="n">m</span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;add&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">add</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;A function that adds two numbers&quot;</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="23">2.3 暴露类</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">cpp</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;pybind11/pybind11.h&gt;</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Calculator</span><span class="w"> </span><span class="p">{</span>
+<span class="k">public</span><span class="o">:</span>
+<span class="w">    </span><span class="n">Calculator</span><span class="p">()</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="n">value</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="p">{}</span>
+<span class="w">    </span><span class="kt">void</span><span class="w"> </span><span class="n">add</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">+=</span><span class="w"> </span><span class="n">x</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">get_value</span><span class="p">()</span><span class="w"> </span><span class="k">const</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">value</span><span class="p">;</span><span class="w"> </span><span class="p">}</span>
+<span class="k">private</span><span class="o">:</span>
+<span class="w">    </span><span class="kt">int</span><span class="w"> </span><span class="n">value</span><span class="p">;</span>
+<span class="p">};</span>
+
+<span class="n">PYBIND11_MODULE</span><span class="p">(</span><span class="n">calculator</span><span class="p">,</span><span class="w"> </span><span class="n">m</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">py</span><span class="o">::</span><span class="n">class_</span><span class="o">&lt;</span><span class="n">Calculator</span><span class="o">&gt;</span><span class="p">(</span><span class="n">m</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;Calculator&quot;</span><span class="p">)</span>
+<span class="w">        </span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="n">py</span><span class="o">::</span><span class="n">init</span><span class="o">&lt;&gt;</span><span class="p">())</span>
+<span class="w">        </span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;add&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Calculator</span><span class="o">::</span><span class="n">add</span><span class="p">)</span>
+<span class="w">        </span><span class="p">.</span><span class="n">def</span><span class="p">(</span><span class="s">&quot;get_value&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="n">Calculator</span><span class="o">::</span><span class="n">get_value</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="24-numpy">2.4 NumPy 集成</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">cpp</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;pybind11/numpy.h&gt;</span>
+
+<span class="k">namespace</span><span class="w"> </span><span class="nn">py</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nn">pybind11</span><span class="p">;</span>
+
+<span class="n">py</span><span class="o">::</span><span class="n">array_t</span><span class="o">&lt;</span><span class="kt">double</span><span class="o">&gt;</span><span class="w"> </span><span class="n">multiply_array</span><span class="p">(</span><span class="n">py</span><span class="o">::</span><span class="n">array_t</span><span class="o">&lt;</span><span class="kt">double</span><span class="o">&gt;</span><span class="w"> </span><span class="n">input</span><span class="p">,</span><span class="w"> </span><span class="kt">double</span><span class="w"> </span><span class="n">factor</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">buf</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">input</span><span class="p">.</span><span class="n">mutable_unchecked</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;</span><span class="p">();</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">py</span><span class="o">::</span><span class="n">array_t</span><span class="o">&lt;</span><span class="kt">double</span><span class="o">&gt;</span><span class="p">(</span><span class="n">buf</span><span class="p">.</span><span class="n">shape</span><span class="p">(</span><span class="mi">0</span><span class="p">));</span>
+<span class="w">    </span><span class="k">auto</span><span class="w"> </span><span class="n">res_buf</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">result</span><span class="p">.</span><span class="n">mutable_unchecked</span><span class="o">&lt;</span><span class="mi">1</span><span class="o">&gt;</span><span class="p">();</span>
+
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="n">py</span><span class="o">::</span><span class="kt">ssize_t</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">buf</span><span class="p">.</span><span class="n">shape</span><span class="p">(</span><span class="mi">0</span><span class="p">);</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">res_buf</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">buf</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">factor</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">result</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+<hr>
+<h2 id="python-c">三、嵌入 Python 到 C++</h2>
+<h3 id="31-python">3.1 为什么要嵌入 Python？</h3>
+<p>有时候你需要在 <strong>C++ 应用中调用 Python 代码</strong>，比如：<br>
+- 利用 Python 生态做脚本/插件系统<br>
+- C++ 程序调用 Python 库（如 ML 模型）<br>
+- 测试框架中嵌入 Python 执行</p>
+<h3 id="32">3.2 嵌入步骤</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">cpp</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;Python.h&gt;</span>
+
+<span class="kt">int</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">Py_Initialize</span><span class="p">();</span><span class="w">                    </span><span class="c1">// 初始化 Python 解释器</span>
+
+<span class="w">    </span><span class="n">PyRun_SimpleString</span><span class="p">(</span><span class="s">&quot;print(&#39;Hello from embedded Python!&#39;)&quot;</span><span class="p">);</span>
+
+<span class="w">    </span><span class="c1">// 调用 Python 函数</span>
+<span class="w">    </span><span class="n">PyObject</span><span class="w"> </span><span class="o">*</span><span class="k">module</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PyImport_ImportModule</span><span class="p">(</span><span class="s">&quot;math&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">PyObject</span><span class="w"> </span><span class="o">*</span><span class="n">func</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PyObject_GetAttrString</span><span class="p">(</span><span class="k">module</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;sqrt&quot;</span><span class="p">);</span>
+<span class="w">    </span><span class="n">PyObject</span><span class="w"> </span><span class="o">*</span><span class="n">args</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Py_BuildValue</span><span class="p">(</span><span class="s">&quot;(d)&quot;</span><span class="p">,</span><span class="w"> </span><span class="mf">64.0</span><span class="p">);</span>
+<span class="w">    </span><span class="n">PyObject</span><span class="w"> </span><span class="o">*</span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PyObject_CallObject</span><span class="p">(</span><span class="n">func</span><span class="p">,</span><span class="w"> </span><span class="n">args</span><span class="p">);</span>
+
+<span class="w">    </span><span class="kt">double</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">PyFloat_AsDouble</span><span class="p">(</span><span class="n">result</span><span class="p">);</span>
+<span class="w">    </span><span class="n">printf</span><span class="p">(</span><span class="s">&quot;sqrt(64) = %f</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">value</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">Py_DECREF</span><span class="p">(</span><span class="n">result</span><span class="p">);</span>
+<span class="w">    </span><span class="n">Py_DECREF</span><span class="p">(</span><span class="n">args</span><span class="p">);</span>
+<span class="w">    </span><span class="n">Py_DECREF</span><span class="p">(</span><span class="n">func</span><span class="p">);</span>
+<span class="w">    </span><span class="n">Py_DECREF</span><span class="p">(</span><span class="k">module</span><span class="p">);</span>
+
+<span class="w">    </span><span class="n">Py_Finalize</span><span class="p">();</span><span class="w">                     </span><span class="c1">// 关闭 Python 解释器</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="33">3.3 关键注意事项</h3>
+<ul>
+<li><strong>GIL 管理</strong>：嵌入时需手动获取/释放 GIL</li>
+<li><strong>引用计数</strong>：所有 PyObject* 都需要手动管理</li>
+<li><strong>Python 版本匹配</strong>：编译和运行时的 Python 版本必须一致</li>
+<li><strong>错误处理</strong>：检查 Python 调用返回值是否为 NULL</li>
+</ul>
+<hr>
+<h2 id="python-c_1">四、Python + C++ 混合编程实战</h2>
+<h3 id="41">4.1 项目结构</h3>
+<pre class="plain"><code>hybrid_project/
+├── CMakeLists.txt          # 构建配置
+├── src/
+│   ├── core.cpp            # C++ 核心计算
+│   └── bindings.cpp        # pybind11 绑定
+├── python/
+│   ├── __init__.py
+│   └── wrapper.py          # Python 包装层
+└── tests/
+    └── test_core.py        # 测试
+</code></pre>
+<h3 id="42-cmakeliststxt">4.2 CMakeLists.txt</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">cmake</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cmake_minimum_required</span><span class="p">(</span><span class="s">VERSION</span><span class="w"> </span><span class="s">3.15</span><span class="p">)</span>
+<span class="nb">project</span><span class="p">(</span><span class="s">hybrid_project</span><span class="p">)</span>
+
+<span class="nb">find_package</span><span class="p">(</span><span class="s">pybind11</span><span class="w"> </span><span class="s">REQUIRED</span><span class="p">)</span>
+
+<span class="nb">pybind11_add_module</span><span class="p">(</span><span class="s">core</span><span class="w"> </span><span class="s">src/core.cpp</span><span class="w"> </span><span class="s">src/bindings.cpp</span><span class="p">)</span>
+<span class="nb">target_compile_options</span><span class="p">(</span><span class="s">core</span><span class="w"> </span><span class="s">PRIVATE</span><span class="w"> </span><span class="s">-O3</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="43">4.3 构建与使用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>pybind11<span class="w"> </span>cmake
+mkdir<span class="w"> </span>build<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>build
+cmake<span class="w"> </span>..<span class="w"> </span>-DPYTHON_EXECUTABLE<span class="o">=</span><span class="k">$(</span>which<span class="w"> </span>python3<span class="k">)</span>
+make<span class="w"> </span>-j<span class="k">$(</span>nproc<span class="k">)</span>
+<span class="nb">cd</span><span class="w"> </span>..<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import core; print(core.fast_compute(1000000))&quot;</span>
+</code></pre></div>
+<hr>
+<h2 id="_2">五、三种方式对比</h2>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>Cython</th>
+<th>Pybind11</th>
+<th>嵌入 Python</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>输入语言</td>
+<td>Python + 类型注解</td>
+<td>C++</td>
+<td>C++</td>
+</tr>
+<tr>
+<td>学习曲线</td>
+<td>低</td>
+<td>中</td>
+<td>高</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>Python 加速</td>
+<td>C++ 库封装</td>
+<td>C++ 主程序调用 Python</td>
+</tr>
+<tr>
+<td>类型安全</td>
+<td>编译时检查</td>
+<td>编译时检查</td>
+<td>运行时检查</td>
+</tr>
+<tr>
+<td>性能</td>
+<td>高</td>
+<td>极高</td>
+<td>取决于调用方式</td>
+</tr>
+<tr>
+<td>GIL 管理</td>
+<td>自动</td>
+<td>自动</td>
+<td>手动</td>
+</tr>
+<tr>
+<td>调试难度</td>
+<td>低</td>
+<td>中</td>
+<td>高</td>
+</tr>
+<tr>
+<td>部署复杂度</td>
+<td>低</td>
+<td>中</td>
+<td>高</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">六、最佳实践与避坑</h2>
+<ol>
+<li><strong>先 profile 再优化</strong>：不要盲目用 C++ 重写，先用 <code>cProfile</code> 找到瓶颈</li>
+<li><strong>粒度控制</strong>：只把计算密集的部分用 C++ 写，逻辑留在 Python</li>
+<li><strong>错误传播</strong>：C++ 异常要正确转换为 Python 异常</li>
+<li><strong>内存安全</strong>：C++ 分配的内存要确保有释放路径</li>
+<li><strong>版本兼容</strong>：发布时提供多版本 wheel（pybind11 支持）</li>
+</ol>
+<hr>
+<h2 id="_4">🤔 思考题</h2>
+<ol>
+<li>Cython 中 <code>cdef</code>、<code>def</code>、<code>cpdef</code> 三者的区别是什么？什么时候该用哪个？</li>
+<li>Pybind11 如何处理 C++ 的 RAII 和智能指针？这与 Python 的 GC 有何关系？</li>
+<li>嵌入 Python 到 C++ 时，如何正确管理 GIL？如果不管理会怎样？</li>
+<li>在什么场景下你会选择 Cython 而不是 Pybind11？反过来呢？</li>
+<li>如果你的 C++ 库使用了多线程，在暴露给 Python 时需要注意什么？</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-098/index.html">← Day 98 Python 内部机制</a><a class="nav-next" href="../day-100/index.html">Day 100 阶段里程碑：知识体系梳理 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

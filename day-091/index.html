@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 91 — 性能剖析</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 91 — 性能剖析</h1>
+  <div class="lmeta">
+    <span class="badge">进阶与性能优化</span>
+    <span class="badge">406 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-091-性能剖析" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📚 学习目标</a>
+<a class="toc-l2" href="#_2">一、为什么需要性能剖析？</a>
+<a class="toc-l3" href="#11">1.1 性能优化的误区</a>
+<a class="toc-l3" href="#12">1.2 性能剖析的核心价值</a>
+<a class="toc-l2" href="#cprofile">二、cProfile — 函数级性能剖析</a>
+<a class="toc-l3" href="#21">2.1 基本使用</a>
+<a class="toc-l3" href="#22">2.2 输出解读</a>
+<a class="toc-l3" href="#23">2.3 常用参数</a>
+<a class="toc-l2" href="#line_profiler">三、line_profiler — 行级性能剖析</a>
+<a class="toc-l3" href="#31">3.1 安装与基本使用</a>
+<a class="toc-l3" href="#32">3.2 输出解读</a>
+<a class="toc-l3" href="#33">3.3 在代码中动态使用</a>
+<a class="toc-l2" href="#memory_profiler">四、memory_profiler — 内存剖析</a>
+<a class="toc-l3" href="#41">4.1 安装与使用</a>
+<a class="toc-l3" href="#42">4.2 输出解读</a>
+<a class="toc-l3" href="#43">4.3 内存泄漏检测</a>
+<a class="toc-l2" href="#_3">五、时间测量工具</a>
+<a class="toc-l3" href="#51-timeit">5.1 timeit — 精确计时</a>
+<a class="toc-l3" href="#52">5.2 上下文管理器计时</a>
+<a class="toc-l2" href="#_4">六、性能剖析最佳实践</a>
+<a class="toc-l3" href="#61">6.1 剖析流程</a>
+<a class="toc-l3" href="#62">6.2 常见性能陷阱</a>
+<a class="toc-l3" href="#63">6.3 性能对比模板</a>
+<a class="toc-l2" href="#_5">七、实战：性能剖析完整示例</a>
+<a class="toc-l3" href="#71">7.1 剖析一个实际函数</a>
+<a class="toc-l2" href="#_6">八、思考题</a>
+<a class="toc-l2" href="#_7">📖 延伸阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-091">Day 091 — 性能剖析</h1>
+<blockquote>
+<p>📊 Phase 7 进阶与性能优化 | 性能剖析第一天</p>
+</blockquote>
+<h2 id="_1">📚 学习目标</h2>
+<p>今天我们将掌握 Python 代码性能剖析的核心工具和方法，学会定位性能瓶颈，为后续的优化工作打下基础。</p>
+<hr>
+<h2 id="_2">一、为什么需要性能剖析？</h2>
+<h3 id="11">1.1 性能优化的误区</h3>
+<pre class="plain"><code>❌ 常见错误: 凭直觉优化
+  → &quot;我觉得这个循环很慢&quot; → 优化了错误的地方
+
+✅ 正确做法: 先测量，再优化
+  → 用工具找到真正的瓶颈 → 精准优化
+</code></pre>
+<h3 id="12">1.2 性能剖析的核心价值</h3>
+<ol>
+<li><strong>定位瓶颈</strong>：找到代码中真正耗时的部分</li>
+<li><strong>量化改进</strong>：用数据证明优化效果</li>
+<li><strong>避免过早优化</strong>：不浪费时间在不重要的地方</li>
+<li><strong>监控回归</strong>：确保优化没有引入新问题</li>
+</ol>
+<hr>
+<h2 id="cprofile">二、cProfile — 函数级性能剖析</h2>
+<h3 id="21">2.1 基本使用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">cProfile</span>
+
+<span class="k">def</span> <span class="nf">my_function</span><span class="p">():</span>
+    <span class="c1"># 你的代码</span>
+    <span class="k">pass</span>
+
+<span class="c1"># 方法1: 直接运行剖析</span>
+<span class="n">cProfile</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;my_function()&#39;</span><span class="p">)</span>
+
+<span class="c1"># 方法2: 按函数统计</span>
+<span class="n">profiler</span> <span class="o">=</span> <span class="n">cProfile</span><span class="o">.</span><span class="n">Profile</span><span class="p">()</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">enable</span><span class="p">()</span>
+<span class="n">my_function</span><span class="p">()</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">disable</span><span class="p">()</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">print_stats</span><span class="p">(</span><span class="n">sort</span><span class="o">=</span><span class="s1">&#39;cumtime&#39;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="22">2.2 输出解读</h3>
+<pre class="plain"><code>         4 function calls in 0.002 seconds
+
+   Ordered by: standard name
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.001    0.001    0.002    0.002 main.py:5(my_function)
+        2    0.001    0.001    0.001    0.001 main.py:10(helper)
+        1    0.000    0.000    0.000    0.000 {method &#x27;append&#x27; of &#x27;list&#x27; objects}
+</code></pre>
+<p><strong>关键列说明：</strong><br>
+- <code>ncalls</code>：调用次数<br>
+- <code>tottime</code>：函数自身耗时（不含子函数）<br>
+- <code>cumtime</code>：累计耗时（含子函数）<br>
+- <code>percall</code>：每次调用平均耗时</p>
+<h3 id="23">2.3 常用参数</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 按累计时间排序</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">print_stats</span><span class="p">(</span><span class="n">sort</span><span class="o">=</span><span class="s1">&#39;cumtime&#39;</span><span class="p">)</span>
+
+<span class="c1"># 按调用次数排序</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">print_stats</span><span class="p">(</span><span class="n">sort</span><span class="o">=</span><span class="s1">&#39;ncalls&#39;</span><span class="p">)</span>
+
+<span class="c1"># 按自身时间排序</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">print_stats</span><span class="p">(</span><span class="n">sort</span><span class="o">=</span><span class="s1">&#39;tottime&#39;</span><span class="p">)</span>
+
+<span class="c1"># 限制输出行数</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">print_stats</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span>  <span class="c1"># 只显示前20行</span>
+</code></pre></div>
+<hr>
+<h2 id="line_profiler">三、line_profiler — 行级性能剖析</h2>
+<h3 id="31">3.1 安装与基本使用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>line_profiler
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 使用装饰器</span>
+<span class="nd">@profile</span>  <span class="c1"># 注意: 这个装饰器由 line_profiler 提供</span>
+<span class="k">def</span> <span class="nf">my_function</span><span class="p">():</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="o">*</span> <span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">a</span><span class="p">]</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+
+<span class="c1"># 运行: kernprof -l -v my_script.py</span>
+</code></pre></div>
+<h3 id="32">3.2 输出解读</h3>
+<pre class="plain"><code>Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+     3                                           def my_function():
+     4         1          0.1      0.1      1.2      a = [1, 2, 3]
+     5         1        200.3    200.3     78.5      b = [x * 2 for x in a]
+     6         1         55.0     55.0     21.5      return sum(b)
+</code></pre>
+<p><strong>关键列说明：</strong><br>
+- <code>Hits</code>：该行执行次数<br>
+- <code>Time</code>：该行总耗时（微秒）<br>
+- <code>Per Hit</code>：每次执行平均耗时<br>
+- <code>% Time</code>：占总时间百分比</p>
+<h3 id="33">3.3 在代码中动态使用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">line_profiler</span> <span class="kn">import</span> <span class="n">LineProfiler</span>
+
+<span class="k">def</span> <span class="nf">my_function</span><span class="p">():</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="o">*</span> <span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">a</span><span class="p">]</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+
+<span class="n">lp</span> <span class="o">=</span> <span class="n">LineProfiler</span><span class="p">()</span>
+<span class="n">lp</span><span class="o">.</span><span class="n">add_function</span><span class="p">(</span><span class="n">my_function</span><span class="p">)</span>
+<span class="n">lp_wrapper</span> <span class="o">=</span> <span class="n">lp</span><span class="p">(</span><span class="n">my_function</span><span class="p">)</span>
+<span class="n">lp_wrapper</span><span class="p">()</span>
+<span class="n">lp</span><span class="o">.</span><span class="n">print_stats</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="memory_profiler">四、memory_profiler — 内存剖析</h2>
+<h3 id="41">4.1 安装与使用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>memory_profiler
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">memory_profiler</span> <span class="kn">import</span> <span class="n">profile</span>
+
+<span class="nd">@profile</span>
+<span class="k">def</span> <span class="nf">my_function</span><span class="p">():</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">)]</span>  <span class="c1"># ~400KB</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="p">[</span><span class="n">i</span> <span class="o">**</span> <span class="mi">2</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">)]</span>  <span class="c1"># ~400KB</span>
+    <span class="k">return</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span>
+</code></pre></div>
+<h3 id="42">4.2 输出解读</h3>
+<pre class="plain"><code>Line #    Mem usage    Increment   Line Contents
+================================================
+     3     38.5 MiB     38.5 MiB   @profile
+     4                             def my_function():
+     5     38.5 MiB      0.0 MiB       a = [i for i in range(10000)]
+     6     38.5 MiB      0.0 MiB       b = [i ** 2 for i in range(10000)]
+     7     38.5 MiB      0.0 MiB       return a, b
+</code></pre>
+<h3 id="43">4.3 内存泄漏检测</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">memory_profiler</span> <span class="kn">import</span> <span class="n">profile</span>
+
+<span class="nd">@profile</span>
+<span class="k">def</span> <span class="nf">leaky_function</span><span class="p">():</span>
+    <span class="c1"># 每次调用都会泄漏内存</span>
+    <span class="k">global</span> <span class="n">my_list</span>
+    <span class="n">my_list</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">my_list</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">))</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">my_list</span><span class="p">)</span>
+
+<span class="c1"># 多次调用观察内存增长</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="n">leaky_function</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">五、时间测量工具</h2>
+<h3 id="51-timeit">5.1 timeit — 精确计时</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">timeit</span>
+
+<span class="c1"># 基本用法</span>
+<span class="n">time</span> <span class="o">=</span> <span class="n">timeit</span><span class="o">.</span><span class="n">timeit</span><span class="p">(</span><span class="s1">&#39;sum(range(1000))&#39;</span><span class="p">,</span> <span class="n">number</span><span class="o">=</span><span class="mi">10000</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;耗时: </span><span class="si">{</span><span class="n">time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">秒&quot;</span><span class="p">)</span>
+
+<span class="c1"># 测量函数</span>
+<span class="k">def</span> <span class="nf">my_func</span><span class="p">():</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">))</span>
+
+<span class="n">time</span> <span class="o">=</span> <span class="n">timeit</span><span class="o">.</span><span class="n">timeit</span><span class="p">(</span><span class="n">my_func</span><span class="p">,</span> <span class="n">number</span><span class="o">=</span><span class="mi">10000</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;耗时: </span><span class="si">{</span><span class="n">time</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">秒&quot;</span><span class="p">)</span>
+
+<span class="c1"># 对比两种方法</span>
+<span class="n">time1</span> <span class="o">=</span> <span class="n">timeit</span><span class="o">.</span><span class="n">timeit</span><span class="p">(</span><span class="s1">&#39;[x**2 for x in range(1000)]&#39;</span><span class="p">,</span> <span class="n">number</span><span class="o">=</span><span class="mi">10000</span><span class="p">)</span>
+<span class="n">time2</span> <span class="o">=</span> <span class="n">timeit</span><span class="o">.</span><span class="n">timeit</span><span class="p">(</span><span class="s1">&#39;list(map(lambda x: x**2, range(1000)))&#39;</span><span class="p">,</span> <span class="n">number</span><span class="o">=</span><span class="mi">10000</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;列表推导: </span><span class="si">{</span><span class="n">time1</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">秒&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;map函数: </span><span class="si">{</span><span class="n">time2</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">秒&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="52">5.2 上下文管理器计时</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">contextmanager</span>
+
+<span class="nd">@contextmanager</span>
+<span class="k">def</span> <span class="nf">timer</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;操作&quot;</span><span class="p">):</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="k">yield</span>
+    <span class="n">end</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;⏱️ </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">end</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">秒&quot;</span><span class="p">)</span>
+
+<span class="c1"># 使用</span>
+<span class="k">with</span> <span class="n">timer</span><span class="p">(</span><span class="s2">&quot;排序&quot;</span><span class="p">):</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">100000</span><span class="p">),</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">timer</span><span class="p">(</span><span class="s2">&quot;列表推导&quot;</span><span class="p">):</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="o">**</span> <span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">)]</span>
+</code></pre></div>
+<hr>
+<h2 id="_4">六、性能剖析最佳实践</h2>
+<h3 id="61">6.1 剖析流程</h3>
+<pre class="plain"><code>┌─────────────────────────────────────┐
+│         性能剖析流程                 │
+├─────────────────────────────────────┤
+│                                     │
+│  1. 确定目标                        │
+│     └→ 优化什么？为什么？           │
+│                                     │
+│  2. 基准测试                        │
+│     └→ 当前性能如何？               │
+│                                     │
+│  3. 剖析代码                        │
+│     └→ cProfile → 找到热点函数     │
+│     └→ line_profiler → 找到热点行  │
+│                                     │
+│  4. 分析结果                        │
+│     └→ 哪些函数/行耗时最多？       │
+│     └→ 为什么慢？                   │
+│                                     │
+│  5. 制定优化方案                    │
+│     └→ 算法优化？数据结构？缓存？  │
+│                                     │
+│  6. 实施优化                        │
+│     └→ 一次只改一个地方            │
+│                                     │
+│  7. 验证效果                        │
+│     └→ 对比优化前后性能            │
+│                                     │
+└─────────────────────────────────────┘
+</code></pre>
+<h3 id="62">6.2 常见性能陷阱</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 陷阱1: 在循环中重复创建对象</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">):</span>
+    <span class="n">regex</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\d+&#39;</span><span class="p">)</span>  <span class="c1"># 每次都编译!</span>
+    <span class="n">regex</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+
+<span class="c1"># ✅ 正确: 预编译正则</span>
+<span class="n">regex</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\d+&#39;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">):</span>
+    <span class="n">regex</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+
+
+<span class="c1"># ❌ 陷阱2: 字符串拼接</span>
+<span class="n">result</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">):</span>
+    <span class="n">result</span> <span class="o">+=</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>  <span class="c1"># 每次都创建新字符串!</span>
+
+<span class="c1"># ✅ 正确: 使用 join</span>
+<span class="n">parts</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">)]</span>
+<span class="n">result</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">)</span>
+
+
+<span class="c1"># ❌ 陷阱3: 在循环中查找</span>
+<span class="n">my_list</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="mi">10000</span><span class="p">]</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">my_list</span><span class="p">:</span>  <span class="c1"># O(n) 查找!</span>
+        <span class="k">pass</span>
+
+<span class="c1"># ✅ 正确: 使用集合</span>
+<span class="n">my_set</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">my_list</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">my_set</span><span class="p">:</span>  <span class="c1"># O(1) 查找!</span>
+        <span class="k">pass</span>
+</code></pre></div>
+<h3 id="63">6.3 性能对比模板</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">timeit</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">wraps</span>
+
+<span class="k">def</span> <span class="nf">benchmark</span><span class="p">(</span><span class="n">func</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;性能测试装饰器&quot;&quot;&quot;</span>
+    <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">wrapper</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="n">times</span> <span class="o">=</span> <span class="n">timeit</span><span class="o">.</span><span class="n">repeat</span><span class="p">(</span>
+            <span class="k">lambda</span><span class="p">:</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">),</span>
+            <span class="n">repeat</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+            <span class="n">number</span><span class="o">=</span><span class="mi">1000</span>
+        <span class="p">)</span>
+        <span class="n">avg_time</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">times</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">times</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📊 </span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">avg_time</span><span class="o">*</span><span class="mi">1000</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">ms (平均)&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">wrapper</span>
+
+<span class="nd">@benchmark</span>
+<span class="k">def</span> <span class="nf">slow_function</span><span class="p">():</span>
+    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">10000</span><span class="p">),</span> <span class="n">reverse</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="nd">@benchmark</span>
+<span class="k">def</span> <span class="nf">fast_function</span><span class="p">():</span>
+    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">9999</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">))</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">七、实战：性能剖析完整示例</h2>
+<h3 id="71">7.1 剖析一个实际函数</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">cProfile</span>
+<span class="kn">import</span> <span class="nn">pstats</span>
+<span class="kn">from</span> <span class="nn">io</span> <span class="kn">import</span> <span class="n">StringIO</span>
+
+<span class="k">def</span> <span class="nf">process_data</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;需要优化的函数&quot;&quot;&quot;</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+        <span class="c1"># 过滤</span>
+        <span class="k">if</span> <span class="n">item</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c1"># 转换</span>
+            <span class="n">transformed</span> <span class="o">=</span> <span class="n">item</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">+</span> <span class="n">item</span> <span class="o">*</span> <span class="mi">3</span>
+            <span class="c1"># 验证</span>
+            <span class="k">if</span> <span class="n">transformed</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">:</span>
+                <span class="n">result</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">transformed</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+<span class="c1"># 生成测试数据</span>
+<span class="n">test_data</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">100000</span><span class="p">))</span>
+
+<span class="c1"># 剖析</span>
+<span class="n">profiler</span> <span class="o">=</span> <span class="n">cProfile</span><span class="o">.</span><span class="n">Profile</span><span class="p">()</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">enable</span><span class="p">()</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">process_data</span><span class="p">(</span><span class="n">test_data</span><span class="p">)</span>
+<span class="n">profiler</span><span class="o">.</span><span class="n">disable</span><span class="p">()</span>
+
+<span class="c1"># 分析结果</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">StringIO</span><span class="p">()</span>
+<span class="n">ps</span> <span class="o">=</span> <span class="n">pstats</span><span class="o">.</span><span class="n">Stats</span><span class="p">(</span><span class="n">profiler</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="n">s</span><span class="p">)</span>
+<span class="n">ps</span><span class="o">.</span><span class="n">sort_stats</span><span class="p">(</span><span class="s1">&#39;cumulative&#39;</span><span class="p">)</span>
+<span class="n">ps</span><span class="o">.</span><span class="n">print_stats</span><span class="p">(</span><span class="mi">20</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">getvalue</span><span class="p">())</span>
+</code></pre></div>
+<hr>
+<h2 id="_6">八、思考题</h2>
+<ol>
+<li>
+<p><strong>cProfile vs line_profiler</strong>：什么时候用 cProfile，什么时候用 line_profiler？</p>
+</li>
+<li>
+<p><strong>性能测试的陷阱</strong>：为什么 <code>timeit</code> 要默认执行多次？只执行一次有什么问题？</p>
+</li>
+<li>
+<p><strong>内存 vs 时间</strong>：有时候优化内存使用会增加时间开销，反之亦然。如何权衡？</p>
+</li>
+<li>
+<p><strong>基准测试</strong>：为什么基准测试要在"安静"的环境下进行？其他程序会影响结果吗？</p>
+</li>
+<li>
+<p><strong>性能回归</strong>：如何在项目中建立性能监控，防止新代码导致性能下降？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_7">📖 延伸阅读</h2>
+<ul>
+<li><a href="https://docs.python.org/3/library/profile.html">Python 官方文档 - cProfile</a></li>
+<li><a href="https://github.com/pyutils/line_profiler">line_profiler GitHub</a></li>
+<li><a href="https://pythonhosted.org/MemoryProfiler/">memory_profiler GitHub</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-090/index.html">← Day 90 碰撞检测与动画</a><a class="nav-next" href="../day-092/index.html">Day 92 代码优化技巧 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

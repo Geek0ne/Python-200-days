@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 147 — 密码学基础：哈希、加盐与 HMAC</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 147 — 密码学基础：哈希、加盐与 HMAC</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">299 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-147-crypto-basics" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-hash-digest">1.1 什么是哈希（Hash / 摘要 / Digest）</a>
+<a class="toc-l3" href="#12">1.2 为什么&quot;裸哈希存密码&quot;是灾难</a>
+<a class="toc-l3" href="#13-salt">1.3 加盐哈希（Salt）</a>
+<a class="toc-l3" href="#14-hmac">1.4 HMAC（基于哈希的消息认证码）</a>
+<a class="toc-l3" href="#15">1.5 密码哈希的正确姿势：慢哈希</a>
+<a class="toc-l2" href="#_2">二、原理深入</a>
+<a class="toc-l3" href="#21-merkledamgard-md5sha-1sha-2">2.1 Merkle–Damgård 结构（MD5/SHA-1/SHA-2 的共同骨架）</a>
+<a class="toc-l3" href="#22-hmac">2.2 HMAC 内部结构</a>
+<a class="toc-l3" href="#23-pbkdf2">2.3 为什么 PBKDF2 &quot;慢得恰到好处&quot;</a>
+<a class="toc-l3" href="#24">2.4 大文件哈希：流式处理</a>
+<a class="toc-l2" href="#api">三、API 速查</a>
+<a class="toc-l3" href="#hashlib">hashlib</a>
+<a class="toc-l3" href="#hmac">hmac</a>
+<a class="toc-l3" href="#secrets">secrets（顺带记住）</a>
+<a class="toc-l2" href="#_3">四、图解</a>
+<a class="toc-l3" href="#_4">文件完整性校验全流程</a>
+<a class="toc-l3" href="#_5">加盐哈希存储结构（数据库一行）</a>
+<a class="toc-l2" href="#_6">五、实战代码案例</a>
+<a class="toc-l2" href="#_7">六、思考题</a>
+<a class="toc-l2" href="#_8">参考</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-147-hmac">Day 147 — 密码学基础：哈希、加盐与 HMAC</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化 · 主题：实战密码学基础</p>
+<p>前置知识：Day 146（HTTPS/TLS 分析）中你已经见过"摘要算法"在数字签名/证书里的角色。今天我们系统地学习 Python 标准库 <code>hashlib</code> 与 <code>hmac</code>，并把它们用到文件完整性校验这个真实场景中。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-hash-digest">1.1 什么是哈希（Hash / 摘要 / Digest）</h3>
+<p>哈希函数是把<strong>任意长度</strong>的输入映射为<strong>固定长度</strong>输出的单向函数：</p>
+<ul>
+<li><strong>确定性</strong>：同样的输入永远得到同样的输出。</li>
+<li><strong>单向性（不可逆）</strong>：从摘要几乎不可能反推出原文。</li>
+<li><strong>抗碰撞性</strong>：很难找到两个不同的输入拥有相同摘要。</li>
+<li><strong>雪崩效应</strong>：输入改 1 个比特，输出约一半比特发生变化。</li>
+</ul>
+<p>常见算法对比（Python <code>hashlib</code> 全部内置）：</p>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th>摘要长度</th>
+<th>安全性</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MD5</td>
+<td>128 bit (16 字节)</td>
+<td>❌ 已被碰撞攻击攻破</td>
+<td>仅用于非安全校验（如缓存 key）</td>
+</tr>
+<tr>
+<td>SHA-1</td>
+<td>160 bit</td>
+<td>❌ 2017 年被实际碰撞</td>
+<td>遗留系统</td>
+</tr>
+<tr>
+<td>SHA-256</td>
+<td>256 bit</td>
+<td>✅ 安全</td>
+<td>通用场景默认选择</td>
+</tr>
+<tr>
+<td>SHA-512</td>
+<td>512 bit</td>
+<td>✅ 安全</td>
+<td>64 位平台大文件</td>
+</tr>
+<tr>
+<td>SHA-3</td>
+<td>可变</td>
+<td>✅ 安全</td>
+<td>抗未来攻击的新标准</td>
+</tr>
+<tr>
+<td>BLAKE2 / BLAKE2b</td>
+<td>可变</td>
+<td>✅ 安全且更快</td>
+<td>高性能场景</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>为什么 MD5 还到处都是？</strong> 历史惯性。但绝不能用于密码存储或安全校验——攻击者可以构造两个不同文件具有相同 MD5（碰撞攻击），从而"偷梁换柱"。</p>
+</blockquote>
+<h3 id="12">1.2 为什么"裸哈希存密码"是灾难</h3>
+<p>很多人第一次写登录系统时这样存密码：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">password</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>  <span class="c1"># ❌ 错误做法</span>
+</code></pre></div>
+<p>问题有三层：</p>
+<ol>
+<li><strong>彩虹表攻击</strong>：攻击者提前把常见密码的 SHA-256 全部算好存表，拖库后直接反查。<code>123456</code> 的 SHA-256 在任何机器上都是一样的。</li>
+<li><strong>字典/暴力破解极快</strong>：SHA-256 设计目标是"快"，现代 GPU 每秒可算数十亿次。攻击者拿到数据库后可以离线高速爆破。</li>
+<li><strong>相同密码摘要相同</strong>：一眼能看出哪些用户用了同一个密码。</li>
+</ol>
+<p>正确做法：<strong>加盐 + 慢哈希</strong>（见 1.3 与 1.5）。</p>
+<h3 id="13-salt">1.3 加盐哈希（Salt）</h3>
+<p><strong>盐（salt）</strong> 是一段随机数据，与密码拼接后再哈希：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">salt</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">urandom</span><span class="p">(</span><span class="mi">16</span><span class="p">)</span>                    <span class="c1"># 每个用户独立的随机盐</span>
+<span class="n">digest</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">pbkdf2_hmac</span><span class="p">(</span><span class="s1">&#39;sha256&#39;</span><span class="p">,</span> <span class="n">password</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span> <span class="n">salt</span><span class="p">,</span> <span class="mi">100_000</span><span class="p">)</span>
+</code></pre></div>
+<p>为什么加盐能救命：</p>
+<ul>
+<li>相同密码 + 不同盐 ⇒ 不同摘要 ⇒ 彩虹表全部失效（表必须为每个盐重新生成，代价爆炸）。</li>
+<li>盐不需要保密，可以明文存进数据库（通常 <code>salt$digest</code> 拼一起）。</li>
+<li><strong>每次设置密码都要生成新盐</strong>，绝不能复用全局固定盐。</li>
+</ul>
+<h3 id="14-hmac">1.4 HMAC（基于哈希的消息认证码）</h3>
+<p>哈希只能保证"内容没被意外篡改"（完整性），<strong>不能证明来源可信</strong>：攻击者可以连同哈希一起篡改。</p>
+<p>HMAC = Hash + <strong>密钥</strong>，公式：</p>
+<pre class="plain"><code>HMAC(K, m) = H((K&#x27; ^ opad) || H((K&#x27; ^ ipad) || m))
+</code></pre>
+<ul>
+<li>只有持有同一个密钥 <code>K</code> 的人才能算出/验证该摘要 → <strong>完整性 + 认证</strong>。</li>
+<li>内外两层哈希结构是精心设计的，能抵御长度扩展攻击（length extension attack）——这正是"直接 <code>sha256(key + msg)</code>"不安全的原因。</li>
+<li>典型用途：API 签名（微信/支付宝支付回调）、WebSocket JWT 签名、TLS 记录层 MAC。</li>
+</ul>
+<h3 id="15">1.5 密码哈希的正确姿势：慢哈希</h3>
+<p>安全存密码的关键不是"更复杂的算法"，而是"<strong>故意慢</strong>"：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>特点</th>
+<th>Python 位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PBKDF2</td>
+<td>标准库内置，迭代次数可调</td>
+<td><code>hashlib.pbkdf2_hmac()</code></td>
+</tr>
+<tr>
+<td>bcrypt</td>
+<td>自带盐、费用因子</td>
+<td>第三方 <code>bcrypt</code> 库</td>
+</tr>
+<tr>
+<td>scrypt / argon2</td>
+<td>内存困难型，抗 GPU</td>
+<td>第三方库</td>
+</tr>
+</tbody>
+</table>
+<p><code>hashlib.pbkdf2_hmac('sha256', pwd, salt, 600_000)</code>：OWASP 2023 建议 PBKDF2-HMAC-SHA256 至少 60 万次迭代——每次校验约几百毫秒，用户无感，爆破者绝望。</p>
+<hr>
+<h2 id="_2">二、原理深入</h2>
+<h3 id="21-merkledamgard-md5sha-1sha-2">2.1 Merkle–Damgård 结构（MD5/SHA-1/SHA-2 的共同骨架）</h3>
+<pre class="plain"><code>消息 M (任意长度)
+   │
+   ▼
+┌──────────────┐  填充 padding：先补 1 位 &#x27;1&#x27;，
+│ 分块处理      │  再补 0 直到长度 ≡ 56 (mod 64)，
+│ 512 bit/块   │  最后 8 字节存原始长度（长度填充）
+└──────┬───────┘
+       ▼
+  IV(初始向量) ──►┌────────┐   ┌────────┐   ┌────────┐
+                 │ 压缩函数 │──►│ 压缩函数 │──►│ 压缩函数 │──► 摘要
+        块1 ────►│  f()   │   │  f()   │   │  f()   │
+                 └────────┘   └────────┘   └────────┘
+                    块1          块2          块N
+</code></pre>
+<p>要点：</p>
+<ul>
+<li><strong>为什么补长度</strong>：防止"不同长度的消息通过填充后变成同一块序列"造成碰撞。</li>
+<li><strong>长度扩展攻击</strong>：由于 <code>摘要 = 压缩(IV, M)</code> 的链式结构，知道 <code>H(M)</code> 的输出就等于知道中间状态，攻击者无需知道 M 就能算 <code>H(M || padding || extra)</code>。HMAC 的内外双 hash 结构正好切断这条路。</li>
+</ul>
+<h3 id="22-hmac">2.2 HMAC 内部结构</h3>
+<pre class="plain"><code>                 message m
+                     │
+        key K ──► K&#x27; = H(K) 若 K 超过块长则先哈希，不足补零到块长
+                     │
+          ┌──────────┴──────────┐
+          ▼                     ▼
+   K&#x27; ^ ipad (0x36…)     K&#x27; ^ opad (0x5c…)
+          │                     │
+          ▼                     ▼
+   ┌─────────────┐       ┌─────────────┐
+   │ 内层 SHA256 │◄──────│ 外层 SHA256 │──► HMAC 输出
+   └─────────────┘  digest└─────────────┘
+        ▲
+        └── (K&#x27; ^ ipad) || m 作为内层输入
+</code></pre>
+<ul>
+<li><strong>ipad/opad 是固定常数</strong>，任何实现都一致，保证跨语言互认。</li>
+<li>双层结构在证明上把 HMAC 的安全性归约到底层哈希函数的 PRF（伪随机函数）性质，即使底层哈希有轻微缺陷也稳。</li>
+</ul>
+<h3 id="23-pbkdf2">2.3 为什么 PBKDF2 "慢得恰到好处"</h3>
+<pre class="plain"><code>PBKDF2(pwd, salt, iter, n):
+    U1 = HMAC(pwd, salt || 0x00000001)
+    U2 = HMAC(pwd, U1)
+    ...
+    Uiter = HMAC(pwd, U_{iter-1})
+    return U2 ^ U3 ^ ... ^ Uiter 的前 n 字节   # 全部异或
+</code></pre>
+<ul>
+<li>每次迭代必须<strong>串行</strong>依赖上一次结果，无法并行加速单次登录校验。</li>
+<li>攻击者想爆破 1 亿个候选密码？每个候选都要跑 60 万轮 HMAC —— 硬件成本从"秒级"变成"千年级"。</li>
+<li>迭代次数是一个<strong>随硬件进化不断调大</strong>的参数，这也是它比"写死的复杂算法"长寿的原因。</li>
+</ul>
+<h3 id="24">2.4 大文件哈希：流式处理</h3>
+<p>一次性 <code>f.read()</code> 会把几 GB 文件全灌进内存。正确姿势是分块喂给哈希对象——<code>hashlib</code> 内部维护增量状态，内存占用恒定：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">h</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">()</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="nb">iter</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">),</span> <span class="sa">b</span><span class="s1">&#39;&#39;</span><span class="p">):</span>  <span class="c1"># 1 MiB 块</span>
+        <span class="n">h</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+</code></pre></div>
+<p><code>update()</code> 可以任意次调用，结果等价于一次性喂入全部字节——这正是 Merkle–Damgård 增量结构带来的天然能力。</p>
+<hr>
+<h2 id="api">三、API 速查</h2>
+<h3 id="hashlib">hashlib</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">hashlib</span><span class="o">,</span> <span class="nn">hmac</span><span class="o">,</span> <span class="nn">os</span><span class="o">,</span> <span class="nn">secrets</span>
+
+<span class="n">hashlib</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="s1">&#39;sha256&#39;</span><span class="p">)</span>            <span class="c1"># 按名字创建（兼容未知算法）</span>
+<span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;data&#39;</span><span class="p">)</span>          <span class="c1"># 常用算法直接是属性</span>
+<span class="n">h</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">();</span> <span class="n">h</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;a&#39;</span><span class="p">);</span> <span class="n">h</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;b&#39;</span><span class="p">)</span>
+<span class="n">h</span><span class="o">.</span><span class="n">digest</span><span class="p">()</span>                       <span class="c1"># → bytes（16/32/64 字节）</span>
+<span class="n">h</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>                    <span class="c1"># → &#39;a3f5...&#39;（小写十六进制）</span>
+<span class="n">h</span><span class="o">.</span><span class="n">name</span><span class="p">;</span> <span class="n">h</span><span class="o">.</span><span class="n">digest_size</span><span class="p">;</span> <span class="n">h</span><span class="o">.</span><span class="n">block_size</span>
+
+<span class="n">hashlib</span><span class="o">.</span><span class="n">pbkdf2_hmac</span><span class="p">(</span><span class="s1">&#39;sha256&#39;</span><span class="p">,</span> <span class="n">pwd</span><span class="p">,</span> <span class="n">salt</span><span class="p">,</span> <span class="mi">600_000</span><span class="p">,</span> <span class="n">dklen</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>
+<span class="n">hashlib</span><span class="o">.</span><span class="n">blake2b</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;data&#39;</span><span class="p">,</span> <span class="n">digest_size</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="sa">b</span><span class="s1">&#39;k&#39;</span><span class="p">)</span>  <span class="c1"># 原生带 key 的 BLAKE2</span>
+
+<span class="n">hashlib</span><span class="o">.</span><span class="n">file_digest</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s1">&#39;f&#39;</span><span class="p">,</span><span class="s1">&#39;rb&#39;</span><span class="p">),</span> <span class="s1">&#39;sha256&#39;</span><span class="p">)</span>        <span class="c1"># Python 3.11+ 高速文件哈希</span>
+<span class="n">hashlib</span><span class="o">.</span><span class="n">algorithms_available</span><span class="p">;</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">algorithms_guaranteed</span>
+</code></pre></div>
+<h3 id="hmac">hmac</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">hmac</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">msg</span><span class="p">,</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+<span class="n">hmac</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>   <span class="c1"># 恒定时间比较，防时序攻击（永远用它比较 MAC/口令）</span>
+<span class="n">hmac</span><span class="o">.</span><span class="n">digest</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">msg</span><span class="p">,</span> <span class="s1">&#39;sha256&#39;</span><span class="p">)</span>  <span class="c1"># 3.7+ 一步出结果，最快</span>
+</code></pre></div>
+<h3 id="secrets">secrets（顺带记住）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">secrets</span><span class="o">.</span><span class="n">token_bytes</span><span class="p">(</span><span class="mi">16</span><span class="p">);</span> <span class="n">secrets</span><span class="o">.</span><span class="n">token_hex</span><span class="p">(</span><span class="mi">16</span><span class="p">);</span> <span class="n">secrets</span><span class="o">.</span><span class="n">token_urlsafe</span><span class="p">(</span><span class="mi">16</span><span class="p">)</span>
+<span class="n">secrets</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>
+</code></pre></div>
+<blockquote>
+<p><strong>避坑</strong>：校验 MAC/口令时<strong>永远用 <code>hmac.compare_digest</code></strong>，不要用 <code>==</code>。<code>==</code> 在第一个不匹配字节处提前返回，攻击者可通过测量响应时间逐字节猜出正确值（时序攻击）。</p>
+</blockquote>
+<hr>
+<h2 id="_3">四、图解</h2>
+<h3 id="_4">文件完整性校验全流程</h3>
+<pre class="plain"><code> 发布方（软件作者）                        验证方（下载用户）
+ ─────────────────────                    ─────────────────────
+ app-v2.1.tar.gz                          1. 下载 app-v2.1.tar.gz
+      │                                   2. 下载 SHA256SUMS（含摘要+文件名）
+      │ sha256sum                         3. 本地重新计算摘要
+      ▼                                        │
+ SHA256SUMS 文件 ────（发布到官网/邮件列表）──►  ▼
+                                           4. compare_digest 比对
+                                                │
+                                     ┌──────────┴──────────┐
+                                     ▼                     ▼
+                                  相等 ✅ 放心安装      不等 ❌ 文件被篡改/损坏
+</code></pre>
+<h3 id="_5">加盐哈希存储结构（数据库一行）</h3>
+<pre class="plain"><code>┌────────────┬────────────────────────────────────────────────┐
+│ username   │ password_hash                                  │
+├────────────┼────────────────────────────────────────────────┤
+│ alice      │ pbkdf2$sha256$600000$&lt;salt_hex&gt;$&lt;digest_hex&gt;   │
+└────────────┴────────────────────────────────────────────────┘
+     ▲              ▲        ▲       ▲           ▲
+   明文用户名     算法标识  迭代次数   随机盐     慢哈希结果
+   （可公开）    （用于未来升级换算法，盐和迭代次数随行存储）
+</code></pre>
+<hr>
+<h2 id="_6">五、实战代码案例</h2>
+<p><strong>文件完整性校验工具</strong>（完整可运行版本见 <code>code/03-file-integrity.py</code>）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">hashlib</span><span class="o">,</span> <span class="nn">sys</span><span class="o">,</span> <span class="nn">hmac</span>
+
+<span class="k">def</span> <span class="nf">sha256_file</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">chunk</span><span class="o">=</span><span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">20</span><span class="p">):</span>
+    <span class="n">h</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">()</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">block</span> <span class="ow">in</span> <span class="nb">iter</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">chunk</span><span class="p">),</span> <span class="sa">b</span><span class="s1">&#39;&#39;</span><span class="p">):</span>
+            <span class="n">h</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">block</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">h</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+
+<span class="k">def</span> <span class="nf">verify</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">expected_hex</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">hmac</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">sha256_file</span><span class="p">(</span><span class="n">path</span><span class="p">),</span> <span class="n">expected_hex</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">verify</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">2</span><span class="p">]))</span>
+</code></pre></div>
+<p><strong>密码哈希存储器</strong>（见 <code>code/02-password-hashing.py</code>）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">hashlib</span><span class="o">,</span> <span class="nn">os</span><span class="o">,</span> <span class="nn">hmac</span>
+
+<span class="n">ITER</span> <span class="o">=</span> <span class="mi">600_000</span>
+
+<span class="k">def</span> <span class="nf">hash_password</span><span class="p">(</span><span class="n">password</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">salt</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">urandom</span><span class="p">(</span><span class="mi">16</span><span class="p">)</span>
+    <span class="n">digest</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">pbkdf2_hmac</span><span class="p">(</span><span class="s1">&#39;sha256&#39;</span><span class="p">,</span> <span class="n">password</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span> <span class="n">salt</span><span class="p">,</span> <span class="n">ITER</span><span class="p">)</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;pbkdf2$sha256$</span><span class="si">{</span><span class="n">ITER</span><span class="si">}</span><span class="s2">$</span><span class="si">{</span><span class="n">salt</span><span class="o">.</span><span class="n">hex</span><span class="p">()</span><span class="si">}</span><span class="s2">$</span><span class="si">{</span><span class="n">digest</span><span class="o">.</span><span class="n">hex</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
+
+<span class="k">def</span> <span class="nf">verify_password</span><span class="p">(</span><span class="n">password</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">stored</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">algo</span><span class="p">,</span> <span class="n">it</span><span class="p">,</span> <span class="n">salt_hex</span><span class="p">,</span> <span class="n">digest_hex</span> <span class="o">=</span> <span class="n">stored</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;$&#39;</span><span class="p">)</span>
+    <span class="n">calc</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">pbkdf2_hmac</span><span class="p">(</span><span class="n">algo</span><span class="p">,</span> <span class="n">password</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span> <span class="nb">bytes</span><span class="o">.</span><span class="n">fromhex</span><span class="p">(</span><span class="n">salt_hex</span><span class="p">),</span> <span class="nb">int</span><span class="p">(</span><span class="n">it</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">hmac</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">calc</span><span class="o">.</span><span class="n">hex</span><span class="p">(),</span> <span class="n">digest_hex</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_7">六、思考题</h2>
+<ol>
+<li>为什么"盐不需要保密，但必须唯一且随机"？如果全站共用一个固定盐，攻击者需要为每个盐重新生成彩虹表吗？</li>
+<li>既然 SHA-256 比 PBKDF2 快得多，为什么存密码反而要选"慢"的 PBKDF2？这两个场景对哈希函数的诉求差在哪？（提示：一个防篡改、一个防爆破）</li>
+<li><code>sha256(secret_key + message)</code> 看起来也有"密钥"，为什么它不等于 HMAC，会被什么攻击打穿？</li>
+<li>如果攻击者能测量你服务器的响应时间，用 <code>==</code> 比较密码摘要有什么风险？<code>hmac.compare_digest</code> 是如何消除这个风险的？</li>
+<li>你要给一个 10 GB 的镜像文件做校验：为什么必须用流式 <code>update()</code> 分块读取？如果中途网络断了重传，能否从断点继续计算哈希？（想一想 Merkle–Damgård 的链式结构意味着什么）</li>
+</ol>
+<hr>
+<h2 id="_8">参考</h2>
+<ul>
+<li><a href="https://docs.python.org/zh-cn/3/library/hashlib.html">hashlib 官方文档</a></li>
+<li><a href="https://docs.python.org/zh-cn/3/library/hmac.html">hmac 官方文档</a></li>
+<li>RFC 2104（HMAC）、RFC 8018（PBKDF2）</li>
+<li>OWASP Password Storage Cheat Sheet</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-146/index.html">← Day 146 HTTPS 深入 + 抓包分析：TLS 握手与证书验证（Phase 10 开篇）</a><a class="nav-next" href="../day-148/index.html">Day 148 对称与非对称加密：AES、RSA 与混合加密 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

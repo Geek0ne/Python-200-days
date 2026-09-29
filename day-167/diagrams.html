@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 167 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 167 正文</a>
+  <h1>Day 167 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-167-watchdog">Day 167 — 文件监控（watchdog）· 图解</h1>
+<blockquote>
+<p>本文件只放<strong>图</strong>，文字说明见 <code>../README.md</code>。
+所有图用 ASCII / Mermaid 表达，<strong>不生成图片文件</strong>。</p>
+</blockquote>
+<hr>
+<h2 id="1">图 1：两条技术路线总览</h2>
+<pre class="plain"><code>                    ┌─────────────────────────┐
+                    │   我需要知道文件变了     │
+                    └────────────┬────────────┘
+                                 │
+                 ┌───────────────┴───────────────┐
+                 │                               │
+        ┌────────▼────────┐             ┌────────▼─────────┐
+        │  轮询 Polling   │             │  事件 Event       │
+        │  os.walk+diff   │             │  inotify/FSEvents │
+        └────────┬────────┘             └────────┬─────────┘
+                 │                               │
+   ┌─────────────▼─────────────┐   ┌─────────────▼──────────────┐
+   │ ✅ 跨平台、网络盘可用      │   │ ✅ 空闲 0 CPU、ms 级延迟    │
+   │ ✅ 实现简单、无内核配额    │   │ ✅ 不漏事件                  │
+   │ ❌ 延迟 = 间隔             │   │ ❌ 平台相关                 │
+   │ ❌ 间隔内建+删 → 漏        │   │ ❌ 递归要自己补 watch       │
+   │ ❌ 大目录树吃 IO           │   │ ❌ 网络盘 / 部分容器失效     │
+   └───────────────────────────┘   └────────────────────────────┘
+                 │                               │
+                 └───────────────┬───────────────┘
+                                 ▼
+                 watchdog 把它们统一成同一套 API：
+                 Observer / FileSystemEventHandler / FileSystemEvent
+                 （PollingObserver 就是&quot;轮询后端&quot;）
+</code></pre>
+<hr>
+<h2 id="2watchdog">图 2：watchdog 线程模型与队列</h2>
+<pre class="plain"><code>   主线程                               Observer 内部
+   ┌──────────────┐                    ┌──────────────────────────┐
+   │ observer     │   start()          │ 线程 A: Emitter          │
+   │ .schedule()  │───────────────────►│  read(inotify_fd) 阻塞    │
+   │ observer     │                    │        │                 │
+   │ .start()     │                    │        ▼                 │
+   │              │                    │  FileSystemEvent 对象     │
+   │ 业务主循环    │                    │        │ put()           │
+   │ (或 sleep)   │                    │        ▼                 │
+   │              │                    │  event_queue (Queue)     │
+   │              │                    │        │ get()           │
+   │              │                    │        ▼                 │
+   │              │                    │ 线程 B: dispatch         │
+   │              │                    │  逐 handler 调 on_xxx()   │
+   │              │                    └──────────┬───────────────┘
+   │              │                               │
+   │              │        ┌──────────────────────▼───────────────┐
+   │              │        │ 你的 Handler（运行在 dispatch 线程）   │
+   │              │        │  ⚠ 慢 = 队列堆积 = 溢出丢事件          │
+   │              │        └──────────────────────┬───────────────┘
+   │ finally:     │                               │
+   │ stop()+join()│                    ┌──────────▼───────────┐
+   └──────────────┘                    │ 工作线程池 / 自建队列  │
+                                       │ ✅ 重活放这里          │
+                                       └──────────────────────┘
+</code></pre>
+<hr>
+<h2 id="3inotify-watch">图 3：inotify 递归监控的真实 watch 分布</h2>
+<pre class="plain"><code>  应用层一次调用：schedule(handler, &quot;/data&quot;, recursive=True)
+
+  内核实际：
+      ┌─ /data        wd=1  ◄── 显式注册
+      │   ├─ a        wd=2  ◄── 启动时 os.walk 补齐
+      │   │   └─ x    wd=5  ◄── 运行时 IN_CREATE(is_dir) 异步补
+      │   ├─ b        wd=3
+      │   └─ c        wd=4
+      └─ ...
+
+  新目录补齐的时间窗（经典漏事件窗口）：
+      t0  mkdir /data/a/new
+      t1  IN_CREATE is_directory=True  → 进入 emitter 内部队列
+      t2  cp big.bin /data/a/new/      ← ⚠ 此刻 wd 还没补上
+      t3  add_watch(&quot;/data/a/new&quot;)     ← 太晚了，t2 的事件已丢
+</code></pre>
+<hr>
+<h2 id="4">图 4：一次保存 = 一串事件（原子写）</h2>
+<pre class="plain"><code>  编辑器保存 a.txt（POSIX 原子写）
+
+  a.txt.tmp ──IN_CREATE──┐
+     │                   │
+     ├──IN_MODIFY────────┤   写入内容（可能多次）
+     ├──IN_MODIFY────────┤
+     │                   │
+     └──IN_CLOSE_WRITE───┤   写完关闭
+                         │
+  rename(a.txt.tmp→a.txt)└──IN_MOVED_FROM/IN_MOVED_TO──► FileMovedEvent
+
+  ┌───────────────── 弱 handler（无防抖）─────────────────┐
+  │ on_created  a.txt.tmp   → 处理 ①                        │
+  │ on_modified a.txt.tmp   → 处理 ②（读到半截！）          │
+  │ on_modified a.txt.tmp   → 处理 ③                        │
+  │ on_closed   a.txt.tmp   → 处理 ④                        │
+  │ on_moved    a.txt.tmp→a.txt → 处理 ⑤                    │
+  │                        ❌ 同一份文件被处理 5 次          │
+  └─────────────────────────────────────────────────────────┘
+
+  ┌───────────────── 防抖 handler ─────────────────────────┐
+  │ 5 次 trigger → 每次 cancel 上一个 Timer                │
+  │ 静默 0.5s 后 → 只执行 1 次 on_settled(&#x27;/data/a.txt&#x27;)   │
+  │                        ✅ 处理 1 次，且是最终版本        │
+  └─────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="5mermaid">图 5：Mermaid 时序图 — 事件流转全链路</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    autonumber
+    participant U as 用户/程序
+    participant K as 内核 inotify
+    participant E as Emitter 线程
+    participant Q as event_queue
+    participant D as dispatch 线程
+    participant H as Handler
+    participant W as 工作线程池
+
+    U-&gt;&gt;K: write(&quot;/inbox/a.csv&quot;)
+    K--&gt;&gt;E: IN_CREATE
+    E-&gt;&gt;Q: put(FileCreatedEvent)
+    D-&gt;&gt;Q: get()
+    D-&gt;&gt;H: on_created(event)
+    H-&gt;&gt;H: 忽略规则？→ 否
+    H-&gt;&gt;H: 防抖 Timer(0.5s) 启动
+    K--&gt;&gt;E: IN_MODIFY ×N
+    E-&gt;&gt;Q: put(FileModifiedEvent)
+    D-&gt;&gt;H: on_modified(event)
+    H-&gt;&gt;H: cancel 旧 Timer，重启 New
+    K--&gt;&gt;E: IN_CLOSE_WRITE
+    E-&gt;&gt;Q: put(FileClosedEvent)
+    D-&gt;&gt;H: on_closed(event)
+    H-&gt;&gt;H: cancel 旧 Timer，重启
+    Note over H: 静默 0.5s …
+    H-&gt;&gt;W: submit(classify_and_move, path)
+    W-&gt;&gt;W: shutil.move → data/a.csv
+    W-&gt;&gt;W: append operations.jsonl
+    Note over D: ✅ dispatch 线程始终&quot;轻&quot;
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    autonumber
+    participant U as 用户/程序
+    participant K as 内核 inotify
+    participant E as Emitter 线程
+    participant Q as event_queue
+    participant D as dispatch 线程
+    participant H as Handler
+    participant W as 工作线程池
+
+    U-&gt;&gt;K: write(&quot;/inbox/a.csv&quot;)
+    K--&gt;&gt;E: IN_CREATE
+    E-&gt;&gt;Q: put(FileCreatedEvent)
+    D-&gt;&gt;Q: get()
+    D-&gt;&gt;H: on_created(event)
+    H-&gt;&gt;H: 忽略规则？→ 否
+    H-&gt;&gt;H: 防抖 Timer(0.5s) 启动
+    K--&gt;&gt;E: IN_MODIFY ×N
+    E-&gt;&gt;Q: put(FileModifiedEvent)
+    D-&gt;&gt;H: on_modified(event)
+    H-&gt;&gt;H: cancel 旧 Timer，重启 New
+    K--&gt;&gt;E: IN_CLOSE_WRITE
+    E-&gt;&gt;Q: put(FileClosedEvent)
+    D-&gt;&gt;H: on_closed(event)
+    H-&gt;&gt;H: cancel 旧 Timer，重启
+    Note over H: 静默 0.5s …
+    H-&gt;&gt;W: submit(classify_and_move, path)
+    W-&gt;&gt;W: shutil.move → data/a.csv
+    W-&gt;&gt;W: append operations.jsonl
+    Note over D: ✅ dispatch 线程始终&quot;轻&quot;
+</code></pre></div>
+<hr>
+<h2 id="6mermaid">图 6：Mermaid 流程图 — 自动分类决策</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[事件到达 on_any_event] --&gt; B{is_directory?}
+    B -- 是 --&gt; Z1[忽略：目录本身不搬]
+    B -- 否 --&gt; C{忽略规则命中?}
+    C -- &quot;.tmp/.swp/~/.part/.crdownload&quot; --&gt; Z2[忽略：等待写完]
+    C -- &quot;隐藏文件/__pycache__&quot; --&gt; Z3[忽略：系统产物]
+    C -- 否 --&gt; D[按 abspath 归一化 key]
+    D --&gt; E[防抖 Timer 重置]
+    E --&gt; F[静默 T 秒后触发 on_settled]
+    F --&gt; G[按扩展名长度倒序匹配 RULES]
+    G --&gt; H{命中桶?}
+    H -- 否 --&gt; I[others/]
+    H -- 是 --&gt; J[&quot;images/ docs/ data/ archives/&quot;]
+    I --&gt; K{目标同名存在?}
+    J --&gt; K
+    K -- 是 --&gt; L[追加时间戳后缀]
+    K -- 否 --&gt; M[shutil.move]
+    L --&gt; M
+    M --&gt; N[写 operations.jsonl]
+    M -. 失败 .-&gt; O[写 errors.log]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[事件到达 on_any_event] --&gt; B{is_directory?}
+    B -- 是 --&gt; Z1[忽略：目录本身不搬]
+    B -- 否 --&gt; C{忽略规则命中?}
+    C -- &quot;.tmp/.swp/~/.part/.crdownload&quot; --&gt; Z2[忽略：等待写完]
+    C -- &quot;隐藏文件/__pycache__&quot; --&gt; Z3[忽略：系统产物]
+    C -- 否 --&gt; D[按 abspath 归一化 key]
+    D --&gt; E[防抖 Timer 重置]
+    E --&gt; F[静默 T 秒后触发 on_settled]
+    F --&gt; G[按扩展名长度倒序匹配 RULES]
+    G --&gt; H{命中桶?}
+    H -- 否 --&gt; I[others/]
+    H -- 是 --&gt; J[&quot;images/ docs/ data/ archives/&quot;]
+    I --&gt; K{目标同名存在?}
+    J --&gt; K
+    K -- 是 --&gt; L[追加时间戳后缀]
+    K -- 否 --&gt; M[shutil.move]
+    L --&gt; M
+    M --&gt; N[写 operations.jsonl]
+    M -. 失败 .-&gt; O[写 errors.log]
+</code></pre></div>
+<hr>
+<h2 id="7-vs">图 7：防抖 vs 节流</h2>
+<pre class="plain"><code>  事件输入（同一文件，持续写）：
+  ▼▼▼▼▼ ▼▼▼ ▼▼▼▼▼▼▼▼ ▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼ ▼▼▼▼ (t)
+
+  ── 防抖 debounce（T=2）──────────────────────────────
+      └─取消─┘ └─取消─┘   └──取消───┘
+                          └── 静默 2 格 ──► ● 执行一次
+      特点：动作总在最&quot;安静&quot;的时刻发生 → 适合&quot;写完再处理&quot;
+
+  ── 节流 throttle（T=2）──────────────────────────────
+      ●         ●         ●         ●         ●
+      └──2格──┘ └──2格──┘ └──2格──┘ └──2格──┘
+      特点：固定节奏采样 → 适合&quot;实时看进度&quot;
+
+  文件监控 99% 用防抖；只有&quot;实时 tail 进度&quot;类需求才用节流。
+</code></pre>
+<hr>
+<h2 id="8">图 8：平台能力矩阵</h2>
+<pre class="plain"><code>                Linux      macOS     Windows     NFS/SMB    Docker bind
+  机制          inotify    FSEvents  RDCW        ❌         部分失效
+  粒度          文件级      目录级     文件级      —          —
+  递归          自己补      原生       自己补      —          —
+  on_closed     ✅          ❌         ✅          ❌          ✅(若可用)
+  推荐后端      Observer   Observer  Observer    Polling    Polling
+  watchdog 类   Inotify    FSEvents  WinAPI      Polling-   Polling-
+                Observer   Observer  Observer    Observer   Observer
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

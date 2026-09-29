@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 43 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 43 正文</a>
+  <h1>Day 43 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="dataclass">dataclass 底层实现原理图解</h1>
+<h2 id="1-dataclass">1. dataclass 装饰器做了什么？</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 开发时
+        A[&quot;你写的代码：
+        @dataclass
+        class Point:
+            x: float
+            y: float&quot;] --&gt; B[&quot;Python 解释器
+        读取 @dataclass 装饰器&quot;]
+    end
+
+    subgraph 装饰器执行
+        B --&gt; C[&quot;遍历类注解中的字段
+        → 提取 (x, float), (y, float)&quot;]
+        C --&gt; D{&quot;装饰器参数判断&quot;}
+        D --&gt;|init=True| E[&quot;生成 __init__ 方法&quot;]
+        D --&gt;|repr=True| F[&quot;生成 __repr__ 方法&quot;]
+        D --&gt;|eq=True| G[&quot;生成 __eq__ 方法&quot;]
+        D --&gt;|order=True| H[&quot;生成 __lt__/__le__/__gt__/__ge__&quot;]
+        D --&gt;|frozen=True| I[&quot;生成 __setattr__ 抛出异常&quot;]
+        D --&gt;|slots=True| J[&quot;创建 __slots__&quot;]
+    end
+
+    subgraph 运行时
+        E --&gt; K[&quot;p = Point(1.0, 2.0)
+        → 自动调用生成的 __init__&quot;]
+        F --&gt; L[&quot;print(p)
+        → Point(x=1.0, y=2.0)&quot;]
+        G --&gt; M[&quot;p1 == p2
+        → 自动比较所有字段&quot;]
+    end
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#fff3e0
+    style K fill:#e8f5e9
+    style L fill:#e8f5e9
+    style M fill:#e8f5e9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 开发时
+        A[&quot;你写的代码：
+        @dataclass
+        class Point:
+            x: float
+            y: float&quot;] --&gt; B[&quot;Python 解释器
+        读取 @dataclass 装饰器&quot;]
+    end
+
+    subgraph 装饰器执行
+        B --&gt; C[&quot;遍历类注解中的字段
+        → 提取 (x, float), (y, float)&quot;]
+        C --&gt; D{&quot;装饰器参数判断&quot;}
+        D --&gt;|init=True| E[&quot;生成 __init__ 方法&quot;]
+        D --&gt;|repr=True| F[&quot;生成 __repr__ 方法&quot;]
+        D --&gt;|eq=True| G[&quot;生成 __eq__ 方法&quot;]
+        D --&gt;|order=True| H[&quot;生成 __lt__/__le__/__gt__/__ge__&quot;]
+        D --&gt;|frozen=True| I[&quot;生成 __setattr__ 抛出异常&quot;]
+        D --&gt;|slots=True| J[&quot;创建 __slots__&quot;]
+    end
+
+    subgraph 运行时
+        E --&gt; K[&quot;p = Point(1.0, 2.0)
+        → 自动调用生成的 __init__&quot;]
+        F --&gt; L[&quot;print(p)
+        → Point(x=1.0, y=2.0)&quot;]
+        G --&gt; M[&quot;p1 == p2
+        → 自动比较所有字段&quot;]
+    end
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#fff3e0
+    style K fill:#e8f5e9
+    style L fill:#e8f5e9
+    style M fill:#e8f5e9
+</code></pre></div>
+<h2 id="2-field">2. field() 参数解析</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph field 参数体系
+        A[&quot;field()&quot;] --&gt; B[&quot;default\n简单默认值&quot;]
+        A --&gt; C[&quot;default_factory\n⚡默认可变类型工厂&quot;]
+        A --&gt; D[&quot;init\n是否出现在 __init__&quot;]
+        A --&gt; E[&quot;repr\n是否出现在 __repr__&quot;]
+        A --&gt; F[&quot;compare\n是否参与比较&quot;]
+        A --&gt; G[&quot;hash\n是否参与哈希&quot;]
+        A --&gt; H[&quot;metadata\n自定义元数据字典&quot;]
+    end
+
+    B --&gt; B1[&quot;str, int, float, bool...
+    name: str = &#x27;unknown&#x27;&quot;]
+
+    C --&gt; C1[&quot;list → field(default_factory=list)&quot;]
+    C --&gt; C2[&quot;dict → field(default_factory=dict)&quot;]
+    C --&gt; C3[&quot;set → field(default_factory=set)&quot;]
+    C --&gt; C4[&quot;复杂对象 → field(default_factory=lambda: [])&quot;]
+
+    D --&gt; D1[&quot;init=False → 计算字段&quot;]
+    E --&gt; E1[&quot;repr=False → 隐藏密码/密钥&quot;]
+    F --&gt; F1[&quot;compare=False → 排除 UUID/时间戳&quot;]
+    G --&gt; G1[&quot;hash=False → 排除非关键哈希字段&quot;]
+
+    style A fill:#ce93d8
+    style C fill:#ffcc02
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph field 参数体系
+        A[&quot;field()&quot;] --&gt; B[&quot;default\n简单默认值&quot;]
+        A --&gt; C[&quot;default_factory\n⚡默认可变类型工厂&quot;]
+        A --&gt; D[&quot;init\n是否出现在 __init__&quot;]
+        A --&gt; E[&quot;repr\n是否出现在 __repr__&quot;]
+        A --&gt; F[&quot;compare\n是否参与比较&quot;]
+        A --&gt; G[&quot;hash\n是否参与哈希&quot;]
+        A --&gt; H[&quot;metadata\n自定义元数据字典&quot;]
+    end
+
+    B --&gt; B1[&quot;str, int, float, bool...
+    name: str = &#x27;unknown&#x27;&quot;]
+
+    C --&gt; C1[&quot;list → field(default_factory=list)&quot;]
+    C --&gt; C2[&quot;dict → field(default_factory=dict)&quot;]
+    C --&gt; C3[&quot;set → field(default_factory=set)&quot;]
+    C --&gt; C4[&quot;复杂对象 → field(default_factory=lambda: [])&quot;]
+
+    D --&gt; D1[&quot;init=False → 计算字段&quot;]
+    E --&gt; E1[&quot;repr=False → 隐藏密码/密钥&quot;]
+    F --&gt; F1[&quot;compare=False → 排除 UUID/时间戳&quot;]
+    G --&gt; G1[&quot;hash=False → 排除非关键哈希字段&quot;]
+
+    style A fill:#ce93d8
+    style C fill:#ffcc02
+</code></pre></div>
+<h2 id="3-post_init">3. <strong>post_init</strong> 执行流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant 调用方
+    participant dataclass
+    participant __post_init__
+
+    调用方-&gt;&gt;dataclass: Order(&quot;笔记本&quot;, 2, 4999)
+    activate dataclass
+    dataclass-&gt;&gt;dataclass: 分配字段 self.product=&quot;笔记本&quot;
+    dataclass-&gt;&gt;dataclass: 分配字段 self.quantity=2
+    dataclass-&gt;&gt;dataclass: 分配字段 self.unit_price=4999
+    dataclass-&gt;&gt;dataclass: 调用 __post_init__()
+    deactivate dataclass
+    activate __post_init__
+    __post_init__-&gt;&gt;__post_init__: 生成 order_id = UUID
+    __post_init__-&gt;&gt;__post_init__: 计算 total_price = 2 * 4999
+    __post_init__-&gt;&gt;__post_init__: 验证 quantity &gt; 0
+    __post_init__-&gt;&gt;__post_init__: 验证 unit_price &gt; 0
+    deactivate __post_init__
+    调用方-&gt;&gt;调用方: 得到完整的 Order 实例 ✅
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant 调用方
+    participant dataclass
+    participant __post_init__
+
+    调用方-&gt;&gt;dataclass: Order(&quot;笔记本&quot;, 2, 4999)
+    activate dataclass
+    dataclass-&gt;&gt;dataclass: 分配字段 self.product=&quot;笔记本&quot;
+    dataclass-&gt;&gt;dataclass: 分配字段 self.quantity=2
+    dataclass-&gt;&gt;dataclass: 分配字段 self.unit_price=4999
+    dataclass-&gt;&gt;dataclass: 调用 __post_init__()
+    deactivate dataclass
+    activate __post_init__
+    __post_init__-&gt;&gt;__post_init__: 生成 order_id = UUID
+    __post_init__-&gt;&gt;__post_init__: 计算 total_price = 2 * 4999
+    __post_init__-&gt;&gt;__post_init__: 验证 quantity &gt; 0
+    __post_init__-&gt;&gt;__post_init__: 验证 unit_price &gt; 0
+    deactivate __post_init__
+    调用方-&gt;&gt;调用方: 得到完整的 Order 实例 ✅
+</code></pre></div>
+<h2 id="4-dataclass-vs-namedtuple-vs">4. dataclass vs namedtuple vs 普通类</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    subgraph 选择决策
+        A[&quot;我需要一个类来装数据&quot;] --&gt; B{需要可变?}
+    end
+
+    B --&gt;|是| C{需要类型注解?}
+    B --&gt;|否| D{需要方法/继承?}
+
+    C --&gt;|是| E[&quot;✅ dataclass\n(日常首选)&quot;]
+    C --&gt;|否| F[&quot;普通 class\n(少量数据)&quot;]
+
+    D --&gt;|是| G[&quot;✅ dataclass(frozen=True)\n或 NamedTuple&quot;]
+    D --&gt;|否| H[&quot;✅ NamedTuple\n或 namedtuple&quot;]
+
+    E --&gt; I[&quot;field() / __post_init__\n继承 / 序列化&quot;]
+    G --&gt; I
+
+    H --&gt; J[&quot;元组拆包\n可哈希 / 性能极佳&quot;]
+
+    style E fill:#a5d6a7
+    style G fill:#81c784
+    style H fill:#81c784
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    subgraph 选择决策
+        A[&quot;我需要一个类来装数据&quot;] --&gt; B{需要可变?}
+    end
+
+    B --&gt;|是| C{需要类型注解?}
+    B --&gt;|否| D{需要方法/继承?}
+
+    C --&gt;|是| E[&quot;✅ dataclass\n(日常首选)&quot;]
+    C --&gt;|否| F[&quot;普通 class\n(少量数据)&quot;]
+
+    D --&gt;|是| G[&quot;✅ dataclass(frozen=True)\n或 NamedTuple&quot;]
+    D --&gt;|否| H[&quot;✅ NamedTuple\n或 namedtuple&quot;]
+
+    E --&gt; I[&quot;field() / __post_init__\n继承 / 序列化&quot;]
+    G --&gt; I
+
+    H --&gt; J[&quot;元组拆包\n可哈希 / 性能极佳&quot;]
+
+    style E fill:#a5d6a7
+    style G fill:#81c784
+    style H fill:#81c784
+</code></pre></div>
+<h2 id="5">5. 可变默认值陷阱图解</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph ❌ 错误：共享引用
+        A1[&quot;@dataclass
+        class Bad:
+            items: list = []
+
+        b1 = Bad()
+        b2 = Bad()&quot;] --&gt; A2[&quot;b1.items is b2.items
+        → True (同一对象!)&quot;]
+        A2 --&gt; A3[&quot;b1.items.append(&#x27;x&#x27;)
+        → b2.items 也被修改了！😱&quot;]
+    end
+
+    subgraph ✅ 正确：独立副本
+        B1[&quot;@dataclass
+        class Good:
+            items: list = field(default_factory=list)
+
+        g1 = Good()
+        g2 = Good()&quot;] --&gt; B2[&quot;g1.items is g2.items
+        → False (独立对象)&quot;]
+        B2 --&gt; B3[&quot;g1.items.append(&#x27;x&#x27;)
+        → g2.items 不受影响 ✅&quot;]
+    end
+
+    style A3 fill:#ffcdd2
+    style B3 fill:#c8e6c9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph ❌ 错误：共享引用
+        A1[&quot;@dataclass
+        class Bad:
+            items: list = []
+
+        b1 = Bad()
+        b2 = Bad()&quot;] --&gt; A2[&quot;b1.items is b2.items
+        → True (同一对象!)&quot;]
+        A2 --&gt; A3[&quot;b1.items.append(&#x27;x&#x27;)
+        → b2.items 也被修改了！😱&quot;]
+    end
+
+    subgraph ✅ 正确：独立副本
+        B1[&quot;@dataclass
+        class Good:
+            items: list = field(default_factory=list)
+
+        g1 = Good()
+        g2 = Good()&quot;] --&gt; B2[&quot;g1.items is g2.items
+        → False (独立对象)&quot;]
+        B2 --&gt; B3[&quot;g1.items.append(&#x27;x&#x27;)
+        → g2.items 不受影响 ✅&quot;]
+    end
+
+    style A3 fill:#ffcdd2
+    style B3 fill:#c8e6c9
+</code></pre></div>
+<h2 id="6">6. 配置管理架构图</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 配置来源
+        A[&quot;默认值\n(dataclass defaults)&quot;] --&gt;|优先级 1 低| M[配置合并器]
+        B[&quot;JSON 配置文件&quot;] --&gt;|优先级 2| M
+        C[&quot;环境变量\nAPP_*&quot;] --&gt;|优先级 3| M
+        D[&quot;命令行参数&quot;] --&gt;|优先级 4 高| M
+    end
+
+    subgraph 配置处理
+        M --&gt; V[__post_init__ 验证]
+        V --&gt; Cfg[&quot;AppConfig\n(frozen=True 保护)&quot;]
+    end
+
+    subgraph 配置消费者
+        Cfg --&gt; S1[&quot;应用层&quot;]
+        Cfg --&gt; S2[&quot;数据库层&quot;]
+        Cfg --&gt; S3[&quot;缓存层&quot;]
+        Cfg --&gt; S4[&quot;日志层&quot;]
+    end
+
+    Cfg --&gt; E[&quot;配置导出\nasdict() → JSON&quot;]
+
+    style Cfg fill:#ce93d8,color:#fff
+    style V fill:#fff176
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 配置来源
+        A[&quot;默认值\n(dataclass defaults)&quot;] --&gt;|优先级 1 低| M[配置合并器]
+        B[&quot;JSON 配置文件&quot;] --&gt;|优先级 2| M
+        C[&quot;环境变量\nAPP_*&quot;] --&gt;|优先级 3| M
+        D[&quot;命令行参数&quot;] --&gt;|优先级 4 高| M
+    end
+
+    subgraph 配置处理
+        M --&gt; V[__post_init__ 验证]
+        V --&gt; Cfg[&quot;AppConfig\n(frozen=True 保护)&quot;]
+    end
+
+    subgraph 配置消费者
+        Cfg --&gt; S1[&quot;应用层&quot;]
+        Cfg --&gt; S2[&quot;数据库层&quot;]
+        Cfg --&gt; S3[&quot;缓存层&quot;]
+        Cfg --&gt; S4[&quot;日志层&quot;]
+    end
+
+    Cfg --&gt; E[&quot;配置导出\nasdict() → JSON&quot;]
+
+    style Cfg fill:#ce93d8,color:#fff
+    style V fill:#fff176
+</code></pre></div>
+<h2 id="7-ascii-dataclass">7. ASCII 速查：dataclass 核心概念关系</h2>
+<pre class="plain"><code>                    ┌─────────────────────────────────┐
+                    │         @dataclass               │
+                    │  自动生成模板方法               │
+                    └──────────┬──────────────────────┘
+                               │
+              ┌────────────────┼──────────────────┐
+              │                │                  │
+        ┌─────▼─────┐   ┌─────▼─────┐    ┌───────▼───────┐
+        │   field()  │   │__post_init│    │ 装饰器参数    │
+        │ 精细字段控制│   │  后处理   │    │ 全局行为控制  │
+        └─────┬─────┘   └─────┬─────┘    └───────┬───────┘
+              │               │                   │
+    ┌─────────┼─────────┐     │              ┌────┴────┐
+    │         │         │     │              │         │
+  default_factory  compare    │            frozen    order
+  (可变默认值)  (排除比较)  验证/转换      (不可变)  (自排序)
+    │         │         │     │              │         │
+  repr=False  hash=False│     │            slots    unsafe_hash
+  (隐藏字段)  (控制哈希) │     │           (内存优化) (强制哈希)
+                        │     │
+                        ▼     ▼
+                   ┌──────────────────┐
+                   │ 最终生成的方法集 │
+                   │ __init__, __repr__│
+                   │ __eq__, __hash__  │
+                   │ __lt__~__ge__     │
+                   │ __setattr__ (frozen)│
+                   └──────────────────┘
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

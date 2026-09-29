@@ -1,0 +1,1094 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 78 — 爬虫部署、监控与优化</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 78 — 爬虫部署、监控与优化</h1>
+  <div class="lmeta">
+    <span class="badge">实战项目（一）</span>
+    <span class="badge">1044 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-078-爬虫部署与监控" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 今日知识点总览</a>
+<a class="toc-l2" href="#1-scrapyd">1. Scrapyd 部署服务</a>
+<a class="toc-l3" href="#11-scrapyd">1.1 什么是 Scrapyd？</a>
+<a class="toc-l3" href="#12">1.2 安装与启动</a>
+<a class="toc-l3" href="#13">1.3 项目打包与部署</a>
+<a class="toc-l3" href="#14-api">1.4 通过 API 控制爬虫</a>
+<a class="toc-l2" href="#2-docker">2. Docker 容器化部署</a>
+<a class="toc-l3" href="#21-docker">2.1 为什么用 Docker？</a>
+<a class="toc-l3" href="#22-dockerfile">2.2 Dockerfile 编写</a>
+<a class="toc-l3" href="#23-docker-compose">2.3 Docker Compose 编排</a>
+<a class="toc-l3" href="#24">2.4 部署命令</a>
+<a class="toc-l2" href="#3">3. 日志系统与监控</a>
+<a class="toc-l3" href="#31">3.1 结构化日志</a>
+<a class="toc-l3" href="#32">3.2 监控指标收集</a>
+<a class="toc-l3" href="#33-prometheus">3.3 Prometheus 指标导出</a>
+<a class="toc-l2" href="#4">4. 限速与反反爬策略</a>
+<a class="toc-l3" href="#41-scrapy">4.1 Scrapy 自动限速配置</a>
+<a class="toc-l3" href="#42-ip">4.2 代理 IP 轮换</a>
+<a class="toc-l3" href="#43-user-agent">4.3 随机 User-Agent</a>
+<a class="toc-l2" href="#5">5. 性能优化与调优</a>
+<a class="toc-l3" href="#51">5.1 数据库批量写入</a>
+<a class="toc-l3" href="#52">5.2 请求去重优化（布隆过滤器）</a>
+<a class="toc-l3" href="#53-io">5.3 异步 IO 优化</a>
+<a class="toc-l2" href="#6">6. 完整项目集成</a>
+<a class="toc-l3" href="#61">6.1 项目结构</a>
+<a class="toc-l3" href="#62">6.2 主爬虫文件</a>
+<a class="toc-l3" href="#63">6.3 数据管道</a>
+<a class="toc-l2" href="#_2">🖼️ 图解：爬虫系统架构</a>
+<a class="toc-l2" href="#_3">💡 思考题</a>
+<a class="toc-l2" href="#_4">📚 延伸阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-078">Day 078 — 爬虫部署、监控与优化</h1>
+<blockquote>
+<p>🎯 <strong>今日目标</strong>：将前两天搭建的 Web 爬虫系统从开发环境推向生产环境，掌握部署、监控、性能优化的完整流程。</p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 今日知识点总览</h2>
+<table>
+<thead>
+<tr>
+<th>序号</th>
+<th>知识点</th>
+<th>难度</th>
+<th>重要性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Scrapyd 部署服务</td>
+<td>⭐⭐</td>
+<td>🔥🔥🔥</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Docker 容器化部署</td>
+<td>⭐⭐</td>
+<td>🔥🔥🔥</td>
+</tr>
+<tr>
+<td>3</td>
+<td>日志系统与监控</td>
+<td>⭐⭐⭐</td>
+<td>🔥🔥🔥</td>
+</tr>
+<tr>
+<td>4</td>
+<td>限速与反反爬策略</td>
+<td>⭐⭐⭐</td>
+<td>🔥🔥</td>
+</tr>
+<tr>
+<td>5</td>
+<td>性能优化与调优</td>
+<td>⭐⭐⭐</td>
+<td>🔥🔥🔥</td>
+</tr>
+<tr>
+<td>6</td>
+<td>完整项目集成</td>
+<td>⭐⭐⭐⭐</td>
+<td>🔥🔥🔥</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="1-scrapyd">1. Scrapyd 部署服务</h2>
+<h3 id="11-scrapyd">1.1 什么是 Scrapyd？</h3>
+<p>Scrapyd 是 Scrapy 官方提供的部署和运行爬虫的服务。它允许你：<br>
+- 通过 HTTP API 远程部署 Scrapy 项目<br>
+- 启动、停止、查看爬虫运行状态<br>
+- 管理多个爬虫项目的版本</p>
+<h3 id="12">1.2 安装与启动</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 安装 scrapyd</span>
+pip<span class="w"> </span>install<span class="w"> </span>scrapyd
+
+<span class="c1"># 启动服务（默认监听 6800 端口）</span>
+scrapyd
+
+<span class="c1"># 或指定配置</span>
+scrapyd<span class="w"> </span>-p<span class="w"> </span><span class="m">6800</span><span class="w"> </span>-d<span class="w"> </span>/path/to/logs
+</code></pre></div>
+<h3 id="13">1.3 项目打包与部署</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 安装 scrapyd-deploy</span>
+pip<span class="w"> </span>install<span class="w"> </span>scrapyd-deploy
+
+<span class="c1"># 配置 scrapyd-deploy（在 setup.cfg 或 scrapyd-deploy 配置文件中）</span>
+<span class="c1"># [deploy]</span>
+<span class="c1"># url = http://localhost:6800/</span>
+<span class="c1"># project = ecommerce_monitor</span>
+
+<span class="c1"># 打包并部署</span>
+scrapyd-deploy<span class="w"> </span>default<span class="w"> </span>-p<span class="w"> </span>ecommerce_monitor
+</code></pre></div>
+<h3 id="14-api">1.4 通过 API 控制爬虫</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">requests</span>
+<span class="kn">import</span> <span class="nn">json</span>
+
+<span class="n">SCRAPYD_URL</span> <span class="o">=</span> <span class="s2">&quot;http://localhost:6800&quot;</span>
+
+<span class="c1"># 启动爬虫</span>
+<span class="k">def</span> <span class="nf">start_spider</span><span class="p">(</span><span class="n">spider_name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;启动指定爬虫&quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;project&quot;</span><span class="p">:</span> <span class="s2">&quot;ecommerce_monitor&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;spider&quot;</span><span class="p">:</span> <span class="n">spider_name</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="n">data</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">kwargs</span><span class="p">)</span>
+    
+    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">SCRAPYD_URL</span><span class="si">}</span><span class="s2">/schedule.json&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ 爬虫已启动，Job ID: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;jobid&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+<span class="c1"># 查看运行中的爬虫</span>
+<span class="k">def</span> <span class="nf">list_running_spiders</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;查看所有运行中的爬虫&quot;&quot;&quot;</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">SCRAPYD_URL</span><span class="si">}</span><span class="s2">/listjobs.json?project=ecommerce_monitor&quot;</span><span class="p">)</span>
+    <span class="n">jobs</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;📋 运行中的爬虫：&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">job</span> <span class="ow">in</span> <span class="n">jobs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;running&quot;</span><span class="p">,</span> <span class="p">[]):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  - </span><span class="si">{</span><span class="n">job</span><span class="p">[</span><span class="s1">&#39;spider&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> (ID: </span><span class="si">{</span><span class="n">job</span><span class="p">[</span><span class="s1">&#39;id&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">⏳ 等待中的爬虫：&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">job</span> <span class="ow">in</span> <span class="n">jobs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;pending&quot;</span><span class="p">,</span> <span class="p">[]):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  - </span><span class="si">{</span><span class="n">job</span><span class="p">[</span><span class="s1">&#39;spider&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">jobs</span>
+
+<span class="c1"># 删除爬虫任务</span>
+<span class="k">def</span> <span class="nf">cancel_spider</span><span class="p">(</span><span class="n">job_id</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;取消指定任务&quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;project&quot;</span><span class="p">:</span> <span class="s2">&quot;ecommerce_monitor&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;job&quot;</span><span class="p">:</span> <span class="n">job_id</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">SCRAPYD_URL</span><span class="si">}</span><span class="s2">/cancel.json&quot;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;🗑️  任务已取消: </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># 使用示例</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="c1"># 启动价格监控爬虫</span>
+    <span class="n">start_spider</span><span class="p">(</span><span class="s2">&quot;price_monitor&quot;</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="s2">&quot;electronics&quot;</span><span class="p">)</span>
+    
+    <span class="c1"># 查看状态</span>
+    <span class="n">list_running_spiders</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="2-docker">2. Docker 容器化部署</h2>
+<h3 id="21-docker">2.1 为什么用 Docker？</h3>
+<ul>
+<li><strong>环境一致性</strong>：开发和生产环境完全一致</li>
+<li><strong>快速部署</strong>：一条命令启动整个系统</li>
+<li><strong>资源隔离</strong>：爬虫、数据库、监控互相独立</li>
+<li><strong>弹性扩展</strong>：轻松增减爬虫实例数量</li>
+</ul>
+<h3 id="22-dockerfile">2.2 Dockerfile 编写</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">dockerfile</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c"># Dockerfile</span>
+<span class="k">FROM</span><span class="w"> </span><span class="s">python:3.11-slim</span>
+
+<span class="c"># 设置工作目录</span>
+<span class="k">WORKDIR</span><span class="w"> </span><span class="s">/app</span>
+
+<span class="c"># 安装系统依赖（Scrapy 需要）</span>
+<span class="k">RUN</span><span class="w"> </span>apt-get<span class="w"> </span>update<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>apt-get<span class="w"> </span>install<span class="w"> </span>-y<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>gcc<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>libxml2-dev<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>libxslt1-dev<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="o">&amp;&amp;</span><span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span>/var/lib/apt/lists/*
+
+<span class="c"># 复制依赖文件</span>
+<span class="k">COPY</span><span class="w"> </span>requirements.txt<span class="w"> </span>.
+
+<span class="c"># 安装 Python 依赖</span>
+<span class="k">RUN</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--no-cache-dir<span class="w"> </span>-r<span class="w"> </span>requirements.txt
+
+<span class="c"># 复制项目代码</span>
+<span class="k">COPY</span><span class="w"> </span>.<span class="w"> </span>.
+
+<span class="c"># 暴露端口（scrapyd）</span>
+<span class="k">EXPOSE</span><span class="w"> </span><span class="s">6800</span>
+
+<span class="c"># 启动命令</span>
+<span class="k">CMD</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;scrapyd&quot;</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="23-docker-compose">2.3 Docker Compose 编排</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># docker-compose.yml</span>
+<span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;3.8&#39;</span>
+
+<span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="c1"># 爬虫服务</span>
+<span class="w">  </span><span class="nt">scrapyd</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">build</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.</span>
+<span class="w">    </span><span class="nt">ports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;6800:6800&quot;</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./logs:/app/logs</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./data:/app/data</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SCRAPYD_LOG_LEVEL=INFO</span>
+<span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">unless-stopped</span>
+<span class="w">    </span><span class="nt">networks</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">crawler-network</span>
+
+<span class="w">  </span><span class="c1"># Redis 缓存（去重队列）</span>
+<span class="w">  </span><span class="nt">redis</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">redis:7-alpine</span>
+<span class="w">    </span><span class="nt">ports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;6379:6379&quot;</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">redis-data:/data</span>
+<span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">unless-stopped</span>
+<span class="w">    </span><span class="nt">networks</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">crawler-network</span>
+
+<span class="w">  </span><span class="c1"># MongoDB（数据存储）</span>
+<span class="w">  </span><span class="nt">mongodb</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mongo:7</span>
+<span class="w">    </span><span class="nt">ports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;27017:27017&quot;</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mongo-data:/data/db</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MONGO_INITDB_ROOT_USERNAME=admin</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MONGO_INITDB_ROOT_PASSWORD=password</span>
+<span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">unless-stopped</span>
+<span class="w">    </span><span class="nt">networks</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">crawler-network</span>
+
+<span class="w">  </span><span class="c1"># 监控面板</span>
+<span class="w">  </span><span class="nt">grafana</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">grafana/grafana:latest</span>
+<span class="w">    </span><span class="nt">ports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;3000:3000&quot;</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">grafana-data:/var/lib/grafana</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GF_SECURITY_ADMIN_PASSWORD=admin</span>
+<span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">unless-stopped</span>
+<span class="w">    </span><span class="nt">networks</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">crawler-network</span>
+
+<span class="nt">volumes</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">redis-data</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">mongo-data</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">grafana-data</span><span class="p">:</span>
+
+<span class="nt">networks</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">crawler-network</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">driver</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">bridge</span>
+</code></pre></div>
+<h3 id="24">2.4 部署命令</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 构建并启动所有服务</span>
+docker-compose<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
+
+<span class="c1"># 查看服务状态</span>
+docker-compose<span class="w"> </span>ps
+
+<span class="c1"># 查看日志</span>
+docker-compose<span class="w"> </span>logs<span class="w"> </span>-f<span class="w"> </span>scrapyd
+
+<span class="c1"># 停止所有服务</span>
+docker-compose<span class="w"> </span>down
+
+<span class="c1"># 重启单个服务</span>
+docker-compose<span class="w"> </span>restart<span class="w"> </span>scrapyd
+</code></pre></div>
+<hr>
+<h2 id="3">3. 日志系统与监控</h2>
+<h3 id="31">3.1 结构化日志</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="k">class</span> <span class="nc">StructuredLogger</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;结构化日志记录器&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">log_file</span><span class="o">=</span><span class="s2">&quot;crawler.log&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+        
+        <span class="c1"># 文件处理器</span>
+        <span class="n">file_handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">FileHandler</span><span class="p">(</span><span class="n">log_file</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+        <span class="n">file_handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span>
+            <span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> - </span><span class="si">%(name)s</span><span class="s2"> - </span><span class="si">%(levelname)s</span><span class="s2"> - </span><span class="si">%(message)s</span><span class="s2">&quot;</span>
+        <span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">file_handler</span><span class="p">)</span>
+        
+        <span class="c1"># 控制台处理器</span>
+        <span class="n">console_handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">()</span>
+        <span class="n">console_handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span>
+            <span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> [</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="n">datefmt</span><span class="o">=</span><span class="s2">&quot;%H:%M:%S&quot;</span>
+        <span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">console_handler</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">log_event</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event_type</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;记录结构化事件&quot;&quot;&quot;</span>
+        <span class="n">log_entry</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(),</span>
+            <span class="s2">&quot;event_type&quot;</span><span class="p">:</span> <span class="n">event_type</span><span class="p">,</span>
+            <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="n">data</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">log_entry</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">log_entry</span>
+    
+    <span class="k">def</span> <span class="nf">log_scrape</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">url</span><span class="p">,</span> <span class="n">status</span><span class="p">,</span> <span class="n">items_count</span><span class="p">,</span> <span class="n">duration</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;记录爬取事件&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_event</span><span class="p">(</span><span class="s2">&quot;scrape&quot;</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span>
+            <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="n">status</span><span class="p">,</span>
+            <span class="s2">&quot;items_count&quot;</span><span class="p">:</span> <span class="n">items_count</span><span class="p">,</span>
+            <span class="s2">&quot;duration_seconds&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">duration</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="p">})</span>
+    
+    <span class="k">def</span> <span class="nf">log_error</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">error</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;记录错误事件&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_event</span><span class="p">(</span><span class="s2">&quot;error&quot;</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s2">&quot;error_type&quot;</span><span class="p">:</span> <span class="nb">type</span><span class="p">(</span><span class="n">error</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+            <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">error</span><span class="p">),</span>
+            <span class="s2">&quot;context&quot;</span><span class="p">:</span> <span class="n">context</span> <span class="ow">or</span> <span class="p">{}</span>
+        <span class="p">})</span>
+    
+    <span class="k">def</span> <span class="nf">log_price_change</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">product_id</span><span class="p">,</span> <span class="n">old_price</span><span class="p">,</span> <span class="n">new_price</span><span class="p">,</span> <span class="n">change_pct</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;记录价格变动&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_event</span><span class="p">(</span><span class="s2">&quot;price_change&quot;</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s2">&quot;product_id&quot;</span><span class="p">:</span> <span class="n">product_id</span><span class="p">,</span>
+            <span class="s2">&quot;old_price&quot;</span><span class="p">:</span> <span class="n">old_price</span><span class="p">,</span>
+            <span class="s2">&quot;new_price&quot;</span><span class="p">:</span> <span class="n">new_price</span><span class="p">,</span>
+            <span class="s2">&quot;change_percent&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">change_pct</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="p">})</span>
+
+<span class="c1"># 使用示例</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">StructuredLogger</span><span class="p">(</span><span class="s2">&quot;ecommerce_crawler&quot;</span><span class="p">)</span>
+
+<span class="c1"># 记录爬取</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">log_scrape</span><span class="p">(</span>
+    <span class="n">url</span><span class="o">=</span><span class="s2">&quot;https://example.com/product/123&quot;</span><span class="p">,</span>
+    <span class="n">status</span><span class="o">=</span><span class="s2">&quot;success&quot;</span><span class="p">,</span>
+    <span class="n">items_count</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span>
+    <span class="n">duration</span><span class="o">=</span><span class="mf">3.2</span>
+<span class="p">)</span>
+
+<span class="c1"># 记录价格变动</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">log_price_change</span><span class="p">(</span>
+    <span class="n">product_id</span><span class="o">=</span><span class="s2">&quot;SKU-001&quot;</span><span class="p">,</span>
+    <span class="n">old_price</span><span class="o">=</span><span class="mf">99.99</span><span class="p">,</span>
+    <span class="n">new_price</span><span class="o">=</span><span class="mf">89.99</span><span class="p">,</span>
+    <span class="n">change_pct</span><span class="o">=-</span><span class="mf">10.0</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="32">3.2 监控指标收集</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">CrawlerMetrics</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;爬虫运行指标&quot;&quot;&quot;</span>
+    <span class="n">start_time</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">total_requests</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">successful_requests</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">failed_requests</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">items_scraped</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">items_dropped</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">response_times</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">errors</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;开始计时&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    
+    <span class="k">def</span> <span class="nf">record_request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">success</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span> <span class="n">response_time</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;记录请求&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">total_requests</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="n">success</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">successful_requests</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">failed_requests</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">response_times</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">response_time</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">record_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dropped</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;记录数据项&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">dropped</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">items_dropped</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">items_scraped</span> <span class="o">+=</span> <span class="mi">1</span>
+    
+    <span class="k">def</span> <span class="nf">record_error</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">error_type</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">message</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;记录错误&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="n">error_type</span><span class="p">,</span>
+            <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="n">message</span><span class="p">,</span>
+            <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="p">})</span>
+    
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">duration</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;运行时长（秒）&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_time</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_time</span> <span class="k">else</span> <span class="mi">0</span>
+    
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">success_rate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;请求成功率&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">total_requests</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="mf">0.0</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">successful_requests</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">total_requests</span> <span class="o">*</span> <span class="mi">100</span>
+    
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">avg_response_time</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;平均响应时间&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">response_times</span><span class="p">:</span>
+            <span class="k">return</span> <span class="mf">0.0</span>
+        <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">response_times</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">response_times</span><span class="p">)</span>
+    
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">requests_per_second</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;每秒请求数&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">duration</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="mf">0.0</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">total_requests</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">duration</span>
+    
+    <span class="k">def</span> <span class="nf">summary</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;生成摘要报告&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;duration_seconds&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">duration</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+            <span class="s2">&quot;total_requests&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">total_requests</span><span class="p">,</span>
+            <span class="s2">&quot;success_rate&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">success_rate</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;avg_response_time&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">avg_response_time</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;requests_per_second&quot;</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">requests_per_second</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+            <span class="s2">&quot;items_scraped&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">items_scraped</span><span class="p">,</span>
+            <span class="s2">&quot;items_dropped&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">items_dropped</span><span class="p">,</span>
+            <span class="s2">&quot;errors_count&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">errors</span><span class="p">)</span>
+        <span class="p">}</span>
+
+<span class="c1"># 使用示例</span>
+<span class="n">metrics</span> <span class="o">=</span> <span class="n">CrawlerMetrics</span><span class="p">()</span>
+<span class="n">metrics</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+
+<span class="c1"># 模拟爬取过程</span>
+<span class="kn">import</span> <span class="nn">random</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">):</span>
+    <span class="n">success</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mf">0.1</span>  <span class="c1"># 90% 成功率</span>
+    <span class="n">response_time</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">)</span>
+    <span class="n">metrics</span><span class="o">.</span><span class="n">record_request</span><span class="p">(</span><span class="n">success</span><span class="p">,</span> <span class="n">response_time</span><span class="p">)</span>
+    
+    <span class="k">if</span> <span class="n">success</span> <span class="ow">and</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mf">0.2</span><span class="p">:</span>
+        <span class="n">metrics</span><span class="o">.</span><span class="n">record_item</span><span class="p">(</span><span class="n">dropped</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">metrics</span><span class="o">.</span><span class="n">record_item</span><span class="p">(</span><span class="n">dropped</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># 输出报告</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;📊 爬虫运行报告：&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">metrics</span><span class="o">.</span><span class="n">summary</span><span class="p">()</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">key</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="33-prometheus">3.3 Prometheus 指标导出</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">prometheus_client</span> <span class="kn">import</span> <span class="n">Counter</span><span class="p">,</span> <span class="n">Histogram</span><span class="p">,</span> <span class="n">Gauge</span><span class="p">,</span> <span class="n">start_http_server</span>
+
+<span class="c1"># 定义指标</span>
+<span class="n">REQUEST_COUNT</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span>
+    <span class="s1">&#39;crawler_requests_total&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Total crawler requests&#39;</span><span class="p">,</span>
+    <span class="p">[</span><span class="s1">&#39;spider&#39;</span><span class="p">,</span> <span class="s1">&#39;status&#39;</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="n">REQUEST_DURATION</span> <span class="o">=</span> <span class="n">Histogram</span><span class="p">(</span>
+    <span class="s1">&#39;crawler_request_duration_seconds&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Request duration in seconds&#39;</span><span class="p">,</span>
+    <span class="p">[</span><span class="s1">&#39;spider&#39;</span><span class="p">],</span>
+    <span class="n">buckets</span><span class="o">=</span><span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="n">ITEMS_SCRAPED</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span>
+    <span class="s1">&#39;crawler_items_scraped_total&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Total items scraped&#39;</span><span class="p">,</span>
+    <span class="p">[</span><span class="s1">&#39;spider&#39;</span><span class="p">]</span>
+<span class="p">)</span>
+
+<span class="n">ACTIVE_SPIDERS</span> <span class="o">=</span> <span class="n">Gauge</span><span class="p">(</span>
+    <span class="s1">&#39;crawler_active_spiders&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Number of active spiders&#39;</span>
+<span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">setup_monitoring</span><span class="p">(</span><span class="n">port</span><span class="o">=</span><span class="mi">9100</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;启动 Prometheus 监控端口&quot;&quot;&quot;</span>
+    <span class="n">start_http_server</span><span class="p">(</span><span class="n">port</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📊 监控端口已启动: http://localhost:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">/metrics&quot;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">record_spider_request</span><span class="p">(</span><span class="n">spider_name</span><span class="p">,</span> <span class="n">status</span><span class="p">,</span> <span class="n">duration</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;记录爬虫请求&quot;&quot;&quot;</span>
+    <span class="n">REQUEST_COUNT</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">spider</span><span class="o">=</span><span class="n">spider_name</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="n">status</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>
+    <span class="n">REQUEST_DURATION</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">spider</span><span class="o">=</span><span class="n">spider_name</span><span class="p">)</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span><span class="n">duration</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">record_items</span><span class="p">(</span><span class="n">spider_name</span><span class="p">,</span> <span class="n">count</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;记录爬取数据量&quot;&quot;&quot;</span>
+    <span class="n">ITEMS_SCRAPED</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">spider</span><span class="o">=</span><span class="n">spider_name</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">(</span><span class="n">count</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 限速与反反爬策略</h2>
+<h3 id="41-scrapy">4.1 Scrapy 自动限速配置</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># settings.py</span>
+
+<span class="c1"># 自动限速（AutoThrottle）</span>
+<span class="n">AUTOTHROTTLE_ENABLED</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="n">AUTOTHROTTLE_START_DELAY</span> <span class="o">=</span> <span class="mi">1</span>        <span class="c1"># 初始延迟（秒）</span>
+<span class="n">AUTOTHROTTLE_MAX_DELAY</span> <span class="o">=</span> <span class="mi">10</span>         <span class="c1"># 最大延迟（秒）</span>
+<span class="n">AUTOTHROTTLE_TARGET_CONCURRENCY</span> <span class="o">=</span> <span class="mf">2.0</span>  <span class="c1"># 目标并发数</span>
+<span class="n">AUTOTHROTTLE_DEBUG</span> <span class="o">=</span> <span class="kc">False</span>          <span class="c1"># 调试模式</span>
+
+<span class="c1"># 下载延迟</span>
+<span class="n">DOWNLOAD_DELAY</span> <span class="o">=</span> <span class="mi">2</span>  <span class="c1"># 每个请求间隔 2 秒</span>
+
+<span class="c1"># 并发控制</span>
+<span class="n">CONCURRENT_REQUESTS</span> <span class="o">=</span> <span class="mi">16</span>           <span class="c1"># 总并发数</span>
+<span class="n">CONCURRENT_REQUESTS_PER_DOMAIN</span> <span class="o">=</span> <span class="mi">8</span>  <span class="c1"># 每域名并发数</span>
+</code></pre></div>
+<h3 id="42-ip">4.2 代理 IP 轮换</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">random</span>
+<span class="kn">import</span> <span class="nn">requests</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="k">class</span> <span class="nc">ProxyManager</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;代理 IP 管理器&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">proxy_list</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">proxies</span> <span class="o">=</span> <span class="n">proxy_list</span> <span class="ow">or</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">current_index</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">failed_proxies</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    
+    <span class="k">def</span> <span class="nf">add_proxy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">proxy</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;添加代理&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">proxy</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">proxies</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">proxies</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">proxy</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">get_proxy</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;获取下一个可用代理&quot;&quot;&quot;</span>
+        <span class="n">available</span> <span class="o">=</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">proxies</span> <span class="k">if</span> <span class="n">p</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">failed_proxies</span><span class="p">]</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">available</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        
+        <span class="n">proxy</span> <span class="o">=</span> <span class="n">available</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">current_index</span> <span class="o">%</span> <span class="nb">len</span><span class="p">(</span><span class="n">available</span><span class="p">)]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">current_index</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">proxy</span>
+    
+    <span class="k">def</span> <span class="nf">mark_failed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">proxy</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;标记代理失败&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">failed_proxies</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">proxy</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;重置失败标记&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">failed_proxies</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+<span class="k">class</span> <span class="nc">ProxyMiddleware</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Scrapy 代理中间件&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">proxy_manager</span> <span class="o">=</span> <span class="n">ProxyManager</span><span class="p">()</span>
+    
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">from_crawler</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">crawler</span><span class="p">):</span>
+        <span class="n">middleware</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">()</span>
+        <span class="c1"># 从设置中加载代理列表</span>
+        <span class="n">proxy_list</span> <span class="o">=</span> <span class="n">crawler</span><span class="o">.</span><span class="n">settings</span><span class="o">.</span><span class="n">getlist</span><span class="p">(</span><span class="s2">&quot;PROXY_LIST&quot;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="k">for</span> <span class="n">proxy</span> <span class="ow">in</span> <span class="n">proxy_list</span><span class="p">:</span>
+            <span class="n">middleware</span><span class="o">.</span><span class="n">proxy_manager</span><span class="o">.</span><span class="n">add_proxy</span><span class="p">(</span><span class="n">proxy</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">middleware</span>
+    
+    <span class="k">def</span> <span class="nf">process_request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;为每个请求添加代理&quot;&quot;&quot;</span>
+        <span class="n">proxy</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">proxy_manager</span><span class="o">.</span><span class="n">get_proxy</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">proxy</span><span class="p">:</span>
+            <span class="n">request</span><span class="o">.</span><span class="n">meta</span><span class="p">[</span><span class="s2">&quot;proxy&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;http://</span><span class="si">{</span><span class="n">proxy</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">spider</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;使用代理: </span><span class="si">{</span><span class="n">proxy</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="43-user-agent">4.3 随机 User-Agent</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">random</span>
+
+<span class="k">class</span> <span class="nc">RandomUserAgentMiddleware</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;随机 User-Agent 中间件&quot;&quot;&quot;</span>
+    
+    <span class="n">USER_AGENTS</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s2">&quot;Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15&quot;</span><span class="p">,</span>
+    <span class="p">]</span>
+    
+    <span class="k">def</span> <span class="nf">process_request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;随机设置 User-Agent&quot;&quot;&quot;</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">[</span><span class="s2">&quot;User-Agent&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">USER_AGENTS</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 性能优化与调优</h2>
+<h3 id="51">5.1 数据库批量写入</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">pymongo</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Dict</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="k">class</span> <span class="nc">BatchWriter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;批量写入优化器&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">collection</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">flush_interval</span><span class="o">=</span><span class="mf">5.0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">collection</span> <span class="o">=</span> <span class="n">collection</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">batch_size</span> <span class="o">=</span> <span class="n">batch_size</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">flush_interval</span> <span class="o">=</span> <span class="n">flush_interval</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">last_flush</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    
+    <span class="k">def</span> <span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">:</span> <span class="n">Dict</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;添加数据到缓冲区&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+        
+        <span class="c1"># 检查是否需要刷新</span>
+        <span class="k">if</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">batch_size</span> <span class="ow">or</span> 
+            <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">last_flush</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">flush_interval</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+    
+    <span class="k">def</span> <span class="nf">flush</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;刷新缓冲区到数据库&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">:</span>
+            <span class="k">return</span>
+        
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">collection</span><span class="o">.</span><span class="n">insert_many</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span> <span class="n">ordered</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ 批量写入 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span><span class="si">}</span><span class="s2"> 条数据&quot;</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">pymongo</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">BulkWriteError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;⚠️ 部分写入失败: </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">details</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">last_flush</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    
+    <span class="k">def</span> <span class="fm">__del__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;析构时刷新剩余数据&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+<span class="c1"># 使用示例</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">pymongo</span><span class="o">.</span><span class="n">MongoClient</span><span class="p">(</span><span class="s2">&quot;mongodb://localhost:27017&quot;</span><span class="p">)</span>
+<span class="n">db</span> <span class="o">=</span> <span class="n">client</span><span class="p">[</span><span class="s2">&quot;ecommerce&quot;</span><span class="p">]</span>
+<span class="n">collection</span> <span class="o">=</span> <span class="n">db</span><span class="p">[</span><span class="s2">&quot;products&quot;</span><span class="p">]</span>
+
+<span class="n">writer</span> <span class="o">=</span> <span class="n">BatchWriter</span><span class="p">(</span><span class="n">collection</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="52">5.2 请求去重优化（布隆过滤器）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">mmh3</span>
+<span class="kn">from</span> <span class="nn">bitarray</span> <span class="kn">import</span> <span class="n">bitarray</span>
+
+<span class="k">class</span> <span class="nc">BloomFilter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;布隆过滤器 - 高效去重&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">capacity</span><span class="o">=</span><span class="mi">1000000</span><span class="p">,</span> <span class="n">error_rate</span><span class="o">=</span><span class="mf">0.001</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        初始化布隆过滤器</span>
+<span class="sd">        </span>
+<span class="sd">        Args:</span>
+<span class="sd">            capacity: 预期元素数量</span>
+<span class="sd">            error_rate: 允许的误判率</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">capacity</span> <span class="o">=</span> <span class="n">capacity</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">error_rate</span> <span class="o">=</span> <span class="n">error_rate</span>
+        
+        <span class="c1"># 计算所需位数和哈希函数数量</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">size</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_optimal_size</span><span class="p">(</span><span class="n">capacity</span><span class="p">,</span> <span class="n">error_rate</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">hash_count</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_optimal_hash_count</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">capacity</span><span class="p">)</span>
+        
+        <span class="c1"># 初始化位数组</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bit_array</span> <span class="o">=</span> <span class="n">bitarray</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">size</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bit_array</span><span class="o">.</span><span class="n">setall</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+    
+    <span class="k">def</span> <span class="nf">_optimal_size</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">p</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;计算最优位数组大小&quot;&quot;&quot;</span>
+        <span class="kn">import</span> <span class="nn">math</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="o">-</span><span class="p">(</span><span class="n">n</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">p</span><span class="p">))</span> <span class="o">/</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">m</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">_optimal_hash_count</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">m</span><span class="p">,</span> <span class="n">n</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;计算最优哈希函数数量&quot;&quot;&quot;</span>
+        <span class="kn">import</span> <span class="nn">math</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="p">(</span><span class="n">m</span> <span class="o">/</span> <span class="n">n</span><span class="p">)</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;添加元素&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">hash_count</span><span class="p">):</span>
+            <span class="n">index</span> <span class="o">=</span> <span class="n">mmh3</span><span class="o">.</span><span class="n">hash</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">item</span><span class="p">),</span> <span class="n">i</span><span class="p">)</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">bit_array</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+    
+    <span class="k">def</span> <span class="nf">contains</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;检查元素是否可能存在&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">hash_count</span><span class="p">):</span>
+            <span class="n">index</span> <span class="o">=</span> <span class="n">mmh3</span><span class="o">.</span><span class="n">hash</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">item</span><span class="p">),</span> <span class="n">i</span><span class="p">)</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">size</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">bit_array</span><span class="p">[</span><span class="n">index</span><span class="p">]:</span>
+                <span class="k">return</span> <span class="kc">False</span>
+        <span class="k">return</span> <span class="kc">True</span>
+    
+    <span class="k">def</span> <span class="fm">__contains__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">contains</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+
+<span class="c1"># 使用示例</span>
+<span class="n">bloom</span> <span class="o">=</span> <span class="n">BloomFilter</span><span class="p">(</span><span class="n">capacity</span><span class="o">=</span><span class="mi">1000000</span><span class="p">)</span>
+
+<span class="c1"># 添加 URL</span>
+<span class="n">bloom</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;https://example.com/product/1&quot;</span><span class="p">)</span>
+<span class="n">bloom</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;https://example.com/product/2&quot;</span><span class="p">)</span>
+
+<span class="c1"># 检查 URL 是否已存在</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">bloom</span><span class="o">.</span><span class="n">contains</span><span class="p">(</span><span class="s2">&quot;https://example.com/product/1&quot;</span><span class="p">))</span>  <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">bloom</span><span class="o">.</span><span class="n">contains</span><span class="p">(</span><span class="s2">&quot;https://example.com/product/999&quot;</span><span class="p">))</span>  <span class="c1"># False</span>
+</code></pre></div>
+<h3 id="53-io">5.3 异步 IO 优化</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+<span class="kn">import</span> <span class="nn">aiohttp</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="k">class</span> <span class="nc">AsyncFetcher</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;异步批量请求器&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_concurrent</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_concurrent</span> <span class="o">=</span> <span class="n">max_concurrent</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">semaphore</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Semaphore</span><span class="p">(</span><span class="n">max_concurrent</span><span class="p">)</span>
+    
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_one</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;获取单个 URL&quot;&quot;&quot;</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">semaphore</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientTimeout</span><span class="p">(</span><span class="n">total</span><span class="o">=</span><span class="mi">10</span><span class="p">))</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+                    <span class="n">content</span> <span class="o">=</span> <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">()</span>
+                    <span class="k">return</span> <span class="p">{</span>
+                        <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span>
+                        <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="n">response</span><span class="o">.</span><span class="n">status</span><span class="p">,</span>
+                        <span class="s2">&quot;length&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">content</span><span class="p">),</span>
+                        <span class="s2">&quot;success&quot;</span><span class="p">:</span> <span class="kc">True</span>
+                    <span class="p">}</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="k">return</span> <span class="p">{</span>
+                    <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span>
+                    <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                    <span class="s2">&quot;length&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                    <span class="s2">&quot;success&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+                    <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+                <span class="p">}</span>
+    
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_batch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">urls</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;批量异步获取&quot;&quot;&quot;</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+            <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">fetch_one</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">)</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">]</span>
+            <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">results</span>
+
+<span class="c1"># 使用示例</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">urls</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="sa">f</span><span class="s2">&quot;https://example.com/page/</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span> 
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+    <span class="p">]</span>
+    
+    <span class="n">fetcher</span> <span class="o">=</span> <span class="n">AsyncFetcher</span><span class="p">(</span><span class="n">max_concurrent</span><span class="o">=</span><span class="mi">20</span><span class="p">)</span>
+    
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetcher</span><span class="o">.</span><span class="n">fetch_batch</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span>
+    <span class="n">duration</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+    
+    <span class="n">success_count</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s2">&quot;success&quot;</span><span class="p">])</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ 完成 </span><span class="si">{</span><span class="n">success_count</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个请求，耗时 </span><span class="si">{</span><span class="n">duration</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+
+<span class="c1"># 运行</span>
+<span class="c1"># asyncio.run(main())</span>
+</code></pre></div>
+<hr>
+<h2 id="6">6. 完整项目集成</h2>
+<h3 id="61">6.1 项目结构</h3>
+<pre class="plain"><code>ecommerce_monitor/
+├── scrapy.cfg
+├── requirements.txt
+├── Dockerfile
+├── docker-compose.yml
+├── ecommerce_monitor/
+│   ├── __init__.py
+│   ├── items.py          # 数据模型
+│   ├── pipelines.py      # 数据管道
+│   ├── middlewares.py     # 中间件
+│   ├── settings.py       # 配置
+│   ├── spiders/
+│   │   ├── __init__.py
+│   │   ├── price_monitor.py
+│   │   └── review_monitor.py
+│   └── utils/
+│       ├── __init__.py
+│       ├── logger.py      # 日志工具
+│       ├── metrics.py     # 指标收集
+│       └── bloom.py       # 布隆过滤器
+├── deploy/
+│   ├── scrapyd-deploy.cfg
+│   └── deploy.sh
+├── monitor/
+│   ├── prometheus.yml
+│   └── grafana/
+│       └── dashboards/
+└── tests/
+    ├── test_spiders.py
+    └── test_pipelines.py
+</code></pre>
+<h3 id="62">6.2 主爬虫文件</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ecommerce_monitor/spiders/price_monitor.py</span>
+<span class="kn">import</span> <span class="nn">scrapy</span>
+<span class="kn">from</span> <span class="nn">scrapy.exceptions</span> <span class="kn">import</span> <span class="n">DropItem</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+
+<span class="k">class</span> <span class="nc">PriceMonitorSpider</span><span class="p">(</span><span class="n">scrapy</span><span class="o">.</span><span class="n">Spider</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;电商价格监控爬虫&quot;&quot;&quot;</span>
+    
+    <span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;price_monitor&quot;</span>
+    <span class="n">allowed_domains</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;example.com&quot;</span><span class="p">]</span>
+    <span class="n">start_urls</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;https://example.com/products&quot;</span><span class="p">]</span>
+    
+    <span class="n">custom_settings</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;DOWNLOAD_DELAY&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span>
+        <span class="s2">&quot;CONCURRENT_REQUESTS_PER_DOMAIN&quot;</span><span class="p">:</span> <span class="mi">4</span><span class="p">,</span>
+        <span class="s2">&quot;AUTOTHROTTLE_ENABLED&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+        <span class="s2">&quot;ITEM_PIPELINES&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;ecommerce_monitor.pipelines.ValidationPipeline&quot;</span><span class="p">:</span> <span class="mi">100</span><span class="p">,</span>
+            <span class="s2">&quot;ecommerce_monitor.pipelines.PriceFilterPipeline&quot;</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span>
+            <span class="s2">&quot;ecommerce_monitor.pipelines.DatabasePipeline&quot;</span><span class="p">:</span> <span class="mi">300</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">}</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">category</span> <span class="o">=</span> <span class="n">category</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stats</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;items_scraped&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="s2">&quot;items_dropped&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="s2">&quot;requests_made&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+        <span class="p">}</span>
+    
+    <span class="k">def</span> <span class="nf">parse</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">response</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;解析商品列表页&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stats</span><span class="p">[</span><span class="s2">&quot;requests_made&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        
+        <span class="c1"># 提取商品链接</span>
+        <span class="n">product_links</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">css</span><span class="p">(</span><span class="s2">&quot;a.product-link::attr(href)&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">getall</span><span class="p">()</span>
+        
+        <span class="k">for</span> <span class="n">link</span> <span class="ow">in</span> <span class="n">product_links</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">response</span><span class="o">.</span><span class="n">follow</span><span class="p">(</span><span class="n">link</span><span class="p">,</span> <span class="n">callback</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parse_product</span><span class="p">)</span>
+        
+        <span class="c1"># 翻页</span>
+        <span class="n">next_page</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">css</span><span class="p">(</span><span class="s2">&quot;a.next-page::attr(href)&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">next_page</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">response</span><span class="o">.</span><span class="n">follow</span><span class="p">(</span><span class="n">next_page</span><span class="p">,</span> <span class="n">callback</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parse</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">parse_product</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">response</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;解析商品详情页&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stats</span><span class="p">[</span><span class="s2">&quot;requests_made&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        
+        <span class="c1"># 提取数据</span>
+        <span class="n">item</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;product_id&quot;</span><span class="p">:</span> <span class="n">response</span><span class="o">.</span><span class="n">css</span><span class="p">(</span><span class="s2">&quot;div.product-id::text&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span>
+            <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="n">response</span><span class="o">.</span><span class="n">css</span><span class="p">(</span><span class="s2">&quot;h1.product-name::text&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span>
+            <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">css</span><span class="p">(</span><span class="s2">&quot;span.price::text&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;¥&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s2">&quot;original_price&quot;</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">css</span><span class="p">(</span><span class="s2">&quot;span.original-price::text&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;¥&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s2">&quot;rating&quot;</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">css</span><span class="p">(</span><span class="s2">&quot;span.rating::attr(data-rating)&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0&quot;</span><span class="p">)),</span>
+            <span class="s2">&quot;review_count&quot;</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">css</span><span class="p">(</span><span class="s2">&quot;span.review-count::text&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;0&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)),</span>
+            <span class="s2">&quot;category&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">category</span><span class="p">,</span>
+            <span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">response</span><span class="o">.</span><span class="n">url</span><span class="p">,</span>
+            <span class="s2">&quot;scraped_at&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(),</span>
+            <span class="s2">&quot;url_hash&quot;</span><span class="p">:</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">url</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">(),</span>
+        <span class="p">}</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">stats</span><span class="p">[</span><span class="s2">&quot;items_scraped&quot;</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">yield</span> <span class="n">item</span>
+    
+    <span class="k">def</span> <span class="nf">closed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">reason</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;爬虫关闭时输出统计&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;爬虫统计: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">stats</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="63">6.3 数据管道</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ecommerce_monitor/pipelines.py</span>
+<span class="kn">import</span> <span class="nn">pymongo</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span> <span class="nn">scrapy.exceptions</span> <span class="kn">import</span> <span class="n">DropItem</span>
+
+<span class="k">class</span> <span class="nc">ValidationPipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;数据验证管道&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="c1"># 检查必填字段</span>
+        <span class="n">required_fields</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;product_id&quot;</span><span class="p">,</span> <span class="s2">&quot;name&quot;</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="n">required_fields</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">field</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;缺少必填字段: </span><span class="si">{</span><span class="n">field</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        
+        <span class="c1"># 价格合理性检查</span>
+        <span class="k">if</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;price&quot;</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;price&quot;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">100000</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;价格异常: </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        
+        <span class="k">return</span> <span class="n">item</span>
+
+<span class="k">class</span> <span class="nc">PriceFilterPipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;价格过滤管道（只保留降价商品）&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span> <span class="o">=</span> <span class="p">{}</span>
+    
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="n">product_id</span> <span class="o">=</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;product_id&quot;</span><span class="p">]</span>
+        
+        <span class="k">if</span> <span class="n">product_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span><span class="p">:</span>
+            <span class="n">old_price</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span><span class="p">[</span><span class="n">product_id</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;price&quot;</span><span class="p">]</span> <span class="o">&gt;=</span> <span class="n">old_price</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;价格未降低: </span><span class="si">{</span><span class="n">old_price</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">spider</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;💰 降价: </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">old_price</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span><span class="p">[</span><span class="n">product_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;price&quot;</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">item</span>
+
+<span class="k">class</span> <span class="nc">DatabasePipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;MongoDB 存储管道&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mongo_uri</span><span class="p">,</span> <span class="n">mongo_db</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mongo_uri</span> <span class="o">=</span> <span class="n">mongo_uri</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mongo_db</span> <span class="o">=</span> <span class="n">mongo_db</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db</span> <span class="o">=</span> <span class="kc">None</span>
+    
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">from_crawler</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">crawler</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span>
+            <span class="n">mongo_uri</span><span class="o">=</span><span class="n">crawler</span><span class="o">.</span><span class="n">settings</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MONGO_URI&quot;</span><span class="p">,</span> <span class="s2">&quot;mongodb://localhost:27017&quot;</span><span class="p">),</span>
+            <span class="n">mongo_db</span><span class="o">=</span><span class="n">crawler</span><span class="o">.</span><span class="n">settings</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;MONGO_DB&quot;</span><span class="p">,</span> <span class="s2">&quot;ecommerce&quot;</span><span class="p">)</span>
+        <span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">open_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">pymongo</span><span class="o">.</span><span class="n">MongoClient</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mongo_uri</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">mongo_db</span><span class="p">]</span>
+        <span class="n">spider</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ MongoDB 连接成功: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">mongo_uri</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">close_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="c1"># 更新或插入</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">products</span><span class="o">.</span><span class="n">update_one</span><span class="p">(</span>
+            <span class="p">{</span><span class="s2">&quot;product_id&quot;</span><span class="p">:</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;product_id&quot;</span><span class="p">]},</span>
+            <span class="p">{</span><span class="s2">&quot;$set&quot;</span><span class="p">:</span> <span class="n">item</span><span class="p">},</span>
+            <span class="n">upsert</span><span class="o">=</span><span class="kc">True</span>
+        <span class="p">)</span>
+        
+        <span class="c1"># 记录价格历史</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">price_history</span><span class="o">.</span><span class="n">insert_one</span><span class="p">({</span>
+            <span class="s2">&quot;product_id&quot;</span><span class="p">:</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;product_id&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;price&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+        <span class="p">})</span>
+        
+        <span class="k">return</span> <span class="n">item</span>
+</code></pre></div>
+<hr>
+<h2 id="_2">🖼️ 图解：爬虫系统架构</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────────┐
+│                     Docker Compose 编排                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
+│  │   Scrapyd    │    │    Redis     │    │   MongoDB    │  │
+│  │   调度器     │───▶│   去重队列   │───▶│   数据存储   │  │
+│  │   端口:6800  │    │   端口:6379  │    │   端口:27017 │  │
+│  └──────┬───────┘    └──────────────┘    └──────────────┘  │
+│         │                                                    │
+│         ▼                                                    │
+│  ┌──────────────┐    ┌──────────────┐                       │
+│  │  爬虫实例 x3 │    │   Grafana    │                       │
+│  │  并行运行    │───▶│   监控面板   │                       │
+│  │              │    │   端口:3000  │                       │
+│  └──────────────┘    └──────────────┘                       │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+
+数据流向：
+  目标网站 ──▶ Scrapyd ──▶ 爬虫实例 ──▶ Pipeline ──▶ MongoDB
+                           │
+                           ├──▶ Redis（URL去重）
+                           └──▶ Prometheus（指标） ──▶ Grafana（可视化）
+</code></pre>
+<hr>
+<h2 id="_3">💡 思考题</h2>
+<ol>
+<li>
+<p><strong>缓存策略</strong>：在爬虫中如何设计多级缓存（本地内存 → Redis → 数据库）？各层缓存的失效策略如何设计？</p>
+</li>
+<li>
+<p><strong>分布式调度</strong>：如果要在多台机器上部署爬虫实例，如何实现任务的公平分配和避免重复爬取？（提示：考虑 Celery 或自建调度器）</p>
+</li>
+<li>
+<p><strong>优雅停机</strong>：爬虫正在运行时收到 SIGTERM 信号，如何确保当前任务完成后再退出？如何处理正在处理中的数据？</p>
+</li>
+<li>
+<p><strong>增量爬取</strong>：如何设计增量爬取策略，只爬取有变化的页面？比较基于时间戳和基于内容哈希两种方案的优劣。</p>
+</li>
+<li>
+<p><strong>法律合规</strong>：在编写爬虫时，哪些行为可能触犯法律？如何在技术层面确保爬虫的合规性？（提示：robots.txt、请求频率、数据使用）</p>
+</li>
+</ol>
+<hr>
+<h2 id="_4">📚 延伸阅读</h2>
+<ul>
+<li><a href="https://docs.scrapy.org/en/latest/topics/deploy.html">Scrapy 官方文档 - 部署</a></li>
+<li><a href="https://docs.docker.com/compose/networking/">Docker + Scrapy 最佳实践</a></li>
+<li><a href="https://github.com/prometheus/client_python">Prometheus Python 客户端</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Bloom_filter">布隆过滤器原理</a></li>
+</ul>
+<hr>
+<blockquote>
+<p>🎉 <strong>恭喜完成 Web 爬虫系统项目！</strong> 你现在已经掌握了从爬虫开发到生产部署的完整流程。接下来的 Day 79-81 将进入数据分析领域，用数据来分析你爬取的结果！</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-077/index.html">← Day 77 请求调度与数据管道</a><a class="nav-next" href="../day-079/index.html">Day 79 NumPy 基础 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

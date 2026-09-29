@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 46 — 元类（Metaclass）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 46 — 元类（Metaclass）</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">415 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-046-metaclass" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📌 今日目标</a>
+<a class="toc-l2" href="#_2">一、类也是对象</a>
+<a class="toc-l3" href="#11">1.1 核心概念</a>
+<a class="toc-l3" href="#12">1.2 为什么类是对象？</a>
+<a class="toc-l3" href="#13">1.3 对象的层级关系</a>
+<a class="toc-l2" href="#type">二、type() 动态创建类</a>
+<a class="toc-l3" href="#21-type">2.1 type() 的两种用法</a>
+<a class="toc-l3" href="#22-type">2.2 type() 的完整参数</a>
+<a class="toc-l3" href="#23">2.3 动态创建类的实际意义</a>
+<a class="toc-l2" href="#_3">三、自定义元类</a>
+<a class="toc-l3" href="#31">3.1 元类是什么？</a>
+<a class="toc-l3" href="#32">3.2 编写第一个自定义元类</a>
+<a class="toc-l3" href="#33">3.3 元类的关键方法</a>
+<a class="toc-l3" href="#34-vs">3.4 元类 vs 装饰器</a>
+<a class="toc-l2" href="#orm">四、实战：ORM 字段验证</a>
+<a class="toc-l3" href="#41">4.1 需求分析</a>
+<a class="toc-l3" href="#42">4.2 实现方案</a>
+<a class="toc-l2" href="#api">五、API 速查表</a>
+<a class="toc-l3" href="#type_1">type() 函数</a>
+<a class="toc-l3" href="#_4">自定义元类</a>
+<a class="toc-l3" href="#hasattr-getattr">hasattr / getattr 动态操作</a>
+<a class="toc-l2" href="#_5">六、原理解析图</a>
+<a class="toc-l3" href="#_6">元类调用链</a>
+<a class="toc-l3" href="#_7">自定义元类调用链</a>
+<a class="toc-l2" href="#_8">七、实战代码案例</a>
+<a class="toc-l3" href="#1">案例 1：自动注册类到注册表</a>
+<a class="toc-l3" href="#2">案例 2：单例模式</a>
+<a class="toc-l3" href="#3-repr">案例 3：自动添加 repr</a>
+<a class="toc-l2" href="#_9">八、思考题</a>
+<a class="toc-l2" href="#_10">📚 延伸阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-046-metaclass">Day 046 — 元类（Metaclass）</h1>
+<blockquote>
+<p><strong>Phase 4 — 高阶特性</strong> | Day 046/200 | 实战日</p>
+</blockquote>
+<h2 id="_1">📌 今日目标</h2>
+<p>理解 Python 中"一切皆对象"的终极体现——元类。掌握 <code>type()</code> 的本质、动态创建类的方法，以及如何用自定义元类实现 ORM 字段验证。</p>
+<hr>
+<h2 id="_2">一、类也是对象</h2>
+<h3 id="11">1.1 核心概念</h3>
+<p>在 Python 中，<strong>一切皆对象</strong>。整数是对象，字符串是对象，函数是对象——<strong>类本身也是对象</strong>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Dog</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="c1"># Dog 是一个类，但它同时也是一个对象</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">Dog</span><span class="p">))</span>  <span class="c1"># &lt;class &#39;type&#39;&gt;</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">Dog</span><span class="p">,</span> <span class="nb">type</span><span class="p">))</span>  <span class="c1"># True</span>
+</code></pre></div>
+<p>这意味着：<br>
+- 类可以赋值给变量<br>
+- 类可以作为参数传递<br>
+- 类可以动态创建<br>
+- 类有类型——它的类型就是 <code>type</code></p>
+<h3 id="12">1.2 为什么类是对象？</h3>
+<p>Python 的设计哲学是<strong>一致性</strong>。如果函数可以作为对象传递（回调机制），那么类也应该是对象。这使得：</p>
+<ol>
+<li><strong>元编程</strong>成为可能——你可以编写"生成类的代码"</li>
+<li><strong>框架设计</strong>更加灵活——Django ORM、SQLAlchemy 都依赖此机制</li>
+<li><strong>装饰器</strong>可以应用于类——<code>@dataclass</code>、<code>@singleton</code> 等</li>
+</ol>
+<h3 id="13">1.3 对象的层级关系</h3>
+<pre class="plain"><code>普通对象（实例）  →  类（Class）  →  元类（Metaclass）
+    Dog()          class Dog:       type
+    实例              类定义        创建类的&quot;类&quot;
+</code></pre>
+<p>每个对象都有一个 <code>type</code>：<br>
+- <code>type(dog_instance)</code> → <code>&lt;class 'Dog'&gt;</code><br>
+- <code>type(Dog)</code> → <code>&lt;class 'type'&gt;</code><br>
+- <code>type(type)</code> → <code>&lt;class 'type'&gt;</code>（<code>type</code> 是它自己的实例！）</p>
+<hr>
+<h2 id="type">二、type() 动态创建类</h2>
+<h3 id="21-type">2.1 type() 的两种用法</h3>
+<p><strong>用法一：查询对象类型</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">x</span> <span class="o">=</span> <span class="mi">42</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>  <span class="c1"># &lt;class &#39;int&#39;&gt;</span>
+</code></pre></div>
+<p><strong>用法二：动态创建类</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># type(类名, 基类元组, 属性字典)</span>
+<span class="n">MyClass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="s1">&#39;MyClass&#39;</span><span class="p">,</span> <span class="p">(</span><span class="nb">object</span><span class="p">,),</span> <span class="p">{</span><span class="s1">&#39;greet&#39;</span><span class="p">:</span> <span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="s1">&#39;Hello!&#39;</span><span class="p">})</span>
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">greet</span><span class="p">())</span>  <span class="c1"># Hello!</span>
+</code></pre></div>
+<p><code>type()</code> 三参数版本等价于：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">greet</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s1">&#39;Hello!&#39;</span>
+</code></pre></div>
+<h3 id="22-type">2.2 type() 的完整参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>类名（字符串）</td>
+<td><code>'Dog'</code></td>
+</tr>
+<tr>
+<td><code>bases</code></td>
+<td>基类元组，没有就写 <code>(object,)</code></td>
+<td><code>(Animal,)</code></td>
+</tr>
+<tr>
+<td><code>attrs</code></td>
+<td>类属性字典</td>
+<td><code>{'legs': 4}</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="23">2.3 动态创建类的实际意义</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 根据配置文件动态生成类</span>
+<span class="n">config</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="s1">&#39;User&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;fields&#39;</span><span class="p">:</span> <span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">,</span> <span class="s1">&#39;email&#39;</span><span class="p">,</span> <span class="s1">&#39;age&#39;</span><span class="p">]</span>
+<span class="p">}</span>
+
+<span class="c1"># 动态创建一个包含验证方法的类</span>
+<span class="k">def</span> <span class="nf">make_validator</span><span class="p">(</span><span class="n">fields</span><span class="p">):</span>
+    <span class="n">attrs</span> <span class="o">=</span> <span class="p">{</span><span class="n">f</span><span class="p">:</span> <span class="kc">None</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fields</span><span class="p">}</span>
+    <span class="n">attrs</span><span class="p">[</span><span class="s1">&#39;validate&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="nb">all</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fields</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="s1">&#39;Model&#39;</span><span class="p">,</span> <span class="p">(),</span> <span class="n">attrs</span><span class="p">)</span>
+
+<span class="n">Model</span> <span class="o">=</span> <span class="n">make_validator</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;fields&#39;</span><span class="p">])</span>
+<span class="n">user</span> <span class="o">=</span> <span class="n">Model</span><span class="p">()</span>
+<span class="n">user</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="s1">&#39;Alice&#39;</span>
+<span class="n">user</span><span class="o">.</span><span class="n">email</span> <span class="o">=</span> <span class="s1">&#39;alice@example.com&#39;</span>
+<span class="n">user</span><span class="o">.</span><span class="n">age</span> <span class="o">=</span> <span class="mi">30</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">validate</span><span class="p">())</span>  <span class="c1"># True</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">三、自定义元类</h2>
+<h3 id="31">3.1 元类是什么？</h3>
+<p>元类就是<strong>创建类的类</strong>。当你写 <code>class Dog:</code> 时，Python 会：</p>
+<ol>
+<li>执行 <code>type()</code> 来创建 <code>Dog</code> 类对象</li>
+<li>但如果有自定义元类，Python 会用<strong>自定义元类</strong>来创建</li>
+</ol>
+<h3 id="32">3.2 编写第一个自定义元类</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">UpperAttrMetaclass</span><span class="p">(</span><span class="nb">type</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;自动将类的所有属性名转为大写&quot;&quot;&quot;</span>
+    
+    <span class="k">def</span> <span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">):</span>
+        <span class="n">uppercase_attrs</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">attrs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">key</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;__&#39;</span><span class="p">):</span>
+                <span class="n">uppercase_attrs</span><span class="p">[</span><span class="n">key</span><span class="o">.</span><span class="n">upper</span><span class="p">()]</span> <span class="o">=</span> <span class="n">value</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">uppercase_attrs</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">uppercase_attrs</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">(</span><span class="n">metaclass</span><span class="o">=</span><span class="n">UpperAttrMetaclass</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="s1">&#39;test&#39;</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="nb">dir</span><span class="p">(</span><span class="n">MyClass</span><span class="p">))</span>  <span class="c1"># 包含 NAME 而不是 name</span>
+</code></pre></div>
+<h3 id="33">3.3 元类的关键方法</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>何时调用</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__new__(mcs, name, bases, attrs)</code></td>
+<td>创建类时</td>
+<td>控制类的创建过程</td>
+</tr>
+<tr>
+<td><code>__init__(cls, name, bases, attrs)</code></td>
+<td>创建类后</td>
+<td>初始化类</td>
+</tr>
+<tr>
+<td><code>__call__(cls, *args, **kwargs)</code></td>
+<td>创建实例时</td>
+<td>控制实例化过程</td>
+</tr>
+</tbody>
+</table>
+<h3 id="34-vs">3.4 元类 vs 装饰器</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>元类</th>
+<th>装饰器</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>作用范围</td>
+<td>影响所有子类</td>
+<td>仅影响被装饰的类</td>
+</tr>
+<tr>
+<td>复杂度</td>
+<td>高</td>
+<td>低</td>
+</tr>
+<tr>
+<td>可读性</td>
+<td>差</td>
+<td>好</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>框架、库设计</td>
+<td>简单的类修改</td>
+</tr>
+</tbody>
+</table>
+<p><strong>经验法则</strong>：能用装饰器解决的，就不用元类。</p>
+<hr>
+<h2 id="orm">四、实战：ORM 字段验证</h2>
+<h3 id="41">4.1 需求分析</h3>
+<p>仿照 Django ORM，实现一个简单的字段验证系统：<br>
+- 定义字段类型（StringField、IntegerField 等）<br>
+- 自动收集字段定义<br>
+- 创建实例时自动验证</p>
+<h3 id="42">4.2 实现方案</h3>
+<p>使用元类实现：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Field</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">required</span> <span class="o">=</span> <span class="n">required</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_length</span> <span class="o">=</span> <span class="n">max_length</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="k">class</span> <span class="nc">StringField</span><span class="p">(</span><span class="n">Field</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+<span class="k">class</span> <span class="nc">IntegerField</span><span class="p">(</span><span class="n">Field</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+<span class="k">class</span> <span class="nc">ModelMeta</span><span class="p">(</span><span class="nb">type</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">):</span>
+        <span class="n">fields</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">attrs</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">Field</span><span class="p">):</span>
+                <span class="n">value</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">key</span>
+                <span class="n">fields</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="n">attrs</span><span class="p">[</span><span class="s1">&#39;_fields&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">fields</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">Model</span><span class="p">(</span><span class="n">metaclass</span><span class="o">=</span><span class="n">ModelMeta</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">field</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_fields</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">field</span><span class="o">.</span><span class="n">required</span> <span class="ow">and</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">kwargs</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;缺少必填字段: </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">kwargs</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+    
+    <span class="k">def</span> <span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">field</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_fields</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">field</span><span class="o">.</span><span class="n">max_length</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">))</span> <span class="o">&gt;</span> <span class="n">field</span><span class="o">.</span><span class="n">max_length</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> 超出最大长度 </span><span class="si">{</span><span class="n">field</span><span class="o">.</span><span class="n">max_length</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># 使用</span>
+<span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">Model</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">StringField</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="mi">50</span><span class="p">)</span>
+    <span class="n">age</span> <span class="o">=</span> <span class="n">IntegerField</span><span class="p">(</span><span class="n">required</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">&#39;Alice&#39;</span><span class="p">,</span> <span class="n">age</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+<span class="n">user</span><span class="o">.</span><span class="n">validate</span><span class="p">()</span>  <span class="c1"># 通过</span>
+</code></pre></div>
+<hr>
+<h2 id="api">五、API 速查表</h2>
+<h3 id="type_1">type() 函数</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 查询类型</span>
+<span class="nb">type</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>                    <span class="c1"># 返回 obj 的类型</span>
+<span class="nb">type</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span> <span class="ow">is</span> <span class="n">SomeClass</span>       <span class="c1"># 判断类型</span>
+
+<span class="c1"># 动态创建类</span>
+<span class="n">MyClass</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="s1">&#39;MyClass&#39;</span><span class="p">,</span> <span class="p">(</span><span class="n">BaseClass</span><span class="p">,),</span> <span class="p">{</span><span class="s1">&#39;attr&#39;</span><span class="p">:</span> <span class="n">value</span><span class="p">})</span>
+</code></pre></div>
+<h3 id="_4">自定义元类</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Meta</span><span class="p">(</span><span class="nb">type</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">):</span>
+        <span class="c1"># mcs: 元类自身</span>
+        <span class="c1"># name: 类名</span>
+        <span class="c1"># bases: 基类元组</span>
+        <span class="c1"># attrs: 类属性字典</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__call__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<span class="c1"># 使用</span>
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">(</span><span class="n">metaclass</span><span class="o">=</span><span class="n">Meta</span><span class="p">):</span>
+    <span class="k">pass</span>
+</code></pre></div>
+<h3 id="hasattr-getattr">hasattr / getattr 动态操作</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 元类常与动态属性操作配合</span>
+<span class="nb">hasattr</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="s1">&#39;some_attr&#39;</span><span class="p">)</span>       <span class="c1"># 检查属性是否存在</span>
+<span class="nb">getattr</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="s1">&#39;some_attr&#39;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span> <span class="c1"># 安全获取属性</span>
+<span class="nb">setattr</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="s1">&#39;new_attr&#39;</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span> <span class="c1"># 动态设置属性</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">六、原理解析图</h2>
+<h3 id="_6">元类调用链</h3>
+<pre class="plain"><code>用户代码: class Dog(Animal):
+              legs = 4
+              def bark(self): ...
+
+                    ↓ Python 解释器
+
+type(&#x27;Dog&#x27;, (Animal,), {&#x27;legs&#x27;: 4, &#x27;bark&#x27;: &lt;function&gt;})
+                    ↓
+              type.__call__()
+                    ↓
+              type.__new__()  ← 创建 Dog 类对象
+                    ↓
+              type.__init__() ← 初始化 Dog 类
+                    ↓
+              Dog 类对象诞生 🎉
+</code></pre>
+<h3 id="_7">自定义元类调用链</h3>
+<pre class="plain"><code>用户代码: class Dog(Animal, metaclass=Meta):
+              legs = 4
+              def bark(self): ...
+
+                    ↓ Python 解释器
+
+Meta.__new__(Meta, &#x27;Dog&#x27;, (Animal,), {&#x27;legs&#x27;: 4, &#x27;bark&#x27;: ...})
+                    ↓
+              Meta 创建 Dog 类（可以修改 attrs）
+                    ↓
+              Meta.__init__(Dog, ...)
+                    ↓
+              Dog 类对象诞生 🎉
+</code></pre>
+<hr>
+<h2 id="_8">七、实战代码案例</h2>
+<h3 id="1">案例 1：自动注册类到注册表</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">registry</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="k">class</span> <span class="nc">PluginMeta</span><span class="p">(</span><span class="nb">type</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">):</span>
+        <span class="bp">cls</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">bases</span><span class="p">:</span>  <span class="c1"># 不注册基类本身</span>
+            <span class="n">registry</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="bp">cls</span>
+        <span class="k">return</span> <span class="bp">cls</span>
+
+<span class="k">class</span> <span class="nc">Plugin</span><span class="p">(</span><span class="n">metaclass</span><span class="o">=</span><span class="n">PluginMeta</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+<span class="k">class</span> <span class="nc">MathPlugin</span><span class="p">(</span><span class="n">Plugin</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s1">&#39;Math running&#39;</span>
+
+<span class="k">class</span> <span class="nc">DataPlugin</span><span class="p">(</span><span class="n">Plugin</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s1">&#39;Data running&#39;</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">registry</span><span class="p">)</span>
+<span class="c1"># {&#39;MathPlugin&#39;: &lt;class &#39;MathPlugin&#39;&gt;, &#39;DataPlugin&#39;: &lt;class &#39;DataPlugin&#39;&gt;}</span>
+</code></pre></div>
+<h3 id="2">案例 2：单例模式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">SingletonMeta</span><span class="p">(</span><span class="nb">type</span><span class="p">):</span>
+    <span class="n">_instances</span> <span class="o">=</span> <span class="p">{}</span>
+    
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">cls</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_instances</span><span class="p">:</span>
+            <span class="bp">cls</span><span class="o">.</span><span class="n">_instances</span><span class="p">[</span><span class="bp">cls</span><span class="p">]</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__call__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_instances</span><span class="p">[</span><span class="bp">cls</span><span class="p">]</span>
+
+<span class="k">class</span> <span class="nc">Database</span><span class="p">(</span><span class="n">metaclass</span><span class="o">=</span><span class="n">SingletonMeta</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">connection</span> <span class="o">=</span> <span class="s1">&#39;Connected&#39;</span>
+
+<span class="n">db1</span> <span class="o">=</span> <span class="n">Database</span><span class="p">()</span>
+<span class="n">db2</span> <span class="o">=</span> <span class="n">Database</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">db1</span> <span class="ow">is</span> <span class="n">db2</span><span class="p">)</span>  <span class="c1"># True</span>
+</code></pre></div>
+<h3 id="3-repr">案例 3：自动添加 <strong>repr</strong></h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">AutoReprMeta</span><span class="p">(</span><span class="nb">type</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">):</span>
+        <span class="n">fields</span> <span class="o">=</span> <span class="p">[</span><span class="n">k</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">attrs</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> 
+                  <span class="k">if</span> <span class="ow">not</span> <span class="n">k</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;_&#39;</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">callable</span><span class="p">(</span><span class="n">v</span><span class="p">)]</span>
+        
+        <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+            <span class="n">values</span> <span class="o">=</span> <span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">f</span><span class="si">}</span><span class="s1">=</span><span class="si">{</span><span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">f</span><span class="p">)</span><span class="si">!r}</span><span class="s1">&#39;</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fields</span><span class="p">)</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s1">(</span><span class="si">{</span><span class="n">values</span><span class="si">}</span><span class="s1">)&#39;</span>
+        
+        <span class="n">attrs</span><span class="p">[</span><span class="s1">&#39;__repr__&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="fm">__repr__</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="n">mcs</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">bases</span><span class="p">,</span> <span class="n">attrs</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">Point</span><span class="p">(</span><span class="n">metaclass</span><span class="o">=</span><span class="n">AutoReprMeta</span><span class="p">):</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="n">p</span> <span class="o">=</span> <span class="n">Point</span><span class="p">()</span>
+<span class="n">p</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="n">p</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="mi">4</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>  <span class="c1"># Point(x=3, y=4)</span>
+</code></pre></div>
+<hr>
+<h2 id="_9">八、思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 <code>type(type) is type</code>？</strong> 这意味着什么？</p>
+</li>
+<li>
+<p><strong>元类的 <code>__new__</code> 和 <code>__init__</code> 有什么区别？</strong> 在元类中，<code>__new__</code> 不能直接调用 <code>super().__init__()</code>，为什么？</p>
+</li>
+<li>
+<p><strong>如果一个类同时使用了元类和装饰器，执行顺序是什么？</strong> 先元类还是先装饰器？</p>
+</li>
+<li>
+<p><strong>Django 的 <code>Model</code> 基类是如何利用元类实现字段自动收集的？</strong> 试着查看 Django 源码中的 <code>ModelMetaclass</code>。</p>
+</li>
+<li>
+<p><strong>能否用元类实现 <code>@dataclass</code> 的功能？</strong> 如果能，怎么做？如果不能，为什么？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_10">📚 延伸阅读</h2>
+<ul>
+<li><a href="https://docs.python.org/zh-cn/3/reference/datamodel.html#metaclasses">Python 官方文档 — 3.3.1.1. 动态创建类型</a></li>
+<li><a href="https://zhuanlan.zhihu.com/p/138884836">Python 元类编程 — 中文详解</a></li>
+<li><a href="https://github.com/django/django/blob/main/django/db/models/base.py">Django Model 源码分析</a></li>
+</ul>
+<hr>
+<p><strong>上一课</strong>：Day 045 — OOP 综合实战<br>
+<strong>下一课</strong>：Day 047 — 描述符（Descriptor）</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-045/index.html">← Day 45 阶段项目：面向对象实战</a><a class="nav-next" href="../day-047/index.html">Day 47 描述符（Descriptor） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

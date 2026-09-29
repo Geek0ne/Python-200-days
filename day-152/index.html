@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 152 — XSS 与 Web 漏洞：反射/存储/DOM 型、防护原理与本地检测实战</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 152 — XSS 与 Web 漏洞：反射/存储/DOM 型、防护原理与本地检测实战</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">1362 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-152-xss-web-vuln" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-xss">1.1 XSS 是什么</a>
+<a class="toc-l3" href="#12">1.2 三种类型的核心区别</a>
+<a class="toc-l3" href="#13-xssreflected-xss">1.3 反射型 XSS（Reflected XSS）</a>
+<a class="toc-l3" href="#14-xssstored-xss">1.4 存储型 XSS（Stored XSS）</a>
+<a class="toc-l3" href="#15-dom-xssdom-based-xss">1.5 DOM 型 XSS（DOM-based XSS）</a>
+<a class="toc-l3" href="#16">1.6 根本原因：数据与代码的边界被打破</a>
+<a class="toc-l3" href="#17-xsscsrfcsp">1.7 XSS、CSRF、CSP 三者关系</a>
+<a class="toc-l3" href="#18-csrf-day-150">1.8 CSRF 复习与进阶（承接 Day 150）</a>
+<a class="toc-l2" href="#_2">二、原理解释（底层机制）</a>
+<a class="toc-l3" href="#21">2.1 浏览器是怎么把一段文本变成&quot;代码&quot;的</a>
+<a class="toc-l3" href="#22">2.2 五种输出上下文与对应编码</a>
+<a class="toc-l3" href="#23">2.3 为什么&quot;黑名单过滤&quot;必然失败</a>
+<a class="toc-l3" href="#24-cspcontent-security-policy">2.4 CSP（Content Security Policy）原理</a>
+<a class="toc-l3" href="#25-httponlysecuresamesite">2.5 HttpOnly、Secure、SameSite 三件套</a>
+<a class="toc-l3" href="#26-html-sanitization">2.6 富文本净化（HTML Sanitization）原理</a>
+<a class="toc-l3" href="#27-csrf-token">2.7 CSRF 的三种 Token 方案细节</a>
+<a class="toc-l3" href="#28-html5">2.8 深度机制：HTML5 词法分析器的&quot;状态机&quot;与各自的可逃逸点</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-152-xss-web-dom">Day 152 — XSS 与 Web 漏洞：反射/存储/DOM 型、防护原理与本地检测实战</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化 · 主题：Web 安全与漏洞检测</p>
+<p>前置知识：Day 146 HTTPS/TLS、Day 148 对称/非对称加密、Day 149 JWT、<br>
+Day 150 OAuth2 与认证安全（CSRF / SSRF）。<br>
+今天把"<strong>用户输入变成了浏览器执行的代码</strong>"这一整类问题讲透：<strong>XSS</strong><br>
+（跨站脚本）的三种形态、它的防护原理（输出编码 / CSP / HttpOnly / 富文本净化），<br>
+把 Day 150 里的 <strong>CSRF</strong> 再往下补一层现代防护，最后写一个<br>
+<strong>本地靶场 XSS 检测与安全头扫描脚本</strong>。</p>
+<p>⚠️ <strong>本日内容定位是"安全防御与教学"。</strong> 文中的所有代码只针对<br>
+<strong>本地启动的演示服务</strong>（<code>127.0.0.1</code>）与 <code>html.escape</code> 对比演示，<br>
+用来<strong>理解漏洞成因、验证防护是否生效</strong>。请勿将任何技术用于未授权的真实目标；<br>
+对真实系统做测试前，必须拿到<strong>书面授权</strong>（授权渗透测试 / SRC 项目）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-xss">1.1 XSS 是什么</h3>
+<p><strong>定义</strong>：XSS（Cross-Site Scripting，跨站脚本）是指<strong>攻击者把可执行的脚本<br>
+注入到网页中，使它在受害者的浏览器里、在目标站点的源（origin）下执行</strong>。</p>
+<p><strong>为什么危险？</strong> 因为脚本在<strong>目标站点的源</strong>下运行，它天然拥有：</p>
+<ul>
+<li>读取该站点的 <strong>DOM</strong>（页面里显示的隐私数据、CSRF Token）；</li>
+<li>读写该站点的 <strong>Cookie / localStorage</strong>（若没有 <code>HttpOnly</code>）；</li>
+<li>用受害者的身份<strong>发起任意请求</strong>（带 Cookie 的 fetch）；</li>
+<li>篡改页面（伪造登录框、伪装转账成功）；</li>
+<li>读取用户在该页面填写的任何内容。</li>
+</ul>
+<p>一句话：<strong>XSS = 攻击者获得了在你网站里执行 JS 的能力</strong>。<br>
+这是它比"数据库被拖库"更隐蔽的地方——<strong>受害的是每一个访问页面的用户</strong>。</p>
+<h3 id="12">1.2 三种类型的核心区别</h3>
+<p>很多资料把 XSS 讲成"三种攻击手法"，其实更准确的视角是：<br>
+<strong>按"恶意数据存在哪里、在哪一步进入页面"来分类</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>反射型（Reflected）</th>
+<th>存储型（Stored）</th>
+<th>DOM 型（DOM-based）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>恶意数据存在哪</td>
+<td><strong>URL 参数</strong>里，不落库</td>
+<td><strong>数据库 / 文件</strong>里，持久保存</td>
+<td><strong>不存在服务端</strong>，就在浏览器 URL/本地</td>
+</tr>
+<tr>
+<td>谁"回显"了它</td>
+<td>服务端模板</td>
+<td>服务端模板</td>
+<td><strong>前端 JavaScript</strong></td>
+</tr>
+<tr>
+<td>触发方式</td>
+<td>诱导点击特制链接</td>
+<td>受害者<strong>打开正常页面</strong>就中招</td>
+<td>诱导点击带 <code>#</code> 的链接</td>
+</tr>
+<tr>
+<td>影响面</td>
+<td>一次一个用户</td>
+<td><strong>一次影响所有访问者</strong></td>
+<td>一次一个用户</td>
+</tr>
+<tr>
+<td>请求是否到服务端</td>
+<td>✅ 会（服务端看到了 payload）</td>
+<td>✅ 会（payload 存进库）</td>
+<td>❌ <strong>payload 可能永远不会发给服务器</strong></td>
+</tr>
+<tr>
+<td>典型入口</td>
+<td>搜索框、错误页回显</td>
+<td>评论、昵称、留言板、消息</td>
+<td><code>location.hash</code>、<code>innerHTML</code>、<code>document.write</code></td>
+</tr>
+<tr>
+<td>服务端日志能否发现</td>
+<td>能（URL 里有）</td>
+<td>能（入库时）</td>
+<td><strong>不能</strong>（fragment 不上传）</td>
+</tr>
+<tr>
+<td>危害</td>
+<td>⭐⭐⭐</td>
+<td>⭐⭐⭐⭐⭐</td>
+<td>⭐⭐⭐</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>一句话记忆</strong>：<br>
+反射型 = "<strong>服务器把我的话原样念回来</strong>"；<br>
+存储型 = "<strong>服务器把我的话写进公告栏，所有人来了都念</strong>"；<br>
+DOM 型 = "<strong>页面上的 JS 自己把我的话当代码执行了，服务器根本不知情</strong>"。</p>
+</blockquote>
+<h3 id="13-xssreflected-xss">1.3 反射型 XSS（Reflected XSS）</h3>
+<p><strong>成因</strong>：服务端把<strong>本次请求的参数</strong>直接拼进 HTML 返回，没有做<strong>对应上下文的<br>
+输出编码</strong>。</p>
+<p><strong>极简例子</strong>（本题材的本地演示服务就有这个端点）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 危险写法：直接拼接</span>
+<span class="n">body</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;&lt;h1&gt;你搜索了：</span><span class="si">{</span><span class="n">q</span><span class="si">}</span><span class="s2">&lt;/h1&gt;&quot;</span>
+</code></pre></div>
+<p>请求 <code>GET /search?q=&lt;script&gt;...&lt;/script&gt;</code>，服务端返回的 HTML 里就真的出现了<br>
+一段 <code>&lt;script&gt;</code>，浏览器解析时<strong>把它当成代码执行</strong>。</p>
+<p><strong>为什么它叫"反射"？</strong> 因为 payload 像镜子一样："进去 → 立刻弹回来"。<br>
+它<strong>不落库</strong>，所以修复一处代码就彻底修好。</p>
+<p><strong>特点</strong>：</p>
+<ul>
+<li>攻击者必须<strong>诱导受害者点击特制链接</strong>（邮件、短链、论坛发帖）；</li>
+<li>因此常被社工配合使用（"这是我刚发现的图片，你看看"）；</li>
+<li>现代浏览器对 URL 中 <code>&lt;</code> 的自动编码<strong>只是部分缓解</strong>，不能依赖。</li>
+</ul>
+<h3 id="14-xssstored-xss">1.4 存储型 XSS（Stored XSS）</h3>
+<p><strong>成因</strong>：恶意内容被<strong>保存</strong>到服务端（数据库、缓存、日志、文件名……），<br>
+之后在<strong>别人访问页面时</strong>才被输出到 HTML 里。</p>
+<p><strong>典型场景</strong>：评论区、昵称/签名、私信、工单系统、后台日志查看页<br>
+（"管理员打开日志页就中招"这一类叫 <strong>XSS to RCE / 打后台</strong>）。</p>
+<p><strong>为什么它最严重？</strong></p>
+<ol>
+<li><strong>不需要社工</strong>：受害者只是正常访问一个页面；</li>
+<li><strong>可批量</strong>：一个 payload 可以打到所有访问者；</li>
+<li><strong>可持久</strong>：清理前一直有效（甚至被 CDN 缓存后清都清不掉）；</li>
+<li><strong>可以打高权限的人</strong>：比如管理员后台会渲染用户提交的内容。</li>
+</ol>
+<h3 id="15-dom-xssdom-based-xss">1.5 DOM 型 XSS（DOM-based XSS）</h3>
+<p><strong>成因</strong>：<strong>服务端完全无辜</strong>。前端 JS 把<strong>来自"可被攻击者控制的源"</strong><br>
+（<code>location</code>、<code>document.referrer</code>、<code>postMessage</code>、<code>localStorage</code>）的数据，<br>
+写进了<strong>危险的信宿（sink）</strong>。</p>
+<p><strong>经典危险信宿（sink）清单：</strong></p>
+<table>
+<thead>
+<tr>
+<th>Sink</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>innerHTML</code> / <code>outerHTML</code></td>
+<td>会把字符串当 HTML 解析</td>
+</tr>
+<tr>
+<td><code>document.write()</code> / <code>writeln()</code></td>
+<td>直接把 HTML 注入文档流</td>
+</tr>
+<tr>
+<td><code>eval()</code> / <code>setTimeout("str")</code> / <code>Function()</code></td>
+<td>把字符串当 JS 执行</td>
+</tr>
+<tr>
+<td><code>element.src</code> / <code>href</code> = 用户输入</td>
+<td><code>javascript:</code> 伪协议可执行</td>
+</tr>
+<tr>
+<td><code>jQuery</code> 的 <code>$(...)</code> / <code>.html()</code></td>
+<td>内部走 innerHTML</td>
+</tr>
+<tr>
+<td><code>insertAdjacentHTML</code></td>
+<td>同 innerHTML</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键区别：payload 不经过服务端。</strong> 比如：</p>
+<pre class="plain"><code>https://site.com/#&lt;img src=x onerror=...&gt;
+</code></pre>
+<p><code>#</code> 后面的 <strong>fragment 不会发送给服务器</strong>，所以：</p>
+<ul>
+<li>服务端日志里看不到；</li>
+<li>WAF 拦不到；</li>
+<li>服务端的输出编码<strong>救不了你</strong>（它压根没碰过这段数据）；</li>
+<li><strong>必须在客户端修</strong>（用 <code>textContent</code>、<code>createElement</code>、DOMPurify 等）。</li>
+</ul>
+<blockquote>
+<p><strong>重要认知</strong>：DOM 型 XSS 意味着"<strong>光做好服务端编码是不够的</strong>"。<br>
+一个有 XSS 的页面，可能是"服务端输出编码 + 前端安全 DOM 操作"两件事都做对才安全。</p>
+</blockquote>
+<h3 id="16">1.6 根本原因：数据与代码的边界被打破</h3>
+<p>所有注入类漏洞（SQL 注入、命令注入、XSS、模板注入）共享<strong>同一个根因</strong>：</p>
+<blockquote>
+<p><strong>程序把"数据"和"代码"放在了同一个字符串通道里，且没有做转义。</strong></p>
+</blockquote>
+<pre class="plain"><code>正常情况：  用户输入 ──[数据通道]──► 只当文本显示
+漏洞情况：  用户输入 ──[数据通道]──► 被解析器当成指令执行
+</code></pre>
+<ul>
+<li>SQL 注入：数据通道是 SQL 语句 → 数据被当 SQL 执行；</li>
+<li>XSS：数据通道是 <strong>HTML/JS 文本</strong> → 数据被当 <strong>HTML/JS</strong> 执行。</li>
+</ul>
+<p><strong>因此 XSS 的修复原则只有一条</strong>：<strong>在把数据放进 HTML 之前，按它所在的位置<br>
+做正确的编码（escaping），让解析器只把它当"字符"而不是"标签/代码"。</strong></p>
+<h3 id="17-xsscsrfcsp">1.7 XSS、CSRF、CSP 三者关系</h3>
+<p>刚学安全的人常混淆，这里一次说清：</p>
+<table>
+<thead>
+<tr>
+<th>名字</th>
+<th>攻击者利用的是什么</th>
+<th>防御核心</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>XSS</strong></td>
+<td>站点对<strong>输入</strong>信任过度，让攻击者的代码在站点里执行</td>
+<td><strong>输出编码</strong> + CSP + 净化</td>
+</tr>
+<tr>
+<td><strong>CSRF</strong></td>
+<td>浏览器对<strong>Cookie</strong>的信任，自动携带凭证</td>
+<td><strong>SameSite</strong> + CSRF Token + Origin 校验</td>
+</tr>
+<tr>
+<td><strong>CSP</strong></td>
+<td>不是漏洞，是<strong>浏览器提供的最后一道防线</strong></td>
+<td>限制页面能加载/执行什么</td>
+</tr>
+</tbody>
+</table>
+<p>它们的<strong>联动关系</strong>非常重要：</p>
+<ul>
+<li>如果站点有 XSS，<strong>CSRF Token 可以被脚本读走</strong> → 传统 CSRF 防护<strong>失效</strong>；</li>
+<li>如果 Cookie 有 <code>HttpOnly</code>，XSS 读不到 Cookie（但<strong>仍可发请求</strong>，因为浏览器会自动带）；</li>
+<li>如果 CSP 够严格（<code>script-src 'nonce-...'</code>），XSS 的注入脚本<strong>可能根本执行不了</strong>。</li>
+</ul>
+<p>这就是为什么安全是<strong>纵深防御（defense in depth）</strong>，而不是"一招制敌"。</p>
+<h3 id="18-csrf-day-150">1.8 CSRF 复习与进阶（承接 Day 150）</h3>
+<p><strong>CSRF</strong>：诱导已登录用户的浏览器，向目标站点发一个<strong>用户不知情的、带凭证的请求</strong>。</p>
+<p><strong>成立的三个前提</strong>（缺一不可）：</p>
+<ol>
+<li>浏览器会<strong>自动携带凭证</strong>（Cookie）；</li>
+<li>服务端<strong>只看 Cookie 判断身份</strong>，不校验请求来源；</li>
+<li>攻击者能构造出<strong>有副作用</strong>的请求（转账、改密码、发帖）。</li>
+</ol>
+<p><strong>四层现代防护</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>防护层</th>
+<th>机制</th>
+<th>强度</th>
+<th>注意</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SameSite=Lax</code> / <code>Strict</code></td>
+<td>跨站请求时不带该 Cookie</td>
+<td>⭐⭐⭐⭐</td>
+<td>现代浏览器默认 <code>Lax</code>，但不能当唯一防线</td>
+</tr>
+<tr>
+<td><strong>Synchronizer Token</strong></td>
+<td>服务端生成随机 token 存 session，请求必须带上并比对</td>
+<td>⭐⭐⭐⭐⭐</td>
+<td>最可靠；需防 XSS 偷 token</td>
+</tr>
+<tr>
+<td><strong>Double Submit Cookie</strong></td>
+<td>token 同时放 Cookie 和请求体/头，服务端比对两者</td>
+<td>⭐⭐⭐</td>
+<td>无状态服务适用；Cookie 需签名或绑定</td>
+</tr>
+<tr>
+<td><code>Origin</code> / <code>Referer</code> 校验</td>
+<td>检查来源域名白名单</td>
+<td>⭐⭐⭐</td>
+<td>只作补充；部分场景 Origin 缺失</td>
+</tr>
+</tbody>
+</table>
+<p>⚠️ <strong>易错点</strong>：</p>
+<ul>
+<li><code>SameSite=Lax</code> <strong>不能防</strong>"同站不同子域"的攻击（<code>evil.example.com</code> 与<br>
+<code>app.example.com</code> 是 same-site），也不能防 <code>GET</code> 就产生副作用的接口；</li>
+<li><code>SameSite=None</code> 必须同时 <code>Secure</code>；</li>
+<li><strong>CORS 不是 CSRF 防护</strong>：CORS 管的是"JS 能不能读响应"，不管"请求能不能发出去"；</li>
+<li>表单 <code>POST</code> 之外，<code>GET</code> 必须保证<strong>无副作用</strong>（幂等）。</li>
+</ul>
+<hr>
+<h2 id="_2">二、原理解释（底层机制）</h2>
+<h3 id="21">2.1 浏览器是怎么把一段文本变成"代码"的</h3>
+<p>理解 XSS 必须理解 HTML 解析器的<strong>上下文（context）</strong>概念。</p>
+<p>浏览器拿到 HTML <strong>不是</strong>"一次性当成一棵树"来解析的，而是<strong>流式、带状态机</strong>的：</p>
+<pre class="plain"><code>原始字节
+   │  ① 字符编码判定（&lt;meta charset&gt; / HTTP 头 / BOM）
+   ▼
+字符流
+   │  ② 词法分析：遇到 &#x27;&lt;&#x27; 进入&quot;标签开始状态&quot;，遇到 &#x27;&amp;&#x27; 进入&quot;字符引用状态&quot;
+   ▼
+Token（标签 / 文本 / 注释）
+   │  ③ 树构建：按标签语义建 DOM，&lt;script&gt; 里的文本送给 JS 引擎
+   ▼
+DOM 树 + 可执行脚本
+</code></pre>
+<p><strong>关键点</strong>：解析器<strong>对"同样的字符"在不同位置有不同解释</strong>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">html</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">&lt;</span><span class="nt">div</span> <span class="na">title</span><span class="o">=</span><span class="s">&quot;X&quot;</span><span class="p">&gt;</span>这里<span class="p">&lt;/</span><span class="nt">div</span><span class="p">&gt;</span>
+<span class="cm">&lt;!-- X 处在&quot;属性值&quot;上下文 --&gt;</span>
+<span class="p">&lt;</span><span class="nt">a</span> <span class="na">href</span><span class="o">=</span><span class="s">&quot;X&quot;</span><span class="p">&gt;</span>链接<span class="p">&lt;/</span><span class="nt">a</span><span class="p">&gt;</span>
+<span class="cm">&lt;!-- X 处在&quot;URL&quot;上下文 --&gt;</span>
+<span class="p">&lt;</span><span class="nt">script</span><span class="p">&gt;</span><span class="kd">var</span><span class="w"> </span><span class="nx">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;X&#39;</span><span class="p">;&lt;/</span><span class="nt">script</span><span class="p">&gt;</span>
+<span class="cm">&lt;!-- X 处在&quot;JS 字符串&quot;上下文 --&gt;</span>
+</code></pre></div>
+<p>你只做一种编码（比如把 <code>&lt;</code> 变 <code>&amp;lt;</code>），<strong>在属性上下文里是无效的</strong>——<br>
+因为攻击者要的不是 <code>&lt;</code>，而是<strong>闭合现有引号</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">html</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">&lt;</span><span class="nt">input</span> <span class="na">value</span><span class="o">=</span><span class="s">&quot;USER_INPUT&quot;</span><span class="p">&gt;</span>
+<span class="cm">&lt;!-- 输入： &quot; onfocus=&quot;alert(1)&quot; autofocus=&quot; --&gt;</span>
+<span class="cm">&lt;!-- 结果： &lt;input value=&quot;&quot; onfocus=&quot;alert(1)&quot; autofocus=&quot;&quot;&gt;</span>
+<span class="cm">        → 引号被闭合，凭空多了一个事件处理器！ --&gt;</span>
+</code></pre></div>
+<p><strong>结论</strong>：<strong>不存在"一种通用的 XSS 过滤"</strong>。必须按上下文编码。</p>
+<h3 id="22">2.2 五种输出上下文与对应编码</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>上下文</th>
+<th>例子</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>HTML 文本</td>
+<td><code>&lt;p&gt;HERE&lt;/p&gt;</code></td>
+<td><code>&amp; &lt; &gt; " '</code> → 实体（<code>html.escape</code>）</td>
+</tr>
+<tr>
+<td>2</td>
+<td>HTML 属性值</td>
+<td><code>&lt;input value="HERE"&gt;</code></td>
+<td>同上，<strong>且属性值必须加引号</strong></td>
+</tr>
+<tr>
+<td>3</td>
+<td>URL 参数</td>
+<td><code>&lt;a href="/s?q=HERE"&gt;</code></td>
+<td><code>urllib.parse.quote</code> + 校验协议白名单</td>
+</tr>
+<tr>
+<td>4</td>
+<td>JS 字符串</td>
+<td><code>var x = 'HERE'</code></td>
+<td><strong>不要拼</strong>；改用 <code>json.dumps</code> 或 <code>data-*</code> 属性传值</td>
+</tr>
+<tr>
+<td>5</td>
+<td>CSS</td>
+<td><code>style="color: HERE"</code></td>
+<td>只允许白名单值（如颜色正则），否则不要动态化</td>
+</tr>
+</tbody>
+</table>
+<p><strong>黄金规则</strong>：<strong>在"数据进入输出位置"的那一刻编码，而不是在"输入进来"时"清洗"。</strong></p>
+<p>为什么？因为<strong>同一条数据可能会去往多个输出位置</strong>：</p>
+<pre class="plain"><code>用户昵称 &quot;A&amp;B&quot;
+ ├─ 存进数据库        → 应该原样存（保留用户原意）
+ ├─ 输出到 HTML 页面  → 编码成 A&amp;amp;B
+ ├─ 输出到 JSON API   → json.dumps 转义
+ └─ 输出到邮件主题    → 又是一种编码
+</code></pre>
+<p>如果<strong>在输入时就把 <code>&amp;</code> 洗掉</strong>，数据库里的数据就<strong>永久损坏</strong>了（用户改不回来、<br>
+搜索也搜不到），而且换个输出场景还是不安全。<strong>输入校验（validation）用于<br>
+"合法性"，输出编码（encoding）用于"安全性"</strong>，两者职责不同，都要做。</p>
+<h3 id="23">2.3 为什么"黑名单过滤"必然失败</h3>
+<p>初学者最常见的错误写法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 反面教材：黑名单，永远不够</span>
+<span class="k">def</span> <span class="nf">bad_filter</span><span class="p">(</span><span class="n">s</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">s</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;&lt;script&gt;&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;onerror&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>它必然被绕过，原因有三个层次：</p>
+<ol>
+<li><strong>大小写/变形</strong>：<code>&lt;ScRiPt&gt;</code>、<code>&lt;script\t&gt;</code>、<code>&lt;scr&lt;script&gt;ipt&gt;</code>（过滤一次后<br>
+   重新拼接又出现）；</li>
+<li><strong>上下文不同</strong>：<code>" onmouseover=</code> 里根本没有 <code>&lt;script&gt;</code> 这个词；</li>
+<li><strong>编码层次</strong>：<code>&amp;#x3c;script&amp;#x3e;</code>、<code>%3Cscript%3E</code>、UTF-7 等，<br>
+   过滤发生在<strong>解码前还是解码后</strong>决定生死。</li>
+</ol>
+<p><strong>正确姿势</strong>：</p>
+<ul>
+<li>✅ <strong>输出编码</strong>（白名单式：只把必须转义的字符转义）；</li>
+<li>✅ <strong>结构化数据</strong>（不要拼字符串，用 DOM API / 模板引擎的自动转义）；</li>
+<li>✅ <strong>如果一定要接受 HTML</strong>（富文本），用<strong>解析 + 白名单净化</strong>（见 2.6）。</li>
+</ul>
+<h3 id="24-cspcontent-security-policy">2.4 CSP（Content Security Policy）原理</h3>
+<p>CSP 是<strong>浏览器提供的、独立于你代码的最后一道防线</strong>。它是一个 HTTP 响应头：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">http</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="err">Content-Security-Policy: default-src &#39;self&#39;; script-src &#39;nonce-r4nd0m&#39; &#39;strict-dynamic&#39;; object-src &#39;none&#39;; base-uri &#39;none&#39;</span>
+</code></pre></div>
+<p><strong>它怎么工作？</strong></p>
+<pre class="plain"><code>页面响应头声明策略
+        │
+        ▼
+浏览器解析页面，遇到每个&quot;资源加载/脚本执行&quot;动作
+        │
+        ├─ 内联 &lt;script&gt;…&lt;/script&gt;         → 检查 script-src 是否允许
+        ├─ &lt;script src=&quot;https://...&quot;&gt;      → 检查该来源是否在白名单
+        ├─ 内联 onclick=&quot;…&quot;                → 被 script-src 拦（除非 unsafe-inline）
+        └─ &lt;img src=&quot;...&quot;&gt;                 → 检查 img-src
+        │
+        ▼
+不符合 → 拒绝执行/加载，并在控制台报 CSP 违规
+</code></pre>
+<p><strong>关键指令速查：</strong></p>
+<table>
+<thead>
+<tr>
+<th>指令</th>
+<th>作用</th>
+<th>建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>default-src</code></td>
+<td>兜底，未指定指令都继承它</td>
+<td><code>'self'</code></td>
+</tr>
+<tr>
+<td><code>script-src</code></td>
+<td>谁能执行 JS</td>
+<td><strong><code>'nonce-xxx'</code> + <code>'strict-dynamic'</code></strong></td>
+</tr>
+<tr>
+<td><code>style-src</code></td>
+<td>谁提供样式</td>
+<td><code>'self'</code>（避免 <code>unsafe-inline</code>）</td>
+</tr>
+<tr>
+<td><code>object-src</code></td>
+<td>Flash/插件（已死但仍有风险）</td>
+<td><code>'none'</code></td>
+</tr>
+<tr>
+<td><code>base-uri</code></td>
+<td>谁能改 <code>&lt;base&gt;</code></td>
+<td><code>'none'</code>（防相对路径劫持）</td>
+</tr>
+<tr>
+<td><code>frame-ancestors</code></td>
+<td>谁能用 iframe 嵌我</td>
+<td><code>'none'</code>（防点击劫持）</td>
+</tr>
+<tr>
+<td><code>form-action</code></td>
+<td>表单能提交到哪</td>
+<td><code>'self'</code></td>
+</tr>
+<tr>
+<td><code>upgrade-insecure-requests</code></td>
+<td>自动把 http 升 https</td>
+<td>加上</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么 <code>'nonce-xxx'</code> 比 <code>'unsafe-inline'</code> 安全？</strong></p>
+<p><code>nonce</code> 是<strong>每次响应随机生成</strong>的字符串，同时出现在：</p>
+<ol>
+<li>响应头 <code>script-src 'nonce-abc123'</code>；</li>
+<li>页面里 <code>&lt;script nonce="abc123"&gt;</code>。</li>
+</ol>
+<p>CSP 规定：<strong>只有带着正确 nonce 的 <code>&lt;script&gt;</code> 才会执行</strong>。<br>
+攻击者注入的 <code>&lt;script&gt;</code> 猜不到 nonce（它每次请求都变，且无法从页面外读取），<br>
+于是<strong>注入的脚本直接被浏览器拒绝执行</strong>。</p>
+<p>⚠️ <strong>CSP 三大坑</strong>：</p>
+<ol>
+<li>写了 <code>script-src 'unsafe-inline'</code> = <strong>基本等于没写</strong>；</li>
+<li>白名单里放 CDN（如 <code>https://cdn.jsdelivr.net</code>）= 攻击者可在该 CDN 上传<br>
+   文件后引用（<strong>JSONP / 开放重定向</strong>是经典 CSP 绕过）；</li>
+<li>只靠 <code>Content-Security-Policy</code> <strong>不加</strong> <code>report-uri</code> / <code>report-to</code>，<br>
+   违规时你<strong>无从得知</strong>。</li>
+</ol>
+<h3 id="25-httponlysecuresamesite">2.5 HttpOnly、Secure、SameSite 三件套</h3>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>防的是什么</th>
+<th>机制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HttpOnly</code></td>
+<td><strong>JS 读取 Cookie</strong>（XSS 偷 session）</td>
+<td><code>document.cookie</code> 看不到该 Cookie</td>
+</tr>
+<tr>
+<td><code>Secure</code></td>
+<td><strong>明文传输窃取</strong></td>
+<td>只在 HTTPS 下发送</td>
+</tr>
+<tr>
+<td><code>SameSite</code></td>
+<td><strong>跨站请求携带</strong>（CSRF）</td>
+<td><code>Lax</code>/<code>Strict</code> 跨站不带；<code>None</code> 需 <code>Secure</code></td>
+</tr>
+<tr>
+<td><code>Path</code> / <code>Domain</code></td>
+<td><strong>减少作用域</strong></td>
+<td>越窄越好，别乱设 <code>Domain</code></td>
+</tr>
+</tbody>
+</table>
+<p>⚠️ <strong>必须理解的两点</strong>：</p>
+<ol>
+<li><strong><code>HttpOnly</code> 不能阻止 XSS 发请求</strong>。脚本仍然可以 <code>fetch('/transfer',
+   {method:'POST'})</code>，浏览器照样自动带 Cookie。<br>
+<code>HttpOnly</code> 保护的是"<strong>读</strong>"，不是"<strong>用</strong>"。</li>
+<li><strong><code>HttpOnly</code> 保护不了 CSRF Token</strong>（它一般放在 HTML 里），<br>
+   所以有 XSS 时 CSRF Token 依然会被偷——这就是 1.7 说的联动。</li>
+</ol>
+<h3 id="26-html-sanitization">2.6 富文本净化（HTML Sanitization）原理</h3>
+<p>有时业务<strong>必须</strong>允许用户提交 HTML（富文本编辑器、Markdown 渲染）。<br>
+这时不能简单转义（会把 <code>&lt;b&gt;</code> 也变成文本），只能<strong>净化</strong>。</p>
+<p><strong>正确做法 = 解析成树 → 白名单过滤</strong>，而不是正则替换字符串：</p>
+<pre class="plain"><code>原始 HTML 字符串
+      │ 解析（HTMLParser / lxml / 浏览器）
+      ▼
+   DOM 树
+      │ 遍历每个节点：
+      │   ① 标签不在白名单 → 丢弃节点，保留其文本子节点
+      │   ② 属性不在白名单 → 删除该属性
+      │   ③ 属性值协议不在白名单（href/src）→ 删除或改写
+      ▼
+  安全的 DOM 树 → 序列化回 HTML
+</code></pre>
+<p><strong>为什么必须"解析成树"？</strong> 因为浏览器的容错解析规则极其复杂<br>
+（<code>&lt;div&gt;&lt;p&gt;&lt;/div&gt;&lt;/p&gt;</code> 会自动修补），正则永远无法预测浏览器最终会构建出<br>
+什么树。<strong>必须在"树"这个层面做判断，才能和浏览器看到的一致。</strong></p>
+<p>⚠️ <strong>不要自己写富文本净化器上生产</strong>：用成熟库（Python:<br>
+<code>bleach</code>（已归档）/ <code>nh3</code> / <code>lxml.html.clean</code>；前端: DOMPurify）。<br>
+本文的 <code>02</code> 示例只是<strong>教学用最小实现</strong>，用来理解机制。</p>
+<h3 id="27-csrf-token">2.7 CSRF 的三种 Token 方案细节</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>流程</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Synchronizer Token</td>
+<td>服务端 session 存 token，表单隐藏域/请求头带回来比对</td>
+<td>最安全</td>
+<td>需要服务端状态</td>
+</tr>
+<tr>
+<td>Double Submit Cookie</td>
+<td>token 写入 Cookie，JS 读出后放请求头，服务端比对 Cookie vs Header</td>
+<td>无状态</td>
+<td>需要签名/防子域写入；依赖 JS</td>
+</tr>
+<tr>
+<td>Signed Double Submit</td>
+<td>上一种 + HMAC 签名绑定用户</td>
+<td>无状态且安全</td>
+<td>实现稍复杂</td>
+</tr>
+</tbody>
+</table>
+<p>⚠️ <strong>Double Submit 的两个坑</strong>：</p>
+<ol>
+<li>攻击者若能<strong>给目标域写 Cookie</strong>（子域接管、<code>Cookie</code> 注入），可伪造两端一致；</li>
+<li>因此<strong>必须用 HMAC 把 token 和用户会话绑定</strong>，或用 <code>__Host-</code> 前缀<br>
+   （<code>__Host-csrf=x; Secure; Path=/; 无 Domain</code>）防止子域覆盖。</li>
+</ol>
+<h3 id="28-html5">2.8 深度机制：HTML5 词法分析器的"状态机"与各自的可逃逸点</h3>
+<p>2.1 讲了"上下文不同、编码就不同"。这一节把它落到<strong>规范层面</strong>：浏览器不是"看字符串里有没有 <code>&lt;</code>"，<br>
+而是用一个<strong>带状态的词法分析器（tokenizer）</strong>逐字符推进。<strong>同一个字符在不同状态下含义完全不同</strong>，<br>
+这就是"不存在通用过滤"最硬的理由。</p>
+<p>HTML5 规范（WHATWG HTML Standard §13.2.5 Tokenization）定义的状态里，与我们相关的有这些：</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>状态（tokenizer state）</th>
+<th>什么情况下进入</th>
+<th>结束/转义的字符</th>
+<th>对 XSS 的含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>Data</strong></td>
+<td>普通文本处</td>
+<td><code>&amp;</code> → 字符引用；<code>&lt;</code> → 标签开始</td>
+<td>编码 <code>&amp; &lt; &gt;</code> 即可</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Tag open / Tag name</strong></td>
+<td>遇到 <code>&lt;</code> 后</td>
+<td>空白、<code>/</code>、<code>&gt;</code></td>
+<td>造标签名，<code>&lt;</code> 被转义就进不来</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Attribute value (double-quoted)</strong></td>
+<td><code>attr="</code> 后</td>
+<td><code>"</code> 结束属性值；<code>&amp;</code> → 字符引用</td>
+<td><strong>只转 <code>&lt;&gt;</code> 无效</strong>：<code>"</code> 能闭合属性</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Attribute value (single-quoted)</strong></td>
+<td><code>attr='</code> 后</td>
+<td><code>'</code> 结束属性值</td>
+<td>同上，用 <code>'</code> 逃逸</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>Attribute value (unquoted)</strong></td>
+<td><code>attr=</code> 后</td>
+<td>空白或 <code>&gt;</code> 结束</td>
+<td>空格就能造出新属性（<strong>所以属性值必须加引号</strong>）</td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong>RCDATA</strong>（<code>&lt;title&gt;</code>、<code>&lt;textarea&gt;</code>）</td>
+<td>进入这些标签后</td>
+<td><code>&amp;</code> 实体；`</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-151/index.html">← Day 151 SQL 注入原理：五类注入、参数化查询与 ORM 防线</a><a class="nav-next" href="../day-153/index.html">Day 153 端口扫描进阶：Nmap、banner 抓取与自动化扫描器 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

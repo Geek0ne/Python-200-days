@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 112 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 112 正文</a>
+  <h1>Day 112 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-112-pipeline">Day 112 — 图解：模型调优与 Pipeline</h1>
+<blockquote>
+<p>使用 Mermaid 图解核心概念，帮助理解数据流动和算法流程</p>
+</blockquote>
+<hr>
+<h2 id="1-k-fold">1. K-Fold 交叉验证数据划分</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 数据集
+        D[&quot;完整数据集 (500 样本)&quot;]
+    end
+
+    subgraph &quot;K=5 划分&quot;
+        F1[&quot;Fold 1\n100 样本&quot;]
+        F2[&quot;Fold 2\n100 样本&quot;]
+        F3[&quot;Fold 3\n100 样本&quot;]
+        F4[&quot;Fold 4\n100 样本&quot;]
+        F5[&quot;Fold 5\n100 样本&quot;]
+    end
+
+    subgraph &quot;交叉验证过程&quot;
+        R1[&quot;轮次1: 验证=Fold1\n训练=Fold2,3,4,5\n得分: 0.92&quot;]
+        R2[&quot;轮次2: 验证=Fold2\n训练=Fold1,3,4,5\n得分: 0.89&quot;]
+        R3[&quot;轮次3: 验证=Fold3\n训练=Fold1,2,4,5\n得分: 0.91&quot;]
+        R4[&quot;轮次4: 验证=Fold4\n训练=Fold1,2,3,5\n得分: 0.90&quot;]
+        R5[&quot;轮次5: 验证=Fold5\n训练=Fold1,2,3,4\n得分: 0.93&quot;]
+    end
+
+    subgraph &quot;最终结果&quot;
+        AVG[&quot;平均得分\n(0.92+0.89+0.91+0.90+0.93)/5\n= 0.91 ± 0.03&quot;]
+    end
+
+    D --&gt; F1 &amp; F2 &amp; F3 &amp; F4 &amp; F5
+    F1 --&gt; R1
+    F2 --&gt; R2
+    F3 --&gt; R3
+    F4 --&gt; R4
+    F5 --&gt; R5
+    R1 &amp; R2 &amp; R3 &amp; R4 &amp; R5 --&gt; AVG
+
+    style D fill:#e1f5fe
+    style AVG fill:#c8e6c9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 数据集
+        D[&quot;完整数据集 (500 样本)&quot;]
+    end
+
+    subgraph &quot;K=5 划分&quot;
+        F1[&quot;Fold 1\n100 样本&quot;]
+        F2[&quot;Fold 2\n100 样本&quot;]
+        F3[&quot;Fold 3\n100 样本&quot;]
+        F4[&quot;Fold 4\n100 样本&quot;]
+        F5[&quot;Fold 5\n100 样本&quot;]
+    end
+
+    subgraph &quot;交叉验证过程&quot;
+        R1[&quot;轮次1: 验证=Fold1\n训练=Fold2,3,4,5\n得分: 0.92&quot;]
+        R2[&quot;轮次2: 验证=Fold2\n训练=Fold1,3,4,5\n得分: 0.89&quot;]
+        R3[&quot;轮次3: 验证=Fold3\n训练=Fold1,2,4,5\n得分: 0.91&quot;]
+        R4[&quot;轮次4: 验证=Fold4\n训练=Fold1,2,3,5\n得分: 0.90&quot;]
+        R5[&quot;轮次5: 验证=Fold5\n训练=Fold1,2,3,4\n得分: 0.93&quot;]
+    end
+
+    subgraph &quot;最终结果&quot;
+        AVG[&quot;平均得分\n(0.92+0.89+0.91+0.90+0.93)/5\n= 0.91 ± 0.03&quot;]
+    end
+
+    D --&gt; F1 &amp; F2 &amp; F3 &amp; F4 &amp; F5
+    F1 --&gt; R1
+    F2 --&gt; R2
+    F3 --&gt; R3
+    F4 --&gt; R4
+    F5 --&gt; R5
+    R1 &amp; R2 &amp; R3 &amp; R4 &amp; R5 --&gt; AVG
+
+    style D fill:#e1f5fe
+    style AVG fill:#c8e6c9
+</code></pre></div>
+<hr>
+<h2 id="2-stratified-k-fold-vs-k-fold">2. Stratified K-Fold vs 普通 K-Fold</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 原始数据分布
+        O[&quot;总数据: 正类30%\n负类70%&quot;]
+    end
+
+    subgraph &quot;普通 K-Fold (可能不均匀)&quot;
+        KF1[&quot;Fold1: 正类40%\n负类60%&quot;]
+        KF2[&quot;Fold2: 正类20%\n负类80%&quot;]
+        KF3[&quot;Fold3: 正类30%\n负类70%&quot;]
+    end
+
+    subgraph &quot;Stratified K-Fold (保持比例)&quot;
+        SF1[&quot;Fold1: 正类30%\n负类70%&quot;]
+        SF2[&quot;Fold2: 正类30%\n负类70%&quot;]
+        SF3[&quot;Fold3: 正类30%\n负类70%&quot;]
+    end
+
+    O --&gt; KF1 &amp; KF2 &amp; KF3
+    O --&gt; SF1 &amp; SF2 &amp; SF3
+
+    style O fill:#fff3e0
+    style SF1 fill:#c8e6c9
+    style SF2 fill:#c8e6c9
+    style SF3 fill:#c8e6c9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 原始数据分布
+        O[&quot;总数据: 正类30%\n负类70%&quot;]
+    end
+
+    subgraph &quot;普通 K-Fold (可能不均匀)&quot;
+        KF1[&quot;Fold1: 正类40%\n负类60%&quot;]
+        KF2[&quot;Fold2: 正类20%\n负类80%&quot;]
+        KF3[&quot;Fold3: 正类30%\n负类70%&quot;]
+    end
+
+    subgraph &quot;Stratified K-Fold (保持比例)&quot;
+        SF1[&quot;Fold1: 正类30%\n负类70%&quot;]
+        SF2[&quot;Fold2: 正类30%\n负类70%&quot;]
+        SF3[&quot;Fold3: 正类30%\n负类70%&quot;]
+    end
+
+    O --&gt; KF1 &amp; KF2 &amp; KF3
+    O --&gt; SF1 &amp; SF2 &amp; SF3
+
+    style O fill:#fff3e0
+    style SF1 fill:#c8e6c9
+    style SF2 fill:#c8e6c9
+    style SF3 fill:#c8e6c9
+</code></pre></div>
+<hr>
+<h2 id="3-gridsearchcv">3. GridSearchCV 搜索过程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph &quot;搜索空间&quot;
+        P1[&quot;C = [0.1, 1, 10]&quot;]
+        P2[&quot;gamma = [0.01, 0.1]&quot;]
+    end
+
+    subgraph &quot;组合生成 (3×2=6种)&quot;
+        C1[&quot;C=0.1, γ=0.01&quot;]
+        C2[&quot;C=0.1, γ=0.1&quot;]
+        C3[&quot;C=1, γ=0.01&quot;]
+        C4[&quot;C=1, γ=0.1&quot;]
+        C5[&quot;C=10, γ=0.01&quot;]
+        C6[&quot;C=10, γ=0.1&quot;]
+    end
+
+    subgraph &quot;交叉验证评估&quot;
+        CV1[&quot;组合1: 5折CV\n平均AUC=0.85&quot;]
+        CV2[&quot;组合2: 5折CV\n平均AUC=0.88&quot;]
+        CV3[&quot;组合3: 5折CV\n平均AUC=0.91&quot;]
+        CV4[&quot;组合4: 5折CV\n平均AUC=0.90&quot;]
+        CV5[&quot;组合5: 5折CV\n平均AUC=0.89&quot;]
+        CV6[&quot;组合6: 5折CV\n平均AUC=0.87&quot;]
+    end
+
+    subgraph &quot;结果&quot;
+        BEST[&quot;🏆 最佳: C=1, γ=0.01\nAUC=0.91&quot;]
+    end
+
+    P1 &amp; P2 --&gt; C1 &amp; C2 &amp; C3 &amp; C4 &amp; C5 &amp; C6
+    C1 --&gt; CV1
+    C2 --&gt; CV2
+    C3 --&gt; CV3
+    C4 --&gt; CV4
+    C5 --&gt; CV5
+    C6 --&gt; CV6
+    CV1 &amp; CV2 &amp; CV3 &amp; CV4 &amp; CV5 &amp; CV6 --&gt; BEST
+
+    style BEST fill:#ffeb3b
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph &quot;搜索空间&quot;
+        P1[&quot;C = [0.1, 1, 10]&quot;]
+        P2[&quot;gamma = [0.01, 0.1]&quot;]
+    end
+
+    subgraph &quot;组合生成 (3×2=6种)&quot;
+        C1[&quot;C=0.1, γ=0.01&quot;]
+        C2[&quot;C=0.1, γ=0.1&quot;]
+        C3[&quot;C=1, γ=0.01&quot;]
+        C4[&quot;C=1, γ=0.1&quot;]
+        C5[&quot;C=10, γ=0.01&quot;]
+        C6[&quot;C=10, γ=0.1&quot;]
+    end
+
+    subgraph &quot;交叉验证评估&quot;
+        CV1[&quot;组合1: 5折CV\n平均AUC=0.85&quot;]
+        CV2[&quot;组合2: 5折CV\n平均AUC=0.88&quot;]
+        CV3[&quot;组合3: 5折CV\n平均AUC=0.91&quot;]
+        CV4[&quot;组合4: 5折CV\n平均AUC=0.90&quot;]
+        CV5[&quot;组合5: 5折CV\n平均AUC=0.89&quot;]
+        CV6[&quot;组合6: 5折CV\n平均AUC=0.87&quot;]
+    end
+
+    subgraph &quot;结果&quot;
+        BEST[&quot;🏆 最佳: C=1, γ=0.01\nAUC=0.91&quot;]
+    end
+
+    P1 &amp; P2 --&gt; C1 &amp; C2 &amp; C3 &amp; C4 &amp; C5 &amp; C6
+    C1 --&gt; CV1
+    C2 --&gt; CV2
+    C3 --&gt; CV3
+    C4 --&gt; CV4
+    C5 --&gt; CV5
+    C6 --&gt; CV6
+    CV1 &amp; CV2 &amp; CV3 &amp; CV4 &amp; CV5 &amp; CV6 --&gt; BEST
+
+    style BEST fill:#ffeb3b
+</code></pre></div>
+<hr>
+<h2 id="4-pipeline">4. Pipeline 数据流</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph &quot;原始数据&quot;
+        RAW[&quot;X_raw\n(含缺失值、\n不同类型特征)&quot;]
+    end
+
+    subgraph &quot;Pipeline 步骤&quot;
+        S1[&quot;步骤1: 预处理器\n(ColumnTransformer)&quot;]
+        S2[&quot;步骤2: 特征工程\n(PCA/特征选择)&quot;]
+        S3[&quot;步骤3: 模型\n(分类器)&quot;]
+    end
+
+    subgraph &quot;数据变化&quot;
+        D1[&quot;X_imputed\n(缺失值已填充)&quot;]
+        D2[&quot;X_scaled\n(数值已标准化)&quot;]
+        D3[&quot;X_encoded\n(类别已编码)&quot;]
+        D4[&quot;X_combined\n(所有特征合并)&quot;]
+        D5[&quot;X_reduced\n(降维后特征)&quot;]
+        D6[&quot;y_pred\n(预测结果)&quot;]
+    end
+
+    RAW --&gt;|&quot;fit_transform / transform&quot;| S1
+    S1 --&gt;|&quot;输出&quot;| D1
+    D1 --&gt; D2 --&gt; D3 --&gt; D4
+    D4 --&gt;|&quot;fit_transform / transform&quot;| S2
+    S2 --&gt;|&quot;输出&quot;| D5
+    D5 --&gt;|&quot;fit / predict&quot;| S3
+    S3 --&gt;|&quot;输出&quot;| D6
+
+    style RAW fill:#e1f5fe
+    style D6 fill:#c8e6c9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph &quot;原始数据&quot;
+        RAW[&quot;X_raw\n(含缺失值、\n不同类型特征)&quot;]
+    end
+
+    subgraph &quot;Pipeline 步骤&quot;
+        S1[&quot;步骤1: 预处理器\n(ColumnTransformer)&quot;]
+        S2[&quot;步骤2: 特征工程\n(PCA/特征选择)&quot;]
+        S3[&quot;步骤3: 模型\n(分类器)&quot;]
+    end
+
+    subgraph &quot;数据变化&quot;
+        D1[&quot;X_imputed\n(缺失值已填充)&quot;]
+        D2[&quot;X_scaled\n(数值已标准化)&quot;]
+        D3[&quot;X_encoded\n(类别已编码)&quot;]
+        D4[&quot;X_combined\n(所有特征合并)&quot;]
+        D5[&quot;X_reduced\n(降维后特征)&quot;]
+        D6[&quot;y_pred\n(预测结果)&quot;]
+    end
+
+    RAW --&gt;|&quot;fit_transform / transform&quot;| S1
+    S1 --&gt;|&quot;输出&quot;| D1
+    D1 --&gt; D2 --&gt; D3 --&gt; D4
+    D4 --&gt;|&quot;fit_transform / transform&quot;| S2
+    S2 --&gt;|&quot;输出&quot;| D5
+    D5 --&gt;|&quot;fit / predict&quot;| S3
+    S3 --&gt;|&quot;输出&quot;| D6
+
+    style RAW fill:#e1f5fe
+    style D6 fill:#c8e6c9
+</code></pre></div>
+<hr>
+<h2 id="5-ml-pipeline">5. 完整 ML Pipeline 工作流</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph &quot;1. 数据准备&quot;
+        A1[&quot;加载数据&quot;]
+        A2[&quot;探索性分析&quot;]
+        A3[&quot;划分训练/测试集&quot;]
+    end
+
+    subgraph &quot;2. 构建 Pipeline&quot;
+        B1[&quot;预处理器\n(ColumnTransformer)&quot;]
+        B2[&quot;特征工程\n(PCA/SelectKBest)&quot;]
+        B3[&quot;基础模型\n(LR/SVM/RF)&quot;]
+    end
+
+    subgraph &quot;3. 模型调优&quot;
+        C1[&quot;定义参数网格&quot;]
+        C2[&quot;GridSearchCV\n(交叉验证+搜索)&quot;]
+        C3[&quot;选择最佳模型&quot;]
+    end
+
+    subgraph &quot;4. 评估&quot;
+        D1[&quot;测试集评估&quot;]
+        D2[&quot;分类报告&quot;]
+        D3[&quot;混淆矩阵&quot;]
+        D4[&quot;ROC曲线&quot;]
+    end
+
+    subgraph &quot;5. 部署&quot;
+        E1[&quot;保存Pipeline\n(joblib.dump)&quot;]
+        E2[&quot;加载模型\n(joblib.load)&quot;]
+        E3[&quot;生产预测&quot;]
+    end
+
+    A1 --&gt; A2 --&gt; A3
+    A3 --&gt; B1 --&gt; B2 --&gt; B3
+    B3 --&gt; C1 --&gt; C2 --&gt; C3
+    C3 --&gt; D1 --&gt; D2 &amp; D3 &amp; D4
+    D1 --&gt; E1 --&gt; E2 --&gt; E3
+
+    style A1 fill:#e1f5fe
+    style C2 fill:#fff3e0
+    style E1 fill:#c8e6c9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph &quot;1. 数据准备&quot;
+        A1[&quot;加载数据&quot;]
+        A2[&quot;探索性分析&quot;]
+        A3[&quot;划分训练/测试集&quot;]
+    end
+
+    subgraph &quot;2. 构建 Pipeline&quot;
+        B1[&quot;预处理器\n(ColumnTransformer)&quot;]
+        B2[&quot;特征工程\n(PCA/SelectKBest)&quot;]
+        B3[&quot;基础模型\n(LR/SVM/RF)&quot;]
+    end
+
+    subgraph &quot;3. 模型调优&quot;
+        C1[&quot;定义参数网格&quot;]
+        C2[&quot;GridSearchCV\n(交叉验证+搜索)&quot;]
+        C3[&quot;选择最佳模型&quot;]
+    end
+
+    subgraph &quot;4. 评估&quot;
+        D1[&quot;测试集评估&quot;]
+        D2[&quot;分类报告&quot;]
+        D3[&quot;混淆矩阵&quot;]
+        D4[&quot;ROC曲线&quot;]
+    end
+
+    subgraph &quot;5. 部署&quot;
+        E1[&quot;保存Pipeline\n(joblib.dump)&quot;]
+        E2[&quot;加载模型\n(joblib.load)&quot;]
+        E3[&quot;生产预测&quot;]
+    end
+
+    A1 --&gt; A2 --&gt; A3
+    A3 --&gt; B1 --&gt; B2 --&gt; B3
+    B3 --&gt; C1 --&gt; C2 --&gt; C3
+    C3 --&gt; D1 --&gt; D2 &amp; D3 &amp; D4
+    D1 --&gt; E1 --&gt; E2 --&gt; E3
+
+    style A1 fill:#e1f5fe
+    style C2 fill:#fff3e0
+    style E1 fill:#c8e6c9
+</code></pre></div>
+<hr>
+<h2 id="6-vs">6. 数据泄露 vs 正确做法</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph &quot;❌ 数据泄露 (错误)&quot;
+        W1[&quot;全部数据&quot;]
+        W2[&quot;scaler.fit_transform(全部)&quot;]
+        W3[&quot;划分训练/测试&quot;]
+        W4[&quot;模型训练&quot;]
+        W5[&quot;⚠️ 测试集信息已泄露到训练集!&quot;]
+    end
+
+    subgraph &quot;✅ 正确做法&quot;
+        R1[&quot;全部数据&quot;]
+        R2[&quot;划分训练/测试集&quot;]
+        R3[&quot;scaler.fit_transform(训练集)&quot;]
+        R4[&quot;scaler.transform(测试集)&quot;]
+        R5[&quot;模型训练 &amp; 评估&quot;]
+    end
+
+    subgraph &quot;✅ Pipeline 做法 (最佳)&quot;
+        P1[&quot;Pipeline.fit(训练集)&quot;]
+        P2[&quot;Pipeline.predict(测试集)&quot;]
+        P3[&quot;✅ 自动防止数据泄露&quot;]
+    end
+
+    W1 --&gt; W2 --&gt; W3 --&gt; W4 --&gt; W5
+    R1 --&gt; R2 --&gt; R3 --&gt; R4 --&gt; R5
+    P1 --&gt; P2 --&gt; P3
+
+    style W5 fill:#ffcdd2
+    style R5 fill:#c8e6c9
+    style P3 fill:#c8e6c9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph &quot;❌ 数据泄露 (错误)&quot;
+        W1[&quot;全部数据&quot;]
+        W2[&quot;scaler.fit_transform(全部)&quot;]
+        W3[&quot;划分训练/测试&quot;]
+        W4[&quot;模型训练&quot;]
+        W5[&quot;⚠️ 测试集信息已泄露到训练集!&quot;]
+    end
+
+    subgraph &quot;✅ 正确做法&quot;
+        R1[&quot;全部数据&quot;]
+        R2[&quot;划分训练/测试集&quot;]
+        R3[&quot;scaler.fit_transform(训练集)&quot;]
+        R4[&quot;scaler.transform(测试集)&quot;]
+        R5[&quot;模型训练 &amp; 评估&quot;]
+    end
+
+    subgraph &quot;✅ Pipeline 做法 (最佳)&quot;
+        P1[&quot;Pipeline.fit(训练集)&quot;]
+        P2[&quot;Pipeline.predict(测试集)&quot;]
+        P3[&quot;✅ 自动防止数据泄露&quot;]
+    end
+
+    W1 --&gt; W2 --&gt; W3 --&gt; W4 --&gt; W5
+    R1 --&gt; R2 --&gt; R3 --&gt; R4 --&gt; R5
+    P1 --&gt; P2 --&gt; P3
+
+    style W5 fill:#ffcdd2
+    style R5 fill:#c8e6c9
+    style P3 fill:#c8e6c9
+</code></pre></div>
+<hr>
+<h2 id="7">7. 模型保存与加载流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph &quot;训练阶段&quot;
+        T1[&quot;加载数据&quot;]
+        T2[&quot;构建Pipeline&quot;]
+        T3[&quot;训练模型\npipeline.fit()&quot;]
+        T4[&quot;joblib.dump()\n保存到文件&quot;]
+    end
+
+    subgraph &quot;部署阶段&quot;
+        D1[&quot;joblib.load()\n加载模型&quot;]
+        D2[&quot;接收新数据&quot;]
+        D3[&quot;pipeline.predict()\n直接预测&quot;]
+        D4[&quot;返回结果&quot;]
+    end
+
+    T1 --&gt; T2 --&gt; T3 --&gt; T4
+    T4 -.-&gt;|&quot;model.pkl&quot;| D1
+    D1 --&gt; D2 --&gt; D3 --&gt; D4
+
+    style T4 fill:#fff3e0
+    style D1 fill:#e1f5fe
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph &quot;训练阶段&quot;
+        T1[&quot;加载数据&quot;]
+        T2[&quot;构建Pipeline&quot;]
+        T3[&quot;训练模型\npipeline.fit()&quot;]
+        T4[&quot;joblib.dump()\n保存到文件&quot;]
+    end
+
+    subgraph &quot;部署阶段&quot;
+        D1[&quot;joblib.load()\n加载模型&quot;]
+        D2[&quot;接收新数据&quot;]
+        D3[&quot;pipeline.predict()\n直接预测&quot;]
+        D4[&quot;返回结果&quot;]
+    end
+
+    T1 --&gt; T2 --&gt; T3 --&gt; T4
+    T4 -.-&gt;|&quot;model.pkl&quot;| D1
+    D1 --&gt; D2 --&gt; D3 --&gt; D4
+
+    style T4 fill:#fff3e0
+    style D1 fill:#e1f5fe
+</code></pre></div>
+<hr>
+<h2 id="_1">📝 图解说明</h2>
+<p>以上 Mermaid 图解覆盖了 Day 112 的核心概念：</p>
+<ol>
+<li><strong>K-Fold 交叉验证</strong> — 数据如何被划分和重复使用</li>
+<li><strong>Stratified vs 普通 K-Fold</strong> — 类别比例保持的重要性</li>
+<li><strong>GridSearchCV</strong> — 超参数搜索的穷举过程</li>
+<li><strong>Pipeline 数据流</strong> — 数据在各步骤中的变化</li>
+<li><strong>完整 ML 工作流</strong> — 从数据到部署的全流程</li>
+<li><strong>数据泄露</strong> — 正确 vs 错误的做法对比</li>
+<li><strong>模型持久化</strong> — 训练与部署的衔接</li>
+</ol>
+<blockquote>
+<p>💡 可以将这些代码复制到 <a href="https://mermaid.live/">Mermaid Live Editor</a> 中查看可视化效果。</p>
+</blockquote></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

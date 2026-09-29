@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 25 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 25 正文</a>
+  <h1>Day 25 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-025">Day 025 — 上下文管理器 图解</h1>
+<h2 id="1-with">1. with 语句执行流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    subgraph Code[&quot;源代码&quot;]
+        C1[&quot;with Expression as Target:&quot;]
+        C2[&quot;    # 代码块&quot;]
+    end
+
+    subgraph Step1[&quot;Step 1: 获取管理器&quot;]
+        S1[&quot;计算 Expression&quot;]
+        S2[&quot;获取上下文管理器对象&quot;]
+    end
+
+    subgraph Step2[&quot;Step 2: __enter__&quot;]
+        S3[&quot;调用 manager.__enter__()&quot;]
+        S4[&quot;返回值绑定到 Target&quot;]
+    end
+
+    subgraph Step3[&quot;Step 3: 执行代码块&quot;]
+        S5[&quot;执行 with 块内的代码&quot;]
+        S6{&quot;发生异常?&quot;}
+    end
+
+    subgraph Step4[&quot;Step 4: __exit__&quot;]
+        S7[&quot;manager.__exit__(None, None, None)&quot;]
+        S8[&quot;manager.__exit__(type, val, tb)&quot;]
+    end
+
+    subgraph Step5[&quot;Step 5: 异常处理&quot;]
+        S9{&quot;__exit__ 返回 True?&quot;}
+        S10[&quot;抑制异常，继续执行&quot;]
+        S11[&quot;异常继续传播&quot;]
+    end
+
+    C1 --&gt; S1
+    C2 -.-&gt; S5
+    S1 --&gt; S2
+    S2 --&gt; S3
+    S3 --&gt; S4
+    S4 --&gt; S5
+    S5 --&gt; S6
+    S6 -- &quot;有异常&quot; --&gt; S8
+    S6 -- &quot;无异常&quot; --&gt; S7
+    S8 --&gt; S9
+    S7 --&gt; E1[&quot;正常退出&quot;]
+    S9 -- &quot;True&quot; --&gt; S10
+    S9 -- &quot;False&quot; --&gt; S11
+
+    style S10 fill:#c8e6c9
+    style S11 fill:#ffcdd2
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    subgraph Code[&quot;源代码&quot;]
+        C1[&quot;with Expression as Target:&quot;]
+        C2[&quot;    # 代码块&quot;]
+    end
+
+    subgraph Step1[&quot;Step 1: 获取管理器&quot;]
+        S1[&quot;计算 Expression&quot;]
+        S2[&quot;获取上下文管理器对象&quot;]
+    end
+
+    subgraph Step2[&quot;Step 2: __enter__&quot;]
+        S3[&quot;调用 manager.__enter__()&quot;]
+        S4[&quot;返回值绑定到 Target&quot;]
+    end
+
+    subgraph Step3[&quot;Step 3: 执行代码块&quot;]
+        S5[&quot;执行 with 块内的代码&quot;]
+        S6{&quot;发生异常?&quot;}
+    end
+
+    subgraph Step4[&quot;Step 4: __exit__&quot;]
+        S7[&quot;manager.__exit__(None, None, None)&quot;]
+        S8[&quot;manager.__exit__(type, val, tb)&quot;]
+    end
+
+    subgraph Step5[&quot;Step 5: 异常处理&quot;]
+        S9{&quot;__exit__ 返回 True?&quot;}
+        S10[&quot;抑制异常，继续执行&quot;]
+        S11[&quot;异常继续传播&quot;]
+    end
+
+    C1 --&gt; S1
+    C2 -.-&gt; S5
+    S1 --&gt; S2
+    S2 --&gt; S3
+    S3 --&gt; S4
+    S4 --&gt; S5
+    S5 --&gt; S6
+    S6 -- &quot;有异常&quot; --&gt; S8
+    S6 -- &quot;无异常&quot; --&gt; S7
+    S8 --&gt; S9
+    S7 --&gt; E1[&quot;正常退出&quot;]
+    S9 -- &quot;True&quot; --&gt; S10
+    S9 -- &quot;False&quot; --&gt; S11
+
+    style S10 fill:#c8e6c9
+    style S11 fill:#ffcdd2
+</code></pre></div>
+<h2 id="2-contextmanager">2. @contextmanager 生成器模式</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    subgraph Generator[&quot;生成器函数&quot;]
+        G1[&quot;def my_cm():&quot;]
+        G2[&quot;    # setup 代码&quot;]
+        G3[&quot;    try:&quot;]
+        G4[&quot;        yield VALUE  ← __enter__ 返回值&quot;]
+        G5[&quot;    finally:&quot;]
+        G6[&quot;        # cleanup 代码&quot;]
+    end
+
+    subgraph WithBlock[&quot;with my_cm() as x:&quot;]
+        W1[&quot;x = VALUE&quot;]
+        W2[&quot;执行 with 块&quot;]
+    end
+
+    G1 -.-&gt; Setup[&quot;__enter__: 执行 yield 之前的代码&quot;]
+    G4 -.-&gt; EnterRet[&quot;yield 的值 → as 子句&quot;]
+    G6 -.-&gt; Exit_[&quot;__exit__: 执行 finally 块&quot;]
+
+    Setup --&gt; G2
+    G2 --&gt; G3
+    G3 --&gt; G4
+    G4 --&gt; W1
+    W1 --&gt; W2
+
+    W2 -- &quot;无异常&quot; --&gt; G5
+    W2 -- &quot;有异常&quot; --&gt; GenErr[&quot;异常在 yield 处抛出&quot;]
+    GenErr --&gt; G5
+    G5 --&gt; G6
+
+    style G4 fill:#fff9c4,stroke:#f9a825
+    style W1 fill:#e3f2fd
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    subgraph Generator[&quot;生成器函数&quot;]
+        G1[&quot;def my_cm():&quot;]
+        G2[&quot;    # setup 代码&quot;]
+        G3[&quot;    try:&quot;]
+        G4[&quot;        yield VALUE  ← __enter__ 返回值&quot;]
+        G5[&quot;    finally:&quot;]
+        G6[&quot;        # cleanup 代码&quot;]
+    end
+
+    subgraph WithBlock[&quot;with my_cm() as x:&quot;]
+        W1[&quot;x = VALUE&quot;]
+        W2[&quot;执行 with 块&quot;]
+    end
+
+    G1 -.-&gt; Setup[&quot;__enter__: 执行 yield 之前的代码&quot;]
+    G4 -.-&gt; EnterRet[&quot;yield 的值 → as 子句&quot;]
+    G6 -.-&gt; Exit_[&quot;__exit__: 执行 finally 块&quot;]
+
+    Setup --&gt; G2
+    G2 --&gt; G3
+    G3 --&gt; G4
+    G4 --&gt; W1
+    W1 --&gt; W2
+
+    W2 -- &quot;无异常&quot; --&gt; G5
+    W2 -- &quot;有异常&quot; --&gt; GenErr[&quot;异常在 yield 处抛出&quot;]
+    GenErr --&gt; G5
+    G5 --&gt; G6
+
+    style G4 fill:#fff9c4,stroke:#f9a825
+    style W1 fill:#e3f2fd
+</code></pre></div>
+<h2 id="3-exit">3. <strong>exit</strong> 异常处理决策树</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;with 块内发生异常&quot;] --&gt; B{&quot;__exit__ 返回?&quot;}
+    B -- &quot;True&quot; --&gt; C[&quot;✅ 异常被抑制&quot;]
+    B -- &quot;False&quot; --&gt; D[&quot;❌ 异常继续传播&quot;]
+    B -- &quot;__exit__ 自身抛出异常 E&quot; --&gt; E[&quot;E 替代原异常传播&quot;]
+
+    C --&gt; F[&quot;程序继续执行&lt;br/&gt;with 块之后的代码&quot;]
+    D --&gt; G[&quot;原异常传播到外层&lt;br/&gt;try/except 可以捕获&quot;]
+
+    subgraph Notes[&quot;注意事项&quot;]
+        N1[&quot;返回 True 要谨慎：&lt;br/&gt;可能掩盖编程错误&quot;]
+        N2[&quot;__exit__ 不要轻易抛异常&lt;br/&gt;否则原异常丢失&quot;]
+        N3[&quot;通常模式：记录日志后&lt;br/&gt;返回 False&quot;]
+    end
+
+    style C fill:#c8e6c9
+    style D fill:#ffcdd2
+    style E fill:#ffcc80
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;with 块内发生异常&quot;] --&gt; B{&quot;__exit__ 返回?&quot;}
+    B -- &quot;True&quot; --&gt; C[&quot;✅ 异常被抑制&quot;]
+    B -- &quot;False&quot; --&gt; D[&quot;❌ 异常继续传播&quot;]
+    B -- &quot;__exit__ 自身抛出异常 E&quot; --&gt; E[&quot;E 替代原异常传播&quot;]
+
+    C --&gt; F[&quot;程序继续执行&lt;br/&gt;with 块之后的代码&quot;]
+    D --&gt; G[&quot;原异常传播到外层&lt;br/&gt;try/except 可以捕获&quot;]
+
+    subgraph Notes[&quot;注意事项&quot;]
+        N1[&quot;返回 True 要谨慎：&lt;br/&gt;可能掩盖编程错误&quot;]
+        N2[&quot;__exit__ 不要轻易抛异常&lt;br/&gt;否则原异常丢失&quot;]
+        N3[&quot;通常模式：记录日志后&lt;br/&gt;返回 False&quot;]
+    end
+
+    style C fill:#c8e6c9
+    style D fill:#ffcdd2
+    style E fill:#ffcc80
+</code></pre></div>
+<h2 id="4">4. 上下文管理器分层图</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────┐
+│                 Python 上下文管理器体系                │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  ┌─────────────────────────────────────────────┐   │
+│  │        核心协议 (PEP 343)                    │   │
+│  │  __enter__(self)  → 返回值绑定到 as          │   │
+│  │  __exit__(self, exc_type, exc_val, exc_tb)  │   │
+│  │     → 返回 bool 决定是否抑制异常              │   │
+│  └─────────────────────────────────────────────┘   │
+│                                                     │
+│  ┌─────────────────────────────────────────────┐   │
+│  │       标准库 contextlib 模块                  │   │
+│  │                                             │   │
+│  │  @contextmanager    生成器方式实现            │   │
+│  │  closing(obj)       调用 obj.close()         │   │
+│  │  suppress(*excs)    忽略指定异常             │   │
+│  │  redirect_stdout    重定向 print 输出        │   │
+│  │  redirect_stderr    重定向 stderr            │   │
+│  │  ExitStack          动态管理多个管理器       │   │
+│  │  nullcontext()      空操作上下文             │   │
+│  │  ContextDecorator   装饰器+上下文二合一       │   │
+│  └─────────────────────────────────────────────┘   │
+│                                                     │
+│  ┌─────────────────────────────────────────────┐   │
+│  │       内置上下文管理器                        │   │
+│  │                                             │   │
+│  │  open()            文件操作                  │   │
+│  │  threading.Lock    线程锁                   │   │
+│  │  subprocess.Popen  子进程                   │   │
+│  │  socket.socket     网络套接字               │   │
+│  │  decimal.localcontext 十进制上下文          │   │
+│  └─────────────────────────────────────────────┘   │
+│                                                     │
+│  ┌─────────────────────────────────────────────┐   │
+│  │       异步上下文管理器 (Python 3.5+)          │   │
+│  │  __aenter__(self)                            │   │
+│  │  __aexit__(self, exc_type, exc_val, exc_tb)  │   │
+│  │  @asynccontextmanager                        │   │
+│  │  async with expr as var:                     │   │
+│  └─────────────────────────────────────────────┘   │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="5-with">5. with 语句的伪代码解释</h2>
+<pre class="plain"><code>with EXPRESSION as TARGET:
+    BLOCK
+</code></pre>
+<p>等价于：</p>
+<pre class="plain"><code>manager = (EXPRESSION)          # 计算表达式得到管理器
+value = manager.__enter__()     # 调用 __enter__
+TARGET = value                  # 绑定到 as 目标
+exc = True                      # 标记是否有异常
+try:
+    BLOCK                       # 执行代码块
+    exc = False                 # 无异常
+except:
+    exc = True                  # 有异常
+    if not manager.__exit__(*sys.exc_info()):
+        raise                   # __exit__ 返回 False，继续传播
+finally:
+    if not exc:
+        manager.__exit__(None, None, None)  # 无异常时正常退出
+</code></pre>
+<p>注意：实际 CPython 实现更复杂（使用特殊的 <code>SETUP_WITH</code> 字节码），
+但上述伪代码准确地反映了语义。</p>
+<h2 id="6-exitstack">6. ExitStack 动态管理架构</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph Entry[&quot;进入 ExitStack&quot;]
+        E1[&quot;stack = ExitStack()&quot;]
+        E2[&quot;conn1 = stack.enter_context(open(&#x27;a.txt&#x27;))&quot;]
+        E3[&quot;conn2 = stack.enter_context(open(&#x27;b.txt&#x27;))&quot;]
+        E4[&quot;conn3 = stack.enter_context(lock)&quot;]
+    end
+
+    subgraph Exit[&quot;退出 with 块&quot;]
+        X1[&quot;conn3.close()  ← LIFO 顺序&quot;]
+        X2[&quot;conn2.close()&quot;]
+        X3[&quot;conn1.close()&quot;]
+    end
+
+    E1 --&gt; E2 --&gt; E3 --&gt; E4
+    E4 -.-&gt; X1 --&gt; X2 --&gt; X3
+
+    style Entry fill:#e8f5e9
+    style Exit fill:#fce4ec
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph Entry[&quot;进入 ExitStack&quot;]
+        E1[&quot;stack = ExitStack()&quot;]
+        E2[&quot;conn1 = stack.enter_context(open(&#x27;a.txt&#x27;))&quot;]
+        E3[&quot;conn2 = stack.enter_context(open(&#x27;b.txt&#x27;))&quot;]
+        E4[&quot;conn3 = stack.enter_context(lock)&quot;]
+    end
+
+    subgraph Exit[&quot;退出 with 块&quot;]
+        X1[&quot;conn3.close()  ← LIFO 顺序&quot;]
+        X2[&quot;conn2.close()&quot;]
+        X3[&quot;conn1.close()&quot;]
+    end
+
+    E1 --&gt; E2 --&gt; E3 --&gt; E4
+    E4 -.-&gt; X1 --&gt; X2 --&gt; X3
+
+    style Entry fill:#e8f5e9
+    style Exit fill:#fce4ec
+</code></pre></div>
+<h2 id="7-exit">7. 异常在 <strong>exit</strong> 中的传播路径</h2>
+<pre class="plain"><code>场景 A：正常退出
+  with块 ──(无异常)──→ __exit__(None, None, None)
+                               │
+                               ↓
+                        返回 False → 正常继续
+
+场景 B：异常被抑制
+  with块 ──(ZeroDivisionError)──→ __exit__(ZeroDivisionError, ..., ...)
+                                           │
+                                    返回 True
+                                           │
+                                           ↓
+                                    异常被抑制
+                                    程序继续
+
+场景 C：异常被传播
+  with块 ──(ValueError)──→ __exit__(ValueError, ..., ...)
+                                     │
+                              返回 False
+                                     │
+                                     ↓
+                              ValueError 继续传播
+                              try/except 可以捕获
+
+场景 D：异常被替换
+  with块 ──(ValueError)──→ __exit__(ValueError, ..., ...)
+                                     │
+                              __exit__ 自身抛出 RuntimeError
+                                     │
+                                     ↓
+                              RuntimeError 替代 ValueError
+                              原 ValueError 丢失 (__context__ 中)
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

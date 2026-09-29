@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 119 — 大模型 API 调用</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 119 — 大模型 API 调用</h1>
+  <div class="lmeta">
+    <span class="badge">数据分析与AI/ML</span>
+    <span class="badge">446 行</span>
+    <span class="badge">5 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（5 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-119-大模型-api-调用" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#api">一、概述：为什么需要大模型 API？</a>
+<a class="toc-l2" href="#openai-deepseek-api">二、OpenAI / DeepSeek API 调用</a>
+<a class="toc-l3" href="#21">2.1 核心概念</a>
+<a class="toc-l3" href="#22-api">2.2 API 请求结构</a>
+<a class="toc-l3" href="#23-role">2.3 消息角色（Role）</a>
+<a class="toc-l2" href="#prompt-engineering">三、Prompt Engineering 技巧</a>
+<a class="toc-l3" href="#31-prompt-engineering">3.1 什么是 Prompt Engineering？</a>
+<a class="toc-l3" href="#32">3.2 六大核心技巧</a>
+<a class="toc-l2" href="#function-calling">四、Function Calling（函数调用）</a>
+<a class="toc-l3" href="#41">4.1 核心机制</a>
+<a class="toc-l3" href="#42">4.2 函数定义格式</a>
+<a class="toc-l3" href="#43">4.3 调用流程</a>
+<a class="toc-l2" href="#api_1">五、API 速查表</a>
+<a class="toc-l3" href="#51-openai-python-sdk">5.1 OpenAI Python SDK</a>
+<a class="toc-l3" href="#52-deepseek-api-openai">5.2 DeepSeek API（兼容 OpenAI）</a>
+<a class="toc-l3" href="#53">5.3 关键参数对比</a>
+<a class="toc-l2" href="#_1">六、实战：智能助手</a>
+<a class="toc-l3" href="#61">6.1 项目架构</a>
+<a class="toc-l3" href="#62">6.2 完整代码示例</a>
+<a class="toc-l2" href="#_2">七、避坑指南</a>
+<a class="toc-l3" href="#_3">常见错误</a>
+<a class="toc-l3" href="#token">Token 成本控制</a>
+<a class="toc-l2" href="#_4">八、思考题</a>
+<a class="toc-l2" href="#_5">参考资源</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-119-api">Day 119 — 大模型 API 调用</h1>
+<blockquote>
+<p>🎯 <strong>今日目标</strong>：掌握大模型 API 的调用方式，学会 Prompt Engineering 技巧，理解 Function Calling 机制，并实战构建一个智能助手。</p>
+</blockquote>
+<hr>
+<h2 id="api">一、概述：为什么需要大模型 API？</h2>
+<p>传统编程需要人来定义每一条规则，而大模型（LLM）通过海量数据训练获得了强大的语言理解和生成能力。通过 API 调用，我们可以：</p>
+<ul>
+<li><strong>零训练成本</strong>：直接使用预训练模型的能力</li>
+<li><strong>弹性扩展</strong>：按需调用，无需自建 GPU 集群</li>
+<li><strong>快速迭代</strong>：几行代码就能集成 AI 能力</li>
+</ul>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│              传统开发 vs API 调用              │
+├──────────────────┬──────────────────────────┤
+│   传统方式        │   API 调用方式            │
+├──────────────────┼──────────────────────────┤
+│ 收集数据 → 训练   │ 直接调用 API              │
+│ 部署模型 → 维护   │ 无需部署                  │
+│ 耗时数周/月       │ 几分钟集成                │
+│ 需要 GPU/算力     │ 只需 HTTP 请求            │
+└──────────────────┴──────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="openai-deepseek-api">二、OpenAI / DeepSeek API 调用</h2>
+<h3 id="21">2.1 核心概念</h3>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>API Key</strong></td>
+<td>认证密钥，每个请求必须携带</td>
+</tr>
+<tr>
+<td><strong>Model</strong></td>
+<td>模型名称，如 <code>gpt-4o</code>、<code>deepseek-chat</code></td>
+</tr>
+<tr>
+<td><strong>Messages</strong></td>
+<td>对话消息列表，包含 role 和 content</td>
+</tr>
+<tr>
+<td><strong>Temperature</strong></td>
+<td>生成随机性（0=确定，1=创造性）</td>
+</tr>
+<tr>
+<td><strong>Max Tokens</strong></td>
+<td>最大生成 token 数</td>
+</tr>
+<tr>
+<td><strong>Stream</strong></td>
+<td>是否流式返回（逐 token 输出）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-api">2.2 API 请求结构</h3>
+<pre class="plain"><code>┌──────────────────────────────────────────────────┐
+│                   HTTP POST 请求                   │
+├──────────────────────────────────────────────────┤
+│ URL: https://api.openai.com/v1/chat/completions  │
+│ Headers:                                         │
+│   Authorization: Bearer sk-xxx                   │
+│   Content-Type: application/json                 │
+├──────────────────────────────────────────────────┤
+│ Body:                                            │
+│   {                                              │
+│     &quot;model&quot;: &quot;gpt-4o&quot;,                           │
+│     &quot;messages&quot;: [                                │
+│       {&quot;role&quot;: &quot;system&quot;, &quot;content&quot;: &quot;...&quot;},       │
+│       {&quot;role&quot;: &quot;user&quot;, &quot;content&quot;: &quot;...&quot;}          │
+│     ],                                           │
+│     &quot;temperature&quot;: 0.7                           │
+│   }                                              │
+└──────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="23-role">2.3 消息角色（Role）</h3>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>作用</th>
+<th>类比</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>system</code></td>
+<td>设定 AI 的行为规则</td>
+<td>人设/性格设定</td>
+</tr>
+<tr>
+<td><code>user</code></td>
+<td>用户的输入</td>
+<td>用户提问</td>
+</tr>
+<tr>
+<td><code>assistant</code></td>
+<td>AI 的回复</td>
+<td>AI 回答</td>
+</tr>
+<tr>
+<td><code>function</code></td>
+<td>工具调用的结果</td>
+<td>工具返回值</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 消息流转示意</span>
+<span class="n">system</span>  <span class="err">→</span>  <span class="s2">&quot;你是一个翻译助手&quot;</span>        <span class="c1"># 设定角色</span>
+<span class="n">user</span>    <span class="err">→</span>  <span class="s2">&quot;把&#39;你好&#39;翻译成英文&quot;</span>       <span class="c1"># 用户提问</span>
+<span class="n">assistant</span> <span class="err">→</span> <span class="s2">&quot;Hello&quot;</span>                   <span class="c1"># AI 回答</span>
+<span class="n">user</span>    <span class="err">→</span>  <span class="s2">&quot;再翻译成日文&quot;</span>             <span class="c1"># 后续追问</span>
+<span class="n">assistant</span> <span class="err">→</span> <span class="s2">&quot;こんにちは&quot;</span>              <span class="c1"># AI 继续回答</span>
+</code></pre></div>
+<hr>
+<h2 id="prompt-engineering">三、Prompt Engineering 技巧</h2>
+<h3 id="31-prompt-engineering">3.1 什么是 Prompt Engineering？</h3>
+<p>Prompt Engineering 是设计和优化输入提示（Prompt）以获得更好 AI 输出的技术。核心原则：</p>
+<pre class="plain"><code>输入质量 → 输出质量
+
+差的 Prompt: &quot;写个故事&quot;
+好的 Prompt: &quot;写一个200字的科幻短篇，主角是一个在火星上种土豆的程序员，
+              风格幽默，包含反转结局&quot;
+</code></pre>
+<h3 id="32">3.2 六大核心技巧</h3>
+<h4 id="1-role-prompting">1️⃣ 角色设定（Role Prompting）</h4>
+<pre class="plain"><code>你是一位资深的 Python 高级工程师，拥有 15 年开发经验。
+请用专业但易懂的方式解释以下概念...
+</code></pre>
+<p><strong>为什么有效</strong>：角色设定让模型锁定知识领域，输出更专业。</p>
+<h4 id="2-few-shot">2️⃣ Few-Shot 示例（提供范例）</h4>
+<pre class="plain"><code>请按以下格式翻译：
+
+英文: Good morning → 中文: 早上好
+英文: Thank you → 中文: 谢谢
+英文: How are you → 中文:
+</code></pre>
+<p><strong>为什么有效</strong>：示例比描述更精确，模型能从范例中学习模式。</p>
+<h4 id="3-chain-of-thought">3️⃣ 链式思考（Chain of Thought）</h4>
+<pre class="plain"><code>请一步步思考：
+1. 首先分析问题...
+2. 然后考虑...
+3. 最后得出结论...
+</code></pre>
+<p><strong>为什么有效</strong>：强制模型展示推理过程，减少跳跃式错误。</p>
+<h4 id="4">4️⃣ 结构化输出</h4>
+<pre class="plain"><code>请以 JSON 格式输出：
+{
+  &quot;name&quot;: &quot;姓名&quot;,
+  &quot;age&quot;: 数字,
+  &quot;skills&quot;: [&quot;技能1&quot;, &quot;技能2&quot;]
+}
+</code></pre>
+<p><strong>为什么有效</strong>：明确输出格式，便于程序解析。</p>
+<h4 id="5">5️⃣ 约束与边界</h4>
+<pre class="plain"><code>注意：
+- 不要编造信息，如果不确定请说&quot;我不确定&quot;
+- 回答控制在 100 字以内
+- 不要使用专业术语
+</code></pre>
+<p><strong>为什么有效</strong>：约束减少幻觉，控制输出长度和风格。</p>
+<h4 id="6">6️⃣ 分步骤指令</h4>
+<pre class="plain"><code>任务：分析一段代码
+步骤：
+1. 先阅读代码，理解功能
+2. 找出潜在的 bug
+3. 给出修复建议
+4. 提供优化后的代码
+</code></pre>
+<p><strong>为什么有效</strong>：分步骤让复杂任务条理清晰，减少遗漏。</p>
+<hr>
+<h2 id="function-calling">四、Function Calling（函数调用）</h2>
+<h3 id="41">4.1 核心机制</h3>
+<p>Function Calling 让大模型能够"调用"外部工具/函数。模型本身不执行函数，而是<strong>生成调用指令</strong>，由你的代码执行后将结果返回给模型。</p>
+<pre class="plain"><code>┌──────┐    ① 用户提问     ┌───────┐
+│ 用户  │ ──────────────→ │  LLM  │
+└──────┘                  └───┬───┘
+                              │ ② 返回函数调用指令
+                              │    {&quot;name&quot;: &quot;get_weather&quot;,
+                              │     &quot;args&quot;: {&quot;city&quot;: &quot;北京&quot;}}
+                              ▼
+                        ┌──────────┐
+                        │ 你的代码  │  ③ 执行函数
+                        └────┬─────┘
+                             │ ④ 获取结果: {&quot;temp&quot;: 25, &quot;sunny&quot;: true}
+                             ▼
+                        ┌───────┐  ⑤ 将结果发回 LLM
+                        │  LLM  │ ──→ 生成自然语言回复
+                        └───┬───┘
+                            │ ⑥ &quot;北京今天25°C，天气晴朗&quot;
+                            ▼
+                        ┌──────┐
+                        │ 用户  │
+                        └──────┘
+</code></pre>
+<h3 id="42">4.2 函数定义格式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">tools</span> <span class="o">=</span> <span class="p">[{</span>
+    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;function&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;function&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;get_weather&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;获取指定城市的天气信息&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;parameters&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;object&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;properties&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;city&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;城市名称&quot;</span>
+                <span class="p">},</span>
+                <span class="s2">&quot;unit&quot;</span><span class="p">:</span> <span class="p">{</span>
+                    <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;string&quot;</span><span class="p">,</span>
+                    <span class="s2">&quot;enum&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;celsius&quot;</span><span class="p">,</span> <span class="s2">&quot;fahrenheit&quot;</span><span class="p">],</span>
+                    <span class="s2">&quot;description&quot;</span><span class="p">:</span> <span class="s2">&quot;温度单位&quot;</span>
+                <span class="p">}</span>
+            <span class="p">},</span>
+            <span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;city&quot;</span><span class="p">]</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+<span class="p">}]</span>
+</code></pre></div>
+<h3 id="43">4.3 调用流程</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">openai</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">OpenAI</span><span class="p">()</span>
+
+<span class="c1"># 1. 发送消息 + 工具定义</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span>
+    <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;北京今天天气怎么样？&quot;</span><span class="p">}],</span>
+    <span class="n">tools</span><span class="o">=</span><span class="n">tools</span><span class="p">,</span>
+    <span class="n">tool_choice</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span>  <span class="c1"># 让模型决定是否调用工具</span>
+<span class="p">)</span>
+
+<span class="c1"># 2. 检查是否有函数调用</span>
+<span class="n">msg</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span>
+<span class="k">if</span> <span class="n">msg</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">:</span>
+    <span class="c1"># 3. 执行函数</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">get_weather</span><span class="p">(</span><span class="o">**</span><span class="n">msg</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">function</span><span class="o">.</span><span class="n">arguments</span><span class="p">)</span>
+    
+    <span class="c1"># 4. 将结果发回</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+        <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span>
+        <span class="n">messages</span><span class="o">=</span><span class="p">[</span>
+            <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;北京今天天气怎么样？&quot;</span><span class="p">},</span>
+            <span class="n">msg</span><span class="p">,</span>  <span class="c1"># assistant 消息（含 tool_calls）</span>
+            <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;tool&quot;</span><span class="p">,</span> <span class="s2">&quot;tool_call_id&quot;</span><span class="p">:</span> <span class="n">msg</span><span class="o">.</span><span class="n">tool_calls</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
+             <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">result</span><span class="p">)}</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="api_1">五、API 速查表</h2>
+<h3 id="51-openai-python-sdk">5.1 OpenAI Python SDK</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">openai</span>
+
+<span class="c1"># 创建客户端（推荐方式）</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">OpenAI</span><span class="p">(</span><span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;sk-xxx&quot;</span><span class="p">)</span>
+
+<span class="c1"># 基础调用</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span>               <span class="c1"># 模型名称</span>
+    <span class="n">messages</span><span class="o">=</span><span class="p">[</span><span class="o">...</span><span class="p">],</span>                <span class="c1"># 消息列表</span>
+    <span class="n">temperature</span><span class="o">=</span><span class="mf">0.7</span><span class="p">,</span>               <span class="c1"># 随机性 (0-2)</span>
+    <span class="n">max_tokens</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span>               <span class="c1"># 最大输出长度</span>
+    <span class="n">top_p</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span>                     <span class="c1"># 核采样</span>
+    <span class="n">frequency_penalty</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>         <span class="c1"># 频率惩罚</span>
+    <span class="n">presence_penalty</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span>          <span class="c1"># 存在惩罚</span>
+    <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>                  <span class="c1"># 是否流式</span>
+    <span class="n">tools</span><span class="o">=</span><span class="n">tools</span><span class="p">,</span>                   <span class="c1"># 工具列表</span>
+    <span class="n">tool_choice</span><span class="o">=</span><span class="s2">&quot;auto&quot;</span><span class="p">,</span>            <span class="c1"># 工具选择策略</span>
+<span class="p">)</span>
+
+<span class="c1"># 获取回复</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">choices</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">message</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="52-deepseek-api-openai">5.2 DeepSeek API（兼容 OpenAI）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">openai</span>
+
+<span class="c1"># DeepSeek 完全兼容 OpenAI SDK</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">OpenAI</span><span class="p">(</span>
+    <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;your-deepseek-key&quot;</span><span class="p">,</span>
+    <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;https://api.deepseek.com/v1&quot;</span>  <span class="c1"># 指向 DeepSeek</span>
+<span class="p">)</span>
+
+<span class="c1"># 调用方式完全一样</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span>
+    <span class="n">model</span><span class="o">=</span><span class="s2">&quot;deepseek-chat&quot;</span><span class="p">,</span>  <span class="c1"># 或 deepseek-coder</span>
+    <span class="n">messages</span><span class="o">=</span><span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;你好&quot;</span><span class="p">}]</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="53">5.3 关键参数对比</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+<th>推荐值</th>
+<th>注意事项</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>temperature</code></td>
+<td>控制随机性</td>
+<td>0-0.3（精确）/ 0.7-1（创意）</td>
+<td>越高越随机</td>
+</tr>
+<tr>
+<td><code>max_tokens</code></td>
+<td>输出上限</td>
+<td>根据需求设</td>
+<td>注意 token 成本</td>
+</tr>
+<tr>
+<td><code>top_p</code></td>
+<td>核采样</td>
+<td>1.0</td>
+<td>通常与 temperature 二选一</td>
+</tr>
+<tr>
+<td><code>frequency_penalty</code></td>
+<td>降低重复</td>
+<td>0-0.5</td>
+<td>防止车轱辘话</td>
+</tr>
+<tr>
+<td><code>presence_penalty</code></td>
+<td>提升多样性</td>
+<td>0-1.5</td>
+<td>鼓励新话题</td>
+</tr>
+<tr>
+<td><code>stream</code></td>
+<td>流式输出</td>
+<td>True（体验好）</td>
+<td>需要特殊处理</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_1">六、实战：智能助手</h2>
+<h3 id="61">6.1 项目架构</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│                智能助手架构                    │
+├─────────────────────────────────────────────┤
+│                                             │
+│  ┌─────────┐   ┌──────────┐   ┌─────────┐ │
+│  │ 用户输入 │ → │ Prompt   │ → │ LLM API │ │
+│  └─────────┘   │ 模板     │   └────┬────┘ │
+│                └──────────┘        │       │
+│                                    ▼       │
+│                              ┌──────────┐  │
+│                              │ 工具调用  │  │
+│                              │ (可选)    │  │
+│                              └────┬─────┘  │
+│                                   ▼        │
+│                              ┌──────────┐  │
+│                              │ 输出格式化│  │
+│                              └────┬─────┘  │
+│                                   ▼        │
+│                              ┌──────────┐  │
+│                              │ 用户展示  │  │
+│                              └──────────┘  │
+└─────────────────────────────────────────────┘
+</code></pre>
+<h3 id="62">6.2 完整代码示例</h3>
+<p>见 <code>code/03-smart-assistant.py</code>，包含：<br>
+- 多轮对话管理<br>
+- Prompt 模板系统<br>
+- 工具函数集成<br>
+- 流式输出支持<br>
+- 上下文窗口管理</p>
+<hr>
+<h2 id="_2">七、避坑指南</h2>
+<h3 id="_3">常见错误</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 错误 1：每次创建新客户端</span>
+<span class="k">for</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">questions</span><span class="p">:</span>
+    <span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">OpenAI</span><span class="p">()</span>  <span class="c1"># 浪费资源！</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+
+<span class="c1"># ✅ 正确：复用客户端</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">openai</span><span class="o">.</span><span class="n">OpenAI</span><span class="p">()</span>  <span class="c1"># 创建一次</span>
+<span class="k">for</span> <span class="n">q</span> <span class="ow">in</span> <span class="n">questions</span><span class="p">:</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+
+<span class="c1"># ❌ 错误 2：没有处理 API 错误</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>  <span class="c1"># 可能抛异常！</span>
+
+<span class="c1"># ✅ 正确：加 try-except</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="k">for</span> <span class="n">attempt</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">chat</span><span class="o">.</span><span class="n">completions</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+        <span class="k">break</span>
+    <span class="k">except</span> <span class="n">openai</span><span class="o">.</span><span class="n">RateLimitError</span><span class="p">:</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span> <span class="o">**</span> <span class="n">attempt</span><span class="p">)</span>  <span class="c1"># 指数退避</span>
+    <span class="k">except</span> <span class="n">openai</span><span class="o">.</span><span class="n">APIError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;API 错误: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ❌ 错误 3：System Prompt 放在 User 消息里</span>
+<span class="n">messages</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;你是翻译助手。把你好翻译成英文&quot;</span><span class="p">}]</span>
+
+<span class="c1"># ✅ 正确：分开角色</span>
+<span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;system&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;你是专业的翻译助手&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="s2">&quot;把&#39;你好&#39;翻译成英文&quot;</span><span class="p">}</span>
+<span class="p">]</span>
+</code></pre></div>
+<h3 id="token">Token 成本控制</h3>
+<pre class="plain"><code>┌─────────────────────────────────────┐
+│          Token 计费示意              │
+├─────────────────────────────────────┤
+│ 1 个中文字 ≈ 1-2 tokens            │
+│ 1 个英文词 ≈ 1 token               │
+│ 1 个标点   ≈ 0.5-1 token           │
+│                                      │
+│ 💡 优化策略：                        │
+│ • 精简 System Prompt                │
+│ • 控制历史消息轮数                   │
+│ • 设置合理的 max_tokens             │
+│ • 使用 GPT-4o-mini 处理简单任务     │
+└─────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="_4">八、思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 System Prompt 要放在消息列表最前面？如果放在最后会怎样？</strong></p>
+<blockquote>
+<p>提示：思考 LLM 处理消息的顺序和注意力机制。</p>
+</blockquote>
+</li>
+<li>
+<p><strong>Temperature 和 Top_p 都能控制随机性，为什么需要两个参数？分别在什么场景下使用？</strong></p>
+<blockquote>
+<p>提示：Temperature 改变概率分布形状，Top_p 截断分布尾部。</p>
+</blockquote>
+</li>
+<li>
+<p><strong>Function Calling 中，如果模型返回了错误的函数参数（比如把"北京"传成了数字），你的代码应该如何处理？</strong></p>
+<blockquote>
+<p>提示：思考参数验证和错误恢复机制。</p>
+</blockquote>
+</li>
+<li>
+<p><strong>多轮对话中，如果上下文超过了模型的 token 限制，你会采用什么策略来管理对话历史？</strong></p>
+<blockquote>
+<p>提示：考虑滑动窗口、摘要压缩、重要性评分等方案。</p>
+</blockquote>
+</li>
+<li>
+<p><strong>OpenAI 和 DeepSeek 的 API 几乎完全兼容，这种设计有什么好处？如果明天出了一个新模型 API 不兼容怎么办？</strong></p>
+<blockquote>
+<p>提示：思考抽象层和适配器模式的价值。</p>
+</blockquote>
+</li>
+</ol>
+<hr>
+<h2 id="_5">参考资源</h2>
+<ul>
+<li><a href="https://platform.openai.com/docs">OpenAI API 文档</a></li>
+<li><a href="https://platform.deepseek.com/api-docs">DeepSeek API 文档</a></li>
+<li><a href="https://www.promptingguide.ai/zh">Prompt Engineering Guide</a></li>
+<li><a href="https://cookbook.openai.com/">OpenAI Cookbook</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-118/index.html">← Day 118 NLP 基础</a><a class="nav-next" href="../day-120/index.html">Day 120 LangChain 与 RAG →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

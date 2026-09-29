@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 132 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 132 正文</a>
+  <h1>Day 132 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-132-">Day 132 - 代理池搭建 · 图解</h1>
+<h2 id="1-http-vs-https">1. 代理请求链路（HTTP vs HTTPS）</h2>
+<pre class="plain"><code>HTTP 站点:
+  爬虫 ──&quot;GET http://site.com/x&quot;──▶ 代理 ──&quot;GET /x Host:site.com&quot;──▶ 站点
+  （代理能看到并修改全部明文内容）
+
+HTTPS 站点（CONNECT 隧道）:
+  爬虫 ──&quot;CONNECT site.com:443&quot;──▶ 代理
+  代理 ──&quot;200 Connection Established&quot;──▶ 爬虫
+  爬虫 ══(TLS 加密隧道，代理只转发字节)══▶ 站点
+  （代理只看得见域名，看不到内容）
+</code></pre>
+<h2 id="2-mermaid">2. 代理池架构（Mermaid）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    F[Fetcher 抓取器&lt;br&gt;多来源抓免费代理] --&gt; V[Validator 验证器&lt;br&gt;aiohttp 并发验证]
+    V --&gt;|成功 +10| S[(Redis ZSet&lt;br&gt;score 0~100)]
+    V --&gt;|失败 -10| S
+    S --&gt;|score=0 删除| X[🗑 移除]
+    S --&gt; A[API: GET /random]
+    A --&gt; C[爬虫业务]
+    C --&gt;|使用失败| S
+    T[定时调度器&lt;br&gt;每 10 分钟] --&gt; F
+    T --&gt; V
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    F[Fetcher 抓取器&lt;br&gt;多来源抓免费代理] --&gt; V[Validator 验证器&lt;br&gt;aiohttp 并发验证]
+    V --&gt;|成功 +10| S[(Redis ZSet&lt;br&gt;score 0~100)]
+    V --&gt;|失败 -10| S
+    S --&gt;|score=0 删除| X[🗑 移除]
+    S --&gt; A[API: GET /random]
+    A --&gt; C[爬虫业务]
+    C --&gt;|使用失败| S
+    T[定时调度器&lt;br&gt;每 10 分钟] --&gt; F
+    T --&gt; V
+</code></pre></div>
+<h2 id="3">3. 分数流转</h2>
+<pre class="plain"><code>   抓取入库(50) ──验证成功──▶ 100（顶）
+        │                      │
+        │                      └─失败-10─▶ 90 ─失败─▶ ... ─失败─▶ 0 → 删除
+        └─首次验证失败─▶ 40 ─失败─▶ 30 ─失败─▶ 20 ─失败─▶ 10 ─失败─▶ 0 → 删除
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

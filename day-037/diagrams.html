@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 37 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 37 正文</a>
+  <h1>Day 37 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-037">Day 037 — 组合与聚合：图解</h1>
+<blockquote>
+<p>Mermaid 与 ASCII 示意图，帮助理解组合、聚合、依赖注入和组合优于继承</p>
+</blockquote>
+<hr>
+<h2 id="1-vs">1️⃣ 组合 vs 继承</h2>
+<h3 id="_1">继承的「脆弱的基类」问题</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 继承
+        A[Base Class] --&gt; B[Derived A]
+        A --&gt; C[Derived B]
+        A --&gt; D[Derived C]
+    end
+
+    subgraph 修改影响
+        CHANGE[&quot;修改 Base 的 fly() 方法&quot;]
+    end
+
+    CHANGE -.-&gt;|影响所有子类!| B
+    CHANGE -.-&gt;|可能不适用| C
+    CHANGE -.-&gt;|可能导致 Bug| D
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 继承
+        A[Base Class] --&gt; B[Derived A]
+        A --&gt; C[Derived B]
+        A --&gt; D[Derived C]
+    end
+
+    subgraph 修改影响
+        CHANGE[&quot;修改 Base 的 fly() 方法&quot;]
+    end
+
+    CHANGE -.-&gt;|影响所有子类!| B
+    CHANGE -.-&gt;|可能不适用| C
+    CHANGE -.-&gt;|可能导致 Bug| D
+</code></pre></div>
+<h3 id="_2">组合的优势</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 组合
+        CAR[Car] --&gt; E[Engine]
+        CAR --&gt; T[Tire 1..4]
+        CAR --&gt; GPS[GPS]
+    end
+
+    subgraph 更换组件
+        E2[&quot;V8 Engine&quot;] -.-&gt;|替换| E
+        T2[&quot;Winter Tire&quot;] -.-&gt;|替换| T
+    end
+
+    note[CAR 不受影响&lt;br/&gt;组件可以独立替换]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 组合
+        CAR[Car] --&gt; E[Engine]
+        CAR --&gt; T[Tire 1..4]
+        CAR --&gt; GPS[GPS]
+    end
+
+    subgraph 更换组件
+        E2[&quot;V8 Engine&quot;] -.-&gt;|替换| E
+        T2[&quot;Winter Tire&quot;] -.-&gt;|替换| T
+    end
+
+    note[CAR 不受影响&lt;br/&gt;组件可以独立替换]
+</code></pre></div>
+<hr>
+<h2 id="2-composition">2️⃣ 组合（Composition）关系图</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class House {
+        +rooms: list[Room]
+        +address: str
+        +__init__()
+    }
+
+    class Room {
+        +name: str
+        +area: float
+        +__init__(name)
+    }
+
+    House *-- Room : 组合
+
+    note for House: House 创建 Room
+    note for House: House 销毁 → Room 也销毁
+    note for Room: Room 不能独立于 House 存在
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class House {
+        +rooms: list[Room]
+        +address: str
+        +__init__()
+    }
+
+    class Room {
+        +name: str
+        +area: float
+        +__init__(name)
+    }
+
+    House *-- Room : 组合
+
+    note for House: House 创建 Room
+    note for House: House 销毁 → Room 也销毁
+    note for Room: Room 不能独立于 House 存在
+</code></pre></div>
+<h3 id="_3">组合的生命周期</h3>
+<pre class="plain"><code>┌─── 时间线 ────────────────────────────────────┐
+
+Car().__init__():
+    ├── Engine.__init__()    ← 组合对象在内部创建
+    ├── Transmission.__init__()
+    └── FuelTank.__init__(55.0)
+
+... 驾驶 ...
+
+del car  (或 car 离开作用域):
+    ├── FuelTank.__del__()   ← 组合对象自动销毁
+    ├── Transmission.__del__()
+    └── Engine.__del__()
+
+✅ 生命周期完全由 Car 管理
+</code></pre>
+<hr>
+<h2 id="3-aggregation">3️⃣ 聚合（Aggregation）关系图</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class SchoolClass {
+        +name: str
+        +add_student(Student)
+        +add_course(Course)
+        +remove_student(Student)
+    }
+
+    class Student {
+        +name: str
+        +student_id: str
+    }
+
+    class Course {
+        +name: str
+        +code: str
+    }
+
+    SchoolClass o-- Student : 聚合
+    SchoolClass o-- Course : 聚合
+
+    note for SchoolClass: Student 从外部传入
+    note for SchoolClass: SchoolClass 销毁 → Student 继续存在
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class SchoolClass {
+        +name: str
+        +add_student(Student)
+        +add_course(Course)
+        +remove_student(Student)
+    }
+
+    class Student {
+        +name: str
+        +student_id: str
+    }
+
+    class Course {
+        +name: str
+        +code: str
+    }
+
+    SchoolClass o-- Student : 聚合
+    SchoolClass o-- Course : 聚合
+
+    note for SchoolClass: Student 从外部传入
+    note for SchoolClass: SchoolClass 销毁 → Student 继续存在
+</code></pre></div>
+<h3 id="_4">聚合的生命周期</h3>
+<pre class="plain"><code>┌─── 时间线 ────────────────────────────────────┐
+
+外部创建:
+alice = Student(&quot;Alice&quot;, &quot;S001&quot;)
+
+class_a = SchoolClass(&quot;2026-1&quot;)
+class_a.add_student(alice)    ← 聚合: 引用外部对象
+
+del class_a                   ← 班级销毁
+# alice 仍然存在!              ← 学生继续存在
+print(alice.name)             → &quot;Alice&quot;
+
+✅ 部分可以独立于整体存在
+</code></pre>
+<hr>
+<h2 id="4-vs">4️⃣ 组合 vs 聚合 对比</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 组合 Composition
+        C1[整体] --&gt;|创建| C2[部分]
+        C1 --&gt;|拥有| C3[部分]
+        C1 -.-&gt;|销毁| C4[部分也销毁]
+    end
+
+    subgraph 聚合 Aggregation
+        A1[整体] --&gt;|引用| A2[部分]
+        A1 --&gt;|使用| A3[部分]
+        A1 -.-&gt;|销毁| A4[部分继续存在]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 组合 Composition
+        C1[整体] --&gt;|创建| C2[部分]
+        C1 --&gt;|拥有| C3[部分]
+        C1 -.-&gt;|销毁| C4[部分也销毁]
+    end
+
+    subgraph 聚合 Aggregation
+        A1[整体] --&gt;|引用| A2[部分]
+        A1 --&gt;|使用| A3[部分]
+        A1 -.-&gt;|销毁| A4[部分继续存在]
+    end
+</code></pre></div>
+<h3 id="_5">区别总结</h3>
+<pre class="plain"><code>特征                 组合                    聚合
+══════════════       ══════════              ══════════
+
+关系强度             强                      弱
+生命周期             整体管理部分             部分独立
+创建时机             整体构造时创建           从外部传入
+销毁影响             部分一起销毁             部分继续存在
+代码实现             构造器中 new             参数传入或 add()
+例                   汽车 → 引擎             班级 → 学生
+                    HTML → DOM 节点          图书馆 → 书籍
+                    订单 → 订单项             公司 → 员工
+</code></pre>
+<hr>
+<h2 id="5-dependency-injection">5️⃣ 依赖注入（Dependency Injection）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 紧耦合
+        A[&quot;class Service:&quot;]
+        A1[&quot;    logger = FileLogger()&quot;]
+        A1 --&gt;|硬编码| AL[&quot;只能使用 FileLogger&quot;]
+    end
+
+    subgraph 松耦合（DI）
+        B[&quot;class Service:&quot;]
+        B1[&quot;    def __init__(self, logger):&quot;]
+        B1 --&gt;|注入| BL[&quot;可以使用任意 Logger&quot;]
+    end
+
+    subgraph 注入方式
+        C1[&quot;构造器注入&lt;br/&gt;__init__(self, dep)&quot;]
+        C2[&quot;Setter 注入&lt;br/&gt;set_dep(self, dep)&quot;]
+        C3[&quot;方法注入&lt;br/&gt;method(self, dep)&quot;]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 紧耦合
+        A[&quot;class Service:&quot;]
+        A1[&quot;    logger = FileLogger()&quot;]
+        A1 --&gt;|硬编码| AL[&quot;只能使用 FileLogger&quot;]
+    end
+
+    subgraph 松耦合（DI）
+        B[&quot;class Service:&quot;]
+        B1[&quot;    def __init__(self, logger):&quot;]
+        B1 --&gt;|注入| BL[&quot;可以使用任意 Logger&quot;]
+    end
+
+    subgraph 注入方式
+        C1[&quot;构造器注入&lt;br/&gt;__init__(self, dep)&quot;]
+        C2[&quot;Setter 注入&lt;br/&gt;set_dep(self, dep)&quot;]
+        C3[&quot;方法注入&lt;br/&gt;method(self, dep)&quot;]
+    end
+</code></pre></div>
+<h3 id="_6">依赖注入的生命周期管理</h3>
+<pre class="plain"><code>┌─── 依赖注入流程 ──────────────────────────────┐
+
+外部创建依赖:
+    logger = FileLogger()
+    gps = GPS(&quot;高德&quot;)
+
+┌─── 注入到服务 ───────────────────┐
+│ car = Car(brand, model)          │
+│ car.install_gps(gps)   ← 注入     │
+└──────────────────────────────────┘
+
+外部管理依赖生命周期:
+    # GPS 可以切换到另一个 Car
+    car2 = Car(&quot;Honda&quot;, &quot;Accord&quot;)
+    car2.install_gps(gps)  ← 复用 GPS
+
+    # 也可以替换
+    gps2 = GPS(&quot;百度导航&quot;)
+    car.install_gps(gps2)  ← 替换
+
+✅ 依赖的创建和销毁由外部管理
+</code></pre>
+<hr>
+<h2 id="6">6️⃣ 「组合优于继承」对比图</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 继承方案 ❌
+        I1[Bird] --&gt; I2[fly]
+        I1 --&gt; I3[eat]
+        I1 --&gt; I4[sleep]
+        I2 -.-&gt;|问题| I5[Penguin 不会飞]
+    end
+
+    subgraph 组合方案 ✅
+        C1[&quot;Bird&lt;br/&gt;- fly_behavior&lt;br/&gt;- eat_behavior&lt;br/&gt;- sleep_behavior&quot;]
+        C1 --&gt;|调用| C2[FlyBehavior.fly]
+        C1 --&gt;|调用| C3[EatBehavior.eat]
+        C1 --&gt;|调用| C4[SleepBehavior.sleep]
+
+        C5[&quot;Penguin&lt;br/&gt;- walk_behavior&lt;br/&gt;- eat_behavior&lt;br/&gt;- sleep_behavior&quot;]
+        C5 --&gt;|调用| C6[WalkBehavior.walk]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 继承方案 ❌
+        I1[Bird] --&gt; I2[fly]
+        I1 --&gt; I3[eat]
+        I1 --&gt; I4[sleep]
+        I2 -.-&gt;|问题| I5[Penguin 不会飞]
+    end
+
+    subgraph 组合方案 ✅
+        C1[&quot;Bird&lt;br/&gt;- fly_behavior&lt;br/&gt;- eat_behavior&lt;br/&gt;- sleep_behavior&quot;]
+        C1 --&gt;|调用| C2[FlyBehavior.fly]
+        C1 --&gt;|调用| C3[EatBehavior.eat]
+        C1 --&gt;|调用| C4[SleepBehavior.sleep]
+
+        C5[&quot;Penguin&lt;br/&gt;- walk_behavior&lt;br/&gt;- eat_behavior&lt;br/&gt;- sleep_behavior&quot;]
+        C5 --&gt;|调用| C6[WalkBehavior.walk]
+    end
+</code></pre></div>
+<h3 id="_7">代码复用对比</h3>
+<pre class="plain"><code>方案 A：继承                         方案 B：组合（推荐）
+════════════════                    ════════════════════
+
+class Bird:                         class FlyBehavior:
+    def fly(self): ...                  def fly(self): ...
+    def eat(self): ...
+
+                                    class EatBehavior:
+class Penguin(Bird):                     def eat(self): ...
+    def fly(self):  # ❌ 会飞
+        raise ...                    class Bird:
+                                       def __init__(self):
+class Ostrich(Bird):                      self.fly = FlyBehavior()
+    def fly(self):  # ❌ 会飞               self.eat = EatBehavior()
+        raise ...
+
+                                    class Penguin:
+# 层次越深问题越多                      def __init__(self):
+# 违反 LSP 原则                           self.eat = EatBehavior()
+                                        self.walk = WalkBehavior()
+                                    # ✅ 只组合需要的功能
+</code></pre>
+<hr>
+<h2 id="7-car">7️⃣ Car 模型架构</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class Car {
+        -_engine: Engine
+        -_transmission: Transmission
+        -_fuel_tank: FuelTank
+        -_tires: list[Tire]
+        -_gps: GPS
+        +start() str
+        +drive(km, speed) list
+        +stop() str
+        +replace_tire(pos, tire) str
+        +install_gps(gps) str
+    }
+
+    class Engine {
+        -_running: bool
+        -_rpm: int
+        +start() str
+        +accelerate(rpm) tuple
+        +stop() str
+    }
+
+    class Transmission {
+        -_gear: str
+        +shift(gear) str
+        +auto_shift(rpm) str
+    }
+
+    class FuelTank {
+        -_level: float
+        +refill(liters) str
+        +consume(liters) bool
+    }
+
+    class Tire {
+        -_pressure: float
+        -_tread_depth: float
+        +inflate(psi) str
+        +check_tread() str
+        +wear(km) void
+    }
+
+    class GPS {
+        +set_destination(dest) str
+        +navigate() str
+    }
+
+    Car *-- Engine : 组合
+    Car *-- Transmission : 组合
+    Car *-- FuelTank : 组合
+    Car o-- Tire : 聚合
+    Car o-- GPS : 依赖注入
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class Car {
+        -_engine: Engine
+        -_transmission: Transmission
+        -_fuel_tank: FuelTank
+        -_tires: list[Tire]
+        -_gps: GPS
+        +start() str
+        +drive(km, speed) list
+        +stop() str
+        +replace_tire(pos, tire) str
+        +install_gps(gps) str
+    }
+
+    class Engine {
+        -_running: bool
+        -_rpm: int
+        +start() str
+        +accelerate(rpm) tuple
+        +stop() str
+    }
+
+    class Transmission {
+        -_gear: str
+        +shift(gear) str
+        +auto_shift(rpm) str
+    }
+
+    class FuelTank {
+        -_level: float
+        +refill(liters) str
+        +consume(liters) bool
+    }
+
+    class Tire {
+        -_pressure: float
+        -_tread_depth: float
+        +inflate(psi) str
+        +check_tread() str
+        +wear(km) void
+    }
+
+    class GPS {
+        +set_destination(dest) str
+        +navigate() str
+    }
+
+    Car *-- Engine : 组合
+    Car *-- Transmission : 组合
+    Car *-- FuelTank : 组合
+    Car o-- Tire : 聚合
+    Car o-- GPS : 依赖注入
+</code></pre></div>
+<h3 id="_8">关系类型标识</h3>
+<pre class="plain"><code>┌─────────────────────────┐
+│      关系类型图例         │
+│                         │
+│  *--  组合 Composition   │
+│  o--  聚合 Aggregation   │
+│  &lt;|-- 继承 Inheritance   │
+│  --&gt;  依赖 Dependency    │
+│  ..&gt;  使用 Usage         │
+└─────────────────────────┘
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

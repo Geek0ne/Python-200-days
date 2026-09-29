@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 50 — 槽（__slots__）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 50 — 槽（__slots__）</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">622 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-050-slots" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📚 概念解释</a>
+<a class="toc-l3" href="#__slots__">什么是 __slots__？</a>
+<a class="toc-l3" href="#__slots___1">为什么需要 __slots__？</a>
+<a class="toc-l2" href="#_2">🔬 原理深入</a>
+<a class="toc-l3" href="#_3">内存布局对比</a>
+<a class="toc-l3" href="#__slots___2">__slots__ 的底层实现</a>
+<a class="toc-l3" href="#__slots___3">__slots__ 与继承</a>
+<a class="toc-l2" href="#api">📖 API 速查表</a>
+<a class="toc-l3" href="#_4">基本用法</a>
+<a class="toc-l3" href="#slot">带默认值的 slot</a>
+<a class="toc-l3" href="#slot_1">只读 slot</a>
+<a class="toc-l3" href="#slots">动态添加属性（绕过 slots）</a>
+<a class="toc-l2" href="#_5">📊 图解</a>
+<a class="toc-l3" href="#_6">内存布局对比</a>
+<a class="toc-l3" href="#_7">性能对比</a>
+<a class="toc-l2" href="#_8">💻 实战代码案例</a>
+<a class="toc-l3" href="#1">案例1：百万级数据对象优化</a>
+<a class="toc-l3" href="#2">案例2：游戏实体系统</a>
+<a class="toc-l3" href="#3">案例3：配置类优化</a>
+<a class="toc-l2" href="#_9">🧠 思考题</a>
+<a class="toc-l2" href="#_10">📋 今日小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-050-slots">Day 050 — 槽（<strong>slots</strong>）</h1>
+<h2 id="_1">📚 概念解释</h2>
+<h3 id="__slots__">什么是 <code>__slots__</code>？</h3>
+<p><strong><code>__slots__</code></strong> 是 Python 中一种内存优化机制。当一个类定义了 <code>__slots__</code>，Python 会为该类的每个实例使用<strong>固定大小的存储空间</strong>，而不是动态的 <code>__dict__</code> 字典。</p>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────┐
+│              普通类 vs __slots__ 类                    │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  普通类（使用 __dict__）：                              │
+│  ┌──────────────────────────────────────┐            │
+│  │ instance.__dict__                     │            │
+│  │ {                                      │            │
+│  │   &#x27;name&#x27;: &#x27;张三&#x27;,                     │            │
+│  │   &#x27;age&#x27;: 28,                          │            │
+│  │   &#x27;email&#x27;: &#x27;zhangsan@example.com&#x27;     │            │
+│  │ }  ← 每个属性都是字典的一个键值对       │            │
+│  └──────────────────────────────────────┘            │
+│                                                      │
+│  __slots__ 类（使用固定槽位）：                         │
+│  ┌──────────────────────────────────────┐            │
+│  │ name → &#x27;张三&#x27;                         │            │
+│  │ age  → 28                             │            │
+│  │ email→ &#x27;zhangsan@example.com&#x27;         │            │
+│  │  ← 直接存储在对象的固定偏移量位置       │            │
+│  └──────────────────────────────────────┘            │
+│                                                      │
+└──────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="__slots___1">为什么需要 <code>__slots__</code>？</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 普通类：每个实例都有一个 __dict__ 字典</span>
+<span class="k">class</span> <span class="nc">User</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">age</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">age</span> <span class="o">=</span> <span class="n">age</span>
+
+<span class="n">u1</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="s2">&quot;张三&quot;</span><span class="p">,</span> <span class="mi">28</span><span class="p">)</span>
+<span class="n">u2</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="s2">&quot;李四&quot;</span><span class="p">,</span> <span class="mi">32</span><span class="p">)</span>
+<span class="c1"># u1.__dict__ = {&#39;name&#39;: &#39;张三&#39;, &#39;age&#39;: 28}  ← 每个实例都有一个字典</span>
+<span class="c1"># u2.__dict__ = {&#39;name&#39;: &#39;李四&#39;, &#39;age&#39;: 32}</span>
+<span class="c1"># 两个字典，每个大约 232 字节（CPython）</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ 使用 __slots__：没有 __dict__，节省内存</span>
+<span class="k">class</span> <span class="nc">User</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">,</span> <span class="s1">&#39;age&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">age</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">age</span> <span class="o">=</span> <span class="n">age</span>
+
+<span class="n">u1</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="s2">&quot;张三&quot;</span><span class="p">,</span> <span class="mi">28</span><span class="p">)</span>
+<span class="n">u2</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="s2">&quot;李四&quot;</span><span class="p">,</span> <span class="mi">32</span><span class="p">)</span>
+<span class="c1"># 没有 __dict__，每个实例大约节省 40%~50% 内存</span>
+</code></pre></div>
+<hr>
+<h2 id="_2">🔬 原理深入</h2>
+<h3 id="_3">内存布局对比</h3>
+<pre class="plain"><code>普通类实例（CPython 3.10+）：
+┌──────────────────────────┐
+│ PyObject_HEAD             │  16 bytes (引用计数 + 类型指针)
+│ __dict__ pointer ────────│──→ 字典对象 (~232 bytes)
+│ __weakref__ pointer      │
+└──────────────────────────┘
+总大小: ~64 bytes + 字典大小
+
+__slots__ 类实例：
+┌──────────────────────────┐
+│ PyObject_HEAD             │  16 bytes
+│ slot[0] (name)           │  8 bytes (指针)
+│ slot[1] (age)            │  8 bytes (指针)
+└──────────────────────────┘
+总大小: ~32 bytes（没有字典开销）
+</code></pre>
+<h3 id="__slots___2"><code>__slots__</code> 的底层实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># CPython 中，__slots__ 通过 PyMemberDef 实现</span>
+<span class="c1"># 每个 slot 是一个固定偏移量的成员变量</span>
+<span class="c1"># 访问速度比 __dict__ 查找更快</span>
+
+<span class="k">class</span> <span class="nc">WithSlots</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">WithoutSlots</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="c1"># 性能对比：</span>
+<span class="c1"># 属性访问: WithSlots 比 WithoutSlots 快约 5-10%</span>
+<span class="c1"># 内存占用: WithSlots 比 WithoutSlots 小约 40-50%</span>
+</code></pre></div>
+<h3 id="__slots___3"><code>__slots__</code> 与继承</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Base</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;x&#39;</span><span class="p">,)</span>
+
+<span class="k">class</span> <span class="nc">Child</span><span class="p">(</span><span class="n">Base</span><span class="p">):</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;y&#39;</span><span class="p">,)</span>  <span class="c1"># 添加新槽位</span>
+
+<span class="n">c</span> <span class="o">=</span> <span class="n">Child</span><span class="p">()</span>
+<span class="n">c</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># ✅ 继承的槽位</span>
+<span class="n">c</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="mi">2</span>  <span class="c1"># ✅ 自己的槽位</span>
+<span class="c1"># c.z = 3  # ❌ AttributeError: &#39;Child&#39; object has no attribute &#39;z&#39;</span>
+</code></pre></div>
+<hr>
+<h2 id="api">📖 API 速查表</h2>
+<h3 id="_4">基本用法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;attr1&#39;</span><span class="p">,</span> <span class="s1">&#39;attr2&#39;</span><span class="p">,</span> <span class="s1">&#39;attr3&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">attr1</span><span class="p">,</span> <span class="n">attr2</span><span class="p">,</span> <span class="n">attr3</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attr1</span> <span class="o">=</span> <span class="n">attr1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attr2</span> <span class="o">=</span> <span class="n">attr2</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attr3</span> <span class="o">=</span> <span class="n">attr3</span>
+</code></pre></div>
+<h3 id="slot">带默认值的 slot</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">y</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="n">x</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="n">y</span>
+
+<span class="c1"># slot 没有默认值机制，需要在 __init__ 中设置</span>
+</code></pre></div>
+<h3 id="slot_1">只读 slot</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;_x&#39;</span><span class="p">,)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">x</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_x</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_x</span> <span class="o">=</span> <span class="n">x</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># 10</span>
+<span class="c1"># obj.x = 20  # ❌ AttributeError (没有 setter)</span>
+</code></pre></div>
+<h3 id="slots">动态添加属性（绕过 slots）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;x&#39;</span><span class="p">,)</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="n">obj</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="mi">10</span>
+
+<span class="c1"># 通过实例 __dict__ 绕过（如果允许）</span>
+<span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="mi">20</span>  <span class="c1"># 需要先允许扩展</span>
+<span class="c1"># 或者使用 types.SimpleNamespace</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">📊 图解</h2>
+<h3 id="_6">内存布局对比</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph &quot;普通类实例&quot;
+        A1[PyObject_HEAD] --&gt; B1[__dict__ pointer]
+        B1 --&gt; C1[dict object]
+        C1 --&gt; D1[&quot;&#x27;name&#x27;: &#x27;张三&#x27;&quot;]
+        C1 --&gt; E1[&quot;&#x27;age&#x27;: 28&quot;]
+        C1 --&gt; F1[&quot;&#x27;email&#x27;: &#x27;...&#x27;&quot;]
+    end
+
+    subgraph &quot;__slots__ 类实例&quot;
+        A2[PyObject_HEAD] --&gt; B2[&quot;slot[0]: name&quot;]
+        A2 --&gt; C2[&quot;slot[1]: age&quot;]
+        A2 --&gt; D2[&quot;slot[2]: email&quot;]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph &quot;普通类实例&quot;
+        A1[PyObject_HEAD] --&gt; B1[__dict__ pointer]
+        B1 --&gt; C1[dict object]
+        C1 --&gt; D1[&quot;&#x27;name&#x27;: &#x27;张三&#x27;&quot;]
+        C1 --&gt; E1[&quot;&#x27;age&#x27;: 28&quot;]
+        C1 --&gt; F1[&quot;&#x27;email&#x27;: &#x27;...&#x27;&quot;]
+    end
+
+    subgraph &quot;__slots__ 类实例&quot;
+        A2[PyObject_HEAD] --&gt; B2[&quot;slot[0]: name&quot;]
+        A2 --&gt; C2[&quot;slot[1]: age&quot;]
+        A2 --&gt; D2[&quot;slot[2]: email&quot;]
+    end
+</code></pre></div>
+<h3 id="_7">性能对比</h3>
+<pre class="plain"><code>┌───────────────────────────────────────────┐
+│         100,000 个对象内存对比             │
+├───────────────────┬───────────────────────┤
+│  普通类            │  __slots__ 类         │
+├───────────────────┼───────────────────────┤
+│  ~50 MB           │  ~25 MB              │
+│  (每个 ~500 bytes)│  (每个 ~250 bytes)   │
+├───────────────────┼───────────────────────┤
+│  属性访问: 100ns   │  属性访问: 90ns       │
+│  属性设置: 120ns   │  属性设置: 95ns       │
+└───────────────────┴───────────────────────┘
+</code></pre>
+<hr>
+<h2 id="_8">💻 实战代码案例</h2>
+<h3 id="1">案例1：百万级数据对象优化</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span>
+
+
+<span class="k">class</span> <span class="nc">PointNormal</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;普通类 — 使用 __dict__&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">z</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="n">x</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="n">y</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">z</span> <span class="o">=</span> <span class="n">z</span>
+
+
+<span class="k">class</span> <span class="nc">PointSlots</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用 __slots__ 的类&quot;&quot;&quot;</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">,</span> <span class="s1">&#39;z&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">z</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="n">x</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="n">y</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">z</span> <span class="o">=</span> <span class="n">z</span>
+
+
+<span class="k">def</span> <span class="nf">benchmark</span><span class="p">():</span>
+    <span class="n">n</span> <span class="o">=</span> <span class="mi">100_000</span>
+
+    <span class="c1"># 内存对比</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=== 内存对比 ===&quot;</span><span class="p">)</span>
+
+    <span class="n">normal_points</span> <span class="o">=</span> <span class="p">[</span><span class="n">PointNormal</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">i</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span> <span class="n">i</span><span class="o">*</span><span class="mi">3</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">)]</span>
+    <span class="n">slots_points</span> <span class="o">=</span> <span class="p">[</span><span class="n">PointSlots</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">i</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span> <span class="n">i</span><span class="o">*</span><span class="mi">3</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">)]</span>
+
+    <span class="n">normal_size</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">normal_points</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="n">slots_size</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">slots_points</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;普通类单个对象大小: </span><span class="si">{</span><span class="n">normal_size</span><span class="si">}</span><span class="s2"> bytes&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;__slots__ 类单个对象大小: </span><span class="si">{</span><span class="n">slots_size</span><span class="si">}</span><span class="s2"> bytes&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;节省: </span><span class="si">{</span><span class="p">(</span><span class="mi">1</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">slots_size</span><span class="o">/</span><span class="n">normal_size</span><span class="p">)</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 注意：sys.getsizeof 不包含 __dict__ 的大小</span>
+    <span class="c1"># 需要额外计算</span>
+    <span class="n">normal_dict_size</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">normal_points</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">普通类 __dict__ 大小: </span><span class="si">{</span><span class="n">normal_dict_size</span><span class="si">}</span><span class="s2"> bytes&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;实际总大小（含 dict）: </span><span class="si">{</span><span class="n">normal_size</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">normal_dict_size</span><span class="si">}</span><span class="s2"> bytes&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;实际节省: </span><span class="si">{</span><span class="p">(</span><span class="mi">1</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">slots_size</span><span class="o">/</span><span class="p">(</span><span class="n">normal_size</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">normal_dict_size</span><span class="p">))</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 速度对比</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== 速度对比 ===&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 属性访问</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000000</span><span class="p">):</span>
+        <span class="n">_</span> <span class="o">=</span> <span class="n">normal_points</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">x</span>
+    <span class="n">normal_access</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000000</span><span class="p">):</span>
+        <span class="n">_</span> <span class="o">=</span> <span class="n">slots_points</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">x</span>
+    <span class="n">slots_access</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;普通类属性访问: </span><span class="si">{</span><span class="n">normal_access</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;__slots__ 属性访问: </span><span class="si">{</span><span class="n">slots_access</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;加速: </span><span class="si">{</span><span class="n">normal_access</span><span class="o">/</span><span class="n">slots_access</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 属性设置</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000000</span><span class="p">):</span>
+        <span class="n">normal_points</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="n">i</span>
+    <span class="n">normal_set</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000000</span><span class="p">):</span>
+        <span class="n">slots_points</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="n">i</span>
+    <span class="n">slots_set</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">普通类属性设置: </span><span class="si">{</span><span class="n">normal_set</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;__slots__ 属性设置: </span><span class="si">{</span><span class="n">slots_set</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;加速: </span><span class="si">{</span><span class="n">normal_set</span><span class="o">/</span><span class="n">slots_set</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x&quot;</span><span class="p">)</span>
+
+
+<span class="n">benchmark</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="2">案例2：游戏实体系统</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">游戏实体系统 — 使用 __slots__ 优化大量游戏对象</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span>
+
+
+<span class="k">class</span> <span class="nc">GameObject</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;游戏对象基类&quot;&quot;&quot;</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;_id&#39;</span><span class="p">,</span> <span class="s1">&#39;_active&#39;</span><span class="p">,</span> <span class="s1">&#39;_x&#39;</span><span class="p">,</span> <span class="s1">&#39;_y&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_id</span> <span class="o">=</span> <span class="n">obj_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_active</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_x</span> <span class="o">=</span> <span class="n">x</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_y</span> <span class="o">=</span> <span class="n">y</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">position</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_y</span><span class="p">)</span>
+
+    <span class="nd">@position</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span> <span class="nf">position</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pos</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_x</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_y</span> <span class="o">=</span> <span class="n">pos</span>
+
+    <span class="k">def</span> <span class="nf">deactivate</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_active</span> <span class="o">=</span> <span class="kc">False</span>
+
+
+<span class="k">class</span> <span class="nc">Player</span><span class="p">(</span><span class="n">GameObject</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;玩家类&quot;&quot;&quot;</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;_health&#39;</span><span class="p">,</span> <span class="s1">&#39;_name&#39;</span><span class="p">,</span> <span class="s1">&#39;_score&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">obj_id</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_health</span> <span class="o">=</span> <span class="mi">100</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_score</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">health</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_health</span>
+
+    <span class="k">def</span> <span class="nf">take_damage</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">amount</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_health</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_health</span> <span class="o">-</span> <span class="n">amount</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_health</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">deactivate</span><span class="p">()</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">score</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_score</span>
+
+    <span class="k">def</span> <span class="nf">add_score</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">points</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_score</span> <span class="o">+=</span> <span class="n">points</span>
+
+
+<span class="k">class</span> <span class="nc">Enemy</span><span class="p">(</span><span class="n">GameObject</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;敌人类&quot;&quot;&quot;</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;_health&#39;</span><span class="p">,</span> <span class="s1">&#39;_damage&#39;</span><span class="p">,</span> <span class="s1">&#39;_speed&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+                 <span class="n">health</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">50</span><span class="p">,</span> <span class="n">damage</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">,</span> <span class="n">speed</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">1.0</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">obj_id</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_health</span> <span class="o">=</span> <span class="n">health</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_damage</span> <span class="o">=</span> <span class="n">damage</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_speed</span> <span class="o">=</span> <span class="n">speed</span>
+
+    <span class="k">def</span> <span class="nf">attack</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">target</span><span class="p">:</span> <span class="n">Player</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_active</span> <span class="ow">and</span> <span class="n">target</span><span class="o">.</span><span class="n">_active</span><span class="p">:</span>
+            <span class="n">target</span><span class="o">.</span><span class="n">take_damage</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_damage</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+
+<span class="k">class</span> <span class="nc">GameWorld</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;游戏世界 — 管理所有游戏对象&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_objects</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">GameObject</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_next_id</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span> <span class="nf">spawn_player</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Player</span><span class="p">:</span>
+        <span class="n">player</span> <span class="o">=</span> <span class="n">Player</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_next_id</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_objects</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">player</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_next_id</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">player</span>
+
+    <span class="k">def</span> <span class="nf">spawn_enemy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Enemy</span><span class="p">:</span>
+        <span class="n">enemy</span> <span class="o">=</span> <span class="n">Enemy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_next_id</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_objects</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">enemy</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_next_id</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">enemy</span>
+
+    <span class="k">def</span> <span class="nf">active_objects</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">GameObject</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">obj</span> <span class="k">for</span> <span class="n">obj</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_objects</span> <span class="k">if</span> <span class="n">obj</span><span class="o">.</span><span class="n">_active</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">stats</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="n">active</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">active_objects</span><span class="p">()</span>
+        <span class="n">players</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">active</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">o</span><span class="p">,</span> <span class="n">Player</span><span class="p">)]</span>
+        <span class="n">enemies</span> <span class="o">=</span> <span class="p">[</span><span class="n">o</span> <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="n">active</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">o</span><span class="p">,</span> <span class="n">Enemy</span><span class="p">)]</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_objects</span><span class="p">),</span>
+            <span class="s2">&quot;active&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">active</span><span class="p">),</span>
+            <span class="s2">&quot;players&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">players</span><span class="p">),</span>
+            <span class="s2">&quot;enemies&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">enemies</span><span class="p">),</span>
+        <span class="p">}</span>
+
+
+<span class="c1"># 使用演示</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Day 050 - __slots__ 实战：游戏实体系统&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+
+    <span class="kn">import</span> <span class="nn">sys</span>
+
+    <span class="n">world</span> <span class="o">=</span> <span class="n">GameWorld</span><span class="p">()</span>
+
+    <span class="c1"># 创建玩家和敌人</span>
+    <span class="n">player</span> <span class="o">=</span> <span class="n">world</span><span class="o">.</span><span class="n">spawn_player</span><span class="p">(</span><span class="s2">&quot;勇者&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="n">enemy1</span> <span class="o">=</span> <span class="n">world</span><span class="o">.</span><span class="n">spawn_enemy</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>
+    <span class="n">enemy2</span> <span class="o">=</span> <span class="n">world</span><span class="o">.</span><span class="n">spawn_enemy</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+
+    <span class="c1"># 战斗</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- 战斗开始 ---&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;玩家生命: </span><span class="si">{</span><span class="n">player</span><span class="o">.</span><span class="n">health</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">enemy1</span><span class="o">.</span><span class="n">attack</span><span class="p">(</span><span class="n">player</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;敌人1攻击后，玩家生命: </span><span class="si">{</span><span class="n">player</span><span class="o">.</span><span class="n">health</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">enemy2</span><span class="o">.</span><span class="n">attack</span><span class="p">(</span><span class="n">player</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;敌人2攻击后，玩家生命: </span><span class="si">{</span><span class="n">player</span><span class="o">.</span><span class="n">health</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">enemy1</span><span class="o">.</span><span class="n">attack</span><span class="p">(</span><span class="n">player</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;敌人1再次攻击后，玩家生命: </span><span class="si">{</span><span class="n">player</span><span class="o">.</span><span class="n">health</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 统计</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- 世界统计 ---&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">world</span><span class="o">.</span><span class="n">stats</span><span class="p">())</span>
+
+    <span class="c1"># 内存分析</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- 内存分析 ---&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Player 对象大小: </span><span class="si">{</span><span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">player</span><span class="p">)</span><span class="si">}</span><span class="s2"> bytes&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Enemy 对象大小: </span><span class="si">{</span><span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">enemy1</span><span class="p">)</span><span class="si">}</span><span class="s2"> bytes&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Player 有 __dict__? </span><span class="si">{</span><span class="nb">hasattr</span><span class="p">(</span><span class="n">player</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;__dict__&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Enemy 有 __dict__? </span><span class="si">{</span><span class="nb">hasattr</span><span class="p">(</span><span class="n">enemy1</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;__dict__&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="3">案例3：配置类优化</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">配置类 — 使用 __slots__ 避免意外添加属性</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span>
+
+
+<span class="k">class</span> <span class="nc">Config</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    配置类 — 使用 __slots__ 实现：</span>
+<span class="sd">    1. 内存优化</span>
+<span class="sd">    2. 防止意外添加属性</span>
+<span class="sd">    3. 更快的属性访问</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;_host&#39;</span><span class="p">,</span> <span class="s1">&#39;_port&#39;</span><span class="p">,</span> <span class="s1">&#39;_debug&#39;</span><span class="p">,</span> <span class="s1">&#39;_db_url&#39;</span><span class="p">,</span> <span class="s1">&#39;_secret_key&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8000</span><span class="p">,</span>
+                 <span class="n">debug</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">db_url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">secret_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_host</span> <span class="o">=</span> <span class="n">host</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_port</span> <span class="o">=</span> <span class="n">port</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_debug</span> <span class="o">=</span> <span class="n">debug</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_db_url</span> <span class="o">=</span> <span class="n">db_url</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_secret_key</span> <span class="o">=</span> <span class="n">secret_key</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">host</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_host</span>
+
+    <span class="nd">@host</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span> <span class="nf">host</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_host</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">port</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_port</span>
+
+    <span class="nd">@port</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span> <span class="nf">port</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span> <span class="ow">or</span> <span class="n">value</span> <span class="o">&lt;</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="mi">65535</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;无效端口: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_port</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">debug</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_debug</span>
+
+    <span class="nd">@debug</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span> <span class="nf">debug</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_debug</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">db_url</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_db_url</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">secret_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_secret_key</span>
+
+    <span class="k">def</span> <span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;导出配置（隐藏敏感信息）&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;host&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_host</span><span class="p">,</span>
+            <span class="s2">&quot;port&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_port</span><span class="p">,</span>
+            <span class="s2">&quot;debug&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_debug</span><span class="p">,</span>
+            <span class="s2">&quot;db_url&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_db_url</span><span class="p">[:</span><span class="mi">10</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;...&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_db_url</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Config(host=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_host</span><span class="si">}</span><span class="s2">, port=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_port</span><span class="si">}</span><span class="s2">, debug=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_debug</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">SafeConfig</span><span class="p">(</span><span class="n">Config</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;安全配置 — 继承 Config 的 slots&quot;&quot;&quot;</span>
+
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;_api_key&#39;</span><span class="p">,</span> <span class="s1">&#39;_api_secret&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">api_key</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">api_secret</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_api_key</span> <span class="o">=</span> <span class="n">api_key</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_api_secret</span> <span class="o">=</span> <span class="n">api_secret</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">api_key</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_api_key</span><span class="p">[:</span><span class="mi">4</span><span class="p">]</span> <span class="o">+</span> <span class="s2">&quot;****&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_api_key</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">api_secret</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;****&quot;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_api_secret</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+
+
+<span class="c1"># 使用</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- 配置类 ---&quot;</span><span class="p">)</span>
+
+    <span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">(</span>
+        <span class="n">host</span><span class="o">=</span><span class="s2">&quot;0.0.0.0&quot;</span><span class="p">,</span>
+        <span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">,</span>
+        <span class="n">debug</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="n">db_url</span><span class="o">=</span><span class="s2">&quot;postgresql://user:pass@localhost/db&quot;</span><span class="p">,</span>
+        <span class="n">secret_key</span><span class="o">=</span><span class="s2">&quot;super-secret-key&quot;</span>
+    <span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;配置: </span><span class="si">{</span><span class="n">config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;导出: </span><span class="si">{</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span><span class="w"> </span><span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span><span class="w"> </span><span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 防止意外添加属性</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">config</span><span class="o">.</span><span class="n">new_attr</span> <span class="o">=</span> <span class="s2">&quot;test&quot;</span>
+    <span class="k">except</span> <span class="ne">AttributeError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">防止意外添加: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 安全配置</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--- 安全配置 ---&quot;</span><span class="p">)</span>
+    <span class="n">safe</span> <span class="o">=</span> <span class="n">SafeConfig</span><span class="p">(</span>
+        <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;sk-1234567890abcdef&quot;</span><span class="p">,</span>
+        <span class="n">api_secret</span><span class="o">=</span><span class="s2">&quot;secret-value&quot;</span><span class="p">,</span>
+        <span class="n">host</span><span class="o">=</span><span class="s2">&quot;api.example.com&quot;</span>
+    <span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;API Key: </span><span class="si">{</span><span class="n">safe</span><span class="o">.</span><span class="n">api_key</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;API Secret: </span><span class="si">{</span><span class="n">safe</span><span class="o">.</span><span class="n">api_secret</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Host: </span><span class="si">{</span><span class="n">safe</span><span class="o">.</span><span class="n">host</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_9">🧠 思考题</h2>
+<ol>
+<li>
+<p><strong><code>__slots__</code> 为什么不能和 <code>__dict__</code> 同时使用？</strong> 如果你既想要内存优化，又想动态添加属性，该怎么办？</p>
+</li>
+<li>
+<p><strong><code>__slots__</code> 对数据类（<code>@dataclass</code>）有什么影响？</strong> 如何为 <code>@dataclass</code> 添加 <code>__slots__</code>？</p>
+</li>
+<li>
+<p><strong>在什么场景下不应该使用 <code>__slots__</code>？</strong> 比如需要动态属性、序列化、或频繁修改的类。</p>
+</li>
+<li>
+<p><strong><code>__slots__</code> 和 <code>NamedTuple</code> 的区别是什么？</strong> 什么情况下用哪个更合适？</p>
+</li>
+<li>
+<p><strong>如何测量 <code>__slots__</code> 的实际内存节省？</strong> 除了 <code>sys.getsizeof</code>，还有什么方法可以更准确地测量？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_10">📋 今日小结</h2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong><code>__slots__</code></strong></td>
+<td>使用固定存储槽替代 <code>__dict__</code>，节省内存</td>
+</tr>
+<tr>
+<td><strong>内存节省</strong></td>
+<td>每个实例节省约 40-50% 内存</td>
+</tr>
+<tr>
+<td><strong>性能提升</strong></td>
+<td>属性访问和设置速度提升约 5-10%</td>
+</tr>
+<tr>
+<td><strong>继承规则</strong></td>
+<td>子类需要声明自己的 <code>__slots__</code></td>
+</tr>
+<tr>
+<td><strong>限制</strong></td>
+<td>不能动态添加未声明的属性</td>
+</tr>
+<tr>
+<td><strong>适用场景</strong></td>
+<td>大量相同结构的对象（如游戏实体、数据记录）</td>
+</tr>
+</tbody>
+</table>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-049/index.html">← Day 49 抽象基类（ABC）</a><a class="nav-next" href="../day-051/index.html">Day 51 弱引用（weakref） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

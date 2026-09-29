@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 62 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 62 正文</a>
+  <h1>Day 62 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-062">Day 062 — 数据序列化：图解</h1>
+<h2 id="1">1. 序列化体系架构</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph &quot;Python 对象空间&quot;
+        A[&quot;内存中的 Python 对象&lt;br/&gt;(dict, list, 自定义类等)&quot;]
+    end
+    
+    subgraph &quot;序列化格式层&quot;
+        B1[&quot;JSON&lt;br/&gt;文本格式&lt;br/&gt;跨语言&quot;]
+        B2[&quot;YAML&lt;br/&gt;文本格式&lt;br/&gt;可读性最佳&quot;]
+        B3[&quot;pickle&lt;br/&gt;二进制格式&lt;br/&gt;仅 Python&quot;]
+        B4[&quot;msgpack&lt;br/&gt;二进制格式&lt;br/&gt;跨语言&quot;]
+    end
+    
+    subgraph &quot;存储/传输层&quot;
+        C1[&quot;文件系统&lt;br/&gt;(.json/.yaml/.pkl)&quot;]
+        C2[&quot;网络传输&lt;br/&gt;(HTTP/RPC)&quot;]
+        C3[&quot;缓存系统&lt;br/&gt;(Redis/Memcached)&quot;]
+    end
+    
+    A --&gt; B1
+    A --&gt; B2
+    A --&gt; B3
+    A --&gt; B4
+    
+    B1 --&gt; C1
+    B1 --&gt; C2
+    B2 --&gt; C1
+    B3 --&gt; C1
+    B3 --&gt; C3
+    B4 --&gt; C2
+    B4 --&gt; C3
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph &quot;Python 对象空间&quot;
+        A[&quot;内存中的 Python 对象&lt;br/&gt;(dict, list, 自定义类等)&quot;]
+    end
+    
+    subgraph &quot;序列化格式层&quot;
+        B1[&quot;JSON&lt;br/&gt;文本格式&lt;br/&gt;跨语言&quot;]
+        B2[&quot;YAML&lt;br/&gt;文本格式&lt;br/&gt;可读性最佳&quot;]
+        B3[&quot;pickle&lt;br/&gt;二进制格式&lt;br/&gt;仅 Python&quot;]
+        B4[&quot;msgpack&lt;br/&gt;二进制格式&lt;br/&gt;跨语言&quot;]
+    end
+    
+    subgraph &quot;存储/传输层&quot;
+        C1[&quot;文件系统&lt;br/&gt;(.json/.yaml/.pkl)&quot;]
+        C2[&quot;网络传输&lt;br/&gt;(HTTP/RPC)&quot;]
+        C3[&quot;缓存系统&lt;br/&gt;(Redis/Memcached)&quot;]
+    end
+    
+    A --&gt; B1
+    A --&gt; B2
+    A --&gt; B3
+    A --&gt; B4
+    
+    B1 --&gt; C1
+    B1 --&gt; C2
+    B2 --&gt; C1
+    B3 --&gt; C1
+    B3 --&gt; C3
+    B4 --&gt; C2
+    B4 --&gt; C3
+</code></pre></div>
+<h2 id="2-json">2. JSON 序列化流程</h2>
+<pre class="plain"><code>Python 对象                    JSON 字符串
+┌──────────────┐    dumps()    ┌──────────────────┐
+│ {             │  ──────────→ │ {                │
+│   &quot;name&quot;:     │              │   &quot;name&quot;: &quot;张三&quot;, │
+│   &quot;张三&quot;,     │   loads()    │   &quot;age&quot;: 30,     │
+│   &quot;age&quot;: 30,  │  ←────────── │   &quot;active&quot;: true │
+│   &quot;active&quot;:   │              │ }                │
+│   True        │              │                  │
+│ }             │              │                  │
+└──────────────┘              └──────────────────┘
+
+  dict   → object
+  list   → array  
+  str    → string
+  int    → number
+  True   → true
+  False  → false
+  None   → null
+  tuple  → array  (⚠️ 类型信息丢失)
+  set    → ❌ TypeError
+  datetime → ❌ TypeError (需自定义编码)
+</code></pre>
+<h2 id="3">3. 序列化格式选择决策树</h2>
+<pre class="plain"><code>要序列化的数据
+    │
+    ├─ 需要跨语言交换？
+    │   ├─ 是 → 需要二进制？
+    │   │   ├─ 是 → 用 msgpack (体积小，解析快)
+    │   │   └─ 否 → 人类可读要求高？
+    │   │       ├─ 是 → YAML (配置文件首选)
+    │   │       └─ 否 → JSON (API/Web 标准)
+    │   └─ 否 → 安全性要求高？
+    │       ├─ 是 → 用 JSON 或 msgpack
+    │       └─ 否 → pickle (速度最快，支持最广)
+    │
+    ├─ 用于配置文件？
+    │   └─ 人类要编辑？
+    │       ├─ 是 → YAML (支持注释、锚点)
+    │       └─ 否 → JSON 或 TOML
+    │
+    ├─ 用于缓存/内部通信？
+    │   ├─ 跨进程/跨服务 → msgpack / protobuf
+    │   └─ 同进程 → pickle (零成本)
+    │
+    └─ 用于日志输出？
+        └─ JSON (结构化日志，易于 ELK 等工具解析)
+</code></pre>
+<h2 id="4-vs">4. 二进制 vs 文本序列化对比</h2>
+<pre class="plain"><code>文本格式 (JSON/YAML)                二进制格式 (pickle/msgpack)
+┌─────────────────────┐           ┌─────────────────────┐
+│ 人类可直接阅读       │           │ 机器直接解析        │
+│ {&quot;name&quot;:&quot;Alice&quot;}    │           │ 82 a4 6e 61 6d 65   │
+│                     │           │ a5 41 6c 69 63 65   │
+│ ✓ 可读性好          │           │ ✓ 体积小 30-50%    │
+│ ✓ 跨语言兼容        │           │ ✓ 解析速度快 2-5x  │
+ │ ✓ 可编辑             │           │ ✓ 支持二进制数据    │
+│ ❌ 体积大            │           │ ❌ 不可读           │
+│ ❌ 解析慢            │           │ ❌ 部分格式不跨语言 │
+│ ❌ 不支持二进制数据  │           │                     │
+└─────────────────────┘           └─────────────────────┘
+</code></pre>
+<h2 id="5-pickle">5. pickle 协议版本演进</h2>
+<pre class="plain"><code>Protocol 0  ─── ASCII 格式，最慢最胖
+    │
+Protocol 1  ─── 二进制格式，旧式
+    │
+Protocol 2  ─── Python 2.3+ 引入，支持新式类
+    │
+Protocol 3  ─── Python 3.0+ 默认，bytes 支持
+    │
+Protocol 4  ─── Python 3.4+ 默认，大型对象优化
+    │
+Protocol 5  ─── Python 3.8+，内存视图/零拷贝
+    │
+    ▼
+  越高版本 → 速度越快 → 体积越小 → 兼容性越差
+</code></pre>
+<h2 id="6-yaml">6. YAML 锚点与别名原理</h2>
+<pre class="plain"><code>数据定义                          引用
+┌──────────────────────┐      ┌──────────────────────┐
+│ defaults: &amp;defaults  │      │ development:         │
+│   timeout: 30       │ ───→ │   &lt;&lt;: *defaults      │
+│   retries: 3        │ 锚    │   debug: true        │
+│   debug: false      │ 点    │                      │
+└──────────────────────┘      └──────────────────────┘
+
+展开后等价于:
+development:
+  timeout: 30           ← 来自锚点
+  retries: 3            ← 来自锚点
+  debug: true           ← 被覆盖为 true
+
+原理: YAML 解析时，*defaults 会被替换为 &amp;defaults 指向的
+节点的一个深拷贝，然后再应用 &lt;&lt;: 后的合并规则。
+</code></pre>
+<h2 id="7">7. 配置文件加载流程（实战解析器）</h2>
+<pre class="plain"><code>                    ┌─────────────┐
+                    │  用户调用    │
+                    │ get(&quot;xxx&quot;)  │
+                    └──────┬──────┘
+                           │
+                    ┌──────▼──────┐
+                    │ 热加载检查   │
+                    │ 文件变更?    │
+                    └──────┬──────┘
+                           │
+              ┌────────────┴────────────┐
+              │ 否                      │ 是
+              ▼                         ▼
+       ┌──────────────┐        ┌──────────────┐
+       │ 使用缓存配置  │        │ 重新加载文件  │
+       └──────┬───────┘        └──────┬───────┘
+              │                       │
+              └──────────┬────────────┘
+                         ▼
+                ┌─────────────────┐
+                │ 点号路径解析     │
+                │ &quot;a.b.c&quot; →       │
+                │ config[a][b][c] │
+                └────────┬────────┘
+                         ▼
+                ┌─────────────────┐
+                │ 环境变量替换     │
+                │ ${VAR} → os.env │
+                └────────┬────────┘
+                         ▼
+                ┌─────────────────┐
+                │  返回最终值      │
+                └─────────────────┘
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

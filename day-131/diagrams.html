@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 131 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 131 正文</a>
+  <h1>Day 131 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-131-">Day 131 - 爬虫策略 图解</h1>
+<h2 id="1">1. 去重方案内存对比</h2>
+<pre class="plain"><code>1000 万 URL 去重：
+┌──────────────┬─────────────┬──────────────────┐
+│ 方案          │ 内存        │ 误判             │
+├──────────────┼─────────────┼──────────────────┤
+│ set（存字符串）│ ~2-3 GB     │ 0                │
+│ Bloom (1%)    │ ~120 MB     │ 假阳性 1%（可接受）│
+│ Redis set     │ ~2 GB+ 网络 │ 0（可分布式共享）  │
+└──────────────┴─────────────┴──────────────────┘
+</code></pre>
+<h2 id="2-bloom-filter">2. Bloom Filter 原理</h2>
+<pre class="plain"><code>        bit 数组（m 位）        插入 &quot;url_A&quot;（k=3 个哈希）
+  0 1 2 3 4 5 6 7 8 ...    h1 -&gt; 位 2，h2 -&gt; 位 7，h3 -&gt; 位 11
+  ─────────────────────
+  0 0 [1] 0 0 0 0 [1] 0 0 0 [1] ...
+
+查询 &quot;url_A&quot;：位 2,7,11 全是 1 -&gt; 可能存在 ✅（也可能是别的 URL 置的）
+查询 &quot;url_B&quot;：位 5 = 0      -&gt; 肯定不存在 ✅（100% 确定）
+</code></pre>
+<h2 id="3">3. 断点续爬生命周期</h2>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; 启动
+    启动 --&gt; 恢复: checkpoint 存在
+    启动 --&gt; 全新开始: 无存档
+    恢复 --&gt; 爬取
+    全新开始 --&gt; 爬取
+    爬取 --&gt; 保存进度: 每 N 页
+    保存进度 --&gt; 爬取
+    爬取 --&gt; 崩溃: 断电/异常
+    崩溃 --&gt; 恢复: 重新运行
+    爬取 --&gt; [*]: 队列空
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; 启动
+    启动 --&gt; 恢复: checkpoint 存在
+    启动 --&gt; 全新开始: 无存档
+    恢复 --&gt; 爬取
+    全新开始 --&gt; 爬取
+    爬取 --&gt; 保存进度: 每 N 页
+    保存进度 --&gt; 爬取
+    爬取 --&gt; 崩溃: 断电/异常
+    崩溃 --&gt; 恢复: 重新运行
+    爬取 --&gt; [*]: 队列空
+</code></pre></div>
+<h2 id="4-vs">4. 令牌桶 vs 固定延迟</h2>
+<pre class="plain"><code>固定 sleep(1s)：  ●────●────●────●────●    永远匀速，突发也无法更快
+
+令牌桶 rate=1, cap=3：
+  空闲后连发：     ●●●─────●────●────●     前 3 个立即放行（突发），
+                                          之后平均 1 个/秒
+  优点：吞吐更高 + 行为更像真实用户
+</code></pre>
+<h2 id="5">5. 指数退避</h2>
+<pre class="plain"><code>重试间隔: 1s → 2s → 4s → 8s → 16s（base * 2^n）
+收到 429: 优先尊重 Retry-After 响应头
+连续失败 5 次: 记入失败清单，留给下次补爬（绝不无限硬撞）
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

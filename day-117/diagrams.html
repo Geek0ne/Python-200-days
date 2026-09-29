@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 117 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 117 正文</a>
+  <h1>Day 117 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-117">Day 117 — 迁移学习 图解</h1>
+<h2 id="1">1. 迁移学习整体流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[预训练模型&lt;br/&gt;ImageNet 1000类] --&gt; B{冻结/解冻策略}
+    B --&gt;|特征提取| C[冻结所有卷积层&lt;br/&gt;只训练分类头]
+    B --&gt;|微调| D[冻结底层&lt;br/&gt;解冻高层+分类头]
+    C --&gt; E[训练分类头&lt;br/&gt;lr=1e-3]
+    D --&gt; F[差分学习率训练&lt;br/&gt;底层lr=1e-5&lt;br/&gt;高层lr=1e-4&lt;br/&gt;分类头lr=1e-3]
+    E --&gt; G[评估模型]
+    F --&gt; G
+    G --&gt; H{准确率达标?}
+    H --&gt;|是| I[保存模型&lt;br/&gt;部署推理]
+    H --&gt;|否| J[调整策略&lt;br/&gt;解冻更多层/调学习率]
+    J --&gt; B
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[预训练模型&lt;br/&gt;ImageNet 1000类] --&gt; B{冻结/解冻策略}
+    B --&gt;|特征提取| C[冻结所有卷积层&lt;br/&gt;只训练分类头]
+    B --&gt;|微调| D[冻结底层&lt;br/&gt;解冻高层+分类头]
+    C --&gt; E[训练分类头&lt;br/&gt;lr=1e-3]
+    D --&gt; F[差分学习率训练&lt;br/&gt;底层lr=1e-5&lt;br/&gt;高层lr=1e-4&lt;br/&gt;分类头lr=1e-3]
+    E --&gt; G[评估模型]
+    F --&gt; G
+    G --&gt; H{准确率达标?}
+    H --&gt;|是| I[保存模型&lt;br/&gt;部署推理]
+    H --&gt;|否| J[调整策略&lt;br/&gt;解冻更多层/调学习率]
+    J --&gt; B
+</code></pre></div>
+<h2 id="2">2. 渐进式解冻策略</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 阶段1[&quot;阶段1: 分类头训练&quot;]
+        A1[conv1]:::frozen
+        A2[layer1]:::frozen
+        A3[layer2]:::frozen
+        A4[layer3]:::frozen
+        A5[layer4]:::frozen
+        A6[fc]:::trainable
+    end
+
+    subgraph 阶段2[&quot;阶段2: 解冻 layer4&quot;]
+        B1[conv1]:::frozen
+        B2[layer1]:::frozen
+        B3[layer2]:::frozen
+        B4[layer3]:::frozen
+        B5[layer4]:::trainable
+        B6[fc]:::trainable
+    end
+
+    subgraph 阶段3[&quot;阶段3: 解冻 layer3-4&quot;]
+        C1[conv1]:::frozen
+        C2[layer1]:::frozen
+        C3[layer2]:::frozen
+        C4[layer3]:::trainable
+        C5[layer4]:::trainable
+        C6[fc]:::trainable
+    end
+
+    阶段1 --&gt; 阶段2 --&gt; 阶段3
+
+    classDef frozen fill:#ffcccc,stroke:#cc0000
+    classDef trainable fill:#ccffcc,stroke:#00cc00
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 阶段1[&quot;阶段1: 分类头训练&quot;]
+        A1[conv1]:::frozen
+        A2[layer1]:::frozen
+        A3[layer2]:::frozen
+        A4[layer3]:::frozen
+        A5[layer4]:::frozen
+        A6[fc]:::trainable
+    end
+
+    subgraph 阶段2[&quot;阶段2: 解冻 layer4&quot;]
+        B1[conv1]:::frozen
+        B2[layer1]:::frozen
+        B3[layer2]:::frozen
+        B4[layer3]:::frozen
+        B5[layer4]:::trainable
+        B6[fc]:::trainable
+    end
+
+    subgraph 阶段3[&quot;阶段3: 解冻 layer3-4&quot;]
+        C1[conv1]:::frozen
+        C2[layer1]:::frozen
+        C3[layer2]:::frozen
+        C4[layer3]:::trainable
+        C5[layer4]:::trainable
+        C6[fc]:::trainable
+    end
+
+    阶段1 --&gt; 阶段2 --&gt; 阶段3
+
+    classDef frozen fill:#ffcccc,stroke:#cc0000
+    classDef trainable fill:#ccffcc,stroke:#00cc00
+</code></pre></div>
+<h2 id="3">3. 差分学习率示意图</h2>
+<div class="mermaid-wrap"><div class="mermaid">xychart-beta
+    title &quot;差分学习率设置&quot;
+    x-axis [&quot;conv1&quot;, &quot;layer1&quot;, &quot;layer2&quot;, &quot;layer3&quot;, &quot;layer4&quot;, &quot;fc&quot;]
+    y-axis &quot;学习率 (log scale)&quot; 1e-6 --&gt; 1e-2
+    bar [1e-6, 1e-5, 1e-5, 1e-5, 1e-4, 1e-3]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>xychart-beta
+    title &quot;差分学习率设置&quot;
+    x-axis [&quot;conv1&quot;, &quot;layer1&quot;, &quot;layer2&quot;, &quot;layer3&quot;, &quot;layer4&quot;, &quot;fc&quot;]
+    y-axis &quot;学习率 (log scale)&quot; 1e-6 --&gt; 1e-2
+    bar [1e-6, 1e-5, 1e-5, 1e-5, 1e-4, 1e-3]
+</code></pre></div>
+<h2 id="4">4. 特征层级可视化</h2>
+<pre class="plain"><code>深度网络特征层级
+═══════════════════════════════════════════════════════════
+
+输入: 📷 猫的照片 (224×224×3)
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│ Layer 1-2: 边缘/颜色/纹理                        │
+│ ┌───┐ ┌───┐ ┌───┐ ┌───┐                         │
+│ │ ─ │ │ ╱ │ │ ╲ │ │ │ │  → 简单视觉特征          │
+│ └───┘ └───┘ └───┘ └───┘                         │
+│ 特点: 通用性强，所有图像任务共享                   │
+└─────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│ Layer 3-4: 局部形状/纹理组合                      │
+│ ┌───┐ ┌───┐ ┌───┐ ┌───┐                         │
+│ │ ◯ │ │ △ │ │ □ │ │ ⬡ │  → 中级视觉特征          │
+│ └───┘ └───┘ └───┘ └───┘                         │
+│ 特点: 部分通用，需要少量调整                       │
+└─────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│ Layer 5+: 高级语义特征                            │
+│ ┌───┐ ┌───┐ ┌───┐ ┌───┐                         │
+│ │ 👁 │ │ 👂 │ │ 🐾 │ │ 🐱 │  → 语义级特征          │
+│ └───┘ └───┘ └───┘ └───┘                         │
+│ 特点: 任务相关性强，需要微调                       │
+└─────────────────────────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────────────────────────┐
+│ 分类头: 最终决策                                  │
+│ ┌───────────────────────────┐                    │
+│ │ 猫 95% │ 狗 3% │ 其他 2% │  → 输出概率          │
+│ └───────────────────────────┘                    │
+│ 特点: 必须从头训练（类别数不同）                   │
+└─────────────────────────────────────────────────┘
+
+迁移学习策略:
+  ✅ 冻结 Layer 1-2（通用特征，不需要调整）
+  ⚠️ 冻结或微调 Layer 3-4（看数据量决定）
+  ✅ 解冻 Layer 5+（任务相关，需要调整）
+  ✅ 从头训练分类头（类别数不同）
+</code></pre>
+<h2 id="5">5. 模型性能对比</h2>
+<pre class="plain"><code>模型性能对比（ImageNet 验证集）
+═══════════════════════════════════════════════════════════
+
+模型            参数量      准确率     速度      推荐场景
+─────────────────────────────────────────────────────────
+ResNet-18      11.7M      69.8%     ⚡⚡⚡     快速实验/移动端
+ResNet-50      25.6M      76.1%     ⚡⚡       通用任务首选
+ResNet-152     60.2M      78.3%     ⚡         高精度要求
+VGG-16         138M       71.6%     ⚡         特征提取/风格迁移
+EfficientNet-B0  5.3M     77.1%     ⚡⚡⚡     资源受限场景
+EfficientNet-B4  19M      82.9%     ⚡⚡       通用高精度任务
+
+选择建议:
+  🚀 快速原型 → ResNet-18 或 EfficientNet-B0
+  🎯 通用任务 → ResNet-50
+  🏆 高精度   → EfficientNet-B4 或 ResNet-152
+  📱 移动端   → MobileNetV3 或 EfficientNet-B0
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

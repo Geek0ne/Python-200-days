@@ -1,0 +1,772 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 59 — C 扩展与性能优化</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 59 — C 扩展与性能优化</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">617 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-059-c-extensions-performance" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 今日学习目标</a>
+<a class="toc-l2" href="#c">一、为什么需要 C 扩展？</a>
+<a class="toc-l3" href="#_2">性能对比示意</a>
+<a class="toc-l3" href="#_3">优化路线图</a>
+<a class="toc-l2" href="#cython-python-c">二、Cython — Python 语法，C 级速度</a>
+<a class="toc-l3" href="#21-cython">2.1 什么是 Cython？</a>
+<a class="toc-l3" href="#22">2.2 工作原理</a>
+<a class="toc-l3" href="#23">2.3 基础用法</a>
+<a class="toc-l3" href="#24">2.4 类型声明加速</a>
+<a class="toc-l3" href="#25-cython">2.5 Cython 类型速查表</a>
+<a class="toc-l3" href="#26">2.6 速度对比</a>
+<a class="toc-l2" href="#ctypes-c">三、ctypes — 标准库中的 C 互操作</a>
+<a class="toc-l3" href="#31-ctypes">3.1 什么是 ctypes？</a>
+<a class="toc-l3" href="#32">3.2 工作原理</a>
+<a class="toc-l3" href="#33-c">3.3 调用 C 标准库函数</a>
+<a class="toc-l3" href="#34-c">3.4 调用自定义 C 函数</a>
+<a class="toc-l3" href="#35-ctypes">3.5 ctypes 类型对照表</a>
+<a class="toc-l3" href="#36">3.6 传入数组</a>
+<a class="toc-l2" href="#cffi-pythonic-c">四、CFFI — 更 Pythonic 的 C 互操作</a>
+<a class="toc-l3" href="#41-cffi">4.1 什么是 CFFI？</a>
+<a class="toc-l3" href="#42-abi">4.2 ABI 模式（最快上手）</a>
+<a class="toc-l3" href="#43-c">4.3 调用自定义 C 库</a>
+<a class="toc-l3" href="#44-api">4.4 API 模式（编译时绑定）</a>
+<a class="toc-l3" href="#45-ctypes-vs-cffi">4.5 ctypes vs CFFI 对比</a>
+<a class="toc-l2" href="#numba">五、Numba — 一行装饰器搞定加速</a>
+<a class="toc-l3" href="#51-numba">5.1 什么是 Numba？</a>
+<a class="toc-l3" href="#52">5.2 工作原理</a>
+<a class="toc-l3" href="#53">5.3 基础用法</a>
+<a class="toc-l3" href="#54-numba">5.4 Numba 装饰器参数速查</a>
+<a class="toc-l3" href="#55">5.5 自动并行化</a>
+<a class="toc-l3" href="#56-numba-python">5.6 Numba 支持的 Python 特性</a>
+<a class="toc-l2" href="#_4">六、方案选型决策树</a>
+<a class="toc-l2" href="#_5">七、性能对比实战</a>
+<a class="toc-l2" href="#_6">八、实战：蒙特卡洛 π 估算</a>
+<a class="toc-l2" href="#_7">九、常见陷阱与避坑</a>
+<a class="toc-l3" href="#1-numba">1. Numba 首次调用慢</a>
+<a class="toc-l3" href="#2-ctypes">2. ctypes 忘记声明类型</a>
+<a class="toc-l3" href="#3-cython">3. Cython 编译错误</a>
+<a class="toc-l3" href="#4-numba">4. Numba 不支持的特性</a>
+<a class="toc-l2" href="#_8">十、思考题</a>
+<a class="toc-l2" href="#_9">📚 扩展阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-059-c">Day 059 — C 扩展与性能优化</h1>
+<blockquote>
+<p>Python 的优雅与 C 的速度，鱼与熊掌可以兼得</p>
+</blockquote>
+<h2 id="_1">📋 今日学习目标</h2>
+<ol>
+<li>理解 Python 与 C 交互的底层原理</li>
+<li>掌握 Cython、ctypes、CFFI、Numba 四种性能优化方案</li>
+<li>能根据场景选择合适的优化工具</li>
+<li>实战：用多种方式加速数值计算</li>
+</ol>
+<hr>
+<h2 id="c">一、为什么需要 C 扩展？</h2>
+<p>Python 是解释型语言，执行速度受限于：<br>
+- <strong>全局解释器锁（GIL）</strong>：同一时刻只有一个线程执行 Python 字节码<br>
+- <strong>动态类型开销</strong>：每次操作都需要类型检查<br>
+- <strong>解释执行</strong>：字节码逐条解释，无法像编译语言那样优化</p>
+<h3 id="_2">性能对比示意</h3>
+<pre class="plain"><code>纯 Python 循环：  ████████████████████████████  100x（基准）
+NumPy 向量化：    ████                          4x
+C 扩展 / Cython： ██                            1-2x
+纯 C：            █                             1x
+</code></pre>
+<h3 id="_3">优化路线图</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────┐
+│            Python 性能优化选择                    │
+├─────────────────────────────────────────────────┤
+│                                                 │
+│  能用 NumPy/Pandas 解决？                        │
+│    ├─ 是 → 优先用向量化操作（最省事）              │
+│    └─ 否 ↓                                      │
+│                                                 │
+│  需要 JIT 编译？                                 │
+│    ├─ 是 → Numba（最简单，装饰器一行搞定）         │
+│    └─ 否 ↓                                      │
+│                                                 │
+│  已有 C 代码需要调用？                            │
+│    ├─ 是 → ctypes（标准库，零依赖）               │
+│    │       CFFI（更 Pythonic）                   │
+│    └─ 否 ↓                                      │
+│                                                 │
+│  需要从零写 C 扩展？                              │
+│    └─ Cython（Python 语法 + C 编译）              │
+│                                                 │
+└─────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="cython-python-c">二、Cython — Python 语法，C 级速度</h2>
+<h3 id="21-cython">2.1 什么是 Cython？</h3>
+<p>Cython 是 Python 的超集，可以将 Python 代码编译成 C 扩展模块。它允许你：<br>
+- 添加 C 类型声明，消除动态类型开销<br>
+- 直接调用 C 函数和库<br>
+- 保持 Python 语法的可读性</p>
+<h3 id="22">2.2 工作原理</h3>
+<pre class="plain"><code>┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  .pyx 文件   │ ──→ │   Cython     │ ──→ │   .c 文件    │
+│ (Python+Type)│     │   编译器     │     │   (纯 C)     │
+└──────────────┘     └──────────────┘     └──────────────┘
+                                                │
+                                                ▼
+                                         ┌──────────────┐
+                                         │  gcc/clang   │
+                                         │   编译为      │
+                                         │   .so/.pyd   │
+                                         └──────────────┘
+</code></pre>
+<h3 id="23">2.3 基础用法</h3>
+<p><strong>步骤 1：创建 <code>.pyx</code> 文件</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># sum_cy.pyx</span>
+<span class="k">def</span> <span class="nf">cy_sum</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用 Cython 计算 0 到 n-1 的和&quot;&quot;&quot;</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">i</span>
+    <span class="k">return</span> <span class="n">total</span>
+</code></pre></div>
+<p><strong>步骤 2：创建 <code>setup.py</code></strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">setuptools</span> <span class="kn">import</span> <span class="n">setup</span>
+<span class="kn">from</span> <span class="nn">Cython.Build</span> <span class="kn">import</span> <span class="n">cythonize</span>
+
+<span class="n">setup</span><span class="p">(</span>
+    <span class="n">ext_modules</span><span class="o">=</span><span class="n">cythonize</span><span class="p">(</span><span class="s2">&quot;sum_cy.pyx&quot;</span><span class="p">)</span>
+<span class="p">)</span>
+</code></pre></div>
+<p><strong>步骤 3：编译安装</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>setup.py<span class="w"> </span>build_ext<span class="w"> </span>--inplace
+</code></pre></div>
+<h3 id="24">2.4 类型声明加速</h3>
+<p>不加类型声明，Cython 和纯 Python 差不多。关键在于类型声明：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">cython</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c"># sum_typed.pyx</span>
+
+<span class="c"># C 级变量声明 — 消除 Python 对象开销</span>
+<span class="k">def</span> <span class="nf">cy_sum_typed</span><span class="p">(</span><span class="nb">int</span> <span class="n">n</span><span class="p">):</span>
+    <span class="k">cdef</span> <span class="kt">long</span> <span class="nf">total</span> <span class="o">=</span> <span class="mf">0</span>    <span class="c"># C long 类型</span>
+    <span class="k">cdef</span> <span class="kt">int</span> <span class="nf">i</span>             <span class="c"># C int 类型</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">i</span>
+    <span class="k">return</span> <span class="n">total</span>
+</code></pre></div>
+<h3 id="25-cython">2.5 Cython 类型速查表</h3>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>Python 对应</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>int</code></td>
+<td>int</td>
+<td>C int（通常 32 位）</td>
+</tr>
+<tr>
+<td><code>long</code></td>
+<td>int</td>
+<td>C long（通常 64 位）</td>
+</tr>
+<tr>
+<td><code>float</code></td>
+<td>float</td>
+<td>C double</td>
+</tr>
+<tr>
+<td><code>bint</code></td>
+<td>bool</td>
+<td>C 布尔</td>
+</tr>
+<tr>
+<td><code>str</code></td>
+<td>str</td>
+<td>Python 字符串（不可用 C 类型）</td>
+</tr>
+<tr>
+<td><code>char*</code></td>
+<td>bytes</td>
+<td>C 字符串</td>
+</tr>
+</tbody>
+</table>
+<h3 id="26">2.6 速度对比</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+
+<span class="c1"># 纯 Python</span>
+<span class="k">def</span> <span class="nf">py_sum</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">i</span>
+    <span class="k">return</span> <span class="n">total</span>
+
+<span class="c1"># 测试</span>
+<span class="n">n</span> <span class="o">=</span> <span class="mi">10_000_000</span>
+
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="n">py_sum</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<span class="n">py_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="n">cy_sum_typed</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>  <span class="c1"># Cython 版本</span>
+<span class="n">cy_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Python:  </span><span class="si">{</span><span class="n">py_time</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Cython:  </span><span class="si">{</span><span class="n">cy_time</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;加速比:  </span><span class="si">{</span><span class="n">py_time</span><span class="o">/</span><span class="n">cy_time</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">x&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>典型结果：Cython 比纯 Python 快 <strong>30-100 倍</strong>（循环密集型代码）。</p>
+<hr>
+<h2 id="ctypes-c">三、ctypes — 标准库中的 C 互操作</h2>
+<h3 id="31-ctypes">3.1 什么是 ctypes？</h3>
+<p>ctypes 是 Python <strong>标准库</strong>自带的模块，用于调用共享库（.so / .dll）中的 C 函数。无需任何额外安装。</p>
+<h3 id="32">3.2 工作原理</h3>
+<pre class="plain"><code>┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  Python 代码 │ ──→ │   ctypes     │ ──→ │  C 共享库    │
+│              │     │  (FFI 桥接)  │     │  (.so/.dll)  │
+└──────────────┘     └──────────────┘     └──────────────┘
+       │                    │                    │
+   Python 对象         类型转换            C 函数执行
+   (int, str...)     (自动/手动)          (原生速度)
+</code></pre>
+<h3 id="33-c">3.3 调用 C 标准库函数</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ctypes</span>
+
+<span class="c1"># 加载 C 标准库</span>
+<span class="n">libc</span> <span class="o">=</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">CDLL</span><span class="p">(</span><span class="s2">&quot;libc.so.6&quot;</span><span class="p">)</span>  <span class="c1"># Linux</span>
+<span class="c1"># libc = ctypes.CDLL(&quot;msvcrt&quot;)   # Windows</span>
+
+<span class="c1"># 调用 abs()</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">libc</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="o">-</span><span class="mi">42</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># 42</span>
+
+<span class="c1"># 调用 strlen()</span>
+<span class="n">libc</span><span class="o">.</span><span class="n">strlen</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">ctypes</span><span class="o">.</span><span class="n">c_char_p</span><span class="p">]</span>  <span class="c1"># 声明参数类型</span>
+<span class="n">libc</span><span class="o">.</span><span class="n">strlen</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">c_size_t</span>     <span class="c1"># 声明返回类型</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">libc</span><span class="o">.</span><span class="n">strlen</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;Hello, World!&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># 13</span>
+</code></pre></div>
+<h3 id="34-c">3.4 调用自定义 C 函数</h3>
+<p><strong>步骤 1：写一个 C 文件</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">c</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1">// fast_math.c</span>
+<span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;math.h&gt;</span>
+
+<span class="kt">double</span><span class="w"> </span><span class="nf">fast_sin</span><span class="p">(</span><span class="kt">double</span><span class="w"> </span><span class="n">x</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">sin</span><span class="p">(</span><span class="n">x</span><span class="p">);</span>
+<span class="p">}</span>
+
+<span class="kt">long</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="nf">fast_factorial</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">n</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kt">long</span><span class="w"> </span><span class="kt">long</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">;</span>
+<span class="w">    </span><span class="k">for</span><span class="w"> </span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="w"> </span><span class="o">&lt;=</span><span class="w"> </span><span class="n">n</span><span class="p">;</span><span class="w"> </span><span class="n">i</span><span class="o">++</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="n">result</span><span class="w"> </span><span class="o">*=</span><span class="w"> </span><span class="n">i</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">result</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>步骤 2：编译为共享库</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">gcc<span class="w"> </span>-shared<span class="w"> </span>-o<span class="w"> </span>fast_math.so<span class="w"> </span>-fPIC<span class="w"> </span>fast_math.c<span class="w"> </span>-lm
+</code></pre></div>
+<p><strong>步骤 3：Python 调用</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ctypes</span>
+
+<span class="c1"># 加载共享库</span>
+<span class="n">lib</span> <span class="o">=</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">CDLL</span><span class="p">(</span><span class="s2">&quot;./fast_math.so&quot;</span><span class="p">)</span>
+
+<span class="c1"># 声明函数签名</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">fast_sin</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">ctypes</span><span class="o">.</span><span class="n">c_double</span><span class="p">]</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">fast_sin</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">c_double</span>
+
+<span class="n">lib</span><span class="o">.</span><span class="n">fast_factorial</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">ctypes</span><span class="o">.</span><span class="n">c_int</span><span class="p">]</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">fast_factorial</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">c_longlong</span>
+
+<span class="c1"># 调用</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">lib</span><span class="o">.</span><span class="n">fast_sin</span><span class="p">(</span><span class="mf">3.14159</span><span class="p">))</span>      <span class="c1"># ≈ 0</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">lib</span><span class="o">.</span><span class="n">fast_factorial</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span>     <span class="c1"># 2432902008176640000</span>
+</code></pre></div>
+<h3 id="35-ctypes">3.5 ctypes 类型对照表</h3>
+<table>
+<thead>
+<tr>
+<th>ctypes 类型</th>
+<th>C 类型</th>
+<th>Python 对应</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>c_bool</code></td>
+<td><code>_Bool</code></td>
+<td>bool</td>
+</tr>
+<tr>
+<td><code>c_char</code></td>
+<td><code>char</code></td>
+<td>bytes（单字符）</td>
+</tr>
+<tr>
+<td><code>c_int</code></td>
+<td><code>int</code></td>
+<td>int</td>
+</tr>
+<tr>
+<td><code>c_long</code></td>
+<td><code>long</code></td>
+<td>int</td>
+</tr>
+<tr>
+<td><code>c_float</code></td>
+<td><code>float</code></td>
+<td>float</td>
+</tr>
+<tr>
+<td><code>c_double</code></td>
+<td><code>double</code></td>
+<td>float</td>
+</tr>
+<tr>
+<td><code>c_char_p</code></td>
+<td><code>char*</code></td>
+<td>bytes</td>
+</tr>
+<tr>
+<td><code>c_void_p</code></td>
+<td><code>void*</code></td>
+<td>int</td>
+</tr>
+</tbody>
+</table>
+<h3 id="36">3.6 传入数组</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ctypes</span>
+
+<span class="c1"># 创建 C 数组</span>
+<span class="n">arr</span> <span class="o">=</span> <span class="p">(</span><span class="n">ctypes</span><span class="o">.</span><span class="n">c_double</span> <span class="o">*</span> <span class="mi">5</span><span class="p">)(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">,</span> <span class="mf">3.0</span><span class="p">,</span> <span class="mf">4.0</span><span class="p">,</span> <span class="mf">5.0</span><span class="p">)</span>
+
+<span class="c1"># 传给 C 函数</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">sum_array</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">ctypes</span><span class="o">.</span><span class="n">POINTER</span><span class="p">(</span><span class="n">ctypes</span><span class="o">.</span><span class="n">c_double</span><span class="p">),</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">c_int</span><span class="p">]</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">sum_array</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">c_double</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">lib</span><span class="o">.</span><span class="n">sum_array</span><span class="p">(</span><span class="n">arr</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># 15.0</span>
+</code></pre></div>
+<hr>
+<h2 id="cffi-pythonic-c">四、CFFI — 更 Pythonic 的 C 互操作</h2>
+<h3 id="41-cffi">4.1 什么是 CFFI？</h3>
+<p>CFFI（C Foreign Function Interface）提供了比 ctypes 更现代的接口，支持：<br>
+- 直接从 C 头文件解析函数签名<br>
+- ABI 模式（类似 ctypes，运行时加载）和 API 模式（编译时绑定）<br>
+- 更方便的结构体操作</p>
+<h3 id="42-abi">4.2 ABI 模式（最快上手）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">cffi</span> <span class="kn">import</span> <span class="n">FFI</span>
+
+<span class="n">ffi</span> <span class="o">=</span> <span class="n">FFI</span><span class="p">()</span>
+
+<span class="c1"># 声明 C 函数签名（直接写 C 语法）</span>
+<span class="n">ffi</span><span class="o">.</span><span class="n">cdef</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    double sin(double x);</span>
+<span class="s2">    long long factorial(int n);</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">)</span>
+
+<span class="c1"># 加载共享库</span>
+<span class="n">C</span> <span class="o">=</span> <span class="n">ffi</span><span class="o">.</span><span class="n">dlopen</span><span class="p">(</span><span class="s2">&quot;libc.so.6&quot;</span><span class="p">)</span>
+
+<span class="c1"># 调用</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">C</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="mf">3.14159</span><span class="p">))</span>  <span class="c1"># ≈ 0</span>
+</code></pre></div>
+<h3 id="43-c">4.3 调用自定义 C 库</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">cffi</span> <span class="kn">import</span> <span class="n">FFI</span>
+
+<span class="n">ffi</span> <span class="o">=</span> <span class="n">FFI</span><span class="p">()</span>
+<span class="n">ffi</span><span class="o">.</span><span class="n">cdef</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    double fast_sin(double x);</span>
+<span class="s2">    long long fast_factorial(int n);</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">)</span>
+
+<span class="n">lib</span> <span class="o">=</span> <span class="n">ffi</span><span class="o">.</span><span class="n">dlopen</span><span class="p">(</span><span class="s2">&quot;./fast_math.so&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">lib</span><span class="o">.</span><span class="n">fast_sin</span><span class="p">(</span><span class="mf">1.5708</span><span class="p">))</span>  <span class="c1"># ≈ 1.0 (sin(π/2))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">lib</span><span class="o">.</span><span class="n">fast_factorial</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>  <span class="c1"># 3628800</span>
+</code></pre></div>
+<h3 id="44-api">4.4 API 模式（编译时绑定）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># build_ffi.py — 运行一次生成绑定</span>
+<span class="kn">from</span> <span class="nn">cffi</span> <span class="kn">import</span> <span class="n">FFI</span>
+
+<span class="n">ffi</span> <span class="o">=</span> <span class="n">FFI</span><span class="p">()</span>
+<span class="n">ffi</span><span class="o">.</span><span class="n">cdef</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    double fast_sin(double x);</span>
+<span class="s2">    long long fast_factorial(int n);</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">)</span>
+
+<span class="n">ffi</span><span class="o">.</span><span class="n">set_source</span><span class="p">(</span><span class="s2">&quot;_fast_math_cffi&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    #include &quot;fast_math.c&quot;  // 直接包含 C 源码</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">,</span> <span class="n">sources</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;fast_math.c&quot;</span><span class="p">])</span>
+
+<span class="n">ffi</span><span class="o">.</span><span class="n">compile</span><span class="p">()</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 使用编译后的绑定</span>
+<span class="kn">from</span> <span class="nn">_fast_math_cffi</span> <span class="kn">import</span> <span class="n">ffi</span><span class="p">,</span> <span class="n">lib</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">lib</span><span class="o">.</span><span class="n">fast_sin</span><span class="p">(</span><span class="mf">1.0</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">lib</span><span class="o">.</span><span class="n">fast_factorial</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="45-ctypes-vs-cffi">4.5 ctypes vs CFFI 对比</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>ctypes</th>
+<th>CFFI</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>依赖</td>
+<td>标准库，零依赖</td>
+<td>需要 pip install</td>
+</tr>
+<tr>
+<td>声明方式</td>
+<td>Python API 链式调用</td>
+<td>直接写 C 语法</td>
+</tr>
+<tr>
+<td>结构体支持</td>
+<td>较繁琐</td>
+<td>更方便</td>
+</tr>
+<tr>
+<td>性能</td>
+<td>略慢（每次调用有开销）</td>
+<td>API 模式接近原生</td>
+</tr>
+<tr>
+<td>ABI 模式</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>API 模式</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="numba">五、Numba — 一行装饰器搞定加速</h2>
+<h3 id="51-numba">5.1 什么是 Numba？</h3>
+<p>Numba 是一个 JIT（Just-In-Time）编译器，通过装饰器将 Python 函数编译为机器码。它的最大优势是：<strong>几乎不改代码，加个装饰器就行</strong>。</p>
+<h3 id="52">5.2 工作原理</h3>
+<pre class="plain"><code>┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│  Python 函数 │ ──→ │   @jit 装饰  │ ──→ │  LLVM 编译   │
+│              │     │   首次调用时  │     │  生成机器码   │
+└──────────────┘     └──────────────┘     └──────────────┘
+       │                                        │
+   Python 字节码                          原生机器码
+   (慢)                                  (快 10-100x)
+</code></pre>
+<h3 id="53">5.3 基础用法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">numba</span> <span class="kn">import</span> <span class="n">jit</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="nd">@jit</span><span class="p">(</span><span class="n">nopython</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># nopython=True 强制编译为纯机器码</span>
+<span class="k">def</span> <span class="nf">monte_carlo_pi</span><span class="p">(</span><span class="n">n_samples</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用蒙特卡洛方法估算 π&quot;&quot;&quot;</span>
+    <span class="kn">import</span> <span class="nn">random</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_samples</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">x</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">y</span><span class="o">**</span><span class="mi">2</span> <span class="o">&lt;=</span> <span class="mf">1.0</span><span class="p">:</span>
+            <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="mf">4.0</span> <span class="o">*</span> <span class="n">count</span> <span class="o">/</span> <span class="n">n_samples</span>
+
+<span class="c1"># 首次调用会编译（较慢）</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="n">pi</span> <span class="o">=</span> <span class="n">monte_carlo_pi</span><span class="p">(</span><span class="mi">10_000_000</span><span class="p">)</span>
+<span class="n">first_call</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+<span class="c1"># 后续调用直接用机器码（很快）</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="n">pi</span> <span class="o">=</span> <span class="n">monte_carlo_pi</span><span class="p">(</span><span class="mi">10_000_000</span><span class="p">)</span>
+<span class="n">fast_call</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;首次调用（含编译）: </span><span class="si">{</span><span class="n">first_call</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;后续调用: </span><span class="si">{</span><span class="n">fast_call</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;π ≈ </span><span class="si">{</span><span class="n">pi</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="54-numba">5.4 Numba 装饰器参数速查</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nopython=True</code></td>
+<td>强制纯机器码模式（推荐）</td>
+</tr>
+<tr>
+<td><code>cache=True</code></td>
+<td>缓存编译结果，避免重复编译</td>
+</tr>
+<tr>
+<td><code>parallel=True</code></td>
+<td>自动并行化循环</td>
+</tr>
+<tr>
+<td><code>fastmath=True</code></td>
+<td>启用快速数学运算（牺牲精度换速度）</td>
+</tr>
+<tr>
+<td><code>locals={'x': 'float64'}</code></td>
+<td>局部变量类型声明</td>
+</tr>
+</tbody>
+</table>
+<h3 id="55">5.5 自动并行化</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">numba</span> <span class="kn">import</span> <span class="n">jit</span><span class="p">,</span> <span class="n">prange</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+
+<span class="nd">@jit</span><span class="p">(</span><span class="n">nopython</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">parallel</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">parallel_sum</span><span class="p">(</span><span class="n">arr</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;并行求和&quot;&quot;&quot;</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">prange</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">arr</span><span class="p">)):</span>  <span class="c1"># prange 替代 range</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">arr</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">total</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">100_000_000</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">parallel_sum</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Sum: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="56-numba-python">5.6 Numba 支持的 Python 特性</h3>
+<pre class="plain"><code>✅ 支持：                    ❌ 不支持：
+• NumPy 数组操作             • Python 类（class）
+• 数学运算                   • 字典/集合的复杂操作
+• 循环和条件                 • 字符串操作（有限）
+• 元组/列表（固定大小）       • 生成器
+• 内置数学函数               • 递归（有限支持）
+</code></pre>
+<hr>
+<h2 id="_4">六、方案选型决策树</h2>
+<pre class="plain"><code>需要加速 Python 代码？
+│
+├─ 循环密集型计算？
+│   ├─ 能用 NumPy 向量化？ → NumPy（首选）
+│   ├─ 不行 → Numba（最快上手）
+│   └─ 需要复杂 C 交互？ → Cython
+│
+├─ 需要调用已有 C 库？
+│   ├─ 快速原型 → ctypes（零依赖）
+│   └─ 生产环境 → CFFI（更安全）
+│
+├─ 从零写 C 扩展？
+│   └─ Cython（最推荐）
+│
+└─ 一般数值计算？
+    └─ Numba（一行搞定）
+</code></pre>
+<hr>
+<h2 id="_5">七、性能对比实战</h2>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>安装难度</th>
+<th>学习曲线</th>
+<th>典型加速比</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>纯 Python</td>
+<td>无</td>
+<td>无</td>
+<td>1x（基准）</td>
+<td>原型开发</td>
+</tr>
+<tr>
+<td>NumPy</td>
+<td>pip install</td>
+<td>低</td>
+<td>10-100x</td>
+<td>数值数组操作</td>
+</tr>
+<tr>
+<td>Cython</td>
+<td>pip + 编译</td>
+<td>中</td>
+<td>30-100x</td>
+<td>循环密集计算</td>
+</tr>
+<tr>
+<td>ctypes</td>
+<td>标准库</td>
+<td>低</td>
+<td>10-50x</td>
+<td>调用已有 C 库</td>
+</tr>
+<tr>
+<td>CFFI</td>
+<td>pip install</td>
+<td>低</td>
+<td>10-50x</td>
+<td>调用 C 库（更现代）</td>
+</tr>
+<tr>
+<td>Numba</td>
+<td>pip install</td>
+<td>极低</td>
+<td>10-200x</td>
+<td>JIT 加速数值计算</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_6">八、实战：蒙特卡洛 π 估算</h2>
+<p>用四种方式实现同一个算法，对比性能：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 方式 1：纯 Python</span>
+<span class="k">def</span> <span class="nf">pure_python_pi</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="kn">import</span> <span class="nn">random</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">(),</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">x</span><span class="o">*</span><span class="n">x</span> <span class="o">+</span> <span class="n">y</span><span class="o">*</span><span class="n">y</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">count</span> <span class="o">/</span> <span class="n">n</span>
+
+<span class="c1"># 方式 2：NumPy 向量化</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="k">def</span> <span class="nf">numpy_pi</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">x</span><span class="o">*</span><span class="n">x</span> <span class="o">+</span> <span class="n">y</span><span class="o">*</span><span class="n">y</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">)</span> <span class="o">/</span> <span class="n">n</span>
+
+<span class="c1"># 方式 3：Numba JIT</span>
+<span class="kn">from</span> <span class="nn">numba</span> <span class="kn">import</span> <span class="n">jit</span>
+<span class="nd">@jit</span><span class="p">(</span><span class="n">nopython</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">numba_pi</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">x</span><span class="o">*</span><span class="n">x</span> <span class="o">+</span> <span class="n">y</span><span class="o">*</span><span class="n">y</span> <span class="o">&lt;=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="mi">4</span> <span class="o">*</span> <span class="n">count</span> <span class="o">/</span> <span class="n">n</span>
+
+<span class="c1"># 方式 4：Cython 版本见 code/03-cython-monte-carlo.pyx</span>
+</code></pre></div>
+<hr>
+<h2 id="_7">九、常见陷阱与避坑</h2>
+<h3 id="1-numba">1. Numba 首次调用慢</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 错误：在计时代码中包含首次调用</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">jit_func</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>  <span class="c1"># 首次调用包含编译时间！</span>
+<span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+<span class="c1"># ✅ 正确：先预热再计时</span>
+<span class="n">jit_func</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>  <span class="c1"># 预热（编译）</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">jit_func</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>  <span class="c1"># 真正的执行时间</span>
+<span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+</code></pre></div>
+<h3 id="2-ctypes">2. ctypes 忘记声明类型</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 不声明类型（每次都转换，很慢）</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">func</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span>
+
+<span class="c1"># ✅ 声明类型（自动转换，更快）</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">ctypes</span><span class="o">.</span><span class="n">c_double</span><span class="p">]</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">ctypes</span><span class="o">.</span><span class="n">c_double</span>
+<span class="n">lib</span><span class="o">.</span><span class="n">func</span><span class="p">(</span><span class="n">arg</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="3-cython">3. Cython 编译错误</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ .pyx 文件不能直接 import</span>
+<span class="kn">import</span> <span class="nn">sum_cy</span>  <span class="c1"># ModuleNotFoundError</span>
+
+<span class="c1"># ✅ 必须先编译</span>
+<span class="c1"># python3 setup.py build_ext --inplace</span>
+<span class="kn">import</span> <span class="nn">sum_cy</span>  <span class="c1"># 现在可以了</span>
+</code></pre></div>
+<h3 id="4-numba">4. Numba 不支持的特性</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ Numba 不支持普通 Python class</span>
+<span class="nd">@jit</span><span class="p">(</span><span class="n">nopython</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>  <span class="c1"># 会报错</span>
+    <span class="k">pass</span>
+
+<span class="c1"># ✅ 用 namedtuple 代替</span>
+<span class="kn">from</span> <span class="nn">collections</span> <span class="kn">import</span> <span class="n">namedtuple</span>
+<span class="n">Point</span> <span class="o">=</span> <span class="n">namedtuple</span><span class="p">(</span><span class="s1">&#39;Point&#39;</span><span class="p">,</span> <span class="p">[</span><span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">])</span>
+
+<span class="nd">@jit</span><span class="p">(</span><span class="n">nopython</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">use_point</span><span class="p">():</span>
+    <span class="n">p</span> <span class="o">=</span> <span class="n">Point</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="mf">2.0</span><span class="p">)</span>  <span class="c1"># namedtuple 可以用</span>
+    <span class="k">return</span> <span class="n">p</span><span class="o">.</span><span class="n">x</span> <span class="o">+</span> <span class="n">p</span><span class="o">.</span><span class="n">y</span>
+</code></pre></div>
+<hr>
+<h2 id="_8">十、思考题</h2>
+<ol>
+<li>
+<p><strong>选型题</strong>：你要加速一个图像处理管道（读取图片→滤波→边缘检测→保存），每个步骤都用 NumPy 数组操作。应该选择 Cython 还是 Numba？为什么？</p>
+</li>
+<li>
+<p><strong>性能题</strong>：为什么 ctypes 每次调用 C 函数都有固定开销，而 Cython 没有？从底层机制解释。</p>
+</li>
+<li>
+<p><strong>设计题</strong>：如果你有一个 10GB 的大文件需要逐行处理，ctypes 和 Cython 哪个更适合？为什么？</p>
+</li>
+<li>
+<p><strong>对比题</strong>：Numba 的 <code>parallel=True</code> 和 <code>concurrent.futures.ThreadPoolExecutor</code> 有什么区别？在什么场景下各自更优？</p>
+</li>
+<li>
+<p><strong>进阶题</strong>：编写一个 Cython 函数，接受两个 NumPy 数组，计算它们的余弦相似度，要求性能接近纯 C 实现。</p>
+</li>
+</ol>
+<hr>
+<h2 id="_9">📚 扩展阅读</h2>
+<ul>
+<li><a href="https://cython.readthedocs.io/">Cython 官方文档</a></li>
+<li><a href="https://numba.pydata.org/">Numba 用户手册</a></li>
+<li><a href="https://cffi.readthedocs.io/">CFFI 文档</a></li>
+<li><a href="https://docs.python.org/3/extending/">Python C 扩展最佳实践</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-058/index.html">← Day 58 并发模型对比</a><a class="nav-next" href="../day-060/index.html">Day 60 阶段项目：高性能计算 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

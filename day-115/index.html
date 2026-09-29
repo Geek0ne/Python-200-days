@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 115 — 训练流程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 115 — 训练流程</h1>
+  <div class="lmeta">
+    <span class="badge">数据分析与AI/ML</span>
+    <span class="badge">439 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-115-training-loop" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1-dataloader-dataset">1. DataLoader 与 Dataset</a>
+<a class="toc-l3" href="#11-dataloader">1.1 为什么需要 DataLoader？</a>
+<a class="toc-l3" href="#12-dataset">1.2 Dataset — 数据的容器</a>
+<a class="toc-l3" href="#13-dataloader">1.3 DataLoader — 自动批处理</a>
+<a class="toc-l3" href="#14-batch-size">1.4 Batch Size 选择指南</a>
+<a class="toc-l3" href="#15-dataset">1.5 常见内置 Dataset</a>
+<a class="toc-l2" href="#2">2. 完整训练循环</a>
+<a class="toc-l3" href="#21">2.1 标准训练模板</a>
+<a class="toc-l3" href="#22-train-vs-eval">2.2 train() vs eval() 的区别</a>
+<a class="toc-l3" href="#23-torchno_grad">2.3 torch.no_grad() 的作用</a>
+<a class="toc-l2" href="#3">3. 模型保存与加载</a>
+<a class="toc-l3" href="#31-state_dict">3.1 保存/加载 state_dict（推荐）</a>
+<a class="toc-l3" href="#32-checkpoint">3.2 保存/加载完整 checkpoint</a>
+<a class="toc-l3" href="#33">3.3 模型文件大小参考</a>
+<a class="toc-l2" href="#4">4. 图解：完整训练流程</a>
+<a class="toc-l2" href="#5-mnist">5. 实战：MNIST 手写数字识别</a>
+<a class="toc-l3" href="#51">5.1 网络架构</a>
+<a class="toc-l3" href="#52">5.2 完整代码</a>
+<a class="toc-l3" href="#53">5.3 关键设计决策</a>
+<a class="toc-l2" href="#6-api">6. API 速查表</a>
+<a class="toc-l3" href="#dataloader">DataLoader 参数</a>
+<a class="toc-l3" href="#_1">模型模式切换</a>
+<a class="toc-l3" href="#_2">保存/加载</a>
+<a class="toc-l2" href="#7">7. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-115">Day 115 — 训练流程</h1>
+<blockquote>
+<p>🎯 今日目标：掌握 DataLoader/Dataset 数据加载、完整的训练循环、模型保存与加载，最终完成 MNIST 手写数字识别实战。</p>
+</blockquote>
+<hr>
+<h2 id="1-dataloader-dataset">1. DataLoader 与 Dataset</h2>
+<h3 id="11-dataloader">1.1 为什么需要 DataLoader？</h3>
+<p>Day 114 中我们直接把全部数据一次性传入模型。这在小数据集上没问题，但实际场景中：<br>
+- 数据集可能有<strong>百万级</strong>样本，内存装不下<br>
+- 一次性计算梯度太慢，<strong>小批量</strong>训练效果更好<br>
+- DataLoader 自动处理<strong>打乱、并行加载、多进程</strong></p>
+<h3 id="12-dataset">1.2 Dataset — 数据的容器</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">torch.utils.data</span> <span class="kn">import</span> <span class="n">Dataset</span><span class="p">,</span> <span class="n">DataLoader</span>
+
+<span class="k">class</span> <span class="nc">MyDataset</span><span class="p">(</span><span class="n">Dataset</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">features</span><span class="p">,</span> <span class="n">labels</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">features</span> <span class="o">=</span> <span class="n">features</span>  <span class="c1"># numpy array 或 tensor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">labels</span> <span class="o">=</span> <span class="n">labels</span>
+
+    <span class="k">def</span> <span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;返回数据集大小&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">features</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">idx</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;返回第 idx 个样本&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">features</span><span class="p">[</span><span class="n">idx</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+
+<span class="c1"># 使用</span>
+<span class="n">dataset</span> <span class="o">=</span> <span class="n">MyDataset</span><span class="p">(</span><span class="n">X_train</span><span class="p">,</span> <span class="n">y_train</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">dataset</span><span class="p">))</span>       <span class="c1"># 数据集大小</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">dataset</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>         <span class="c1"># 第一个样本 (feature, label)</span>
+</code></pre></div>
+<p><strong>为什么继承 Dataset？</strong><br>
+- PyTorch 的 DataLoader 需要 Dataset 接口<br>
+- <code>__getitem__</code> 让 DataLoader 能按索引取数据<br>
+- <code>__len__</code> 让 DataLoader 知道数据集大小</p>
+<h3 id="13-dataloader">1.3 DataLoader — 自动批处理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">loader</span> <span class="o">=</span> <span class="n">DataLoader</span><span class="p">(</span>
+    <span class="n">dataset</span><span class="p">,</span>
+    <span class="n">batch_size</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span>       <span class="c1"># 每批 32 个样本</span>
+    <span class="n">shuffle</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>        <span class="c1"># 每个 epoch 打乱顺序</span>
+    <span class="n">num_workers</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>       <span class="c1"># 2 个进程并行加载</span>
+    <span class="n">drop_last</span><span class="o">=</span><span class="kc">False</span>      <span class="c1"># 最后一批不满 batch_size 时是否丢弃</span>
+<span class="p">)</span>
+
+<span class="c1"># 遍历 DataLoader</span>
+<span class="k">for</span> <span class="n">batch_features</span><span class="p">,</span> <span class="n">batch_labels</span> <span class="ow">in</span> <span class="n">loader</span><span class="p">:</span>
+    <span class="c1"># batch_features: (32, 64) — 32 个样本，64 个特征</span>
+    <span class="c1"># batch_labels: (32,) — 32 个标签</span>
+    <span class="k">pass</span>
+</code></pre></div>
+<h3 id="14-batch-size">1.4 Batch Size 选择指南</h3>
+<table>
+<thead>
+<tr>
+<th>Batch Size</th>
+<th>优点</th>
+<th>缺点</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1（SGD）</td>
+<td>梯度噪声大，跳出局部最优</td>
+<td>训练不稳定，速度慢</td>
+<td>在线学习</td>
+</tr>
+<tr>
+<td>32~256</td>
+<td><strong>常用范围</strong>，收敛稳定</td>
+<td>—</td>
+<td>通用</td>
+</tr>
+<tr>
+<td>大（1024+）</td>
+<td>GPU 利用率高，速度快</td>
+<td>泛化可能略差</td>
+<td>大数据集</td>
+</tr>
+</tbody>
+</table>
+<p><strong>经验值：</strong> 从 32 开始，GPU 显存够就加大到 64、128。</p>
+<h3 id="15-dataset">1.5 常见内置 Dataset</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">torchvision</span> <span class="kn">import</span> <span class="n">datasets</span><span class="p">,</span> <span class="n">transforms</span>
+
+<span class="c1"># MNIST 手写数字</span>
+<span class="n">mnist</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">MNIST</span><span class="p">(</span><span class="n">root</span><span class="o">=</span><span class="s1">&#39;./data&#39;</span><span class="p">,</span> <span class="n">train</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">download</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># CIFAR-10 图像分类</span>
+<span class="n">cifar</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">CIFAR10</span><span class="p">(</span><span class="n">root</span><span class="o">=</span><span class="s1">&#39;./data&#39;</span><span class="p">,</span> <span class="n">train</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">download</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># ImageFolder — 按文件夹组织的图像数据</span>
+<span class="c1"># data/train/dog/xxx.jpg → 自动标注为 &quot;dog&quot;</span>
+<span class="n">folder</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">ImageFolder</span><span class="p">(</span><span class="n">root</span><span class="o">=</span><span class="s1">&#39;./data/train&#39;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="2">2. 完整训练循环</h2>
+<h3 id="21">2.1 标准训练模板</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">import</span> <span class="nn">torch.nn</span> <span class="k">as</span> <span class="nn">nn</span>
+<span class="kn">from</span> <span class="nn">torch.utils.data</span> <span class="kn">import</span> <span class="n">DataLoader</span>
+
+<span class="k">def</span> <span class="nf">train</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">train_loader</span><span class="p">,</span> <span class="n">criterion</span><span class="p">,</span> <span class="n">optimizer</span><span class="p">,</span> <span class="n">device</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;训练一个 epoch&quot;&quot;&quot;</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>  <span class="c1"># 设为训练模式</span>
+    <span class="n">total_loss</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">correct</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">batch_x</span><span class="p">,</span> <span class="n">batch_y</span> <span class="ow">in</span> <span class="n">train_loader</span><span class="p">:</span>
+        <span class="n">batch_x</span><span class="p">,</span> <span class="n">batch_y</span> <span class="o">=</span> <span class="n">batch_x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">batch_y</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="c1"># 1. 前向传播</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">batch_x</span><span class="p">)</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">criterion</span><span class="p">(</span><span class="n">outputs</span><span class="p">,</span> <span class="n">batch_y</span><span class="p">)</span>
+
+        <span class="c1"># 2. 反向传播</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+        <span class="c1"># 3. 统计</span>
+        <span class="n">total_loss</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="n">batch_x</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">predicted</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">correct</span> <span class="o">+=</span> <span class="n">predicted</span><span class="o">.</span><span class="n">eq</span><span class="p">(</span><span class="n">batch_y</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">batch_y</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">avg_loss</span> <span class="o">=</span> <span class="n">total_loss</span> <span class="o">/</span> <span class="n">total</span>
+    <span class="n">accuracy</span> <span class="o">=</span> <span class="n">correct</span> <span class="o">/</span> <span class="n">total</span>
+    <span class="k">return</span> <span class="n">avg_loss</span><span class="p">,</span> <span class="n">accuracy</span>
+
+<span class="k">def</span> <span class="nf">evaluate</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">test_loader</span><span class="p">,</span> <span class="n">criterion</span><span class="p">,</span> <span class="n">device</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;评估模型&quot;&quot;&quot;</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>  <span class="c1"># 设为评估模式</span>
+    <span class="n">total_loss</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">correct</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>  <span class="c1"># 关闭梯度计算</span>
+        <span class="k">for</span> <span class="n">batch_x</span><span class="p">,</span> <span class="n">batch_y</span> <span class="ow">in</span> <span class="n">test_loader</span><span class="p">:</span>
+            <span class="n">batch_x</span><span class="p">,</span> <span class="n">batch_y</span> <span class="o">=</span> <span class="n">batch_x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">batch_y</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">batch_x</span><span class="p">)</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="n">criterion</span><span class="p">(</span><span class="n">outputs</span><span class="p">,</span> <span class="n">batch_y</span><span class="p">)</span>
+
+            <span class="n">total_loss</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="n">batch_x</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+            <span class="n">_</span><span class="p">,</span> <span class="n">predicted</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">correct</span> <span class="o">+=</span> <span class="n">predicted</span><span class="o">.</span><span class="n">eq</span><span class="p">(</span><span class="n">batch_y</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+            <span class="n">total</span> <span class="o">+=</span> <span class="n">batch_y</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">avg_loss</span> <span class="o">=</span> <span class="n">total_loss</span> <span class="o">/</span> <span class="n">total</span>
+    <span class="n">accuracy</span> <span class="o">=</span> <span class="n">correct</span> <span class="o">/</span> <span class="n">total</span>
+    <span class="k">return</span> <span class="n">avg_loss</span><span class="p">,</span> <span class="n">accuracy</span>
+</code></pre></div>
+<h3 id="22-train-vs-eval">2.2 train() vs eval() 的区别</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>Dropout</th>
+<th>BatchNorm</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model.train()</code></td>
+<td>随机丢弃神经元</td>
+<td>用当前 batch 统计量</td>
+<td>训练</td>
+</tr>
+<tr>
+<td><code>model.eval()</code></td>
+<td>不丢弃</td>
+<td>用全局统计量</td>
+<td>评估/推理</td>
+</tr>
+</tbody>
+</table>
+<p>⚠️ <strong>忘记切换模式是常见 bug！</strong> 评估时用 train() 会导致结果不稳定。</p>
+<h3 id="23-torchno_grad">2.3 torch.no_grad() 的作用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 训练时：需要梯度</span>
+<span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>      <span class="c1"># 计算图被记录</span>
+<span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>         <span class="c1"># 计算梯度</span>
+
+<span class="c1"># 评估时：不需要梯度</span>
+<span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>   <span class="c1"># 关闭计算图</span>
+    <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># 不记录，节省内存</span>
+</code></pre></div>
+<p><strong>为什么评估时要关？</strong><br>
+- 节省约 50% 显存<br>
+- 加速推理（不计算梯度）<br>
+- 防止意外修改参数</p>
+<hr>
+<h2 id="3">3. 模型保存与加载</h2>
+<h3 id="31-state_dict">3.1 保存/加载 state_dict（推荐）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 保存</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s1">&#39;model.pth&#39;</span><span class="p">)</span>
+
+<span class="c1"># 加载</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">MyModel</span><span class="p">()</span>  <span class="c1"># 先创建模型结构</span>
+<span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">&#39;model.pth&#39;</span><span class="p">))</span>
+<span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>为什么保存 state_dict 而不是整个模型？</strong><br>
+- state_dict 只包含参数，体积小<br>
+- 不依赖代码结构，更灵活<br>
+- 方便断点续训</p>
+<h3 id="32-checkpoint">3.2 保存/加载完整 checkpoint</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 保存训练状态</span>
+<span class="n">checkpoint</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;epoch&#39;</span><span class="p">:</span> <span class="n">epoch</span><span class="p">,</span>
+    <span class="s1">&#39;model_state_dict&#39;</span><span class="p">:</span> <span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span>
+    <span class="s1">&#39;optimizer_state_dict&#39;</span><span class="p">:</span> <span class="n">optimizer</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span>
+    <span class="s1">&#39;loss&#39;</span><span class="p">:</span> <span class="n">loss</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">checkpoint</span><span class="p">,</span> <span class="s1">&#39;checkpoint.pth&#39;</span><span class="p">)</span>
+
+<span class="c1"># 加载</span>
+<span class="n">checkpoint</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">&#39;checkpoint.pth&#39;</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">checkpoint</span><span class="p">[</span><span class="s1">&#39;model_state_dict&#39;</span><span class="p">])</span>
+<span class="n">optimizer</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">checkpoint</span><span class="p">[</span><span class="s1">&#39;optimizer_state_dict&#39;</span><span class="p">])</span>
+<span class="n">start_epoch</span> <span class="o">=</span> <span class="n">checkpoint</span><span class="p">[</span><span class="s1">&#39;epoch&#39;</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="33">3.3 模型文件大小参考</h3>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>参数量</th>
+<th>state_dict 大小</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2 层网络 (10→256→10)</td>
+<td>~27K</td>
+<td>~108 KB</td>
+</tr>
+<tr>
+<td>3 层网络 (784→256→128→10)</td>
+<td>~235K</td>
+<td>~940 KB</td>
+</tr>
+<tr>
+<td>ResNet-18</td>
+<td>~11M</td>
+<td>~44 MB</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="4">4. 图解：完整训练流程</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│                    完整训练流程                                │
+│                                                              │
+│  ┌─────────┐    ┌──────────┐    ┌──────────┐               │
+│  │  原始数据 │ →  │ Dataset  │ →  │DataLoader│               │
+│  └─────────┘    └──────────┘    └────┬─────┘               │
+│                                      │                       │
+│                                      ▼                       │
+│                              ┌──────────────┐                │
+│                              │  for batch in │                │
+│                              │    loader:    │                │
+│                              └──────┬───────┘                │
+│                                     │                         │
+│              ┌──────────────────────┼──────────────────────┐ │
+│              ▼                      ▼                      ▼ │
+│    ┌─────────────────┐  ┌─────────────────┐  ┌────────────┐│
+│    │   前向传播        │  │   反向传播        │  │  参数更新   ││
+│    │ model(batch_x)  │  │ loss.backward() │  │ optim.step ││
+│    └────────┬────────┘  └────────┬────────┘  └─────┬──────┘│
+│             │                    │                   │       │
+│             ▼                    ▼                   ▼       │
+│    ┌─────────────────┐  ┌─────────────────┐  ┌────────────┐│
+│    │   计算损失        │  │   累计梯度        │  │ 清空梯度    ││
+│    │ criterion(out,y)│  │   自动求导        │  │ zero_grad  ││
+│    └─────────────────┘  └─────────────────┘  └────────────┘│
+│                                                              │
+│  Epoch 结束 → 打印 Loss/Acc → 检查是否保存最佳模型           │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="5-mnist">5. 实战：MNIST 手写数字识别</h2>
+<h3 id="51">5.1 网络架构</h3>
+<pre class="plain"><code>输入: 28×28 = 784 维
+  │
+  ▼
+Linear(784, 512) → ReLU → Dropout(0.2)
+  │
+  ▼
+Linear(512, 256) → ReLU → Dropout(0.2)
+  │
+  ▼
+Linear(256, 10) → 输出（10 个数字类别）
+</code></pre>
+<h3 id="52">5.2 完整代码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">torch</span>
+<span class="kn">import</span> <span class="nn">torch.nn</span> <span class="k">as</span> <span class="nn">nn</span>
+<span class="kn">import</span> <span class="nn">torch.optim</span> <span class="k">as</span> <span class="nn">optim</span>
+<span class="kn">from</span> <span class="nn">torch.utils.data</span> <span class="kn">import</span> <span class="n">DataLoader</span>
+<span class="kn">from</span> <span class="nn">torchvision</span> <span class="kn">import</span> <span class="n">datasets</span><span class="p">,</span> <span class="n">transforms</span>
+<span class="kn">import</span> <span class="nn">os</span>
+
+<span class="c1"># ========== 1. 配置 ==========</span>
+<span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span><span class="p">(</span><span class="s1">&#39;cuda&#39;</span> <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">cuda</span><span class="o">.</span><span class="n">is_available</span><span class="p">()</span> <span class="k">else</span> <span class="s1">&#39;cpu&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;使用设备: </span><span class="si">{</span><span class="n">device</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ========== 2. 数据加载 ==========</span>
+<span class="n">transform</span> <span class="o">=</span> <span class="n">transforms</span><span class="o">.</span><span class="n">Compose</span><span class="p">([</span>
+    <span class="n">transforms</span><span class="o">.</span><span class="n">ToTensor</span><span class="p">(),</span>                <span class="c1"># 转为 tensor，像素值 0~1</span>
+    <span class="n">transforms</span><span class="o">.</span><span class="n">Normalize</span><span class="p">((</span><span class="mf">0.1307</span><span class="p">,),</span> <span class="p">(</span><span class="mf">0.3081</span><span class="p">,))</span>  <span class="c1"># MNIST 的均值和标准差</span>
+<span class="p">])</span>
+
+<span class="n">train_dataset</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">MNIST</span><span class="p">(</span><span class="s1">&#39;./data&#39;</span><span class="p">,</span> <span class="n">train</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">download</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">transform</span><span class="p">)</span>
+<span class="n">test_dataset</span> <span class="o">=</span> <span class="n">datasets</span><span class="o">.</span><span class="n">MNIST</span><span class="p">(</span><span class="s1">&#39;./data&#39;</span><span class="p">,</span> <span class="n">train</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">transform</span><span class="o">=</span><span class="n">transform</span><span class="p">)</span>
+
+<span class="n">train_loader</span> <span class="o">=</span> <span class="n">DataLoader</span><span class="p">(</span><span class="n">train_dataset</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">64</span><span class="p">,</span> <span class="n">shuffle</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">num_workers</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">test_loader</span> <span class="o">=</span> <span class="n">DataLoader</span><span class="p">(</span><span class="n">test_dataset</span><span class="p">,</span> <span class="n">batch_size</span><span class="o">=</span><span class="mi">1000</span><span class="p">,</span> <span class="n">shuffle</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="c1"># ========== 3. 定义模型 ==========</span>
+<span class="k">class</span> <span class="nc">MNISTNet</span><span class="p">(</span><span class="n">nn</span><span class="o">.</span><span class="n">Module</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">flatten</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Flatten</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">net</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Sequential</span><span class="p">(</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">784</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="mf">0.2</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">512</span><span class="p">,</span> <span class="mi">256</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">ReLU</span><span class="p">(),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Dropout</span><span class="p">(</span><span class="mf">0.2</span><span class="p">),</span>
+            <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="mi">256</span><span class="p">,</span> <span class="mi">10</span><span class="p">)</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">forward</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">):</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">flatten</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># (batch, 1, 28, 28) → (batch, 784)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">net</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">MNISTNet</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="n">criterion</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">CrossEntropyLoss</span><span class="p">()</span>
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">optim</span><span class="o">.</span><span class="n">Adam</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="n">lr</span><span class="o">=</span><span class="mf">0.001</span><span class="p">)</span>
+
+<span class="c1"># ========== 4. 训练循环 ==========</span>
+<span class="n">best_acc</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="k">for</span> <span class="n">epoch</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="c1"># 训练</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">train</span><span class="p">()</span>
+    <span class="n">train_loss</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">correct</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">for</span> <span class="n">batch_x</span><span class="p">,</span> <span class="n">batch_y</span> <span class="ow">in</span> <span class="n">train_loader</span><span class="p">:</span>
+        <span class="n">batch_x</span><span class="p">,</span> <span class="n">batch_y</span> <span class="o">=</span> <span class="n">batch_x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">batch_y</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">zero_grad</span><span class="p">()</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">batch_x</span><span class="p">)</span>
+        <span class="n">loss</span> <span class="o">=</span> <span class="n">criterion</span><span class="p">(</span><span class="n">outputs</span><span class="p">,</span> <span class="n">batch_y</span><span class="p">)</span>
+        <span class="n">loss</span><span class="o">.</span><span class="n">backward</span><span class="p">()</span>
+        <span class="n">optimizer</span><span class="o">.</span><span class="n">step</span><span class="p">()</span>
+
+        <span class="n">train_loss</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="n">batch_x</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="n">_</span><span class="p">,</span> <span class="n">predicted</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">correct</span> <span class="o">+=</span> <span class="n">predicted</span><span class="o">.</span><span class="n">eq</span><span class="p">(</span><span class="n">batch_y</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">batch_y</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">train_loss</span> <span class="o">/=</span> <span class="n">total</span>
+    <span class="n">train_acc</span> <span class="o">=</span> <span class="n">correct</span> <span class="o">/</span> <span class="n">total</span>
+
+    <span class="c1"># 测试</span>
+    <span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+    <span class="n">test_loss</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">test_correct</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">test_total</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">with</span> <span class="n">torch</span><span class="o">.</span><span class="n">no_grad</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">batch_x</span><span class="p">,</span> <span class="n">batch_y</span> <span class="ow">in</span> <span class="n">test_loader</span><span class="p">:</span>
+            <span class="n">batch_x</span><span class="p">,</span> <span class="n">batch_y</span> <span class="o">=</span> <span class="n">batch_x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">),</span> <span class="n">batch_y</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">outputs</span> <span class="o">=</span> <span class="n">model</span><span class="p">(</span><span class="n">batch_x</span><span class="p">)</span>
+            <span class="n">loss</span> <span class="o">=</span> <span class="n">criterion</span><span class="p">(</span><span class="n">outputs</span><span class="p">,</span> <span class="n">batch_y</span><span class="p">)</span>
+            <span class="n">test_loss</span> <span class="o">+=</span> <span class="n">loss</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="n">batch_x</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+            <span class="n">_</span><span class="p">,</span> <span class="n">predicted</span> <span class="o">=</span> <span class="n">outputs</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">test_correct</span> <span class="o">+=</span> <span class="n">predicted</span><span class="o">.</span><span class="n">eq</span><span class="p">(</span><span class="n">batch_y</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+            <span class="n">test_total</span> <span class="o">+=</span> <span class="n">batch_y</span><span class="o">.</span><span class="n">size</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="n">test_loss</span> <span class="o">/=</span> <span class="n">test_total</span>
+    <span class="n">test_acc</span> <span class="o">=</span> <span class="n">test_correct</span> <span class="o">/</span> <span class="n">test_total</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Epoch [</span><span class="si">{</span><span class="n">epoch</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">/10] &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;Train Loss: </span><span class="si">{</span><span class="n">train_loss</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Acc: </span><span class="si">{</span><span class="n">train_acc</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> | &quot;</span>
+          <span class="sa">f</span><span class="s2">&quot;Test Loss: </span><span class="si">{</span><span class="n">test_loss</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> Acc: </span><span class="si">{</span><span class="n">test_acc</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 保存最佳模型</span>
+    <span class="k">if</span> <span class="n">test_acc</span> <span class="o">&gt;</span> <span class="n">best_acc</span><span class="p">:</span>
+        <span class="n">best_acc</span> <span class="o">=</span> <span class="n">test_acc</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">state_dict</span><span class="p">(),</span> <span class="s1">&#39;best_mnist.pth&#39;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  → 保存最佳模型 (acc=</span><span class="si">{</span><span class="n">test_acc</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">🎯 最佳测试准确率: </span><span class="si">{</span><span class="n">best_acc</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="53">5.3 关键设计决策</h3>
+<table>
+<thead>
+<tr>
+<th>决策</th>
+<th>选择</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Batch size</td>
+<td>64</td>
+<td>平衡速度与稳定性</td>
+</tr>
+<tr>
+<td>优化器</td>
+<td>Adam</td>
+<td>自适应学习率，调参少</td>
+</tr>
+<tr>
+<td>Dropout</td>
+<td>0.2</td>
+<td>防止过拟合</td>
+</tr>
+<tr>
+<td>数据增强</td>
+<td>无</td>
+<td>MNIST 太简单，不需要</td>
+</tr>
+<tr>
+<td>标准化</td>
+<td>Normalize</td>
+<td>加速收敛</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6-api">6. API 速查表</h2>
+<h3 id="dataloader">DataLoader 参数</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>batch_size</code></td>
+<td>1</td>
+<td>每批样本数</td>
+</tr>
+<tr>
+<td><code>shuffle</code></td>
+<td>False</td>
+<td>是否打乱顺序</td>
+</tr>
+<tr>
+<td><code>num_workers</code></td>
+<td>0</td>
+<td>并行加载进程数</td>
+</tr>
+<tr>
+<td><code>drop_last</code></td>
+<td>False</td>
+<td>是否丢弃不完整的最后一批</td>
+</tr>
+<tr>
+<td><code>pin_memory</code></td>
+<td>False</td>
+<td>锁页内存，加速 GPU 传输</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_1">模型模式切换</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>model.train()</code></td>
+<td>训练模式</td>
+</tr>
+<tr>
+<td><code>model.eval()</code></td>
+<td>评估模式</td>
+</tr>
+<tr>
+<td><code>torch.no_grad()</code></td>
+<td>关闭梯度计算</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_2">保存/加载</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>保存参数</td>
+<td><code>torch.save(model.state_dict(), 'path.pth')</code></td>
+</tr>
+<tr>
+<td>加载参数</td>
+<td><code>model.load_state_dict(torch.load('path.pth'))</code></td>
+</tr>
+<tr>
+<td>保存 checkpoint</td>
+<td><code>torch.save({'model': ..., 'optim': ..., 'epoch': ...}, 'ckpt.pth')</code></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="7">7. 思考题</h2>
+<ol>
+<li>
+<p><strong>为什么训练时要 shuffle 数据？</strong> 打乱顺序防止模型记住数据顺序，减少梯度估计的偏差。</p>
+</li>
+<li>
+<p><strong>num_workers 设为 0 和 4 有什么区别？</strong> 0 表示主进程加载（慢），4 表示 4 个子进程并行加载（快，但增加内存开销）。</p>
+</li>
+<li>
+<p><strong>Dropout 为什么只在训练时启用？</strong> Dropout 是一种正则化，训练时随机丢弃让网络更鲁棒；推理时所有神经元都参与才能得到稳定输出。</p>
+</li>
+<li>
+<p><strong>为什么 Adam 的默认学习率比 SGD 小？</strong> Adam 有自适应机制，会自动缩放梯度，所以用更小的初始学习率；SGD 需要更大步长保证收敛。</p>
+</li>
+<li>
+<p><strong>checkpoint 和 state_dict 有什么区别？</strong> state_dict 只含模型参数；checkpoint 还包含优化器状态、epoch 等训练信息，适合断点续训。</p>
+</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-114/index.html">← Day 114 神经网络入门</a><a class="nav-next" href="../day-116/index.html">Day 116 CNN 卷积神经网络 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

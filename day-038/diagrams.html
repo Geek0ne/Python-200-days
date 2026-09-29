@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 38 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 38 正文</a>
+  <h1>Day 38 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-038">Day 038 — 创建型设计模式：图解</h1>
+<blockquote>
+<p>Mermaid 与 ASCII 示意图，帮助理解单例、工厂、建造者模式</p>
+</blockquote>
+<hr>
+<h2 id="1-singleton">1️⃣ 单例模式（Singleton）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 多次获取
+        A1[&quot;s1 = Singleton()&quot;]
+        A2[&quot;s2 = Singleton()&quot;]
+    end
+
+    A1 --&gt;|__new__| C{_instance 存在?}
+    A2 --&gt;|__new__| C
+
+    C --&gt;|否| N[&quot;创建新实例&lt;br/&gt;_instance = new&quot;]
+    C --&gt;|是| R[&quot;返回 _instance&quot;]
+
+    N --&gt; R
+    R --&gt; S[&quot;s1 is s2 = True&lt;br/&gt;✅ 同一个实例&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 多次获取
+        A1[&quot;s1 = Singleton()&quot;]
+        A2[&quot;s2 = Singleton()&quot;]
+    end
+
+    A1 --&gt;|__new__| C{_instance 存在?}
+    A2 --&gt;|__new__| C
+
+    C --&gt;|否| N[&quot;创建新实例&lt;br/&gt;_instance = new&quot;]
+    C --&gt;|是| R[&quot;返回 _instance&quot;]
+
+    N --&gt; R
+    R --&gt; S[&quot;s1 is s2 = True&lt;br/&gt;✅ 同一个实例&quot;]
+</code></pre></div>
+<h3 id="_1">三种实现方式对比</h3>
+<pre class="plain"><code>方式一：__new__ 方法
+═══════════════════════
+class Singleton:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+✅ 最 Pythonic
+✅ 不多余实例化
+✅ __init__ 仍会执行（需 _initialized 控制）
+
+
+方式二：装饰器
+═══════════════════════
+@singleton
+class Config:
+    pass
+
+✅ 不入侵类定义
+✅ 灵活性高
+❌ type(instance) 不会返回 Config
+
+
+方式三：元类
+═══════════════════════
+class SingletonMeta(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        ...
+
+class Config(metaclass=SingletonMeta):
+    pass
+
+✅ type(instance) 正确
+✅ 可继承
+❌ 复杂度较高
+</code></pre>
+<hr>
+<h2 id="2">2️⃣ 简单工厂模式</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 客户端
+        C[&quot;notification =&lt;br/&gt;Factory.create(&#x27;email&#x27;)&quot;]
+    end
+
+    subgraph 工厂
+        F[&quot;NotificationFactory&quot;]
+        F --&gt; D{&quot;type = ?&quot;}
+    end
+
+    subgraph 产品
+        D --&gt;|email| E[&quot;EmailNotification()&quot;]
+        D --&gt;|sms| S[&quot;SMSNotification()&quot;]
+        D --&gt;|push| P[&quot;PushNotification()&quot;]
+    end
+
+    C --&gt; F
+    E --&gt; R[&quot;notification.send(&#x27;Hi!&#x27;)&quot;]
+    S --&gt; R
+    P --&gt; R
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 客户端
+        C[&quot;notification =&lt;br/&gt;Factory.create(&#x27;email&#x27;)&quot;]
+    end
+
+    subgraph 工厂
+        F[&quot;NotificationFactory&quot;]
+        F --&gt; D{&quot;type = ?&quot;}
+    end
+
+    subgraph 产品
+        D --&gt;|email| E[&quot;EmailNotification()&quot;]
+        D --&gt;|sms| S[&quot;SMSNotification()&quot;]
+        D --&gt;|push| P[&quot;PushNotification()&quot;]
+    end
+
+    C --&gt; F
+    E --&gt; R[&quot;notification.send(&#x27;Hi!&#x27;)&quot;]
+    S --&gt; R
+    P --&gt; R
+</code></pre></div>
+<h3 id="_2">工厂解耦</h3>
+<pre class="plain"><code>❌ 不使用工厂:                     ✅ 使用工厂:
+
+def send_notification(channel, msg, to):
+    if channel == &quot;email&quot;:            def send_notification(channel, msg, to):
+        notifier = EmailNotifier()        notifier = NotificationFactory.create(channel)
+    elif channel == &quot;sms&quot;:               notifier.send(msg, to)
+        notifier = SMSNotifier()
+    ...
+
+    ← 创建逻辑混杂在业务逻辑中      ← 创建逻辑集中管理
+    ← 新增渠道要改多处代码          ← 新增渠道只改工厂
+</code></pre>
+<hr>
+<h2 id="3">3️⃣ 工厂方法模式</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class Application {
+        &lt;&lt;abstract&gt;&gt;
+        +new_document() str
+        +create_document() Document*
+    }
+
+    class PDFApplication {
+        +create_document() PDFDocument
+    }
+
+    class WordApplication {
+        +create_document() WordDocument
+    }
+
+    class Document {
+        &lt;&lt;interface&gt;&gt;
+        +open() str
+        +save() str
+    }
+
+    class PDFDocument {
+        +open() str
+        +save() str
+    }
+
+    class WordDocument {
+        +open() str
+        +save() str
+    }
+
+    Application &lt;|-- PDFApplication : 继承
+    Application &lt;|-- WordApplication : 继承
+    Document &lt;|.. PDFDocument : 实现
+    Document &lt;|.. WordDocument : 实现
+    PDFApplication --&gt; PDFDocument : 创建
+    WordApplication --&gt; WordDocument : 创建
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class Application {
+        &lt;&lt;abstract&gt;&gt;
+        +new_document() str
+        +create_document() Document*
+    }
+
+    class PDFApplication {
+        +create_document() PDFDocument
+    }
+
+    class WordApplication {
+        +create_document() WordDocument
+    }
+
+    class Document {
+        &lt;&lt;interface&gt;&gt;
+        +open() str
+        +save() str
+    }
+
+    class PDFDocument {
+        +open() str
+        +save() str
+    }
+
+    class WordDocument {
+        +open() str
+        +save() str
+    }
+
+    Application &lt;|-- PDFApplication : 继承
+    Application &lt;|-- WordApplication : 继承
+    Document &lt;|.. PDFDocument : 实现
+    Document &lt;|.. WordDocument : 实现
+    PDFApplication --&gt; PDFDocument : 创建
+    WordApplication --&gt; WordDocument : 创建
+</code></pre></div>
+<h3 id="_3">演化过程</h3>
+<pre class="plain"><code>简单工厂：                    工厂方法：                    抽象工厂：
+                                ┌─────────┐               ┌─────────────┐
+┌──────────┐    Factory    ┌────┤App A    │   Document   │  WinFactory  │
+│ Client   │───→ create()──→│    │create()─→ Doc A       │  ├─ WinButton │
+└──────────┘               │    └─────────┘               │  └─ WinCheck  │
+        │                  │                              │              │
+        ▼                  │    ┌─────────┐               │  MacFactory  │
+    ┌──────────┐           └────┤App B    │               │  ├─ MacButton│
+    │ Product  │                │create()─→ Doc B         │  └─ MacCheck │
+    └──────────┘                └─────────┘               └─────────────┘
+
+    集中管理创建              创建逻辑分散到子类        创建一族相关产品
+    扩展性差                  扩展性好                  产品族一致
+</code></pre>
+<hr>
+<h2 id="4-builder">4️⃣ 建造者模式（Builder）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 建造过程
+        B[&quot;Builder&quot;] --&gt; S1[&quot;size(12)&quot;]
+        S1 --&gt; S2[&quot;crust(&#x27;薄脆&#x27;)&quot;]
+        S2 --&gt; S3[&quot;sauce(&#x27;番茄&#x27;)&quot;]
+        S3 --&gt; S4[&quot;cheese(&#x27;马苏里拉&#x27;)&quot;]
+        S4 --&gt; S5[&quot;add_topping(&#x27;培根&#x27;)&quot;]
+        S5 --&gt; S6[&quot;well_done()&quot;]
+        S6 --&gt; S7[&quot;build() → Pizza&quot;]
+    end
+
+    subgraph Director（可选）
+        D[&quot;PizzaChef&quot;] --&gt; T1[&quot;make_margherita()&quot;]
+        D --&gt; T2[&quot;make_pepperoni()&quot;]
+        T1 --&gt;|使用 Builder| P1[&quot;玛格丽特披萨&quot;]
+        T2 --&gt;|使用 Builder| P2[&quot;辣香肠披萨&quot;]
+    end
+
+    S7 --&gt; P[&quot;🍕 定制披萨&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 建造过程
+        B[&quot;Builder&quot;] --&gt; S1[&quot;size(12)&quot;]
+        S1 --&gt; S2[&quot;crust(&#x27;薄脆&#x27;)&quot;]
+        S2 --&gt; S3[&quot;sauce(&#x27;番茄&#x27;)&quot;]
+        S3 --&gt; S4[&quot;cheese(&#x27;马苏里拉&#x27;)&quot;]
+        S4 --&gt; S5[&quot;add_topping(&#x27;培根&#x27;)&quot;]
+        S5 --&gt; S6[&quot;well_done()&quot;]
+        S6 --&gt; S7[&quot;build() → Pizza&quot;]
+    end
+
+    subgraph Director（可选）
+        D[&quot;PizzaChef&quot;] --&gt; T1[&quot;make_margherita()&quot;]
+        D --&gt; T2[&quot;make_pepperoni()&quot;]
+        T1 --&gt;|使用 Builder| P1[&quot;玛格丽特披萨&quot;]
+        T2 --&gt;|使用 Builder| P2[&quot;辣香肠披萨&quot;]
+    end
+
+    S7 --&gt; P[&quot;🍕 定制披萨&quot;]
+</code></pre></div>
+<h3 id="builder-vs-builder">不使用 Builder vs 使用 Builder</h3>
+<pre class="plain"><code>❌ 不使用 Builder:                  ✅ 使用 Builder:
+
+# 参数太多，顺序容易错              # 链式调用，名称明确
+Pizza(12, &quot;薄脆&quot;, &quot;番茄&quot;,           Pizza.builder()
+      True, &quot;培根&quot;, 14)               .size(12)
+                                      .crust(&quot;薄脆&quot;)
+# 第 4 个参数 extra_cheese?           .sauce(&quot;番茄&quot;)
+# 第 5 个参数 topping?                .add_topping(&quot;培根&quot;)
+# 不读文档看不懂！                     .well_done()
+                                      .build()
+                                  ← 一目了然！
+                                  ← 可选参数可省略
+</code></pre>
+<hr>
+<h2 id="5-prototype">5️⃣ 原型模式（Prototype）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 原型
+        P[&quot;基础合同模板&quot;]
+        P --&gt; V1[&quot;变量: {title, party_a, ...}&quot;]
+    end
+
+    subgraph 克隆
+        C1[&quot;service = base.clone()&quot;]
+        C2[&quot;nba = base.clone()&quot;]
+    end
+
+    subgraph 定制
+        C1 --&gt; M1[&quot;修改变量: 服务合同&quot;]
+        C2 --&gt; M2[&quot;修改变量: 球员合同&quot;]
+    end
+
+    P --&gt; C1
+    P --&gt; C2
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 原型
+        P[&quot;基础合同模板&quot;]
+        P --&gt; V1[&quot;变量: {title, party_a, ...}&quot;]
+    end
+
+    subgraph 克隆
+        C1[&quot;service = base.clone()&quot;]
+        C2[&quot;nba = base.clone()&quot;]
+    end
+
+    subgraph 定制
+        C1 --&gt; M1[&quot;修改变量: 服务合同&quot;]
+        C2 --&gt; M2[&quot;修改变量: 球员合同&quot;]
+    end
+
+    P --&gt; C1
+    P --&gt; C2
+</code></pre></div>
+<h3 id="vs">深拷贝 vs 浅拷贝</h3>
+<pre class="plain"><code>原型模式本质：克隆已有对象
+
+浅拷贝 (copy.copy):               深拷贝 (copy.deepcopy):
+═══════════════════               ═══════════════════════
+
+对象 A ──→ 对象 A&#x27;                对象 A ──→ 对象 A&#x27;
+  │            │                     │              │
+  ├─ attr1     ├─ attr1              ├─ attr1       ├─ attr1
+  └─ attr2 ──→ 共享引用              └─ attr2 ──→  复制新对象
+
+✅ 快速                        ✅ 完全独立
+⚠️ 共享引用可能产生副作用          ❌ 较慢
+</code></pre>
+<hr>
+<h2 id="6">6️⃣ 连接池（对象池模式）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 连接池
+        POOL[&quot;ConnectionPool&quot;]
+        IDLE[&quot;空闲连接池: [Conn#1, Conn#2]&quot;]
+        IN_USE[&quot;使用中: {Conn#3}&quot;]
+        MAX[&quot;最大连接数: 5&quot;]
+    end
+
+    T1[&quot;线程 1&quot;] --&gt;|acquire| POOL
+    T2[&quot;线程 2&quot;] --&gt;|acquire| POOL
+    POOL --&gt;|复用空闲| T1
+    POOL --&gt;|创建新连接| T2
+
+    T1 --&gt;|release| POOL
+    POOL --&gt;|归还到空闲池| IDLE
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 连接池
+        POOL[&quot;ConnectionPool&quot;]
+        IDLE[&quot;空闲连接池: [Conn#1, Conn#2]&quot;]
+        IN_USE[&quot;使用中: {Conn#3}&quot;]
+        MAX[&quot;最大连接数: 5&quot;]
+    end
+
+    T1[&quot;线程 1&quot;] --&gt;|acquire| POOL
+    T2[&quot;线程 2&quot;] --&gt;|acquire| POOL
+    POOL --&gt;|复用空闲| T1
+    POOL --&gt;|创建新连接| T2
+
+    T1 --&gt;|release| POOL
+    POOL --&gt;|归还到空闲池| IDLE
+</code></pre></div>
+<hr>
+<h2 id="7">7️⃣ 配置管理器设计</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class ConfigManager {
+        -_config: dict
+        -_frozen: bool
+        -_readonly_keys: set
+        -_listeners: list
+        -_history: list
+        +get(key, default) any
+        +set(key, value) ConfigManager
+        +freeze() ConfigManager
+        +on_change(cb) ConfigManager
+        +to_json() str
+        +stats: dict
+    }
+
+    class ConfigBuilder {
+        -_data: dict
+        +set(key, value) ConfigBuilder
+        +set_database() ConfigBuilder
+        +set_redis() ConfigBuilder
+        +set_app() ConfigBuilder
+        +build() ConfigManager
+        +build_and_freeze() ConfigManager
+    }
+
+    class ConfigFactory {
+        +from_json_file(path) ConfigManager
+        +from_json_str(str) ConfigManager
+        +from_dict(dict) ConfigManager
+        +from_defaults() ConfigManager
+    }
+
+    ConfigManager &lt;.. ConfigBuilder : 建造
+    ConfigManager &lt;.. ConfigFactory : 工厂创建
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class ConfigManager {
+        -_config: dict
+        -_frozen: bool
+        -_readonly_keys: set
+        -_listeners: list
+        -_history: list
+        +get(key, default) any
+        +set(key, value) ConfigManager
+        +freeze() ConfigManager
+        +on_change(cb) ConfigManager
+        +to_json() str
+        +stats: dict
+    }
+
+    class ConfigBuilder {
+        -_data: dict
+        +set(key, value) ConfigBuilder
+        +set_database() ConfigBuilder
+        +set_redis() ConfigBuilder
+        +set_app() ConfigBuilder
+        +build() ConfigManager
+        +build_and_freeze() ConfigManager
+    }
+
+    class ConfigFactory {
+        +from_json_file(path) ConfigManager
+        +from_json_str(str) ConfigManager
+        +from_dict(dict) ConfigManager
+        +from_defaults() ConfigManager
+    }
+
+    ConfigManager &lt;.. ConfigBuilder : 建造
+    ConfigManager &lt;.. ConfigFactory : 工厂创建
+</code></pre></div>
+<h3 id="_4">设计模式在配置管理器中的应用</h3>
+<pre class="plain"><code>ConfigManager (单例)
+  • __new__ 确保全局唯一实例
+  • _initialized 确保仅初始化一次
+  • 全局访问点：get() / set()
+
+ConfigBuilder (建造者)
+  • set_database() / set_app() 等预定义配置
+  • 链式调用 self return
+  • build() 创建 ConfigManager
+
+ConfigFactory (工厂)
+  • from_json_file() 从文件创建
+  • from_dict() 从字典创建
+  • from_defaults() 创建默认配置
+  • 封装不同创建方式
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

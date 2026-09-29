@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 83 — 远程执行与部署：自动化运维实战</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 83 — 远程执行与部署：自动化运维实战</h1>
+  <div class="lmeta">
+    <span class="badge">实战项目（一）</span>
+    <span class="badge">442 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-083-remote-deploy" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 今日目标</a>
+<a class="toc-l2" href="#_2">一、部署策略概览</a>
+<a class="toc-l3" href="#11">1.1 常见部署模式</a>
+<a class="toc-l3" href="#12">1.2 部署流程标准化</a>
+<a class="toc-l2" href="#_3">二、代码打包与版本管理</a>
+<a class="toc-l3" href="#21">2.1 语义化版本号</a>
+<a class="toc-l3" href="#22">2.2 打包脚本</a>
+<a class="toc-l2" href="#_4">三、远程部署脚本</a>
+<a class="toc-l3" href="#31">3.1 基础部署器</a>
+<a class="toc-l2" href="#_5">四、监控与告警</a>
+<a class="toc-l3" href="#41">4.1 监控指标收集</a>
+<a class="toc-l3" href="#42">4.2 自动化监控循环</a>
+<a class="toc-l2" href="#_6">五、运维脚本最佳实践</a>
+<a class="toc-l3" href="#51">5.1 幂等性设计</a>
+<a class="toc-l3" href="#52">5.2 超时与重试</a>
+<a class="toc-l2" href="#_7">六、思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-083">Day 083 — 远程执行与部署：自动化运维实战</h1>
+<h2 id="_1">📋 今日目标</h2>
+<p>掌握远程部署的完整流程：代码打包、传输、解压、依赖安装、服务重启、健康检查、回滚策略。</p>
+<hr>
+<h2 id="_2">一、部署策略概览</h2>
+<h3 id="11">1.1 常见部署模式</h3>
+<pre class="plain"><code>蓝绿部署 (Blue-Green):
+┌──────────┐     ┌──────────┐
+│  Blue    │◄────│  负载均衡  │
+│  (当前)   │     │          │
+└──────────┘     └─────┬────┘
+                       │ 切换
+                 ┌─────▼────┐
+                 │  Green   │
+                 │  (新版本) │
+                 └──────────┘
+
+滚动更新 (Rolling Update):
+  服务器:  S1  S2  S3  S4  S5
+  旧版本:  v1  v1  v1  v1  v1
+  步骤1:   v2  v1  v1  v1  v1  ← 更新 S1
+  步骤2:   v2  v2  v1  v1  v1  ← 更新 S2
+  步骤3:   v2  v2  v2  v1  v1  ← 更新 S3
+  ...
+
+金丝雀部署 (Canary):
+  ┌─────────────────────────┐
+  │       负载均衡           │
+  │    ┌──────┬──────┐      │
+  │    │ 5%   │ 95%  │      │
+  │    │ 新版本│ 旧版本│      │
+  │    └──────┴──────┘      │
+  └─────────────────────────┘
+  先将 5% 流量导向新版本，观察无异常后逐步扩大
+</code></pre>
+<h3 id="12">1.2 部署流程标准化</h3>
+<pre class="plain"><code>标准部署流程：
+┌─────────┐   ┌─────────┐   ┌─────────┐   ┌─────────┐
+│ 1.打包   │──►│ 2.传输   │──►│ 3.备份   │──►│ 4.解压   │
+│ tar.gz  │   │ SCP/SFTP│   │ 旧版本   │   │ 部署    │
+└─────────┘   └─────────┘   └─────────┘   └─────────┘
+                                                      │
+┌─────────┐   ┌─────────┐   ┌─────────┐              │
+│ 7.完成   │◄──│ 6.验证   │◄──│ 5.启动   │◄─────────────┘
+│ 通知     │   │ 健康检查 │   │ 服务     │
+└─────────┘   └─────────┘   └─────────┘
+      │
+      ▼ 失败
+┌─────────┐
+│ 回滚     │
+│ 恢复旧版 │
+└─────────┘
+</code></pre>
+<hr>
+<h2 id="_3">二、代码打包与版本管理</h2>
+<h3 id="21">2.1 语义化版本号</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 版本号格式: MAJOR.MINOR.PATCH</span>
+<span class="c1"># MAJOR: 不兼容的 API 修改</span>
+<span class="c1"># MINOR: 向下兼容的功能性新增</span>
+<span class="c1"># PATCH: 向下兼容的问题修正</span>
+
+<span class="n">version</span> <span class="o">=</span> <span class="s2">&quot;1.2.3&quot;</span>  <span class="c1"># 主版本.次版本.补丁</span>
+</code></pre></div>
+<h3 id="22">2.2 打包脚本</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="ch">#!/usr/bin/env python3</span>
+<span class="sd">&quot;&quot;&quot;应用打包脚本&quot;&quot;&quot;</span>
+
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">subprocess</span>
+<span class="kn">import</span> <span class="nn">tarfile</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="k">def</span> <span class="nf">create_build</span><span class="p">(</span><span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">source_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="n">output_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;builds&#39;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;创建应用构建包&quot;&quot;&quot;</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># 生成文件名</span>
+    <span class="n">timestamp</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s1">&#39;%Y%m</span><span class="si">%d</span><span class="s1">_%H%M%S&#39;</span><span class="p">)</span>
+    <span class="n">filename</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;app-</span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">timestamp</span><span class="si">}</span><span class="s2">.tar.gz&quot;</span>
+    <span class="n">filepath</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">filename</span><span class="p">)</span>
+
+    <span class="c1"># 排除不需要的文件</span>
+    <span class="n">exclude_patterns</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s1">&#39;__pycache__&#39;</span><span class="p">,</span> <span class="s1">&#39;*.pyc&#39;</span><span class="p">,</span> <span class="s1">&#39;.git&#39;</span><span class="p">,</span> <span class="s1">&#39;venv&#39;</span><span class="p">,</span> <span class="s1">&#39;node_modules&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;.env&#39;</span><span class="p">,</span> <span class="s1">&#39;*.log&#39;</span><span class="p">,</span> <span class="s1">&#39;builds&#39;</span>
+    <span class="p">]</span>
+
+    <span class="k">with</span> <span class="n">tarfile</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="s1">&#39;w:gz&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">tar</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">root</span><span class="p">,</span> <span class="n">dirs</span><span class="p">,</span> <span class="n">files</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">source_dir</span><span class="p">):</span>
+            <span class="c1"># 排除目录</span>
+            <span class="n">dirs</span><span class="p">[:]</span> <span class="o">=</span> <span class="p">[</span><span class="n">d</span> <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="n">dirs</span> <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">(</span>
+                <span class="n">p</span> <span class="ow">in</span> <span class="n">d</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;__pycache__&#39;</span><span class="p">,</span> <span class="s1">&#39;.git&#39;</span><span class="p">,</span> <span class="s1">&#39;venv&#39;</span><span class="p">,</span> <span class="s1">&#39;node_modules&#39;</span><span class="p">]</span>
+            <span class="p">)]</span>
+            <span class="k">for</span> <span class="n">file</span> <span class="ow">in</span> <span class="n">files</span><span class="p">:</span>
+                <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">p</span> <span class="ow">in</span> <span class="n">file</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;*.pyc&#39;</span><span class="p">,</span> <span class="s1">&#39;.env&#39;</span><span class="p">,</span> <span class="s1">&#39;*.log&#39;</span><span class="p">]):</span>
+                    <span class="k">continue</span>
+                <span class="n">filepath_full</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">root</span><span class="p">,</span> <span class="n">file</span><span class="p">)</span>
+                <span class="n">tar</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">filepath_full</span><span class="p">,</span> <span class="n">arcname</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">relpath</span><span class="p">(</span><span class="n">filepath_full</span><span class="p">,</span> <span class="n">source_dir</span><span class="p">))</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ 构建包已创建: </span><span class="si">{</span><span class="n">filepath</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">filepath</span>
+</code></pre></div>
+<hr>
+<h2 id="_4">三、远程部署脚本</h2>
+<h3 id="31">3.1 基础部署器</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">paramiko</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">DeployConfig</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;部署配置&quot;&quot;&quot;</span>
+    <span class="n">host</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">22</span>
+    <span class="n">username</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;root&#39;</span>
+    <span class="n">password</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">key_file</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">app_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;/opt/myapp&#39;</span>
+    <span class="n">backup_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;/opt/myapp/backups&#39;</span>
+    <span class="n">service_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;myapp&#39;</span>
+
+<span class="k">class</span> <span class="nc">Deployer</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="n">DeployConfig</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">connect</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;建立 SSH 连接&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">SSHClient</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">())</span>
+
+        <span class="n">connect_kwargs</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;hostname&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">host</span><span class="p">,</span>
+            <span class="s1">&#39;port&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">port</span><span class="p">,</span>
+            <span class="s1">&#39;username&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">username</span><span class="p">,</span>
+            <span class="s1">&#39;timeout&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">key_file</span><span class="p">:</span>
+            <span class="n">connect_kwargs</span><span class="p">[</span><span class="s1">&#39;key_filename&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">key_file</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">connect_kwargs</span><span class="p">[</span><span class="s1">&#39;password&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">password</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="o">**</span><span class="n">connect_kwargs</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ 已连接: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">host</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">command</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">check</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;执行远程命令&quot;&quot;&quot;</span>
+        <span class="n">stdin</span><span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="n">command</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+        <span class="n">exit_code</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">channel</span><span class="o">.</span><span class="n">recv_exit_status</span><span class="p">()</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="n">error</span> <span class="o">=</span> <span class="n">stderr</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">check</span> <span class="ow">and</span> <span class="n">exit_code</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;命令失败 [</span><span class="si">{</span><span class="n">exit_code</span><span class="si">}</span><span class="s2">]: </span><span class="si">{</span><span class="n">command</span><span class="si">}</span><span class="se">\n</span><span class="s2">错误: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">output</span>
+
+    <span class="k">def</span> <span class="nf">upload</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">local_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">remote_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;上传文件&quot;&quot;&quot;</span>
+        <span class="n">sftp</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">open_sftp</span><span class="p">()</span>
+        <span class="n">sftp</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">local_path</span><span class="p">,</span> <span class="n">remote_path</span><span class="p">)</span>
+        <span class="n">sftp</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;⬆️  上传: </span><span class="si">{</span><span class="n">local_path</span><span class="si">}</span><span class="s2"> → </span><span class="si">{</span><span class="n">remote_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">backup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;备份当前版本&quot;&quot;&quot;</span>
+        <span class="n">timestamp</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s1">&#39;%Y%m</span><span class="si">%d</span><span class="s1">_%H%M%S&#39;</span><span class="p">)</span>
+        <span class="n">backup_path</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">backup_dir</span><span class="si">}</span><span class="s2">/backup_</span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">timestamp</span><span class="si">}</span><span class="s2">&quot;</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;mkdir -p </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">backup_dir</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cp -r </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">app_dir</span><span class="si">}</span><span class="s2">/current </span><span class="si">{</span><span class="n">backup_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📦 已备份: </span><span class="si">{</span><span class="n">backup_path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">backup_path</span>
+
+    <span class="k">def</span> <span class="nf">deploy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">package_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">version</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;执行部署&quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="s1">&#39;=&#39;</span><span class="o">*</span><span class="mi">50</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;🚀 开始部署 v</span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;=&#39;</span><span class="o">*</span><span class="mi">50</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># 1. 连接</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+
+            <span class="c1"># 2. 上传包</span>
+            <span class="n">remote_package</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;/tmp/app-</span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2">.tar.gz&quot;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">upload</span><span class="p">(</span><span class="n">package_path</span><span class="p">,</span> <span class="n">remote_package</span><span class="p">)</span>
+
+            <span class="c1"># 3. 备份</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">backup</span><span class="p">(</span><span class="n">version</span><span class="p">)</span>
+
+            <span class="c1"># 4. 解压部署</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cd </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">app_dir</span><span class="si">}</span><span class="s2"> &amp;&amp; tar xzf </span><span class="si">{</span><span class="n">remote_package</span><span class="si">}</span><span class="s2"> -C current&quot;</span><span class="p">)</span>
+
+            <span class="c1"># 5. 安装依赖</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cd </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">app_dir</span><span class="si">}</span><span class="s2">/current &amp;&amp; &quot;</span>
+                    <span class="sa">f</span><span class="s2">&quot;pip install -r requirements.txt -q&quot;</span><span class="p">,</span> <span class="n">check</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+            <span class="c1"># 6. 数据库迁移（如果需要）</span>
+            <span class="c1"># self.run(f&quot;cd {self.config.app_dir}/current &amp;&amp; python manage.py migrate&quot;)</span>
+
+            <span class="c1"># 7. 重启服务</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;systemctl restart </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">service_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;🔄 服务已重启&quot;</span><span class="p">)</span>
+
+            <span class="c1"># 8. 等待启动</span>
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+
+            <span class="c1"># 9. 健康检查</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">health_check</span><span class="p">():</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ 部署成功！v</span><span class="si">{</span><span class="n">version</span><span class="si">}</span><span class="s2"> 已上线&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;❌ 健康检查失败，开始回滚...&quot;</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+                <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;❌ 部署失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;🔄 开始回滚...&quot;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">def</span> <span class="nf">health_check</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;健康检查&quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;systemctl is-active </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">service_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">result</span> <span class="o">==</span> <span class="s1">&#39;active&#39;</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="k">def</span> <span class="nf">rollback</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;回滚到上一个备份版本&quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span>
+
+            <span class="c1"># 找到最新的备份</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;ls -t </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">backup_dir</span><span class="si">}</span><span class="s2">/backup_* | head -1&quot;</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">result</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rm -rf </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">app_dir</span><span class="si">}</span><span class="s2">/current&quot;</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;cp -r </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">app_dir</span><span class="si">}</span><span class="s2">/current&quot;</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;systemctl restart </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">service_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ 已回滚到: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;⚠️  没有找到可用的备份&quot;</span><span class="p">)</span>
+
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;❌ 回滚失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># 使用示例</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">DeployConfig</span><span class="p">(</span>
+        <span class="n">host</span><span class="o">=</span><span class="s1">&#39;192.168.1.100&#39;</span><span class="p">,</span>
+        <span class="n">username</span><span class="o">=</span><span class="s1">&#39;root&#39;</span><span class="p">,</span>
+        <span class="n">password</span><span class="o">=</span><span class="s1">&#39;password&#39;</span><span class="p">,</span>
+        <span class="n">app_dir</span><span class="o">=</span><span class="s1">&#39;/opt/myapp&#39;</span><span class="p">,</span>
+        <span class="n">service_name</span><span class="o">=</span><span class="s1">&#39;myapp&#39;</span>
+    <span class="p">)</span>
+
+    <span class="n">deployer</span> <span class="o">=</span> <span class="n">Deployer</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="n">deployer</span><span class="o">.</span><span class="n">deploy</span><span class="p">(</span><span class="s1">&#39;builds/app-1.0.0.tar.gz&#39;</span><span class="p">,</span> <span class="s1">&#39;1.0.0&#39;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">四、监控与告警</h2>
+<h3 id="41">4.1 监控指标收集</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Monitor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;远程监控器&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">:</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">SSHClient</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">client</span>
+
+    <span class="k">def</span> <span class="nf">collect_metrics</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;收集系统指标&quot;&quot;&quot;</span>
+        <span class="n">metrics</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="c1"># CPU</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">(</span><span class="s2">&quot;top -bn1 | grep &#39;Cpu(s)&#39; | awk &#39;{print $2}&#39;&quot;</span><span class="p">)</span>
+        <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;cpu_percent&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">output</span><span class="p">)</span> <span class="k">if</span> <span class="n">output</span> <span class="k">else</span> <span class="mi">0</span>
+
+        <span class="c1"># 内存</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">(</span><span class="s2">&quot;free | grep Mem | awk &#39;{printf </span><span class="se">\&quot;</span><span class="si">%.1f</span><span class="se">\&quot;</span><span class="s2">, $3/$2*100}&#39;&quot;</span><span class="p">)</span>
+        <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;memory_percent&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">output</span><span class="p">)</span> <span class="k">if</span> <span class="n">output</span> <span class="k">else</span> <span class="mi">0</span>
+
+        <span class="c1"># 磁盘</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">(</span><span class="s2">&quot;df / | tail -1 | awk &#39;{print $5}&#39; | tr -d &#39;%&#39;&quot;</span><span class="p">)</span>
+        <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;disk_percent&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">output</span><span class="p">)</span> <span class="k">if</span> <span class="n">output</span> <span class="k">else</span> <span class="mi">0</span>
+
+        <span class="c1"># 负载</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">(</span><span class="s2">&quot;cat /proc/loadavg | awk &#39;{print $1}&#39;&quot;</span><span class="p">)</span>
+        <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;load_1m&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">output</span><span class="p">)</span> <span class="k">if</span> <span class="n">output</span> <span class="k">else</span> <span class="mi">0</span>
+
+        <span class="c1"># 连接数</span>
+        <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">(</span><span class="s2">&quot;ss -s | grep &#39;estab&#39; | awk &#39;{print $4}&#39;&quot;</span><span class="p">)</span>
+        <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;connections&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">output</span><span class="p">)</span> <span class="k">if</span> <span class="n">output</span> <span class="k">else</span> <span class="mi">0</span>
+
+        <span class="k">return</span> <span class="n">metrics</span>
+
+    <span class="k">def</span> <span class="nf">check_thresholds</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;检查阈值告警&quot;&quot;&quot;</span>
+        <span class="n">alerts</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">if</span> <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;cpu_percent&#39;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">90</span><span class="p">:</span>
+            <span class="n">alerts</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s1">&#39;critical&#39;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;CPU: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;cpu_percent&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">))</span>
+        <span class="k">elif</span> <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;cpu_percent&#39;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">80</span><span class="p">:</span>
+            <span class="n">alerts</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s1">&#39;warning&#39;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;CPU: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;cpu_percent&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;memory_percent&#39;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">95</span><span class="p">:</span>
+            <span class="n">alerts</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s1">&#39;critical&#39;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;内存: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;memory_percent&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">))</span>
+        <span class="k">elif</span> <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;memory_percent&#39;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">85</span><span class="p">:</span>
+            <span class="n">alerts</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s1">&#39;warning&#39;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;内存: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;memory_percent&#39;</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;disk_percent&#39;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">90</span><span class="p">:</span>
+            <span class="n">alerts</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="s1">&#39;critical&#39;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;磁盘: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">&#39;disk_percent&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">alerts</span>
+</code></pre></div>
+<h3 id="42">4.2 自动化监控循环</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="k">def</span> <span class="nf">monitoring_loop</span><span class="p">(</span><span class="n">servers</span><span class="p">:</span> <span class="nb">list</span><span class="p">,</span> <span class="n">interval</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;持续监控循环&quot;&quot;&quot;</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">server_config</span> <span class="ow">in</span> <span class="n">servers</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">client</span> <span class="o">=</span> <span class="n">create_client</span><span class="p">(</span><span class="n">server_config</span><span class="p">)</span>
+                <span class="n">monitor</span> <span class="o">=</span> <span class="n">Monitor</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
+                <span class="n">metrics</span> <span class="o">=</span> <span class="n">monitor</span><span class="o">.</span><span class="n">collect_metrics</span><span class="p">()</span>
+                <span class="n">alerts</span> <span class="o">=</span> <span class="n">monitor</span><span class="o">.</span><span class="n">check_thresholds</span><span class="p">(</span><span class="n">metrics</span><span class="p">)</span>
+
+                <span class="c1"># 记录日志</span>
+                <span class="n">log_entry</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="s1">&#39;timestamp&#39;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(),</span>
+                    <span class="s1">&#39;server&#39;</span><span class="p">:</span> <span class="n">server_config</span><span class="p">[</span><span class="s1">&#39;host&#39;</span><span class="p">],</span>
+                    <span class="s1">&#39;metrics&#39;</span><span class="p">:</span> <span class="n">metrics</span><span class="p">,</span>
+                    <span class="s1">&#39;alerts&#39;</span><span class="p">:</span> <span class="n">alerts</span>
+                <span class="p">}</span>
+                <span class="n">save_log</span><span class="p">(</span><span class="n">log_entry</span><span class="p">)</span>
+
+                <span class="c1"># 发送告警</span>
+                <span class="k">for</span> <span class="n">level</span><span class="p">,</span> <span class="n">message</span> <span class="ow">in</span> <span class="n">alerts</span><span class="p">:</span>
+                    <span class="n">send_alert</span><span class="p">(</span><span class="n">level</span><span class="p">,</span> <span class="n">server_config</span><span class="p">[</span><span class="s1">&#39;host&#39;</span><span class="p">],</span> <span class="n">message</span><span class="p">)</span>
+
+                <span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">send_alert</span><span class="p">(</span><span class="s1">&#39;error&#39;</span><span class="p">,</span> <span class="n">server_config</span><span class="p">[</span><span class="s1">&#39;host&#39;</span><span class="p">],</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">interval</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_6">五、运维脚本最佳实践</h2>
+<h3 id="51">5.1 幂等性设计</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ 幂等：重复执行结果一致</span>
+<span class="k">def</span> <span class="nf">ensure_user_exists</span><span class="p">(</span><span class="n">username</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;确保用户存在（幂等）&quot;&quot;&quot;</span>
+    <span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;id </span><span class="si">{</span><span class="n">username</span><span class="si">}</span><span class="s2"> || useradd -m </span><span class="si">{</span><span class="n">username</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 幂等：确保目录存在</span>
+<span class="k">def</span> <span class="nf">ensure_directory</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+    <span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;mkdir -p </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 幂等：确保服务运行</span>
+<span class="k">def</span> <span class="nf">ensure_service_running</span><span class="p">(</span><span class="n">service_name</span><span class="p">):</span>
+    <span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;systemctl is-active </span><span class="si">{</span><span class="n">service_name</span><span class="si">}</span><span class="s2"> || systemctl start </span><span class="si">{</span><span class="n">service_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="52">5.2 超时与重试</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">wraps</span>
+
+<span class="k">def</span> <span class="nf">retry</span><span class="p">(</span><span class="n">max_retries</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">delay</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;重试装饰器&quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="nf">decorator</span><span class="p">(</span><span class="n">func</span><span class="p">):</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+        <span class="k">def</span> <span class="nf">wrapper</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">attempt</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_retries</span><span class="p">):</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+                <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">attempt</span> <span class="o">==</span> <span class="n">max_retries</span> <span class="o">-</span> <span class="mi">1</span><span class="p">:</span>
+                        <span class="k">raise</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  ⚠️  重试 </span><span class="si">{</span><span class="n">attempt</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">max_retries</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">delay</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">wrapper</span>
+    <span class="k">return</span> <span class="n">decorator</span>
+
+<span class="nd">@retry</span><span class="p">(</span><span class="n">max_retries</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">delay</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">deploy_with_retry</span><span class="p">(</span><span class="n">deployer</span><span class="p">,</span> <span class="n">package</span><span class="p">,</span> <span class="n">version</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">deployer</span><span class="o">.</span><span class="n">deploy</span><span class="p">(</span><span class="n">package</span><span class="p">,</span> <span class="n">version</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_7">六、思考题</h2>
+<ol>
+<li><strong>蓝绿部署和滚动更新各有什么优缺点？</strong> 在什么场景下选择哪种？</li>
+<li><strong>如何设计一个支持多环境（dev/staging/prod）的部署系统？</strong> 需要考虑哪些配置差异？</li>
+<li><strong>部署失败后的回滚策略有哪些？</strong> 如何保证回滚过程中服务不中断？</li>
+<li><strong>如何实现零停机部署？</strong> 提示：考虑 connection draining 和 graceful shutdown。</li>
+<li><strong>CI/CD 流水线中，Python 自动化部署脚本应该放在哪个阶段？</strong> 如何与 Jenkins/GitHub Actions 集成？</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-082/index.html">← Day 82 Fabric 与 Paramiko：远程服务器自动化</a><a class="nav-next" href="../day-084/index.html">Day 84 监控告警系统 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,1128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 163 — 阶段项目（二）：安全审计工具箱 · SQLi 检测 + XSS 检测</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 163 — 阶段项目（二）：安全审计工具箱 · SQLi 检测 + XSS 检测</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">809 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-163-安全审计工具箱-part2" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 阶段项目要做什么（今天站在哪个位置）</a>
+<a class="toc-l3" href="#22">2.2 两个检测器的职责与失败模式</a>
+<a class="toc-l3" href="#23-sqli">2.3 SQLi 检测：两段式判定（这是今天最容易写错的地方）</a>
+<a class="toc-l3" href="#24">2.4 四个探针为什么是&quot;四个&quot;</a>
+<a class="toc-l3" href="#25-xss">2.5 XSS 检测：四层判定</a>
+<a class="toc-l3" href="#26">2.6 为什么探针不是可执行载荷（本课最重要的避坑点）</a>
+<a class="toc-l3" href="#27">2.7 覆盖完整性：为什么&quot;没测完&quot;必须独立成一种结果</a>
+<a class="toc-l2" href="#3">3. 原理解释</a>
+<a class="toc-l3" href="#31-error-based">3.1 错误回显（error-based）的判定链</a>
+<a class="toc-l3" href="#32">3.2 探针计划与硬闸门</a>
+<a class="toc-l3" href="#33-baseline">3.3 布尔差分的数学：为什么必须锚定 baseline</a>
+<a class="toc-l3" href="#34">3.4 上下文判定算法</a>
+<a class="toc-l3" href="#35">3.5 转义判定的三个布尔量</a>
+<a class="toc-l3" href="#36">3.6 缓解措施：头部是事实，不是结论</a>
+<a class="toc-l3" href="#37">3.7 优先级评分：为什么严重度与置信度要相乘</a>
+<a class="toc-l3" href="#38">3.8 语义化退出码</a>
+<a class="toc-l2" href="#4">4. 图解</a>
+<a class="toc-l3" href="#41">4.1 四天项目里的位置与数据流</a>
+<a class="toc-l3" href="#42-sqli">4.2 SQLi 检测的两段式判定</a>
+<a class="toc-l3" href="#43-baseline">4.3 三个参照点的实测长度对比（一眼看懂为什么要 baseline）</a>
+<a class="toc-l3" href="#44-xss">4.4 XSS 四层判定与上下文风险阶梯</a>
+<a class="toc-l2" href="#5-api">5. 定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#51-vuln_corepy">5.1 vuln_core.py 模块速查</a>
+<a class="toc-l3" href="#52">5.2 探针与阈值常量</a>
+<a class="toc-l3" href="#53-xssresult">5.3 XssResult 字段语义</a>
+<a class="toc-l3" href="#54-cli">5.4 CLI 速查</a>
+<a class="toc-l2" href="#6">6. 实战代码案例</a>
+<a class="toc-l3" href="#61-codevuln_corepy-1016">6.1 code/vuln_core.py — 共享引擎（1016 行）</a>
+<a class="toc-l3" href="#62-code01-sqli-detectpy">6.2 code/01-sqli-detect.py — 基础用法</a>
+<a class="toc-l3" href="#63-code02-xss-detectpy">6.3 code/02-xss-detect.py — 进阶用法与避坑</a>
+<a class="toc-l3" href="#64-code03-vuln-scan-clipy-cli">6.4 code/03-vuln-scan-cli.py — 实战流水线 CLI</a>
+<a class="toc-l3" href="#65">6.5 两个由&quot;实测&quot;驱动的修复（真实踩坑记录）</a>
+<a class="toc-l2" href="#7">7. 自检与验证</a>
+<a class="toc-l2" href="#8">8. 思考题</a>
+<a class="toc-l2" href="#9">9. 边界与合规（每一条都是设计决策，不是场面话）</a>
+<a class="toc-l2" href="#10">10. 今日完成清单</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-163-sqli-xss">Day 163 — 阶段项目（二）：安全审计工具箱 · SQLi 检测 + XSS 检测</h1>
+<blockquote>
+<p><strong>Phase 10 — 网络安全开发（Day 146–165）</strong> · 主题：安全审计工具箱（Day 162–165 四天项目的第 2 天）</p>
+<p><strong>使用边界（重要，读完再动手）</strong>：<br>
+- 只对<strong>你自己拥有、或已获书面授权</strong>的目标做审计。<br>
+- 本课所有实验都跑在 <code>127.0.0.1</code> 上的<strong>自建靶标</strong>（<code>code/vuln_core.py</code> 里的 <code>LabVulnHTTP</code>）。<br>
+- 探测全部<strong>只读</strong>：只发 <code>GET</code>、<strong>不 POST</strong>、不写数据、不带凭据、不跟随重定向。<br>
+- SQLi 只做<strong>检测</strong>：不 <code>UNION</code> 取数、不拖库、不 <code>DROP</code>、不注释绕过后半段 SQL。<br>
+- <strong>不做时间盲注</strong>（<code>SLEEP</code>/<code>pg_sleep</code>）：那是在目标上"占用资源"，本课刻意排除。<br>
+- XSS 探针<strong>不是可执行载荷</strong>：用自定义标签 <code>&lt;zq163&gt;</code>（浏览器不执行），<br>
+  而不是 <code>&lt;script&gt;alert(1)&lt;/script&gt;</code>。原因见 2.6，这是本课最重要的避坑点。<br>
+- 默认限速 <strong>2 请求/秒</strong>，每个参数最多 <strong>4 个探针</strong>（硬闸门）。<br>
+- 教材中的地址一律为回环或文档网段（RFC 5737 的 <code>192.0.2.0/24</code>）。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>说清阶段项目四天的分工，以及为什么<strong>漏洞面必须建立在资产面之上</strong></li>
+<li>解释 <strong>error-based（错误回显）</strong> 与 <strong>boolean-based（布尔差分）</strong> 两种 SQLi 检测技术的<br>
+  判定条件，以及各自<strong>为什么</strong>需要不同的参照物</li>
+<li>说清布尔差分<strong>为什么必须锚定 baseline</strong>——只比 <code>true</code>/<code>false</code> 两者会被"回显型"页面骗到</li>
+<li>解释<strong>探针计划</strong>为什么固定为 4 个、顺序为什么不能乱</li>
+<li>实现反射型 XSS 的<strong>四层判定</strong>：反射确认 → 转义判定 → 上下文判定 → 缓解措施检查</li>
+<li>说清 XSS <strong>上下文</strong>（文本节点 / 属性 / <code>&lt;script&gt;</code> 块 / 注释）为什么决定严重度</li>
+<li>解释<strong>为什么探针不该是可执行载荷</strong>，以及"用 <code>&lt;script&gt;alert(1)&lt;/script&gt;</code> 做检测"的三个害处</li>
+<li>把两个检测器整合成一个 CLI 流水线，产出统一 JSON/Markdown 报告 + <strong>语义化退出码</strong></li>
+<li>说清"<strong>覆盖不完整</strong>"为什么必须独立成一个退出码（<code>4</code>），不能和"通过"混在一起</li>
+<li>明确本工具<strong>不做</strong>什么（取数、绕过、利用、处置），以及这些边界为什么是必要的</li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 阶段项目要做什么（今天站在哪个位置）</h3>
+<p>Day 159 做了"审计工具箱 v0"（规则引擎 + 报告 + CLI 门禁），Day 160 做了日志分析。<br>
+Day 162–165 把这几天分散的能力<strong>拼成一个完整的资产审计工具</strong>，四天分工：</p>
+<pre class="plain"><code>Day 162（昨天）  资产面：端口扫描 + 目录爆破 + 指纹识别   ← 有哪些&quot;资产&quot;
+Day 163（今天）  漏洞面：SQLi 检测 + XSS 检测             ← 资产上&quot;哪里可能有问题&quot;  ★本课
+Day 164          流量面：代理中间人 + 流量分析            ← 实际&quot;发生了什么&quot;
+Day 165          交付面：报告生成 + Docker 部署           ← 最后&quot;怎么交出去&quot;
+</code></pre>
+<p><strong>为什么漏洞面必须建立在资产面之上？</strong> 因为漏洞检测需要三样输入：</p>
+<table>
+<thead>
+<tr>
+<th>漏洞检测需要</th>
+<th>由谁产出（Day 162）</th>
+<th>缺了会怎样</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>目标清单</strong>（哪些主机/端口活着）</td>
+<td>端口扫描（TCP connect 三态）</td>
+<td>只能靠人工手输 URL，规模上不去</td>
+</tr>
+<tr>
+<td><strong>入口清单</strong>（哪些路径可访问）</td>
+<td>目录爆破（软 404 基线 + 状态分类）</td>
+<td>找不到 <code>/product</code>、<code>/search</code> 这类带参端点</td>
+</tr>
+<tr>
+<td><strong>技术栈线索</strong>（Server/框架/语言）</td>
+<td>指纹识别（多信号汇总 + 置信度）</td>
+<td>无法预判该用哪种报错特征、哪种编码链</td>
+</tr>
+</tbody>
+</table>
+<p>所以今天开工前，你手上应该已经有一份"<strong>URL + 参数</strong>"清单。<br>
+<code>code/targets.example.txt</code> 就是这个清单的示例格式。</p>
+<h3 id="22">2.2 两个检测器的职责与失败模式</h3>
+<table>
+<thead>
+<tr>
+<th>检测器</th>
+<th>输入 → 输出</th>
+<th>核心难点</th>
+<th>典型失败模式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SQLi 检测</strong></td>
+<td>带参 URL → 技术(报错/布尔/无) + 证据</td>
+<td>参照物选择、动态页面噪声</td>
+<td>只比长度；把动态内容当注入</td>
+</tr>
+<tr>
+<td><strong>XSS 检测</strong></td>
+<td>带参 URL → 反射/转义/上下文/缓解措施</td>
+<td>假阳性（回显≠漏洞）、上下文判定</td>
+<td>把"回显了"当成"能执行"</td>
+</tr>
+</tbody>
+</table>
+<p>两者共同点同 Day 162：<strong>它们只产出"线索"，不产出"结论"</strong>。<br>
+报告里必须区分：</p>
+<pre class="plain"><code>事实     「error 探针的响应里出现了 sqlite3. 这个字符串」        ← 可复验，目标无法否认
+推断     「这说明服务端把用户输入拼进了 SQL」                    ← 依据事实 + 常识
+待验证   「能取到数据」                                          ← 本工具**不做**，留给人
+</code></pre>
+<h3 id="23-sqli">2.3 SQLi 检测：两段式判定（这是今天最容易写错的地方）</h3>
+<p>朴素实现是：<strong>发一堆"注入 payload"，响应长度变了就报洞</strong>。它会被两种东西骗：</p>
+<pre class="plain"><code>骗局 1（回显型页面）  页面把你的输入原样打印出来
+    GET /echo?id=1      → len=114
+    GET /echo?id=1&#x27;     → len=120     ← 长度变了！但它只是&quot;多打印了一个引号&quot;
+    GET /echo?id=1 AND 1=2 → len=122  ← 又变了！其实完全无害
+
+骗局 2（动态内容）    页面里有时间戳、随机推荐、广告位
+    同一 URL 请求两次，长度就能差出几十字节
+</code></pre>
+<p>所以本课的检测器采用<strong>两段式</strong>判定，顺序不可颠倒：</p>
+<pre class="plain"><code>第 1 段：报错回显（error-based）—— 强证据，优先级最高
+    探针 #1 = 原值 + &#x27;        → 期待&quot;语法被搞坏&quot;的可观测后果
+    成立条件：HTTP 5xx 或 响应体命中数据库报错特征
+    ↑ 这一步不需要参照物：报错本身就是自证
+
+第 2 段：布尔差分（boolean-based）—— 弱证据，必须锚定 baseline
+    探针 #2 = 原值 AND 1=1    → 恒真，结果集应与&quot;正常查询&quot;一致
+    探针 #3 = 原值 AND 1=2    → 恒假，结果集应变为空
+    成立条件（三个必须同时满足）：
+      ① true 与 false 的状态码相同
+      ② true 的响应&quot;贴近 baseline&quot;
+      ③ false 的响应&quot;明显偏离 baseline&quot;
+</code></pre>
+<p><strong>为什么要"贴近 baseline"这一条？</strong> 因为如果只看 <code>true ≠ false</code>，<br>
+骗局 1 那种"原样回显"的页面又会通过：<code>1 AND 1=1</code> 和 <code>1 AND 1=2</code><br>
+长度不同（字符串本身就不同长），于是误报。加上①~③之后：</p>
+<pre class="plain"><code>/echo 陷阱（已转义、原样回显）实测：
+    baseline  1            200   114
+    error     1&#x27;           200   120
+    true      1 AND 1=1    200   122
+    false     1 AND 1=2    200   122
+    → 条件③不成立（false 也贴近 baseline）→ 判定 none ✅ 没有误报
+
+/product 有缺陷端点（字符串拼接）实测：
+    baseline  1            200   124
+    error     1&#x27;           500   ...
+    → 第 1 段就命中（HTTP 500 + sqlite3. 报错特征）→ error_based ✅
+
+/safe-product 安全对照（参数化）实测：
+    baseline  1            200   167
+    error     1&#x27;           200   139
+    true      1 AND 1=1    200   139
+    false     1 AND 1=2    200   139
+    → 没有报错，且三个探针完全一致（值被当字面量）→ none ✅
+</code></pre>
+<h3 id="24">2.4 四个探针为什么是"四个"</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>标签</th>
+<th>值</th>
+<th>作用</th>
+<th>少了它会怎样</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td><code>baseline</code></td>
+<td>原值</td>
+<td>建立"正常响应"锚点</td>
+<td>布尔差分没有参照物 → 只能瞎猜</td>
+</tr>
+<tr>
+<td>1</td>
+<td><code>error</code></td>
+<td>原值 + <code>'</code></td>
+<td>破引号 → 触发语法错误</td>
+<td>漏掉 error-based（最强证据）</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>true</code></td>
+<td><code>原值 AND 1=1</code></td>
+<td>恒真对照</td>
+<td>差分不成对，无法排除"页面本来就在变"</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>false</code></td>
+<td><code>原值 AND 1=2</code></td>
+<td>恒假对照</td>
+<td>同上</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么不多发几个？</strong> 两个理由：</p>
+<ol>
+<li><strong>授权成本</strong>：每多一个探针，就是多一次"真的进入了目标业务逻辑"的请求。<br>
+   本课把上限做成<strong>硬闸门</strong>（<code>MAX_PROBES_PER_PARAM = 4</code>），<br>
+   超了直接抛 <code>ScopeError</code> 而不是"温柔地跳过"——边界必须能让程序停下来。</li>
+<li><strong>边际收益</strong>：更多探针（<code>OR 1=1</code>、<code>UNION</code>、编码变体）属于"检测之上的事"，<br>
+   它们开始接近"利用"，本课刻意不做。</li>
+</ol>
+<h3 id="25-xss">2.5 XSS 检测：四层判定</h3>
+<p>反射型 XSS 的判定不是"有没有反射"这么简单，而是四层：</p>
+<pre class="plain"><code>第 1 层  反射确认   输入有没有回到响应里？            → reflected: bool
+第 2 层  转义判定   回来的是原样字节还是 HTML 实体？   → raw_tag / escaped
+第 3 层  上下文判定 回在文本节点、属性、&lt;script&gt;、注释？→ context
+第 4 层  缓解措施   CSP / nosniff / charset 有没有？   → mitigations: list
+</code></pre>
+<p><strong>每一层都可能单独导致误判</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>只做到</th>
+<th>会误判成</th>
+<th>我们的靶标里谁专治它</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第 1 层</td>
+<td><code>/echo</code>（已转义）被判为"反射型 XSS"</td>
+<td><code>/echo</code> 假阳性陷阱</td>
+</tr>
+<tr>
+<td>第 1、2 层</td>
+<td>所有反射都评成同一严重度</td>
+<td><code>/greeting</code>（<code>&lt;script&gt;</code> 块，high）vs <code>/comment</code>（注释，low）</td>
+</tr>
+<tr>
+<td>第 1、2、3 层</td>
+<td>漏掉"注入成立后有没有兜底"</td>
+<td><code>/safe-search</code>（转义 + CSP，0 缺口）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="26">2.6 为什么探针<strong>不是</strong>可执行载荷（本课最重要的避坑点）</h3>
+<p>新手最容易写出的探针是 <code>&lt;script&gt;alert(1)&lt;/script&gt;</code>。本课刻意<strong>不用</strong>它：</p>
+<ol>
+<li><strong>没必要</strong>。检测只需要证明"危险字符原样进入了 HTML"。<br>
+   判断依据是<strong>响应体里的字节</strong>，不需要浏览器真的执行一次。</li>
+<li><strong>有副作用</strong>。一旦有任何人（包括你自己后续用浏览器复核）打开那个 URL，<br>
+   脚本就在<strong>你的</strong>浏览器上下文里执行——审计就从"只读"变成了"真的攻击了自己"。<br>
+   反射型 XSS 的 URL 是可以被分享、被爬虫抓取、被日志记录的，副作用会扩散。</li>
+<li><strong>会被拦</strong>。<code>&lt;script&gt;</code> 是最先被 WAF / 浏览器 / 框架拦截的模式。<br>
+   测出来的"安全"其实只是"被挡了"，<strong>反而掩盖了真实缺陷</strong>。</li>
+</ol>
+<p>所以本课探针是：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">XSS_MARKER</span> <span class="o">=</span> <span class="s2">&quot;zq163x7&quot;</span>          <span class="c1"># 唯一标记：用于在响应里精确定位&quot;我们的输入落在了哪&quot;</span>
+<span class="n">XSS_PROBE</span>  <span class="o">=</span> <span class="n">XSS_MARKER</span> <span class="o">+</span> <span class="s1">&#39;&quot;</span><span class="se">\&#39;</span><span class="s1">&gt;&lt;zq163&gt;&#39;</span>
+<span class="c1">#            └─ 唯一标记 ─┘ └破引号┘└─ 破标签：自定义标签，浏览器不认识 → 不执行 ─┘</span>
+</code></pre></div>
+<p><code>&lt;zq163&gt;</code> 是<strong>自定义标签</strong>：HTML 解析器会把它当未知元素（进 DOM，但不执行任何脚本）。<br>
+它能证明"标签注入成立"（第 2 层的 <code>raw_tag</code>），却不会带来任何执行风险。</p>
+<blockquote>
+<p>这也是"唯一标记"存在的意义：为了在 HTML 里定位上下文，<br>
+你必须能在响应中<strong>唯一地</strong>找到自己的输入。用 <code>test</code>、<code>123</code> 这种值，<br>
+页面里到处都是，上下文判定会直接失效。</p>
+</blockquote>
+<h3 id="27">2.7 覆盖完整性：为什么"没测完"必须独立成一种结果</h3>
+<p>自动化扫描器最大的伦理与技术问题，是<strong>把"限速后的空结果"当成"干净"</strong>。</p>
+<pre class="plain"><code>目标返回 429 → 探针没拿到有效响应 → 没有发现 → 报告写&quot;无风险&quot;
+                                        ↑ 这是彻头彻尾的假阴性
+</code></pre>
+<p>本课的处理：<strong>每一个探针的 429 都被计数</strong>，并生成一条独立的<br>
+<code>coverage_gap</code>（覆盖缺口）发现，同时在报告头部写明"覆盖：<strong>不完整</strong>"，<br>
+最后用<strong>退出码 4</strong> 把它交给上层：</p>
+<table>
+<thead>
+<tr>
+<th>退出码</th>
+<th>含义</th>
+<th>上层动作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>跑完且无 P0/P1</td>
+<td>归档，继续</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>越界 / 用法错误</td>
+<td>停下并人工确认授权（<strong>不重试</strong>）</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>有 P0/P1 发现</td>
+<td>阻断发布 / 拉起人工复核</td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td>覆盖不完整（429/异常）</td>
+<td>降速重跑；<strong>不能</strong>当成"通过"</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3">3. 原理解释</h2>
+<h3 id="31-error-based">3.1 错误回显（error-based）的判定链</h3>
+<pre class="plain"><code>用户输入 1&#x27;
+   ↓
+服务端拼接：  &quot;SELECT * FROM products WHERE id = &#x27;&quot; + &quot;1&#x27;&quot; + &quot;&#x27;&quot;
+   ↓
+数据库解析：  ... WHERE id = &#x27;1&#x27;&#x27;        ← 引号不配对 → 语法错误
+   ↓
+数据库抛异常：sqlite3.OperationalError: near &quot;1&#x27;&quot;: syntax error
+   ↓
+[缺陷] Web 层把异常详情直接渲染进响应（verbose error）
+   ↓
+检测器的可观测证据：HTTP 500  +  响应体命中 &quot;sqlite3.&quot; 特征
+</code></pre>
+<p><code>vuln_core.py</code> 里的 <code>_fake_execute()</code> 就是一版<strong>确定性的最小复刻</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">if</span> <span class="n">expr</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="s2">&quot;&#39;&quot;</span><span class="p">)</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>                    <span class="c1"># 引号不配对 → 语法错误</span>
+    <span class="k">raise</span> <span class="n">LabSQLError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;near &quot;</span><span class="si">{</span><span class="n">expr</span><span class="si">}</span><span class="s1">&quot;: syntax error&#39;</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;and\s+1\s*=\s*2&quot;</span><span class="p">,</span> <span class="n">expr</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">):</span>   <span class="c1"># 恒假 → 空结果</span>
+    <span class="k">return</span> <span class="p">[]</span>
+<span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;and\s+1\s*=\s*1&quot;</span><span class="p">,</span> <span class="n">expr</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">):</span>   <span class="c1"># 恒真 → 全部结果</span>
+    <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="n">PRODUCTS</span><span class="p">)</span>
+<span class="k">return</span> <span class="p">[</span><span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">PRODUCTS</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">])</span> <span class="o">==</span> <span class="n">expr</span><span class="o">.</span><span class="n">strip</span><span class="p">()]</span>
+</code></pre></div>
+<p><strong>为什么用假引擎而不是真数据库？</strong> 三个好处，缺一不可：</p>
+<ol>
+<li><strong>可复现</strong>：<code>sqlite3</code> 版本一换、SQL 方言一改，报错文本就变，特征是脆的；<br>
+   假引擎是纯函数，行为永远一致（所以能写进 <code>--self-test</code> 当断言）。</li>
+<li><strong>零依赖</strong>：不需要装任何数据库，一个 <code>python3</code> 就能跑完一整课。</li>
+<li><strong>不可能误伤</strong>：它<strong>没有</strong>任何真实数据、没有网络出口——即使探针写错，<br>
+   最坏结果也只是本地一个 HTTP 500。</li>
+</ol>
+<p><strong>报错特征库为什么只匹配、不回抄？</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">SQL_ERROR_SIGNATURES</span> <span class="o">=</span> <span class="p">(</span><span class="sa">r</span><span class="s2">&quot;sql syntax&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;sqlite3\.&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;syntax error&quot;</span><span class="p">,</span>
+                        <span class="sa">r</span><span class="s2">&quot;unclosed quotation mark&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;you have an error in your sql&quot;</span><span class="p">,</span>
+                        <span class="sa">r</span><span class="s2">&quot;quoted string not properly terminated&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;ora-\d</span><span class="si">{5}</span><span class="s2">&quot;</span><span class="p">,</span>
+                        <span class="sa">r</span><span class="s2">&quot;pg_query\(\)&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;mysql_fetch&quot;</span><span class="p">,</span> <span class="sa">r</span><span class="s2">&quot;warning:\s*mysql&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>真实的数据库报错页常常带出<strong>表名、列名、甚至数据片段</strong>。把它们抄进报告<br>
+= 顺手把目标的内部信息泄露到审计报告里（而报告会流转、会归档）。<br>
+所以 <code>match_sql_error()</code> 只返回<strong>命中的特征名</strong>（如 <code>sqlite3\.</code>）。</p>
+<h3 id="32">3.2 探针计划与硬闸门</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">lim</span> <span class="o">=</span> <span class="n">RateLimiter</span><span class="p">(</span><span class="n">rate</span><span class="o">=</span><span class="n">rate</span><span class="p">)</span>                 <span class="c1"># 令牌桶，默认 2 req/s</span>
+<span class="n">plan</span> <span class="o">=</span> <span class="p">[(</span><span class="s2">&quot;baseline&quot;</span><span class="p">,</span> <span class="n">base_value</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;error&quot;</span><span class="p">,</span>    <span class="n">base_value</span> <span class="o">+</span> <span class="s2">&quot;&#39;&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;true&quot;</span><span class="p">,</span>     <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base_value</span><span class="si">}</span><span class="s2"> AND 1=1&quot;</span><span class="p">),</span>
+        <span class="p">(</span><span class="s2">&quot;false&quot;</span><span class="p">,</span>    <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base_value</span><span class="si">}</span><span class="s2"> AND 1=2&quot;</span><span class="p">)]</span>
+</code></pre></div>
+<p>每个探针都要经过三道处理：</p>
+<pre class="plain"><code>set_query_param(url, param, value)   # ① 安全改写 URL（保留其它参数、正确百分号编码）
+        ↓
+scope.check_url(target)              # ② 改写后再校验一次（防止探针把 URL 带出范围）
+        ↓
+lim.get(target)                      # ③ 限速 + 计数；超上限抛 ScopeError
+</code></pre>
+<p><strong>② 为什么要在改写后</strong>再校验一次？因为"参数值进 URL"本身就是一次<strong>改写</strong>，<br>
+改写可能改变 host/port/路径前缀（比如值里带 <code>@</code>、<code>../</code>、<code>//</code>）。<br>
+门禁放在<strong>唯一出口</strong>上，比"入口查一次"更难绕过。</p>
+<p><code>set_query_param()</code> 里还有一条容易忽略的规则：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">if</span> <span class="ow">not</span> <span class="n">found</span><span class="p">:</span>
+    <span class="k">raise</span> <span class="n">ScopeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;URL 中不存在参数 </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>参数不存在时<strong>不擅自添加</strong>——新增一个参数可能改变业务行为<br>
+（比如 <code>?debug=1</code>、<code>?admin=true</code>，那已经是"探测行为"，不是"检测"）。</p>
+<h3 id="33-baseline">3.3 布尔差分的数学：为什么必须锚定 baseline</h3>
+<p>记 <code>L(·)</code> 为响应长度（或任意可比较的响应指纹），<code>B</code> 为 baseline：</p>
+<pre class="plain"><code>朴素判据（错）:      L(true) ≠ L(false)              → 判为注入
+    反例 /echo:     122 ≠ 122? 不成立；但换个页面就成立 → 误报
+
+本课判据（对）:      同状态码 ∧ close(L(true), B) ∧ ¬close(L(false), B)
+    其中 close(a,b) ⇔ |a-b| ≤ max(tol_abs, tol_rel × max(a,b))
+                     默认 tol_abs=32, tol_rel=5%
+</code></pre>
+<p><code>tol_rel</code>（相对容差）的意义：大页面（几十 KB）的长度波动绝对值天然更大，<br>
+固定阈值会让大页面上恒真/恒假都判成"贴近"。用 <code>max(绝对, 相对)</code> 两者取大，<br>
+是一个工程上稳妥的折中。</p>
+<p>实测三条曲线（来自 <code>01-sqli-detect.py</code> 的输出）：</p>
+<pre class="plain"><code>                    baseline   error    true    false   判定
+/product  (有缺陷)     124       500      —       —     error_based（第 1 段命中）
+/safe-product(安全)    167       139     139     139    none（三探针完全一致）
+/echo     (陷阱)       114       120     122     122    none（false 也&quot;贴近&quot;→差分不成立）
+</code></pre>
+<p><strong>注意 <code>/safe-product</code> 那一行</strong>：<code>error</code> 探针长度 139 ≠ baseline 167。<br>
+如果只看"长度变了"，这里会<strong>误报</strong>。原因是参数化后 <code>1'</code> 被当成<strong>字面量</strong>，<br>
+查询结果为空（"没有匹配的商品"比"有 2 条商品"短）。这正是"长度 ≠ 注入"的活证据。</p>
+<h3 id="34">3.4 上下文判定算法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">classify_context</span><span class="p">(</span><span class="n">body</span><span class="p">,</span> <span class="n">marker</span><span class="p">):</span>
+    <span class="n">idx</span> <span class="o">=</span> <span class="n">body</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">marker</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">idx</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span> <span class="k">return</span> <span class="s2">&quot;none&quot;</span>                     <span class="c1"># 没反射，没有上下文</span>
+    <span class="n">before</span> <span class="o">=</span> <span class="n">body</span><span class="p">[:</span><span class="n">idx</span><span class="p">]</span>                           <span class="c1"># 只看标记**之前**的内容</span>
+
+    <span class="k">if</span> <span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;&lt;!--&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;--&gt;&quot;</span><span class="p">):</span>            <span class="c1"># ① 在注释里？</span>
+        <span class="k">return</span> <span class="s2">&quot;html_comment&quot;</span>
+    <span class="n">open_block</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;&lt;script&quot;</span><span class="p">),</span> <span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;&lt;style&quot;</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">open_block</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span> <span class="ow">and</span> <span class="n">open_block</span> <span class="o">&gt;</span> <span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;&lt;/script&gt;&quot;</span><span class="p">)</span> \
+            <span class="ow">and</span> <span class="n">open_block</span> <span class="o">&gt;</span> <span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;&lt;/style&gt;&quot;</span><span class="p">):</span>        <span class="c1"># ② 在脚本/样式块里？</span>
+        <span class="k">return</span> <span class="s2">&quot;script_block&quot;</span>
+    <span class="k">if</span> <span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;&lt;&quot;</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;&gt;&quot;</span><span class="p">):</span>                 <span class="c1"># ③ 在标签内部？</span>
+        <span class="n">fragment</span> <span class="o">=</span> <span class="n">body</span><span class="p">[</span><span class="n">before</span><span class="o">.</span><span class="n">rfind</span><span class="p">(</span><span class="s2">&quot;&lt;&quot;</span><span class="p">):</span><span class="n">idx</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;=\s*</span><span class="se">\&quot;</span><span class="s2">[^</span><span class="se">\&quot;</span><span class="s2">]*$&quot;</span><span class="p">,</span> <span class="n">fragment</span><span class="p">):</span> <span class="k">return</span> <span class="s2">&quot;attr_quoted_double&quot;</span>
+        <span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;=\s*&#39;[^&#39;]*$&quot;</span><span class="p">,</span>  <span class="n">fragment</span><span class="p">):</span> <span class="k">return</span> <span class="s2">&quot;attr_quoted_single&quot;</span>
+        <span class="k">return</span> <span class="s2">&quot;attr_unquoted&quot;</span>
+    <span class="k">return</span> <span class="s2">&quot;text_node&quot;</span>                                        <span class="c1"># ④ 否则：文本节点</span>
+</code></pre></div>
+<p>核心思想：<strong>看"标记左边最近的未闭合结构是什么"</strong>。</p>
+<pre class="plain"><code>   &lt;!-- 注释 --&gt;  &lt;script&gt;…&lt;/script&gt;  &lt;input value=&quot;…&quot;&gt;
+   ↑           ↑  ↑               ↑   ↑       ↑     ↑
+   注释区间         脚本块区间            属性区间
+</code></pre>
+<p><code>rfind(...)</code> 比较"最后一次出现位置"是判断"我是否落在某个区间内部"的标准技巧：<br>
+如果 <code>&lt;!--</code> 的最后位置 &gt; <code>--&gt;</code> 的最后位置，说明注释<strong>开着没关</strong>，我就在注释里。</p>
+<h3 id="35">3.5 转义判定的三个布尔量</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">out</span><span class="o">.</span><span class="n">reflected</span> <span class="o">=</span> <span class="n">XSS_MARKER</span> <span class="ow">in</span> <span class="n">body</span>                      <span class="c1"># 标记出现过</span>
+<span class="n">out</span><span class="o">.</span><span class="n">raw_full</span>  <span class="o">=</span> <span class="n">XSS_PROBE</span>  <span class="ow">in</span> <span class="n">body</span>                      <span class="c1"># 连引号都原样出现（最强）</span>
+<span class="n">out</span><span class="o">.</span><span class="n">raw_tag</span>   <span class="o">=</span> <span class="s2">&quot;&lt;zq163&gt;&quot;</span>  <span class="ow">in</span> <span class="n">body</span>                      <span class="c1"># 标签原样出现 → HTML 注入成立</span>
+<span class="n">out</span><span class="o">.</span><span class="n">escaped</span>   <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;&amp;lt;zq163&amp;gt;&quot;</span> <span class="ow">in</span> <span class="n">body</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">html</span><span class="o">.</span><span class="n">escape</span><span class="p">(</span><span class="n">XSS_PROBE</span><span class="p">,</span> <span class="n">quote</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="ow">in</span> <span class="n">body</span><span class="p">)</span>
+</code></pre></div>
+<p>为什么 <code>raw_full</code> 比 <code>raw_tag</code> 强？因为 <code>"</code> <code>'</code> <code>&gt;</code> 全都没被处理，<br>
+说明服务端<strong>几乎没有任何输出编码</strong>——闭合属性、闭合字符串都成为可能。</p>
+<p><code>escaped</code> 用<strong>两种写法</strong>判断（字面实体 + <code>html.escape</code> 的标准产物），<br>
+是为了覆盖"只转义了 <code>&lt;</code> <code>&gt;</code>"和"按 HTML 规范全转义"两种实现。</p>
+<h3 id="36">3.6 缓解措施：头部是事实，不是结论</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">check_xss_mitigations</span><span class="p">(</span><span class="n">headers</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+    <span class="c1"># 检查三样：CSP / X-Content-Type-Options: nosniff / Content-Type 里的 charset</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>缺的东西</th>
+<th>缺了意味着什么</th>
+<th><strong>不</strong>意味着什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Content-Security-Policy</code></td>
+<td>注入一旦成立，没有纵深防御兜底</td>
+<td>不代表存在 XSS</td>
+</tr>
+<tr>
+<td><code>X-Content-Type-Options: nosniff</code></td>
+<td>可能被 MIME 嗅探利用（配合上传场景）</td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>Content-Type</code> 无 <code>charset</code></td>
+<td>可能触发编码混淆（如 UTF-7 时代的经典问题）</td>
+<td>同上</td>
+</tr>
+</tbody>
+</table>
+<p>报告用 <code>xss_mitigation_missing</code> 这条<strong>独立发现</strong>承载它，<br>
+严重度 <code>low</code> / 置信度 <code>high</code>——因为"头确实没了"是硬事实，但推论链很短，<br>
+不该抬到 high 严重度。实测：有缺陷的 <code>/search</code> 缺 2 项，安全对照 <code>/safe-search</code> 缺 0 项。</p>
+<h3 id="37">3.7 优先级评分：为什么严重度与置信度要相乘</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">score</span>  <span class="o">=</span> <span class="p">(</span><span class="n">严重度序号</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span> <span class="err">×</span> <span class="p">(</span><span class="n">置信度序号</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>      <span class="c1"># SEVERITY_LEVELS = info,low,medium,high,critical</span>
+<span class="n">P0</span> <span class="err">≥</span><span class="mi">20</span>   <span class="n">P1</span> <span class="err">≥</span><span class="mi">12</span>   <span class="n">P2</span> <span class="err">≥</span><span class="mi">6</span>   <span class="n">P3</span> <span class="n">其余</span>
+</code></pre></div>
+<p><strong>为什么相乘而不是相加？</strong> 因为安全结论的两个维度是<strong>独立</strong>的：</p>
+<pre class="plain"><code>high 严重度 + low  置信度 → (4+1)×(1+1) = 10 → P2    &quot;可能很严重，但先别急着叫醒人&quot;
+medium 严重度 + high 置信度 → (2+1)×(4+1) = 15 → P1    &quot;不致命，但证据确凿，得处理&quot;
+high 严重度 + high 置信度 → 25 → P0                    &quot;又严重又确凿&quot;
+</code></pre>
+<p>相加会把它压成一维，<code>high+low</code> 和 <code>medium+medium</code> 变得无法区分。</p>
+<h3 id="38">3.8 语义化退出码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">exit_code</span><span class="p">(</span><span class="n">findings</span><span class="p">,</span> <span class="n">incomplete</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">incomplete</span><span class="p">:</span> <span class="k">return</span> <span class="mi">4</span>                                    <span class="c1"># 覆盖不完整优先</span>
+    <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">priority</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;P0&quot;</span><span class="p">,</span><span class="s2">&quot;P1&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">findings</span><span class="p">):</span> <span class="k">return</span> <span class="mi">3</span>
+    <span class="k">return</span> <span class="mi">0</span>
+</code></pre></div>
+<p><strong>为什么 <code>4</code> 的优先级比 <code>3</code> 高（先判断 incomplete）？</strong><br>
+因为"没测完"会<strong>掩盖</strong>发现——如果 429 让一半目标没结论，<br>
+报告里即使有 P1 也是不完整的 P1。先告诉上层"这轮结论不可信"，<br>
+再谈发现了什么，是更诚实的顺序。（越界的 <code>2</code> 由异常路径抛出，<br>
+语义是"根本没开始测"，自然在 4 之前。）</p>
+<hr>
+<h2 id="4">4. 图解</h2>
+<h3 id="41">4.1 四天项目里的位置与数据流</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph D162[&quot;Day 162 · 资产面&quot;]
+        A1[端口扫描&lt;br/&gt;三态 open/closed/filtered]
+        A2[目录爆破&lt;br/&gt;软404基线]
+        A3[指纹识别&lt;br/&gt;多信号+置信度]
+    end
+    subgraph D163[&quot;Day 163 · 漏洞面 ★&quot;]
+        B0[目标清单&lt;br/&gt;URL + 参数]
+        B1[SQLi 检测器&lt;br/&gt;报错回显 + 布尔差分]
+        B2[XSS 检测器&lt;br/&gt;反射/转义/上下文/缓解]
+        B3[统一报告&lt;br/&gt;JSON + Markdown]
+        B4{{语义化退出码&lt;br/&gt;0/2/3/4}}
+    end
+    A1 --&gt; B0
+    A2 --&gt; B0
+    A3 --&gt; B0
+    B0 --&gt; B1 --&gt; B3
+    B0 --&gt; B2 --&gt; B3
+    B3 --&gt; B4
+    B3 -.-&gt;|Day 164| C[流量面：代理中间人]
+    B3 -.-&gt;|Day 165| D[交付面：报告+Docker]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph D162[&quot;Day 162 · 资产面&quot;]
+        A1[端口扫描&lt;br/&gt;三态 open/closed/filtered]
+        A2[目录爆破&lt;br/&gt;软404基线]
+        A3[指纹识别&lt;br/&gt;多信号+置信度]
+    end
+    subgraph D163[&quot;Day 163 · 漏洞面 ★&quot;]
+        B0[目标清单&lt;br/&gt;URL + 参数]
+        B1[SQLi 检测器&lt;br/&gt;报错回显 + 布尔差分]
+        B2[XSS 检测器&lt;br/&gt;反射/转义/上下文/缓解]
+        B3[统一报告&lt;br/&gt;JSON + Markdown]
+        B4{{语义化退出码&lt;br/&gt;0/2/3/4}}
+    end
+    A1 --&gt; B0
+    A2 --&gt; B0
+    A3 --&gt; B0
+    B0 --&gt; B1 --&gt; B3
+    B0 --&gt; B2 --&gt; B3
+    B3 --&gt; B4
+    B3 -.-&gt;|Day 164| C[流量面：代理中间人]
+    B3 -.-&gt;|Day 165| D[交付面：报告+Docker]
+</code></pre></div>
+<h3 id="42-sqli">4.2 SQLi 检测的两段式判定</h3>
+<pre class="plain"><code>                    ┌──────────────────────────────┐
+   URL + 参数  ───▶ │  Scope.check_url() 门禁      │ 越界 → AuthorizationError → 退出码 2
+                    └──────────────┬───────────────┘
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │ 探针 #0 baseline  原值        │──▶ B (锚点)
+                    │ 探针 #1 error     原值 + &#x27;    │
+                    │ 探针 #2 true      原值 AND 1=1│
+                    │ 探针 #3 false     原值 AND 1=2│
+                    └──────────────┬───────────────┘
+                                   ▼
+              第 1 段：error 探针 5xx 或命中报错特征？
+                    ├── 是 ──▶ technique = error_based   （强证据，直接返回）
+                    └── 否 ──┐
+                             ▼
+              第 2 段：同状态码 ∧ close(true,B) ∧ ¬close(false,B)？
+                    ├── 是 ──▶ technique = boolean_based （弱证据，置信度 medium）
+                    └── 否 ──▶ technique = none          （只说明这 4 个探针没命中）
+</code></pre>
+<h3 id="43-baseline">4.3 三个参照点的实测长度对比（一眼看懂为什么要 baseline）</h3>
+<pre class="plain"><code> 长度
+  180 │                         ▓▓▓
+  160 │                         ▓▓▓
+  140 │        ▓▓▓   ▓▓▓ ▓▓▓    ▓▓▓         ▓▓▓ = baseline
+  120 │ ▓▓▓    ▓▓▓   ▓▓▓ ▓▓▓    ▓▓▓   ▓▓▓   ░░░ = error/true/false
+  100 │ ░░░░░  ░░░   ░░░ ░░░    ░░░   ░░░
+      └──────────────────────────────────────
+        /echo          /safe-product  /product
+        114→120/122/122  167→139×3     124→(500 报错)
+        ↑ false 也贴近 B  ↑ 三探针一致   ↑ 第 1 段命中
+        → none  ✅        → none ✅      → error_based ✅
+</code></pre>
+<h3 id="44-xss">4.4 XSS 四层判定与上下文风险阶梯</h3>
+<pre class="plain"><code>  探针 zq163x7&quot;&#x27;&gt;&lt;zq163&gt;
+        │
+        ▼
+ ① 反射确认 ── 标记没出现？ ─▶ info / 未见反射（≠ 安全）
+        │ 出现
+        ▼
+ ② 转义判定 ── &amp;lt;zq163&amp;gt;？ ─▶ info / 已转义（/echo 陷阱在此沉默）
+        │ 原样
+        ▼
+ ③ 上下文判定
+      script_block        → high   ← 闭合字符串即可执行 JS（最危险）
+      attr_unquoted       → high
+      attr_quoted_double  → medium ← /profile
+      text_node           → medium ← /search
+      html_comment        → low    ← /comment（需先闭合注释）
+        │
+        ▼
+ ④ 缓解措施 ── 缺 CSP/nosniff/charset？ ─▶ 追加一条 low 发现的独立 Finding
+</code></pre>
+<hr>
+<h2 id="5-api">5. 定义与使用方法（API 速查表）</h2>
+<h3 id="51-vuln_corepy">5.1 <code>vuln_core.py</code> 模块速查</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>类型</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Scope</code></td>
+<td>dataclass</td>
+<td>授权范围：<code>networks</code> / <code>ports</code> / <code>http_bases</code> / <code>ticket</code></td>
+</tr>
+<tr>
+<td><code>Scope.check_url(url)</code></td>
+<td>方法</td>
+<td><strong>唯一</strong>允许构造请求的出口；越界抛 <code>AuthorizationError</code></td>
+</tr>
+<tr>
+<td><code>default_lab_scope(port)</code></td>
+<td>函数</td>
+<td>生成"只允许回环该端口"的范围</td>
+</tr>
+<tr>
+<td><code>LabVulnHTTP(port, host, throttle_after)</code></td>
+<td>上下文管理器</td>
+<td>起/停本机靶标；<code>throttle_after</code> 用于演示 429</td>
+</tr>
+<tr>
+<td><code>fetch(url, timeout)</code></td>
+<td>函数</td>
+<td>只读 GET：不跟随重定向、不发送凭据、只读前 8KB</td>
+</tr>
+<tr>
+<td><code>set_query_param(url, name, value)</code></td>
+<td>函数</td>
+<td>安全改写单个查询参数；参数不存在抛 <code>ScopeError</code></td>
+</tr>
+<tr>
+<td><code>TokenBucket(rate, capacity)</code></td>
+<td>类</td>
+<td>令牌桶限速；<code>.acquire()</code> 返回等待秒数</td>
+</tr>
+<tr>
+<td><code>RateLimiter(rate, max_probes)</code></td>
+<td>类</td>
+<td>限速 + 探针硬上限 + 429/异常计数</td>
+</tr>
+<tr>
+<td><code>detect_sqli(url, scope, param, rate, timeout, tol_abs, tol_rel)</code></td>
+<td>函数</td>
+<td>→ <code>SqliResult</code></td>
+</tr>
+<tr>
+<td><code>match_sql_error(body)</code></td>
+<td>函数</td>
+<td>返回命中的<strong>特征名</strong>（不抄报错全文）</td>
+</tr>
+<tr>
+<td><code>detect_xss(url, scope, param, rate, timeout)</code></td>
+<td>函数</td>
+<td>→ <code>XssResult</code></td>
+</tr>
+<tr>
+<td><code>classify_context(body, marker)</code></td>
+<td>函数</td>
+<td>→ <code>text_node</code>/<code>attr_*</code>/<code>script_block</code>/<code>html_comment</code>/<code>none</code></td>
+</tr>
+<tr>
+<td><code>check_xss_mitigations(headers)</code></td>
+<td>函数</td>
+<td>返回<strong>缺失项</strong>的文字列表</td>
+</tr>
+<tr>
+<td><code>Finding</code></td>
+<td>dataclass</td>
+<td>统一发现结构；<code>.priority</code> 由严重度×置信度算出</td>
+</tr>
+<tr>
+<td><code>findings_from_sqli/xss(results)</code></td>
+<td>函数</td>
+<td>结果 → 发现列表（含 <code>coverage_gap</code>）</td>
+</tr>
+<tr>
+<td><code>build_report(...)</code> / <code>render_markdown(...)</code> / <code>write_report(...)</code></td>
+<td>函数</td>
+<td>报告构造/渲染/落盘</td>
+</tr>
+<tr>
+<td><code>exit_code(findings, incomplete)</code></td>
+<td>函数</td>
+<td><code>2/3/4/0</code> 语义化退出码</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52">5.2 探针与阈值常量</h3>
+<table>
+<thead>
+<tr>
+<th>常量</th>
+<th>值</th>
+<th>为什么是这个值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DEFAULT_RATE</code></td>
+<td><code>2.0</code></td>
+<td>探针会真正进入业务逻辑，比目录爆破（5/s）更克制</td>
+</tr>
+<tr>
+<td><code>MAX_PROBES_PER_PARAM</code></td>
+<td><code>4</code></td>
+<td>四探针计划的硬闸门：超了抛异常，不悄悄跳过</td>
+</tr>
+<tr>
+<td><code>READ_LIMIT</code></td>
+<td><code>8192</code></td>
+<td>响应体只读前 8KB：够判定，又不把整站拖下来</td>
+</tr>
+<tr>
+<td><code>DEFAULT_TIMEOUT</code></td>
+<td><code>2.0</code></td>
+<td>漏检（超时）比慢更可接受</td>
+</tr>
+<tr>
+<td><code>XSS_MARKER</code></td>
+<td><code>zq163x7</code></td>
+<td>唯一标记：能在响应里唯一定位自己的输入</td>
+</tr>
+<tr>
+<td><code>XSS_PROBE</code></td>
+<td><code>zq163x7"'&gt;&lt;zq163&gt;</code></td>
+<td>破引号 + 破标签 + <strong>非可执行</strong>自定义标签</td>
+</tr>
+<tr>
+<td><code>tol_abs</code> / <code>tol_rel</code></td>
+<td><code>32</code> / <code>0.05</code></td>
+<td>长度容差：<code>max(32, 5%×max(a,b))</code></td>
+</tr>
+<tr>
+<td><code>SQL_ERROR_SIGNATURES</code></td>
+<td>10 条正则</td>
+<td>只匹配特征名，<strong>不回抄</strong>报错全文</td>
+</tr>
+</tbody>
+</table>
+<h3 id="53-xssresult">5.3 <code>XssResult</code> 字段语义</h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reflected</code></td>
+<td>bool</td>
+<td>唯一标记是否出现在响应里</td>
+</tr>
+<tr>
+<td><code>raw_full</code></td>
+<td>bool</td>
+<td>整个探针字符串原样出现（最强证据）</td>
+</tr>
+<tr>
+<td><code>raw_tag</code></td>
+<td>bool</td>
+<td><code>&lt;zq163&gt;</code> 原样出现 → HTML 注入成立</td>
+</tr>
+<tr>
+<td><code>escaped</code></td>
+<td>bool</td>
+<td>出现的是 HTML 实体 → 本轮未见注入</td>
+</tr>
+<tr>
+<td><code>context</code></td>
+<td>str</td>
+<td>上下文；决定严重度</td>
+</tr>
+<tr>
+<td><code>severity</code> / <code>confidence</code></td>
+<td>str</td>
+<td>严重度 / 置信度（分开表达"多严重"和"多确定"）</td>
+</tr>
+<tr>
+<td><code>risk_note</code></td>
+<td>str</td>
+<td>人类可读结论</td>
+</tr>
+<tr>
+<td><code>mitigations</code></td>
+<td>list[str]</td>
+<td>缺失的缓解措施（<strong>事实</strong>，不是结论）</td>
+</tr>
+<tr>
+<td><code>throttle_or_error</code></td>
+<td>bool</td>
+<td>本轮无有效响应 → 置信度 <code>unknown</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="54-cli">5.4 CLI 速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--lab<span class="w">                                  </span><span class="c1"># 内置靶标，全量跑</span>
+python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--lab<span class="w"> </span>--throttle-after<span class="w"> </span><span class="m">6</span><span class="w">               </span><span class="c1"># 演示覆盖不完整 → 退出码 4</span>
+python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--lab<span class="w"> </span>--targets<span class="w"> </span>targets.example.txt<span class="w">    </span><span class="c1"># 用自写清单</span>
+python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--base<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--targets<span class="w"> </span>targets.example.txt<span class="w"> </span>--rate<span class="w"> </span><span class="m">1</span><span class="w"> </span>--tag<span class="w"> </span>my-audit<span class="w">      </span><span class="c1"># 扫自己的授权目标</span>
+python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--lab<span class="w"> </span>--json-only<span class="w">                      </span><span class="c1"># 只出 JSON</span>
+python3<span class="w"> </span>vuln_core.py<span class="w"> </span>--self-test<span class="w">                                   </span><span class="c1"># 引擎自检 → SELF-TEST OK</span>
+</code></pre></div>
+<hr>
+<h2 id="6">6. 实战代码案例</h2>
+<p>本日代码全部在 <code>code/</code> 下，<strong>每个文件都能单独 <code>python3</code> 运行</strong>。</p>
+<h3 id="61-codevuln_corepy-1016">6.1 <code>code/vuln_core.py</code> — 共享引擎（1016 行）</h3>
+<p>包含：范围门禁 → 本机靶标（8 个端点）→ 只读 HTTP 客户端 → 限速 → 两个检测器<br>
+→ Finding/报告/退出码 → <code>--self-test</code> 端到端自检。</p>
+<p>靶标的 8 个端点（<strong>故意</strong>安排的"有缺陷 / 安全对照 / 陷阱"三组对照）：</p>
+<table>
+<thead>
+<tr>
+<th>端点</th>
+<th>设计意图</th>
+<th>期望检测结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/product?id=1</code></td>
+<td>字符串拼接（缺陷）</td>
+<td><code>error_based</code> ✅</td>
+</tr>
+<tr>
+<td><code>/safe-product?id=1</code></td>
+<td>参数化（安全对照）</td>
+<td><code>none</code>（必须沉默）</td>
+</tr>
+<tr>
+<td><code>/search?q=x</code></td>
+<td>原样反射进文本节点</td>
+<td><code>text_node</code> / medium</td>
+</tr>
+<tr>
+<td><code>/safe-search?q=x</code></td>
+<td><code>html.escape</code> + CSP（安全对照）</td>
+<td>已转义 / 0 缺口</td>
+</tr>
+<tr>
+<td><code>/profile?name=x</code></td>
+<td>反射进双引号属性</td>
+<td><code>attr_quoted_double</code> / medium</td>
+</tr>
+<tr>
+<td><code>/greeting?name=x</code></td>
+<td>反射进 <code>&lt;script&gt;</code> 块</td>
+<td><code>script_block</code> / <strong>high</strong></td>
+</tr>
+<tr>
+<td><code>/comment?note=x</code></td>
+<td>反射进 HTML 注释</td>
+<td><code>html_comment</code> / low</td>
+</tr>
+<tr>
+<td><code>/echo?id=x</code></td>
+<td><strong>已转义</strong>但原样回显（陷阱）</td>
+<td>SQLi 与 XSS 都必须 <code>none</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-code01-sqli-detectpy">6.2 <code>code/01-sqli-detect.py</code> — 基础用法</h3>
+<p>展示"探针表 + 三段判定"，用四个断言把结论钉死：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">r1</span> <span class="o">=</span> <span class="n">show</span><span class="p">(</span><span class="s2">&quot;① 有缺陷的端点 /product（字符串拼接）&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s2">/product?id=1&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">r1</span><span class="o">.</span><span class="n">technique</span> <span class="o">==</span> <span class="s2">&quot;error_based&quot;</span>      <span class="c1"># 单引号 → 报错特征</span>
+<span class="n">r2</span> <span class="o">=</span> <span class="n">show</span><span class="p">(</span><span class="s2">&quot;② 安全对照 /safe-product（参数化）&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">r2</span><span class="o">.</span><span class="n">technique</span> <span class="o">==</span> <span class="s2">&quot;none&quot;</span>             <span class="c1"># 同一业务的两种写法，结论相反</span>
+<span class="n">r3</span> <span class="o">=</span> <span class="n">show</span><span class="p">(</span><span class="s2">&quot;③ 假阳性陷阱 /echo（原样回显，已转义）&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">r3</span><span class="o">.</span><span class="n">technique</span> <span class="o">==</span> <span class="s2">&quot;none&quot;</span>             <span class="c1"># 长度变了 ≠ 注入</span>
+</code></pre></div>
+<p>实测输出（节选）：</p>
+<pre class="plain"><code>③ 假阳性陷阱 /echo（原样回显，已转义）
+  参数: id   基准值: &#x27;1&#x27;
+  探针        注入值                      状态     长度
+  baseline  1                       200    114
+  error     1&#x27;                      200    120
+  true      1 AND 1=1               200    122
+  false     1 AND 1=2               200    122
+  判定技术: none
+  证据    : 探针未触发报错，且布尔对未形成「贴近基线 / 偏离基线」的差值
+</code></pre>
+<p><strong>如果去掉 baseline 锚定</strong>，<code>true=122 ≠ false=122</code> 不成立，<br>
+但把探针换成 <code>1 OR 1=1</code> / <code>1 AND 1=2</code> 就会出现差值 → 直接误报。<br>
+这就是"锚定 baseline"的实际价值。</p>
+<h3 id="63-code02-xss-detectpy">6.3 <code>code/02-xss-detect.py</code> — 进阶用法与避坑</h3>
+<p>逐层打印四层判定，覆盖全部四种上下文 + 两个安全对照 + 缓解措施对比：</p>
+<pre class="plain"><code>① 有缺陷 /search（反射进文本节点）   → text_node / medium
+② 有缺陷 /profile（反射进双引号属性）→ attr_quoted_double / medium
+③ 最危险 /greeting（反射进 &lt;script&gt;）→ script_block / high
+④ 上下文 /comment（反射进 HTML 注释）→ html_comment / low
+⑤ 安全对照 /safe-search（escape+CSP）→ 已转义 / 0 缺口
+⑥ 假阳性陷阱 /echo（回显但已转义）   → 已转义 / 沉默
+</code></pre>
+<p>实测（<code>/comment</code> 一节）：</p>
+<pre class="plain"><code>  探针      : &#x27;zq163x7&quot;\&#x27;&gt;&lt;zq163&gt;&#x27;
+  ① 反射确认: reflected=True
+  ② 转义判定: raw_tag=True  raw_full=True  escaped=False
+  ③ 上下文  : html_comment
+  ④ 缓解措施: 2 项缺口
+  → 严重度  : low   置信度: medium
+</code></pre>
+<p><strong>同一个探针，四处上下文，三档严重度</strong>——这就是第 3 层的意义：<br>
+没有上下文判定，<code>/comment</code>（low）会被和 <code>/greeting</code>（high）评成一样。</p>
+<h3 id="64-code03-vuln-scan-clipy-cli">6.4 <code>code/03-vuln-scan-cli.py</code> — 实战流水线 CLI</h3>
+<p>三个真实跑过的场景：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ① 正常：9 个目标 → 18 个探针 → 13 条发现 → 退出码 3</span>
+$<span class="w"> </span>python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--lab<span class="w"> </span>--tag<span class="w"> </span>day163-lab
+<span class="o">[</span>summary<span class="o">]</span><span class="w"> </span>发现<span class="w"> </span><span class="m">13</span><span class="w"> </span>条<span class="w"> </span>·<span class="w"> </span>优先级分布<span class="w"> </span><span class="o">{</span><span class="s1">&#39;P0&#39;</span>:<span class="w"> </span><span class="m">0</span>,<span class="w"> </span><span class="s1">&#39;P1&#39;</span>:<span class="w"> </span><span class="m">4</span>,<span class="w"> </span><span class="s1">&#39;P2&#39;</span>:<span class="w"> </span><span class="m">5</span>,<span class="w"> </span><span class="s1">&#39;P3&#39;</span>:<span class="w"> </span><span class="m">4</span><span class="o">}</span>
+<span class="o">[</span>coverage<span class="o">]</span><span class="w"> </span>全部目标均取得有效结论
+<span class="o">[</span>exit<span class="o">]</span><span class="w"> </span><span class="m">3</span>
+
+<span class="c1"># ② 覆盖缺口：靶标第 6 个请求后全返 429 → 退出码 4（不是 0！）</span>
+$<span class="w"> </span>python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--lab<span class="w"> </span>--throttle-after<span class="w"> </span><span class="m">6</span><span class="w"> </span>--tag<span class="w"> </span>day163-throttle
+<span class="o">[</span>summary<span class="o">]</span><span class="w"> </span>发现<span class="w"> </span><span class="m">9</span><span class="w"> </span>条<span class="w"> </span>·<span class="w"> </span>优先级分布<span class="w"> </span><span class="o">{</span><span class="s1">&#39;P0&#39;</span>:<span class="w"> </span><span class="m">0</span>,<span class="w"> </span><span class="s1">&#39;P1&#39;</span>:<span class="w"> </span><span class="m">9</span>,<span class="w"> </span>...<span class="o">}</span>
+<span class="o">[</span>coverage<span class="o">]</span><span class="w"> </span>覆盖不完整：存在<span class="w"> </span><span class="m">429</span>/网络异常，未取得结论的目标需降速重跑
+<span class="o">[</span>exit<span class="o">]</span><span class="w"> </span><span class="m">4</span>
+
+<span class="c1"># ③ 越界：门禁在构造请求之前拒绝 → 退出码 2，不重试</span>
+$<span class="w"> </span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;http://192.0.2.1:8086/product?id=1 id sqli\n&#39;</span><span class="w"> </span>&gt;<span class="w"> </span>/tmp/oop.txt
+$<span class="w"> </span>python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--base<span class="w"> </span>http://127.0.0.1:18092<span class="w"> </span>--targets<span class="w"> </span>/tmp/oop.txt
+⛔<span class="w"> </span>AuthorizationError:<span class="w"> </span>主机不在授权网段内:<span class="w"> </span><span class="m">192</span>.0.2.1
+$<span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="nv">$?</span>
+<span class="m">2</span>
+</code></pre></div>
+<p>产物落在 <code>out/</code>（已随仓库提交，作为"实测证据快照"）：</p>
+<pre class="plain"><code>out/day163-lab-report.{json,md}        # 正常一轮：13 条发现，覆盖完整
+out/day163-throttle-report.{json,md}   # 限速一轮：18 探针其中 12 个 429，退出码 4
+out/day163-targets-report.{json,md}    # 用 targets 清单跑出与 ① 一致的结果（可复现性验证）
+</code></pre>
+<h3 id="65">6.5 两个由"实测"驱动的修复（真实踩坑记录）</h3>
+<p>写这两个脚本时踩到并修掉的两个真问题，都值得记住：</p>
+<p><strong>坑 1：<code>--targets</code> 不支持行尾注释。</strong><br>
+第一版 <code>load_targets()</code> 只在 <code>line.startswith("#")</code> 时跳过，<br>
+于是 <code>targets.example.txt</code> 里带行尾说明的行会炸：</p>
+<pre class="plain"><code>⛔ ScopeError: targets.example.txt:14 字段过多: &#x27;/product?id=1   id  sqli   # 有缺陷…&#x27;
+</code></pre>
+<p>修复：先剥掉第一个 <code>#</code> 之后再切字段。<br>
+<strong>教训</strong>：清单类输入格式必须支持行尾注释——否则使用者不敢写"为什么测这条"，<br>
+清单就退化成一堆无法维护的魔法字符串。</p>
+<p><strong>坑 2：清单里写完整 URL 会被拼成垃圾。</strong><br>
+第一版无条件 <code>target = base + url</code>，于是清单里写完整 URL 会变成<br>
+<code>http://127.0.0.1:18092http://192.0.2.1:...</code>。<br>
+修复：以 <code>http://</code> / <code>https://</code> 开头的按完整 URL 走门禁，其余按路径拼接。<br>
+<strong>教训</strong>：<strong>"拼接"和"校验"的顺序决定了工具能不能被信任</strong>——<br>
+门禁必须看到<strong>最终的</strong> URL。</p>
+<hr>
+<h2 id="7">7. 自检与验证</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-163-安全审计工具箱-part2/code
+
+python3<span class="w"> </span>vuln_core.py<span class="w"> </span>--self-test<span class="w">     </span><span class="c1"># → SELF-TEST OK（7 组断言）</span>
+python3<span class="w"> </span><span class="m">01</span>-sqli-detect.py<span class="w">            </span><span class="c1"># → 三类结果：error_based / none / none</span>
+python3<span class="w"> </span><span class="m">02</span>-xss-detect.py<span class="w">             </span><span class="c1"># → 四层判定 + 四种上下文 + 假阳性沉默</span>
+python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--lab<span class="w">    </span><span class="c1"># → 退出码 3，报告落盘 out/</span>
+</code></pre></div>
+<p><code>--self-test</code> 的 7 组断言（这就是"教学代码可验证"的样子）：</p>
+<pre class="plain"><code>① 有缺陷 /product       → error_based, sql_error_hit=True
+② 安全对照 /safe-product → none
+③ 反射型 /search         → raw_tag &amp; text_node
+④ XSS 安全对照 /safe-search → 未注入 &amp; 已转义
+⑤ /greeting             → script_block &amp; severity=high
+⑥ /echo 双陷阱          → XSS 已转义、SQLi none
+⑦ 越界必须 AuthorizationError；探针上限必须 ScopeError
+</code></pre>
+<p><strong>为什么把断言写进 <code>--self-test</code>？</strong> 因为检测器的"沉默"（判 none）<br>
+和"报警"（判有缺陷）<strong>同样重要</strong>。只测"能不能报出洞"的测试，<br>
+无法发现"到处乱报"的回归——而误报才是这类工具在真实环境里最先失去信任的原因。</p>
+<hr>
+<h2 id="8">8. 思考题</h2>
+<ol>
+<li>
+<p><strong>布尔差分的容差</strong>：<code>close()</code> 用 <code>max(tol_abs, tol_rel×max(a,b))</code>。<br>
+   如果目标页面里有随机广告位（每次长度差 200~400 字节），<br>
+   在 <code>tol_abs=32</code>、<code>tol_rel=5%</code> 下会发生什么？你会怎么改检测策略？<br>
+   （提示：想想"多次采样取分布"与"锚定不变量"两条路。）</p>
+</li>
+<li>
+<p><strong><code>/safe-product</code> 的假警报风险</strong>：参数化端点里 <code>error</code> 探针长度 139<br>
+   明显偏离 baseline 167。如果检测器<strong>只看</strong>"error 探针长度变化"就下结论，<br>
+   它会把这台<strong>安全</strong>的服务报成高危。请写出你会用什么证据组合来避免它，<br>
+   并说明为什么"报错特征"比"长度变化"可靠得多。</p>
+</li>
+<li>
+<p><strong>探针是载荷吗</strong>：假设你把探针换成 <code>&lt;script&gt;alert(document.domain)&lt;/script&gt;</code>，<br>
+   请列出至少三个<strong>具体</strong>的负面影响（考虑：浏览器复核、日志留存、<br>
+   WAF/浏览器拦截对结论的污染、URL 被分享）。本课的 <code>&lt;zq163&gt;</code> 各避免了哪一个？</p>
+</li>
+<li>
+<p><strong>覆盖完整性 vs 通过</strong>：为什么"限速后没测到"必须用独立退出码，<br>
+   而不能合并进"无发现"？如果你的 CI 里只有"退出码 0 才算通过"，<br>
+   把 429 当作 0 会造成什么后果？请给出一个具体场景。</p>
+</li>
+<li>
+<p><strong>上下文判定的边界</strong>：<code>classify_context()</code> 用"最近的未闭合结构"判断位置。<br>
+   如果页面把输入放进 <code>&lt;div data-x='…' title="…"&gt;</code>（外层单引号、内层双引号），<br>
+   我们的正则只会匹配<strong>最近的那个 <code>=</code></strong>。请构造一个能让它判错的输入，<br>
+   并说明为什么"简化判定 + 保守严重度"是比"追求完美解析"更工程化的选择。</p>
+</li>
+<li>
+<p><strong>（进阶）从检测到验证的边界</strong>：本工具停在"疑似"。请列出"从疑似到确认"<br>
+   需要的额外动作，并逐条说明为什么它们<strong>不应该</strong>进自动化扫描工具。</p>
+</li>
+</ol>
+<hr>
+<h2 id="9">9. 边界与合规（每一条都是设计决策，不是场面话）</h2>
+<table>
+<thead>
+<tr>
+<th>边界</th>
+<th>为什么这样做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>只发 <code>GET</code></td>
+<td><code>GET</code> 语义是幂等只读；<code>POST</code> 会改数据，越出"检测"范畴</td>
+</tr>
+<tr>
+<td>不跟随重定向</td>
+<td>避免被引到范围外，也避免掩盖真实状态码（3xx 也是信息）</td>
+</tr>
+<tr>
+<td>不带任何凭据</td>
+<td>未授权访问下的检测结果不可信，也避免触发账号锁定</td>
+</tr>
+<tr>
+<td>域名直接拒绝</td>
+<td><strong>解析域名本身就是一次外发</strong>（DNS 也是一次信息暴露）</td>
+</tr>
+<tr>
+<td>不时间盲注</td>
+<td><code>SLEEP</code> 是在目标上"占用资源"，且容易压垮服务</td>
+</tr>
+<tr>
+<td>每参数 ≤4 探针</td>
+<td>探针会进入业务逻辑；硬闸门让"越界"无法被悄悄放宽</td>
+</tr>
+<tr>
+<td>默认 2 req/s</td>
+<td>比目录爆破更克制：每个探针都是一次真实业务调用</td>
+</tr>
+<tr>
+<td>只匹配报错特征、不抄全文</td>
+<td>报错页可能带出表名/列名，抄进报告 = 顺手泄密</td>
+</tr>
+<tr>
+<td>报告只写"疑似/待验证"</td>
+<td>工具不能声称"已验证漏洞"；验证动作必须由人在授权窗口内完成</td>
+</tr>
+<tr>
+<td>全部实验跑回环自建靶标</td>
+<td>可复现、零依赖、<strong>不可能</strong>误伤真实系统</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="10">10. 今日完成清单</h2>
+<p>见 <code>exercises/checklist.md</code>（含 3 道基础题 + 2 道进阶题 + 自检命令）。<br>
+图解补充见 <code>diagrams/README.md</code>。</p>
+<p><strong>下一篇（Day 164）</strong>：流量面——代理中间人（mitmproxy 原理）+ 流量分析，<br>
+把"扫描出来的疑似"放到真实流量里验证。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-162/index.html">← Day 162 阶段项目（一）：安全审计工具箱 · 端口扫描 + 目录爆破 + 指纹识别</a><a class="nav-next" href="../day-164/index.html">Day 164 阶段项目（三）：安全审计工具箱 · 代理中间人 + 流量分析 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 137 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 137 正文</a>
+  <h1>Day 137 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-137-">Day 137 - 浏览器指纹规避 · 图解</h1>
+<h2 id="1">1. 指纹熵叠加</h2>
+<pre class="plain"><code> 单一特征熵低，组合后唯一:
+ UA(1/50) x 分辨率(1/300) x Canvas(1/10000) x 字体集(1/500)
+ ≈ 1 / 750 亿  -&gt; 几乎唯一标识一台设备
+
+ 更换 IP/删 Cookie 不改变上述任何一项 -&gt; 仍被识别
+</code></pre>
+<h2 id="2-vs">2. 三层检测 vs 三层对策</h2>
+<pre class="plain"><code> 检测层            对策
+────────────      ─────────────────────────────
+ TLS/JA3 指纹  -&gt;  curl_cffi impersonate=&quot;chrome&quot;
+ HTTP/2 帧序   -&gt;  同上(完整模拟浏览器网络栈)
+ JS 挑战(5s盾) -&gt;  undetected-chromedriver 执行挑战
+ Canvas/WebGL -&gt;  addScriptToEvaluateOnNewDocument 注入伪装
+ 自动化标记    -&gt;  uc patch (cdc_/webdriver/CDP 特征)
+ 一致性风控    -&gt;  IP归属地/时区/语言/UA 全套自洽
+</code></pre>
+<h2 id="3-cloudflare">3. 过 Cloudflare 完整流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[uc 启动非无头] --&gt; B[访问目标页]
+    B --&gt; C{挑战自动通过?}
+    C -- 是 --&gt; D[拿 cf_clearance Cookie]
+    C -- 否/循环挑战 --&gt; E[检查指纹一致性&lt;br/&gt;IP质量/UA/时区] --&gt; B
+    D --&gt; F[curl_cffi + 同 UA&lt;br/&gt;直连接口]
+    F --&gt; G[✅ 数据到手]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[uc 启动非无头] --&gt; B[访问目标页]
+    B --&gt; C{挑战自动通过?}
+    C -- 是 --&gt; D[拿 cf_clearance Cookie]
+    C -- 否/循环挑战 --&gt; E[检查指纹一致性&lt;br/&gt;IP质量/UA/时区] --&gt; B
+    D --&gt; F[curl_cffi + 同 UA&lt;br/&gt;直连接口]
+    F --&gt; G[✅ 数据到手]
+</code></pre></div>
+<h2 id="4">4. 一致性校验矩阵</h2>
+<pre class="plain"><code>                期望(IP=北京)      实际值           判定
+ 时区           Asia/Shanghai     America/NY     ✗ 破绽
+ 语言           zh-CN             en-US          ✗ 破绽
+ UA平台         Windows           Windows        ✓
+ IP WebRTC泄漏  无                192.168.x.x    ✗ 破绽
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

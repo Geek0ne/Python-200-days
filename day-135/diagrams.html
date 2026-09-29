@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 135 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 135 正文</a>
+  <h1>Day 135 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-135-js">Day 135 - JS 逆向入门 图解</h1>
+<h2 id="1">1. 逆向工作流全景</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[Network 找到目标接口] --&gt; B[对比两次请求 -&gt; 找动态参数]
+    B --&gt; C[XHR 断点 URL 关键词]
+    C --&gt; D[断在 send 处]
+    D --&gt; E[Call Stack 自下而上回溯]
+    E --&gt; F[找到生成 sign 的函数 ⭐]
+    F --&gt; G{代码可读?}
+    G --&gt;|可读| H[Python 复现]
+    G --&gt;|混淆| I[格式化 + 反混淆]
+    I --&gt; J[摘出 JS -&gt; subprocess 调 Node]
+    H --&gt; K[验证请求成功 ✅]
+    J --&gt; K
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[Network 找到目标接口] --&gt; B[对比两次请求 -&gt; 找动态参数]
+    B --&gt; C[XHR 断点 URL 关键词]
+    C --&gt; D[断在 send 处]
+    D --&gt; E[Call Stack 自下而上回溯]
+    E --&gt; F[找到生成 sign 的函数 ⭐]
+    F --&gt; G{代码可读?}
+    G --&gt;|可读| H[Python 复现]
+    G --&gt;|混淆| I[格式化 + 反混淆]
+    I --&gt; J[摘出 JS -&gt; subprocess 调 Node]
+    H --&gt; K[验证请求成功 ✅]
+    J --&gt; K
+</code></pre></div>
+<h2 id="2-call-stack">2. Call Stack 回溯</h2>
+<pre class="plain"><code>┌──────────────────────────────────────┐
+│ XMLHttpRequest.send      ← XHR断点    │
+│ $.ajax                                  │
+│ requestWithSign(params)  ← sign已拼好 │
+│ genSign(page, ts)        ← 算法在这 ⭐ │
+└──────────────────────────────────────┘
+   自下而上 = 调用顺序，越往下离业务越近
+</code></pre>
+<h2 id="3-vs">3. 混淆 vs 反混淆对抗</h2>
+<pre class="plain"><code>混淆手段                     破解手段
+─────────────────────────────────────────
+变量乱名 _0x3f2a       ◄──  格式化 + IDE 重命名
+字符串数组+运行时解密   ◄──  Console 直接调取值函数（死穴）
+控制流平坦化           ◄──  AST 拓扑排序还原
+eval 动态执行          ◄──  断点后 Console 打出明文
+</code></pre>
+<h2 id="4-ast">4. AST 是什么</h2>
+<pre class="plain"><code>代码字符串: &quot;var a = b + 1;&quot;
+      │ @babel/parser
+      ▼
+Program
+ └─ VariableDeclaration
+     └─ VariableDeclarator
+         ├─ id: Identifier { name: &#x27;a&#x27; }
+         └─ init: BinaryExpression { op: &#x27;+&#x27;,
+                 ├─ left: Identifier { name: &#x27;b&#x27; }
+                 └─ right: NumericLiteral { value: 1 } }
+      │ @babel/generator
+      ▼
+可重新生成 / 精确修改的代码
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

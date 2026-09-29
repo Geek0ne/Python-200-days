@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 140 — App 爬虫基础</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 140 — App 爬虫基础</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">216 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-140-app-crawler-basics" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-app">1.1 什么是 App 爬虫？</a>
+<a class="toc-l3" href="#12">1.2 三大核心技术</a>
+<a class="toc-l3" href="#13-app-web">1.3 为什么 App 爬虫比 Web 爬虫更&quot;稳定&quot;？</a>
+<a class="toc-l2" href="#_2">二、原理深入</a>
+<a class="toc-l3" href="#21-mitm">2.1 抓包原理：中间人攻击（MITM）</a>
+<a class="toc-l3" href="#22-ssl-pinning-protobuf">2.2 抓不到包的两种情况（SSL Pinning 与 Protobuf）</a>
+<a class="toc-l3" href="#23">2.3 签名参数原理（重点！）</a>
+<a class="toc-l3" href="#24-apk">2.4 APK 反编译基础</a>
+<a class="toc-l2" href="#api">三、API 速查表</a>
+<a class="toc-l3" href="#31-mitmproxy">3.1 mitmproxy 常用命令</a>
+<a class="toc-l3" href="#32-mitmproxy-addon-api">3.2 mitmproxy addon 脚本 API</a>
+<a class="toc-l3" href="#33-jadx-frida">3.3 jadx / frida 常用</a>
+<a class="toc-l3" href="#34-python">3.4 Python 协议模拟对照表</a>
+<a class="toc-l2" href="#_3">四、图解</a>
+<a class="toc-l3" href="#41-app">4.1 App 爬虫完整工作流</a>
+<a class="toc-l3" href="#42">4.2 抓包代理链路</a>
+<a class="toc-l2" href="#_4">五、实战代码案例</a>
+<a class="toc-l2" href="#_5">六、思考题</a>
+<a class="toc-l2" href="#_6">⚖️ 合规提醒</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-140-app">Day 140 - App 爬虫基础</h1>
+<blockquote>
+<p>目标：掌握 App 爬虫的完整工作流——抓包分析、APK 反编译、协议模拟，最终实现 App 数据抓取。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-app">1.1 什么是 App 爬虫？</h3>
+<p>Web 爬虫抓取的是浏览器渲染的 HTML 页面，而 <strong>App 爬虫</strong>抓取的是手机 App 与服务器之间的通信数据。很多公司（电商、社交、短视频）把最核心的数据和功能放在 App 端，甚至 App 优先于 Web 发布功能，所以 App 爬虫是数据采集绕不开的一环。</p>
+<pre class="plain"><code>Web 爬虫:  浏览器 ──HTTP──&gt; Web 服务器        (返回 HTML/JSON)
+App 爬虫:  手机App ──HTTP/HTTPS/私有协议──&gt; API 服务器  (返回 JSON/Protobuf)
+</code></pre>
+<h3 id="12">1.2 三大核心技术</h3>
+<table>
+<thead>
+<tr>
+<th>技术</th>
+<th>作用</th>
+<th>对应工具</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>抓包</td>
+<td>观察App与服务器通信内容</td>
+<td>mitmproxy / Charles / Fiddler</td>
+</tr>
+<tr>
+<td>反编译</td>
+<td>分析 APK 里的加密逻辑</td>
+<td>jadx / apktool / frida</td>
+</tr>
+<tr>
+<td>协议模拟</td>
+<td>用 Python 复现 App 的请求</td>
+<td>requests / httpx / pycryptodome</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13-app-web">1.3 为什么 App 爬虫比 Web 爬虫更"稳定"？</h3>
+<ul>
+<li>App 的 API 接口版本迭代慢，一旦逆向出参数规则，可以长期稳定使用；</li>
+<li>App 端的反爬主要靠<strong>签名校验</strong>（sign 参数），而不是 Web 端的 JS 混淆 + 风控指纹，攻防面更窄；</li>
+<li>返回数据是结构化 JSON/Protobuf，无需解析 HTML。</li>
+</ul>
+<p>但代价是：<strong>逆向门槛高</strong>，需要懂 Android、加密算法、甚至 ARM 汇编。</p>
+<hr>
+<h2 id="_2">二、原理深入</h2>
+<h3 id="21-mitm">2.1 抓包原理：中间人攻击（MITM）</h3>
+<p>HTTPS 抓包的本质是自己当"中间人"：</p>
+<pre class="plain"><code>正常 HTTPS:
+   App &lt;───────────TLS───────────&gt; 服务器
+
+抓包时（中间人）:
+   App &lt;──TLS①──&gt; mitmproxy &lt;──TLS②──&gt; 服务器
+            ↑                ↑
+      App信任mitm的证书    mitm信任服务器证书
+      (需手动安装CA证书)
+
+① App 校验 mitmproxy 的证书 → 需在手机安装 mitmproxy CA 证书
+② mitmproxy 校验服务器的真证书 → 天然可信
+</code></pre>
+<p><strong>关键点</strong>：Android 7.0+ 默认不信任用户安装的 CA 证书，所以要么：<br>
+1. 把证书装到系统目录（需要 root：<code>/system/etc/security/cacerts/</code>）；<br>
+2. 用 <code>apktool</code> 反编译 APK，修改 <code>AndroidManifest.xml</code> 加 <code>networkSecurityConfig</code> 信任用户证书后重打包；<br>
+3. 用 Android &lt; 7.0 的模拟器。</p>
+<h3 id="22-ssl-pinning-protobuf">2.2 抓不到包的两种情况（SSL Pinning 与 Protobuf）</h3>
+<p><strong>SSL Pinning（证书锁定）</strong>：App 在代码里内置了服务器证书指纹，拒绝与 mitmproxy 握手。绕过方法：用 <strong>Frida + objection</strong> 一键 hook：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>frida-tools<span class="w"> </span>objection
+objection<span class="w"> </span>-g<span class="w"> </span>com.example.app<span class="w"> </span>explore
+<span class="c1"># 进入交互式后执行：</span>
+android<span class="w"> </span>sslpinning<span class="w"> </span>disable
+</code></pre></div>
+<p><strong>Protobuf 二进制协议</strong>：抓到的 body 是乱码。流程是：先从 APK 里提取 <code>.proto</code> 定义（或反编译分析），再用 <code>protobuf</code> 库解析。</p>
+<h3 id="23">2.3 签名参数原理（重点！）</h3>
+<p>绝大多数 App 的请求带有 <code>sign</code> 参数，典型生成逻辑：</p>
+<pre class="plain"><code>sign = md5( md5(password) + timestamp + &quot;固定盐值salt&quot; )
+</code></pre>
+<p><strong>为什么能逆向？</strong> 因为签名算法必须写在客户端代码里——客户端总要自己算签名，就一定会被提取出来。这是客户端加密的宿命：<strong>加密在端上，密钥必在端上</strong>。</p>
+<p>逆向路径：</p>
+<pre class="plain"><code>抓包发现 sign 参数
+  → jadx 反编译 APK，全局搜索 &quot;sign&quot;
+  → 定位到 Java/native 加密函数
+  → 分析算法（md5/sha/aes + 拼接顺序 + 盐值）
+  → Python 复现
+</code></pre>
+<h3 id="24-apk">2.4 APK 反编译基础</h3>
+<p>APK 本质是一个 ZIP 包：</p>
+<pre class="plain"><code>app.apk
+├── AndroidManifest.xml  # 二进制的清单文件
+├── classes.dex          # Dalvik 字节码（Java/Kotlin 编译产物）
+├── lib/                 # native so 库（C/C++，重点加密常在这）
+├── res/                 # 资源文件
+└── assets/              # 静态资源（有时藏 .proto/.js）
+</code></pre>
+<p>工具链分工：</p>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>作用</th>
+<th>产物</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>jadx</td>
+<td>dex → Java 源码</td>
+<td>可读的 .java（首选）</td>
+</tr>
+<tr>
+<td>apktool</td>
+<td>反编译资源 + smali</td>
+<td>可回编译（用于重打包）</td>
+</tr>
+<tr>
+<td>frida</td>
+<td>运行时 hook</td>
+<td>动态调试（对付加固/so）</td>
+</tr>
+<tr>
+<td>unidbg</td>
+<td>模拟执行 so</td>
+<td>黑盒调用 native 算法</td>
+</tr>
+</tbody>
+</table>
+<p><strong>加固识别</strong>：jadx 打开发现只有一两个类（如 <code>StubApp</code>），说明被 360/腾讯乐固/梆梆加固了，需要脱壳（frida-dexdump）后才能看到真实代码。</p>
+<hr>
+<h2 id="api">三、API 速查表</h2>
+<h3 id="31-mitmproxy">3.1 mitmproxy 常用命令</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mitmproxy<span class="w">                    </span><span class="c1"># 终端交互式界面</span>
+mitmweb<span class="w">                      </span><span class="c1"># 浏览器界面（推荐新手）</span>
+mitmdump<span class="w"> </span>-w<span class="w"> </span>app.flow<span class="w">         </span><span class="c1"># 抓包保存到文件</span>
+mitmdump<span class="w"> </span>-s<span class="w"> </span>addon.py<span class="w">         </span><span class="c1"># 加载 Python 脚本实时处理流量</span>
+mitmdump<span class="w"> </span>--mode<span class="w"> </span>reverse:http://api.example.com<span class="w">  </span><span class="c1"># 反向代理模式</span>
+</code></pre></div>
+<h3 id="32-mitmproxy-addon-api">3.2 mitmproxy addon 脚本 API</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Addon</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>    <span class="c1"># 请求阶段（可改请求）</span>
+    <span class="k">def</span> <span class="nf">response</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>   <span class="c1"># 响应阶段（可读/改响应）</span>
+<span class="c1"># flow.request.url / .headers / .content</span>
+<span class="c1"># flow.response.status_code / .content</span>
+</code></pre></div>
+<h3 id="33-jadx-frida">3.3 jadx / frida 常用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">jadx<span class="w"> </span>-d<span class="w"> </span>out/<span class="w"> </span>app.apk<span class="w">               </span><span class="c1"># 反编译输出到 out/</span>
+jadx-gui<span class="w"> </span>app.apk<span class="w">                   </span><span class="c1"># GUI（搜索 &quot;sign&quot;/&quot;encrypt&quot;）</span>
+frida<span class="w"> </span>-U<span class="w"> </span>-f<span class="w"> </span>com.example.app<span class="w"> </span>-l<span class="w"> </span>hook.js<span class="w">   </span><span class="c1"># spawn 启动并注入</span>
+frida-trace<span class="w"> </span>-U<span class="w"> </span>-i<span class="w"> </span><span class="s2">&quot;md5&quot;</span><span class="w"> </span>com.example.app<span class="w">  </span><span class="c1"># 追踪函数调用</span>
+</code></pre></div>
+<h3 id="34-python">3.4 Python 协议模拟对照表</h3>
+<table>
+<thead>
+<tr>
+<th>App 请求特征</th>
+<th>Python 对应处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Content-Type: application/json</td>
+<td><code>requests.post(url, json=data)</code></td>
+</tr>
+<tr>
+<td>body 是二进制 Protobuf</td>
+<td><code>requests.post(url, data=pb.SerializeToString())</code></td>
+</tr>
+<tr>
+<td>header 带 token/sign</td>
+<td>构造 dict，先本地算 sign 再带上</td>
+</tr>
+<tr>
+<td>需要维持设备指纹</td>
+<td>固定 device_id/user_agent</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">四、图解</h2>
+<h3 id="41-app">4.1 App 爬虫完整工作流</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[目标App] --&gt;|安装CA证书+代理| B[mitmproxy 抓包]
+    B --&gt; C{抓到明文?}
+    C --&gt;|否: SSL Pinning| D[Frida hook 解除] --&gt; B
+    C --&gt;|是| E[分析请求参数: sign/token]
+    E --&gt; F{能看懂算法?}
+    F --&gt;|Java层| G[jadx 静态分析]
+    F --&gt;|native层| H[unidbg/frida 调 so]
+    G --&gt; I[Python 复现签名算法]
+    H --&gt; I
+    I --&gt; J[requests/httpx 协议模拟]
+    J --&gt; K[结构化数据入库]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[目标App] --&gt;|安装CA证书+代理| B[mitmproxy 抓包]
+    B --&gt; C{抓到明文?}
+    C --&gt;|否: SSL Pinning| D[Frida hook 解除] --&gt; B
+    C --&gt;|是| E[分析请求参数: sign/token]
+    E --&gt; F{能看懂算法?}
+    F --&gt;|Java层| G[jadx 静态分析]
+    F --&gt;|native层| H[unidbg/frida 调 so]
+    G --&gt; I[Python 复现签名算法]
+    H --&gt; I
+    I --&gt; J[requests/httpx 协议模拟]
+    J --&gt; K[结构化数据入库]
+</code></pre></div>
+<h3 id="42">4.2 抓包代理链路</h3>
+<pre class="plain"><code>┌─────────┐   Wi-Fi 手动代理    ┌────────────┐         ┌──────────┐
+│ 手机App  │ ─────────────────&gt; │ mitmproxy  │ ──────&gt; │ 目标服务器 │
+│ (同局域网)│  ip:8080           │ (电脑8080) │  直连    │  (HTTPS) │
+└─────────┘                    └────────────┘         └──────────┘
+     │                               │
+     └── 已装 mitm CA 证书 &lt;──────────┘ 首次访问 mitm.it 下载证书
+</code></pre>
+<hr>
+<h2 id="_4">五、实战代码案例</h2>
+<p>完整代码见 <code>code/</code> 目录：</p>
+<ol>
+<li><code>01-mitmproxy-addon.py</code> — mitmproxy 抓包脚本（基础用法）</li>
+<li><code>02-sign-crack-demo.py</code> — 签名参数复现与避坑（进阶）</li>
+<li><code>03-app-api-spider.py</code> — 完整 App 协议模拟爬虫（实战）</li>
+</ol>
+<hr>
+<h2 id="_5">六、思考题</h2>
+<ol>
+<li>为什么 App 把签名算法写在客户端就注定能被破解？有没有"理论上不可破解"的客户端方案？（提示：思考白盒加密/服务器下发算法的代价）</li>
+<li>Android 7.0 之后默认不信任用户证书，这个安全设计保护的究竟是谁？</li>
+<li>如果接口返回的是 Protobuf 二进制，相比 JSON 抓包多了哪些步骤？为什么越来越多大厂用 Protobuf？</li>
+<li>抓包时发现请求间隔小于 100ms 就被 ban，除了放慢速度，还能从哪些维度把爬虫行为"伪装"得像真人？</li>
+<li>frida hook 是动态分析，jadx 是静态分析，两者各有什么不可替代的场景？</li>
+</ol>
+<hr>
+<h2 id="_6">⚖️ 合规提醒</h2>
+<p>App 爬虫技术门槛高、法律风险也高。仅对<strong>自己拥有或获得授权</strong>的 App 做安全研究；抓取任何数据前确认不违反《数据安全法》《个人信息保护法》及目标服务条款。逆向他人 App 用于商业数据窃取属于违法行为。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-139/index.html">← Day 139 数据存储管道（Data Storage Pipelines）</a><a class="nav-next" href="../day-141/index.html">Day 141 爬虫监控与告警 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

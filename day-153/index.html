@@ -1,0 +1,2388 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 153 — 端口扫描进阶：Nmap、banner 抓取与自动化扫描器</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 153 — 端口扫描进阶：Nmap、banner 抓取与自动化扫描器</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">1498 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-153-port-scan-advanced" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">⚠️ 使用前必读：法律边界</a>
+<a class="toc-l2" href="#_2">一、概念解释</a>
+<a class="toc-l3" href="#11">1.1 端口到底是什么</a>
+<a class="toc-l3" href="#12">1.2 端口扫描在问什么</a>
+<a class="toc-l3" href="#13">1.3 四种常用扫描类型</a>
+<a class="toc-l3" href="#14-t0-t5">1.4 时序模板 -T0 ~ -T5</a>
+<a class="toc-l3" href="#15-p">1.5 端口选择 -p</a>
+<a class="toc-l3" href="#16-banner">1.6 banner 抓取与服务识别</a>
+<a class="toc-l3" href="#17">1.7 三个必须分清的状态</a>
+<a class="toc-l2" href="#_3">二、原理解释（底层机制与设计动机）</a>
+<a class="toc-l3" href="#21-tcp">2.1 TCP 三次握手与扫描类型的关系</a>
+<a class="toc-l3" href="#22-udp">2.2 为什么 UDP 扫描这么不可靠</a>
+<a class="toc-l3" href="#23">2.3 为什么&quot;扫描到开放&quot;不等于&quot;服务可用&quot;</a>
+<a class="toc-l3" href="#24-python-nmap">2.4 python-nmap 的原理：它其实是个&quot;命令行包装器&quot;</a>
+<a class="toc-l3" href="#25">2.5 并发模型：为什么用线程池而不是协程</a>
+<a class="toc-l3" href="#26">2.6 为什么扫描器必须限流（防御视角）</a>
+<a class="toc-l3" href="#27-closed-rst">2.7 深度机制：closed 端口为什么回 RST，而「被丢弃」连回都不回</a>
+<a class="toc-l3" href="#28-tcp-banner">2.8 深度机制：TCP 是字节流，不是消息流（banner 抓取的根本难点）</a>
+<a class="toc-l3" href="#29-nmap-pn-t-sv">2.9 深度机制：Nmap 内部在做什么（-Pn、-T、-sV 的真实含义）</a>
+<a class="toc-l3" href="#210">2.10 深度机制：并发的代价，与&quot;限流&quot;为什么是硬要求</a>
+<a class="toc-l3" href="#211">2.11 深度机制：服务识别的两个层次，与&quot;证据强度&quot;的概念</a>
+<a class="toc-l3" href="#212">2.12 把扫描器用成&quot;配置漂移监控&quot;（防御视角的正确用法）</a>
+<a class="toc-l2" href="#api">三、定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#31-nmap">3.1 Nmap 命令行速查</a>
+<a class="toc-l3" href="#32-python-nmap-api">3.2 python-nmap API 速查</a>
+<a class="toc-l3" href="#33-socket">3.3 标准库 socket 速查（扫描必需部分）</a>
+<a class="toc-l3" href="#34-concurrentfutures">3.4 concurrent.futures 速查（并发扫描骨架）</a>
+<a class="toc-l3" href="#35">3.5 常见端口—服务对照（防御自查用）</a>
+<a class="toc-l3" href="#36-connect_ex">3.6 connect_ex 返回码速查</a>
+<a class="toc-l2" href="#_4">四、图解</a>
+<a class="toc-l3" href="#41-mermaid">4.1 扫描类型对比（Mermaid 时序图）</a>
+<a class="toc-l3" href="#42-banner-mermaid">4.2 banner 抓取决策流程（Mermaid 流程图）</a>
+<a class="toc-l3" href="#43-ascii">4.3 并发扫描的时间线（ASCII）</a>
+<a class="toc-l3" href="#44-ascii">4.4 自动化扫描器架构（ASCII）</a>
+<a class="toc-l3" href="#45-ascii">4.5 端口三态与防火墙策略（ASCII）</a>
+<a class="toc-l2" href="#_5">五、完整可运行实战代码</a>
+<a class="toc-l3" href="#51-code01-nmap-basicspy807-nmap">5.1 code/01-nmap-basics.py（807 行）— Nmap 基础与三种调用方式</a>
+<a class="toc-l3" href="#52-code02-banner-grab-pitfallspy838-banner-8">5.2 code/02-banner-grab-pitfalls.py（838 行）— banner 抓取的 8 个坑</a>
+<a class="toc-l3" href="#53-code03-auto-port-scannerpy949">5.3 code/03-auto-port-scanner.py（949 行）— 自动化扫描器（实战）</a>
+<a class="toc-l2" href="#-self-test">六、自测（--self-test）与可复现性</a>
+<a class="toc-l3" href="#61">6.1 两种运行模式，职责完全不同</a>
+<a class="toc-l3" href="#62">6.2 四个硬约束</a>
+<a class="toc-l3" href="#63">6.3 退出码契约</a>
+<a class="toc-l3" href="#64">6.4 三个脚本各自的自测覆盖点</a>
+<a class="toc-l3" href="#65">6.5 自测不覆盖什么（诚实声明）</a>
+<a class="toc-l3" href="#66">6.6 本地自证记录（本次升级实测）</a>
+<a class="toc-l3" href="#67">6.7 演示产物落盘策略（工作树必须干净）</a>
+<a class="toc-l2" href="#_6">七、思考题</a>
+<a class="toc-l2" href="#_7">附：本日文件清单</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-153-nmapbanner">Day 153 — 端口扫描进阶：Nmap、banner 抓取与自动化扫描器</h1>
+<blockquote>
+<p>阶段：Phase 8 — 网络安全实战 · 主题：端口扫描进阶</p>
+<p>前置知识：Day 115 socket 编程、Day 116 TCP/UDP 协议、Day 146 HTTPS/TLS 分析、<br>
+Day 151 网络嗅探（如有）、Day 152 中间人攻击与防御（如有）。<br>
+今天把"网络协议"从课本概念变成<strong>手上能跑的工具</strong>：先理解 Nmap 的四种扫描<br>
+类型为什么这么设计，再亲手实现 banner 抓取，最后写一个多线程的自动化<br>
+端口扫描器，把结果导出成 JSON / CSV / Markdown 报告。</p>
+</blockquote>
+<hr>
+<h2 id="_1">⚠️ 使用前必读：法律边界</h2>
+<p>端口扫描在几乎所有司法管辖区都被视为<strong>对计算机系统的探测行为</strong>。<br>
+未经授权扫描他人资产，<strong>哪怕只发一个 SYN 包</strong>，也可能触犯：</p>
+<table>
+<thead>
+<tr>
+<th>法域</th>
+<th>相关法条</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>中国大陆</td>
+<td>《刑法》第 285 条（非法侵入 / 非法获取计算机信息系统数据）、第 286 条（破坏计算机信息系统）；《网络安全法》第 27 条</td>
+</tr>
+<tr>
+<td>美国</td>
+<td>CFAA, 18 U.S.C. § 1030</td>
+</tr>
+<tr>
+<td>英国</td>
+<td>Computer Misuse Act 1990, s.1</td>
+</tr>
+<tr>
+<td>欧盟</td>
+<td>各国转化实施的《网络犯罪公约》条款</td>
+</tr>
+</tbody>
+</table>
+<p><strong>允许使用本日内容的场景（白名单）：</strong></p>
+<ol>
+<li>你自己的机器（<code>127.0.0.1</code>）、你自己的云主机；</li>
+<li>你所在组织的资产，且<strong>持有书面授权</strong>——授权书需写明 IP 段、时间窗、<br>
+   允许的技术手段（是否允许版本探测 / UDP 扫描）、应急联系人；</li>
+<li>专门的授权靶场（自建 DVWA、VulnHub、HackTheBox、CTF 环境）。</li>
+</ol>
+<p><strong>本日所有代码的目标都被硬编码为 <code>127.0.0.1</code></strong>，并且示例 03 内置了<br>
+"非本机目标必须显式声明授权"的护栏。这不是形式主义：把安全边界写进代码，<br>
+是安全工程师和"脚本小子"的分水岭。</p>
+<blockquote>
+<p>本系列定位是<strong>安全防御与教学</strong>。学端口扫描的目的不是"去扫别人"，<br>
+而是搞清楚<strong>自己的机器上有哪些门开着</strong>，然后去关掉它们。</p>
+</blockquote>
+<hr>
+<h2 id="_2">一、概念解释</h2>
+<h3 id="11">1.1 端口到底是什么</h3>
+<p>一个 IP 地址标识"一台主机"，一个端口号标识"这台主机上的一个服务入口"。<br>
+端口号是 16 位无符号整数，范围 <code>0~65535</code>，按 IANA 约定分三段：</p>
+<table>
+<thead>
+<tr>
+<th>区间</th>
+<th>名称</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0 ~ 1023</td>
+<td>系统端口（Well-known）</td>
+<td>需要 root/管理员权限才能绑定；如 22/SSH、80/HTTP、443/HTTPS</td>
+</tr>
+<tr>
+<td>1024 ~ 49151</td>
+<td>注册端口（Registered）</td>
+<td>普通用户可绑定；如 3306/MySQL、6379/Redis、8080/HTTP-Alt</td>
+</tr>
+<tr>
+<td>49152 ~ 65535</td>
+<td>动态/临时端口（Ephemeral）</td>
+<td>操作系统给客户端连接随机分配；任何普通程序都能绑</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么需要"端口"这一层？</strong> 因为同一台机器上要跑很多服务（Web、SSH、数据库），<br>
+TCP/IP 协议栈需要用端口号做<strong>多路复用（multiplexing）</strong>：内核收到一个 TCP<br>
+报文，靠四元组 <code>(源IP, 源端口, 目标IP, 目标端口)</code> 决定把它交给哪个进程的 socket。</p>
+<p><strong>关键推论（后面反复用到）：</strong> TCP 端口是"按需监听"的。<strong>没有进程在某个端口上<br>
+调用 <code>listen()</code>，内核就会拒绝到该端口的连接请求</strong>（回一个 RST）。这正是端口扫描<br>
+能判断"端口是否开放"的底层依据。</p>
+<h3 id="12">1.2 端口扫描在问什么</h3>
+<table>
+<thead>
+<tr>
+<th>扫描要回答的问题</th>
+<th>依赖的机制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>这台主机活着吗？</td>
+<td>ICMP echo / TCP 响应 / ARP</td>
+</tr>
+<tr>
+<td>哪些 TCP 端口开放？</td>
+<td>完成三次握手，或收到 SYN/ACK</td>
+</tr>
+<tr>
+<td>哪些 UDP 端口开放？</td>
+<td>收到响应，或反推"没有 ICMP 不可达"</td>
+</tr>
+<tr>
+<td>端口后面是什么服务/版本？</td>
+<td>banner 抓取 + 探针 + 指纹匹配</td>
+</tr>
+<tr>
+<td>有没有防火墙？它什么策略？</td>
+<td>对比"回 RST"与"直接丢包"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>注意第 5 条</strong>。这是初学者最容易漏掉、也是防御方最该关心的：如果某个端口<br>
+<strong>超时</strong>而不是<strong>被拒绝</strong>，通常说明链路中间有一台设备<strong>主动丢弃</strong>了你的包——<br>
+也就是说，<strong>有防火墙，而且它可能记录了你的行为</strong>。</p>
+<h3 id="13">1.3 四种常用扫描类型</h3>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>Nmap 参数</th>
+<th>原理</th>
+<th>需要 root</th>
+<th>速度</th>
+<th>隐蔽性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TCP connect</td>
+<td><code>-sT</code></td>
+<td>调用 <code>connect()</code>，完成完整三次握手</td>
+<td>❌</td>
+<td>慢</td>
+<td>差（应用层日志能看见）</td>
+</tr>
+<tr>
+<td>TCP SYN</td>
+<td><code>-sS</code></td>
+<td>只发 SYN，收到 SYN/ACK 后发 RST 掐断</td>
+<td>✅</td>
+<td>快</td>
+<td>好（半开，不进应用层）</td>
+</tr>
+<tr>
+<td>UDP</td>
+<td><code>-sU</code></td>
+<td>发空 UDP 包，看是否回 ICMP 不可达</td>
+<td>多数 ✅</td>
+<td>极慢</td>
+<td>中</td>
+</tr>
+<tr>
+<td>版本探测</td>
+<td><code>-sV</code></td>
+<td>抓 banner + 发协议探针做指纹匹配</td>
+<td>❌</td>
+<td>慢</td>
+<td>差（会触发应用逻辑）</td>
+</tr>
+<tr>
+<td>空闲扫描</td>
+<td><code>-sI</code></td>
+<td>借"僵尸主机"的 IP ID 做跳板</td>
+<td>✅</td>
+<td>极慢</td>
+<td>极好（不暴露自己）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么 SYN 扫描需要 root？</strong> 因为它要自己构造 TCP 报文（原始套接字，<br>
+<code>AF_INET + SOCK_RAW</code>），而不是让内核的 TCP 协议栈代劳。普通用户无法创建<br>
+原始套接字，这是操作系统的安全设计（防止用户态伪造任意报文）。</p>
+<p><strong>为什么 SYN 扫描更隐蔽？</strong> 看内核侧发生了什么：</p>
+<pre class="plain"><code>connect 扫描（-sT）：
+  客户端内核 ──SYN──▶ 目标内核 ──▶ 目标进程 accept() 返回！
+              ◀─SYN/ACK─
+              ──ACK──▶            ← 连接进入 ESTABLISHED
+  目标**应用层**（nginx/sshd）看到了一条真实连接 → 写访问日志、计入连接数
+
+SYN 扫描（-sS）：
+  扫描器 ──SYN──▶ 目标内核 ──▶ 内核回 SYN/ACK，但 accept() 队列**未被消费**
+           ◀─SYN/ACK─
+           ──RST──▶            ← 连接被立刻销毁，从未 ESTABLISHED
+  目标**应用层**什么也没看到（内核压根没把它交出去）→ 日志里通常无痕
+</code></pre>
+<p>⚠️ <strong>避坑</strong>：现代防火墙（状态检测）和 IDS 对"大量半开连接"非常敏感，<br>
+SYN 扫描"隐蔽"只是相对 connect 扫描而言。真正的隐蔽要靠<strong>慢速扫描</strong><br>
+（<code>-T0/-T1</code>）+ 分布式源 + 正常业务流量掩护。</p>
+<h3 id="14-t0-t5">1.4 时序模板 <code>-T0 ~ -T5</code></h3>
+<table>
+<thead>
+<tr>
+<th>模板</th>
+<th>名称</th>
+<th>并发/超时</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-T0</code></td>
+<td>paranoid</td>
+<td>每 5 分钟 1 个包</td>
+<td>躲避 IDS，实战基本不用（太慢）</td>
+</tr>
+<tr>
+<td><code>-T1</code></td>
+<td>sneaky</td>
+<td>每 15 秒 1 个包</td>
+<td>同上</td>
+</tr>
+<tr>
+<td><code>-T2</code></td>
+<td>polite</td>
+<td>大幅降速</td>
+<td><strong>脆弱的生产设备</strong>（老交换机、工控 PLC）</td>
+</tr>
+<tr>
+<td><code>-T3</code></td>
+<td>normal</td>
+<td><strong>默认</strong></td>
+<td>绝大多数情况，从它开始</td>
+</tr>
+<tr>
+<td><code>-T4</code></td>
+<td>aggressive</td>
+<td>提高并发、缩短超时</td>
+<td>局域网、自己的机器、网络状况良好时</td>
+</tr>
+<tr>
+<td><code>-T5</code></td>
+<td>insane</td>
+<td>极限并发、超时 0.3s</td>
+<td>仅限本机/同机房，会牺牲准确率</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么默认是 T3 而不是 T5？</strong> 因为 T5 会带来三个真实后果：</p>
+<ol>
+<li><strong>丢包 → 漏报</strong>：超时被压到 0.3 秒，网络稍有抖动，真正开放的端口会被<br>
+   判成"关闭"——<strong>扫描结果错了，比扫得慢更糟</strong>；</li>
+<li><strong>触发防御 → 自我封禁</strong>：目标防火墙的 SYN Flood 防护会直接把你的源 IP<br>
+   拉黑，后续所有扫描全是错的；</li>
+<li><strong>打崩目标 → 事故</strong>：在授权的生产环境里，扫描器把业务链路打满属于<br>
+<strong>生产事故</strong>，可能违反授权条款。</li>
+</ol>
+<h3 id="15-p">1.5 端口选择 <code>-p</code></h3>
+<table>
+<thead>
+<tr>
+<th>写法</th>
+<th>含义</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-p 22,80,443</code></td>
+<td>指定若干端口</td>
+<td>最常用</td>
+</tr>
+<tr>
+<td><code>-p 1-1024</code></td>
+<td>范围</td>
+<td>覆盖所有系统端口</td>
+</tr>
+<tr>
+<td><code>-p-</code></td>
+<td>全部 65535 个端口</td>
+<td>耗时可能是 <code>-p 1-1024</code> 的 60 倍</td>
+</tr>
+<tr>
+<td><code>-p http,https</code></td>
+<td>按服务名</td>
+<td>nmap 会查 <code>/etc/services</code> 翻译</td>
+</tr>
+<tr>
+<td><code>--top-ports 100</code></td>
+<td>最常见的 100 个端口</td>
+<td>基于 nmap 的 <code>nmap-services</code> 频率表</td>
+</tr>
+<tr>
+<td><code>-F</code></td>
+<td>Fast，常见 100 端口</td>
+<td>等价 <code>--top-ports 100</code></td>
+</tr>
+<tr>
+<td><code>--exclude-ports 80</code></td>
+<td>排除</td>
+<td>避免打扰生产 Web</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么要"先小后大"？</strong> 扫描耗时的近似公式：</p>
+<pre class="plain"><code>总耗时 ≈ (端口数 × 单端口探测时间) / 并发度
+</code></pre>
+<p><code>-sV</code> 会把单端口探测时间从 ~1ms 放大到几百毫秒，<code>-p-</code> 会把端口数从 1000<br>
+放大到 65535。<strong>一次 <code>-sV -p- -T4</code> 的扫描，可能比 <code>-p 1-1024 -T3</code> 慢 1000 倍。</strong></p>
+<h3 id="16-banner">1.6 banner 抓取与服务识别</h3>
+<p><strong>定义</strong>：banner 是服务在连接建立后（或收到特定请求后）返回的<strong>标识性文本</strong>，<br>
+通常包含软件名和版本，例如：</p>
+<pre class="plain"><code>SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.19        ← SSH
+220 mail.example.com ESMTP Postfix                ← SMTP
+HTTP/1.1 200 OK  /  Server: nginx/1.24.0          ← HTTP
++OK Dovecot ready.                                ← POP3
+$6379 ... -NOAUTH Authentication required         ← Redis
+</code></pre>
+<p><strong>为什么 banner 这么重要？</strong> 因为"端口 22 开放"只能告诉你有 SSH，而<br>
+"SSH-2.0-OpenSSH_7.4"能告诉你<strong>这是一台 2016 年的老 OpenSSH，可能存在<br>
+CVE-2018-15473 用户名枚举</strong>。服务识别的粒度，直接决定漏洞评估的准确度。</p>
+<p><strong>难点：服务的"性格"不止一种。</strong></p>
+<table>
+<thead>
+<tr>
+<th>性格</th>
+<th>代表服务</th>
+<th>抓取方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>话痨型：连上就说</td>
+<td>SMTP、FTP、SSH、POP3、MySQL（服务端先发握手包）</td>
+<td>connect 后直接 <code>recv</code></td>
+</tr>
+<tr>
+<td>沉默型：你先开口</td>
+<td>HTTP、HTTPS、Redis、Memcached、多数自研协议</td>
+<td>先发<strong>探针</strong>再 <code>recv</code></td>
+</tr>
+<tr>
+<td>冰柜型：连上也不说话</td>
+<td>无响应服务、被限速的服务、部分负载均衡后端的黑洞</td>
+<td>只能靠超时结束</td>
+</tr>
+<tr>
+<td>反侦测型：故意撒谎/不发</td>
+<td>改过 banner 的 SSH、返回假 Server 头的 Web</td>
+<td>需要<strong>多条探针 + 行为特征</strong>联合判断</td>
+</tr>
+</tbody>
+</table>
+<h3 id="17">1.7 三个必须分清的状态</h3>
+<p>扫描结果里，一个端口有<strong>三种</strong>状态，混淆它们会导致错误的安全结论：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>现象</th>
+<th>真实含义</th>
+<th>防御建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>open</code></td>
+<td>connect 成功 / 收到 SYN-ACK</td>
+<td>有进程在监听，服务可达</td>
+<td>确认是否<strong>必须</strong>对外</td>
+</tr>
+<tr>
+<td><code>closed</code></td>
+<td>收到 RST（<code>ECONNREFUSED</code>）</td>
+<td>主机在，但该端口无监听</td>
+<td>正常；但说明<strong>主机可达</strong></td>
+</tr>
+<tr>
+<td><code>filtered</code></td>
+<td>超时 / 无响应（<code>ETIMEDOUT</code>）</td>
+<td>报文被<strong>丢弃</strong>，多半有防火墙</td>
+<td>检查防火墙策略是否过宽</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>一条容易搞错的推论</strong>：<code>closed</code> 不代表"安全"。攻击者知道<strong>主机在线</strong>，<br>
+并且知道你的防火墙<strong>允许</strong> ICMP/RST 回包——这些信息本身就是情报。<br>
+最安全的姿态是 <code>filtered</code>（静默丢弃），而不是 <code>closed</code>。</p>
+</blockquote>
+<hr>
+<h2 id="_3">二、原理解释（底层机制与设计动机）</h2>
+<h3 id="21-tcp">2.1 TCP 三次握手与扫描类型的关系</h3>
+<pre class="plain"><code>        扫描器（客户端）                    目标（服务端）
+              │                                 │
+   ① SYN      │ ───────────────────────────────▶│  CLOSED → 回 RST
+              │ ◀─────────────────────────────── │  LISTEN → 回 SYN/ACK
+              │                                 │
+   ② SYN/ACK  │ ◀─────────────────────────────── │
+              │                                 │
+   ③ ACK      │ ───────────────────────────────▶│  ESTABLISHED（双方）
+
+   ── connect 扫描（-sT）：走完 ①②③，由内核完成，应用层可见
+   ── SYN 扫描（-sS）：只做 ①②，然后**自己发 RST** 取代 ③，应用层不可见
+   ── 防火墙 REJECT：在第 ① 步就回 RST → 扫描器看到&quot;closed&quot;
+   ── 防火墙 DROP：第 ① 步的 SYN 被丢弃，没有回应 → 扫描器看到&quot;filtered&quot;
+</code></pre>
+<p><strong>为什么"收到 RST"是 <code>closed</code>，而不是"未知"？</strong> 因为 RST 是<strong>来自目标主机<br>
+的内核</strong>的明确答复："我这里没有进程监听这个端口"。而超时只是"我没收到任何<br>
+答复"，可能因为：目标主机不存在、防火墙丢包、路由黑洞。两者的<strong>证据强度<br>
+完全不同</strong>。</p>
+<h3 id="22-udp">2.2 为什么 UDP 扫描这么不可靠</h3>
+<p>UDP 是无连接协议，没有握手可以判断，只能靠<strong>排除法</strong>：</p>
+<pre class="plain"><code>发送 UDP 包到目标端口:
+  ├── 收到应用层响应          → open（最确定）
+  ├── 收到 ICMP port unreachable → closed（确定）
+  └── 什么都没收到             → ？？？（可能是 open，也可能是被丢包）
+</code></pre>
+<p><strong>三个导致不可靠的现实因素：</strong></p>
+<ol>
+<li><strong>合法沉默</strong>：很多 UDP 服务（如某些 DNS 服务器对非法查询、SNMP 对错误的<br>
+   community）设计上就不回应。<strong>"不回应"是合法行为</strong>，你无法区分它与丢包。</li>
+<li><strong>ICMP 限速</strong>：Linux 默认 <code>net.ipv4.icmp_ratelimit = 1000</code>（每秒最多 1000 个<br>
+   ICMP 相关报文），且很多云厂商直接限速或过滤 ICMP。ICMP 不可达报文会被<br>
+   内核丢弃 → 你看到的全是"超时"。</li>
+<li><strong>重传与超时</strong>：UDP 没有重传机制，单包丢失就永久丢失。要降低误判只能<br>
+<strong>多次重试 + 加长超时</strong>，这使得 UDP 扫描的时间成本是 TCP 的 10~100 倍。</li>
+</ol>
+<p><strong>实践建议</strong>：<code>-sU</code> 只扫你确实关心的少数端口（53/161/123/500），并且接受<br>
+"结果仅供参考"。</p>
+<h3 id="23">2.3 为什么"扫描到开放"不等于"服务可用"</h3>
+<p>有四种常见情况会让扫描结论与事实不符：</p>
+<table>
+<thead>
+<tr>
+<th>情况</th>
+<th>现象</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>反向代理 / 端口转发</td>
+<td>8080 显示开放，但直连后端失败</td>
+<td>中间有 nginx/haproxy 转发</td>
+</tr>
+<tr>
+<td>SYN 代理 / 负载均衡</td>
+<td>所有端口都"开放"</td>
+<td>中间的 LB 代替后端回 SYN/ACK</td>
+</tr>
+<tr>
+<td>云安全组白名单</td>
+<td>你自己的 IP 扫不到，别人却能连</td>
+<td>安全组按源 IP 放行</td>
+</tr>
+<tr>
+<td>本地回环 vs 外部网卡</td>
+<td><code>127.0.0.1:3306</code> 开放，<code>公网IP:3306</code> 关闭</td>
+<td>服务只绑了 <code>127.0.0.1</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>最后一条是最常见、也最容易被忽略的</strong>，也是本日所有演示都在<br>
+<code>127.0.0.1</code> 上做的原因：<strong>你扫本机开放，不代表对外开放；你扫本机关闭，<br>
+也不代表没有被 <code>0.0.0.0</code> 监听的进程——要看你从哪个地址发起的连接。</strong></p>
+<h3 id="24-python-nmap">2.4 <code>python-nmap</code> 的原理：它其实是个"命令行包装器"</h3>
+<p><code>python-nmap</code> 并没有重新实现 TCP/IP 扫描逻辑，它的工作方式是：</p>
+<pre class="plain"><code>你的 Python 代码
+    │  nm.scan(hosts=..., ports=..., arguments=&#x27;-sS -sV -T4&#x27;)
+    ▼
+python-nmap 拼接命令行: nmap -sS -sV -T4 -p &lt;ports&gt; &lt;hosts&gt; -oX -
+    │  subprocess.Popen(...)
+    ▼
+系统里的 nmap 可执行文件（真正干活的）
+    │  把结果以 XML 写到 stdout
+    ▼
+python-nmap 用 ElementTree 解析 XML，包装成 PortScanner 对象
+    ▼
+你拿到 nm[&#x27;127.0.0.1&#x27;][&#x27;tcp&#x27;][80] 这样的字典
+</code></pre>
+<p><strong>三个重要推论：</strong></p>
+<ol>
+<li><strong>系统里必须装了 nmap</strong>，否则 <code>python-nmap</code> 会报 <code>nmap program was not found in path</code>。<br>
+<strong>库的缺失和可执行文件的缺失是两回事</strong>，检测要分开做。</li>
+<li><strong>它继承了 nmap 的全部能力，也继承了 nmap 的全部限制</strong>（需要 root 才能 <code>-sS</code>）。</li>
+<li>你<strong>完全可以不用这个库</strong>，自己用 <code>subprocess + xml.etree</code> 做同样的事——<br>
+   示例 01 就把这两条路都写了出来，方便对比。</li>
+</ol>
+<h3 id="25">2.5 并发模型：为什么用线程池而不是协程</h3>
+<p>扫描是<strong>I/O 密集型（I/O-bound）</strong>任务：绝大部分时间花在"等待网络响应"上，<br>
+CPU 几乎不动。Python 的 GIL 限制的是<strong>CPU 并行</strong>，而 <code>socket.connect/recv</code><br>
+在阻塞期间会<strong>释放 GIL</strong>，所以多线程在这个场景下能真正并行等待。</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+<th>本日选用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>串行</td>
+<td>简单、结果有序</td>
+<td>慢（N 个端口 × 超时）</td>
+<td>❌</td>
+</tr>
+<tr>
+<td>线程池 <code>ThreadPoolExecutor</code></td>
+<td>实现简单、易限流、易收结果</td>
+<td>线程数上千时内存吃紧</td>
+<td>✅ 示例 03</td>
+</tr>
+<tr>
+<td><code>asyncio</code></td>
+<td>单线程可支持数万并发</td>
+<td>需要异步版 socket API，代码复杂</td>
+<td>⏭ 进阶</td>
+</tr>
+<tr>
+<td>多进程</td>
+<td>绕过 GIL</td>
+<td>进程开销大、共享数据麻烦</td>
+<td>❌ 不适用</td>
+</tr>
+</tbody>
+</table>
+<p><strong>并发能把耗时压到多少？</strong> 理想情况下：</p>
+<pre class="plain"><code>串行耗时  ≈ Σ(单端口耗时)
+并发耗时  ≈ max(单端口耗时) + 调度开销     （当 并发度 ≥ 端口数）
+</code></pre>
+<p>对"大部分端口都超时"的场景，串行 1000 个端口 × 0.6 秒 = <strong>10 分钟</strong>；<br>
+64 并发则约 <strong>10 秒</strong>——这就是为什么真实扫描器必须并发。</p>
+<h3 id="26">2.6 为什么扫描器必须限流（防御视角）</h3>
+<p><strong>对目标而言</strong>：500 并发 × 65535 端口 ≈ 每秒数万个 SYN，效果等同于一次<br>
+小型 SYN Flood。这会：</p>
+<ul>
+<li>打满目标的连接跟踪表（<code>conntrack</code> 满 → <strong>正常用户也连不进来</strong>，这是<br>
+  真实的生产事故）；</li>
+<li>触发 IPS/云 WAF 的封禁规则 → 测试中断；</li>
+<li>违反授权条款（多数授权书会写明"不得影响业务可用性"）。</li>
+</ul>
+<p><strong>对自己而言</strong>：每个并发连接占一个文件描述符。Linux 默认 <code>ulimit -n</code> 是<br>
+1024（部分发行版 65535）。开 5000 个线程池任务，会以<br>
+<code>OSError: [Errno 24] Too many open files</code> 崩掉。</p>
+<p><strong>本日的默认值</strong>：<code>max_workers=64</code>、<code>timeout=0.6s</code>。这是一组"自己的机器上<br>
+跑得舒服、对目标也礼貌"的参数。</p>
+<h3 id="27-closed-rst">2.7 深度机制：closed 端口为什么回 RST，而「被丢弃」连回都不回</h3>
+<p>1.7 给了三态的定义，这一节讲<strong>协议层面到底发生了什么</strong> —— 这才是"closed 与 filtered<br>
+为什么必须分开"的硬道理。关键在一段<strong>内核</strong>的行为，而不是应用的：</p>
+<pre class="plain"><code>① 端口没监听（closed）
+   扫描方 ──── SYN ────────────►  目标内核
+                                     │ 查监听表：没有进程监听该端口
+                                         ↓
+   扫描方 ◄── RST,ACK ──────────  内核**直接回 RST**
+   → connect 立刻失败，errno = ECONNREFUSED(111)
+   → 结论：主机活着、这个端口没有服务 —— 这是一个**确定的结论**
+
+② 中间有防火墙 DROP（filtered）
+   扫描方 ──── SYN ────────────►  防火墙（-j DROP）
+                                     │ 悄悄丢掉，什么都不回
+                                         ↓
+   扫描方 ◄── （沉默）──────────  没有任何回应
+   → connect 一直等到超时，errno = ETIMEDOUT(110)
+   → 结论：**不确定**。可能被丢弃、可能网络断了、可能主机不在
+   → 但&quot;不确定&quot;恰恰是有价值的情报：说明这里有一道会**静默丢弃**的策略
+
+③ 中间有防火墙 REJECT（也是 filtered/closed 之间的模糊地带）
+   iptables -j REJECT --reject-with tcp-reset  → 回 RST ⇒ 扫描方看到 ECONNREFUSED
+   iptables -j REJECT（默认 icmp-port-unreachable） → 回 ICMP ⇒ 扫描方看到 EHOSTUNREACH
+   → ⚠️ 这就是为什么&quot;看到 ECONNREFUSED&quot;**不能**直接断言&quot;对方没防火墙&quot;：
+     一个配了 `--reject-with tcp-reset` 的防火墙会伪装成&quot;端口关闭&quot;
+</code></pre>
+<p>对应的 iptables 写法（<strong>只在你自己的机器上试</strong>，改防火墙可能把自己锁在外面）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 丢弃（DROP）：扫描器只能等到超时 —— 最&quot;硬&quot;的姿态，但也会拖慢正常用户</span>
+sudo<span class="w"> </span>iptables<span class="w"> </span>-A<span class="w"> </span>INPUT<span class="w"> </span>-p<span class="w"> </span>tcp<span class="w"> </span>--dport<span class="w"> </span><span class="m">9999</span><span class="w"> </span>-j<span class="w"> </span>DROP
+<span class="c1"># 拒绝（REJECT）：明确回 RST / ICMP —— 体验更好，但会向扫描者暴露&quot;这里有策略&quot;</span>
+sudo<span class="w"> </span>iptables<span class="w"> </span>-A<span class="w"> </span>INPUT<span class="w"> </span>-p<span class="w"> </span>tcp<span class="w"> </span>--dport<span class="w"> </span><span class="m">9999</span><span class="w"> </span>-j<span class="w"> </span>REJECT<span class="w"> </span>--reject-with<span class="w"> </span>tcp-reset
+sudo<span class="w"> </span>iptables<span class="w"> </span>-A<span class="w"> </span>INPUT<span class="w"> </span>-p<span class="w"> </span>tcp<span class="w"> </span>--dport<span class="w"> </span><span class="m">9999</span><span class="w"> </span>-j<span class="w"> </span>REJECT<span class="w"> </span>--reject-with<span class="w"> </span>icmp-port-unreachable
+</code></pre></div>
+<p><strong>三种扫描类型在握手层面的差别</strong>（对应 1.3）：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>发出的包</th>
+<th>握手是否完成</th>
+<th>需要 root</th>
+<th>日志可见性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>connect</code>（<code>-sT</code>）</td>
+<td><code>SYN</code> → <code>SYN/ACK</code> → <code>ACK</code>，<strong>完整握手后再 <code>RST</code> 拆掉</strong></td>
+<td>✅ 完成</td>
+<td>❌ 不需要（普通 <code>connect()</code> 调用内核）</td>
+<td><strong>显眼</strong>：目标的应用层/服务日志里会留下"连接"记录</td>
+</tr>
+<tr>
+<td><code>SYN</code>（<code>-sS</code>，半开）</td>
+<td><code>SYN</code> → <code>SYN/ACK</code> → <strong>回 <code>RST</code></strong>，从不完成握手</td>
+<td>❌ 不完成</td>
+<td>✅ 需要（要自己构造并收发原始包）</td>
+<td>隐蔽：<strong>应用层完全不知情</strong>，只有内核/IDS 可能看到</td>
+</tr>
+<tr>
+<td>UDP（<code>-sU</code>）</td>
+<td>一个 UDP 包</td>
+<td>无握手概念</td>
+<td>通常需要</td>
+<td>取决于服务是否回 ICMP</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>为什么 <code>SYN</code> 扫描"快"？</strong> 因为它不用等三次握手完成，也不占用目标的并发连接额度；<br>
+每端口的判定只依赖"收到 SYN/ACK（open）还是 RST（closed）还是没响应（filtered|open|filtered）"。<br>
+代价是 UDP 那行说的：<strong>结果有歧义</strong>（UDP 没响应既可能开着也可能被丢），<br>
+以及需要特权 —— 这两点正是本日脚本选择 <code>-sT</code>（connect）作为教学默认值的原因。</p>
+</blockquote>
+<p><strong>扫描器自己也要付代价</strong>：connect 扫描会在本机留下大量 <code>TIME_WAIT</code> 状态的连接<br>
+（主动关闭的一方要等 2×MSL）。扫全 65535 个端口时，本地临时端口（Linux 默认<br>
+<code>net.ipv4.ip_local_port_range = 32768~60999</code>，约 2.8 万个）可能被耗尽：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">ss<span class="w"> </span>-tan<span class="w"> </span>state<span class="w"> </span>time-wait<span class="w"> </span><span class="p">|</span><span class="w"> </span>wc<span class="w"> </span>-l<span class="w">         </span><span class="c1"># 看看现在有多少连接在 TIME_WAIT</span>
+cat<span class="w"> </span>/proc/sys/net/ipv4/ip_local_port_range
+</code></pre></div>
+<p>这就是"并发不是越高越好"的另一面 —— 见 2.10。</p>
+<h3 id="28-tcp-banner">2.8 深度机制：TCP 是<strong>字节流</strong>，不是<strong>消息流</strong>（banner 抓取的根本难点）</h3>
+<p>这是本日示例 02 里 8 个坑的<strong>共同根源</strong>，值得单独讲。</p>
+<p>写 <code>sock.sendall(b"PING\r\n")</code> 或 <code>sock.recv(1024)</code> 时，你会不自觉地以为<br>
+"一次发 = 一条消息、一次收 = 一条消息"。<strong>TCP 不提供这种保证</strong>：</p>
+<pre class="plain"><code>发送方:  sendall(b&quot;220 hello\r\n&quot;)     ← 应用看到的是&quot;一条消息&quot;
+                    │
+             ┌──────┴──────┐   内核可能会拆成两个 TCP 段（受 MSS 限制）
+             ▼             ▼
+        [220 hel]      [lo\r\n]           ← 接收方的 recv() 可能只拿到前半截
+                    │
+接收方:  recv(1024) → b&quot;220 hel&quot;        ← 一次 recv ≠ 一条完整 banner
+         recv(1024) → b&quot;lo\r\n&quot;          ← 也可能两次 recv 拿到两条消息（&quot;粘包&quot;）
+</code></pre>
+<p>影响因素（都需要知道，否则会归错因）：</p>
+<table>
+<thead>
+<tr>
+<th>因素</th>
+<th>作用</th>
+<th>对抓 banner 的影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MSS（最大段长度）</td>
+<td>受 MTU 限制，回环 ~65495、以太网 1460</td>
+<td>长 banner 会被拆成多段</td>
+</tr>
+<tr>
+<td>Nagle 算法</td>
+<td>小包攒够才发（减少小包）</td>
+<td>服务端可能"慢半拍"，第一次 <code>recv</code> 拿到更多或更少</td>
+</tr>
+<tr>
+<td>延迟确认（delayed ACK）</td>
+<td>收方最多等 40ms 再回 ACK</td>
+<td>与服务端的 Nagle 组合可能出现短暂"卡顿"</td>
+</tr>
+<tr>
+<td><code>TCP_NODELAY</code></td>
+<td>关掉 Nagle</td>
+<td>交互式协议（SSH/Telnet）必须开，否则体验差</td>
+</tr>
+<tr>
+<td><code>SO_RCVBUF</code></td>
+<td>接收缓冲</td>
+<td>影响单次 <code>recv</code> 最多能取回多少</td>
+</tr>
+</tbody>
+</table>
+<p>因此<strong>正确的读取循环</strong>必然长这样（本日 <code>grab_banner()</code> 的实现）：</p>
+<pre class="plain"><code>while 还没到上限:
+    try:  chunk = sock.recv(1024)
+    except timeout:        break      # 超时 = &quot;暂时没有更多了&quot;，不是错误
+    except ConnectionReset: break      # 被 RST：对方掐断，已有数据仍可用
+    if not chunk:          break       # FIN：对方正常关闭
+    累积 chunk
+    if 看到换行:           break       # 启发式：一行标识已到手
+</code></pre>
+<p>三个"停止条件"缺一不可：<strong>上限</strong>（防内存放大）、<strong>超时</strong>（防永久卡死）、<br>
+<strong>分隔符</strong>（防白等一个完整 timeout）。这也是示例 02 里坑 1、坑 3 修好的样子。</p>
+<blockquote>
+<p>⚠️ 反过来：<strong>别把"没读到 banner"当成"端口关闭"</strong>。<br>
+<code>connect</code> 成功 = 端口一定开放；banner 为空只是"这个服务不说话，或我们的探针不对"。<br>
+把这两件事分开写进报告，是专业扫描器的标志（示例 03 的 <code>PortResult</code> 里<br>
+<code>state</code> 和 <code>banner</code> 是两个独立字段，正是这个道理）。</p>
+</blockquote>
+<h3 id="29-nmap-pn-t-sv">2.9 深度机制：Nmap 内部在做什么（<code>-Pn</code>、<code>-T</code>、<code>-sV</code> 的真实含义）</h3>
+<p>命令行参数不是"咒语"，每个都对应 Nmap 内部的一个阶段。理解它们才能解释<br>
+"为什么同一个目标，加了某个参数结果就变了"。</p>
+<h4 id="291-host-discovery-pn">2.9.1 阶段一：主机发现（Host Discovery）—— 为什么必须有 <code>-Pn</code></h4>
+<p>Nmap 默认会<strong>先判断主机是否存活</strong>，再对"存活"的主机做端口扫描：</p>
+<pre class="plain"><code>① ARP 请求（同网段，最可靠）
+② 否则 ICMP Echo → ICMP Timestamp → ICMP Address Mask
+③ 再否则 TCP SYN to 443 / TCP ACK to 80 / UDP to 40125…
+④ 全都没回应 → 判定 host down → **跳过所有端口的扫描**
+</code></pre>
+<p><strong>坑在这里</strong>：很多加固过的主机/云安全组会丢弃 ICMP，于是 Nmap 认为主机"down"，<br>
+报告里写 <code>Host is down</code>，<strong>一个端口都不扫</strong> —— 你就会误以为"目标没开任何端口"。</p>
+<p><code>-Pn</code> 的含义就是：<strong>跳过主机发现，把目标当成一定存活</strong>。所以：</p>
+<ul>
+<li>扫"明确还活着的内网资产/IP 白名单"时加 <code>-Pn</code> 是常态；</li>
+<li>但如果目标真的下线，<code>-Pn</code> 会让每个端口都白等超时（扫描变慢），这是代价。</li>
+</ul>
+<h4 id="292-t0-t5">2.9.2 阶段二：时序模板（<code>-T0 ~ -T5</code>）到底改了哪些值</h4>
+<p>1.4 给的是"快慢"的直觉，这里给出它真正调节的参数。<br>
+⚠️ 下表是<strong>典型取值</strong>（依据 Nmap 官方手册；不同版本略有差异，且 <code>max-rtt-timeout</code> 在实际扫描中<br>
+会<strong>动态调整</strong>）。要看你这台机器上的真实行为，请用 <code>nmap --help</code> 与本机实测对照：</p>
+<table>
+<thead>
+<tr>
+<th>模板</th>
+<th><code>--max-rtt-timeout</code>（初始）</th>
+<th><code>--max-retries</code></th>
+<th><code>--min-parallelism</code>/<code>--max-parallelism</code></th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-T0</code> paranoid</td>
+<td>5 分钟</td>
+<td>10</td>
+<td>1 / 1</td>
+<td>躲避 IDS，慢到不可接受</td>
+</tr>
+<tr>
+<td><code>-T1</code> sneaky</td>
+<td>15 秒</td>
+<td>10</td>
+<td>1 / 1</td>
+<td>同上，略快</td>
+</tr>
+<tr>
+<td><code>-T2</code> polite</td>
+<td>10 秒</td>
+<td>10</td>
+<td>1 / 1</td>
+<td>降低对脆弱生产设备的压力</td>
+</tr>
+<tr>
+<td><code>-T3</code> normal</td>
+<td>1 秒（动态调整）</td>
+<td>10</td>
+<td>动态</td>
+<td><strong>默认值</strong>，通用</td>
+</tr>
+<tr>
+<td><code>-T4</code> aggressive</td>
+<td>1.25 秒</td>
+<td>6</td>
+<td>动态（更高）</td>
+<td>局域网/自有主机，响应快</td>
+</tr>
+<tr>
+<td><code>-T5</code> insane</td>
+<td>0.3 秒</td>
+<td>2</td>
+<td>很高</td>
+<td>只适合极快网络，<strong>会牺牲准确率</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>为什么 <code>-T5</code> 会"扫不准"？</strong> 因为 <code>--max-retries</code> 降到 2、超时压到 0.3 秒后，<br>
+稍慢的开放端口会被判成 <code>filtered</code>。<strong>在任何真实网络里，"更快"和"更准"是互相拉扯的</strong>，<br>
+这也是为什么默认 <code>-T3</code> 而不是 <code>-T4/-T5</code>：默认值要为普适性负责。</p>
+<p>⚠️ 顺带一个纪律问题：<code>-T4/-T5</code> 打在生产设备上可能被当成拒绝服务。<br>
+<strong>时序选择既是技术问题，也是伦理/合规问题</strong> —— 授权书里通常写着"不得使用可能<br>
+造成服务影响的高强度扫描"。</p>
+</blockquote>
+<h4 id="293-sv">2.9.3 阶段三：服务/版本探测（<code>-sV</code>）—— 为什么它比"按端口号猜服务"强得多</h4>
+<p>1.6 讲了 banner 抓取，<code>-sV</code> 是它的工业化版本：</p>
+<pre class="plain"><code>对每个开放端口：
+   ① 从探针库（nmap-service-probes，含上千条）中选出**可能匹配**的探针
+      例如 HTTP 端点 → 发 `GET / HTTP/1.0`；SSL 端点 → 先做 TLS 握手
+   ② 发送探针 → 收集响应
+   ③ 用&quot;响应匹配规则&quot;（正则会话表达式）比对 → 命中 softmatch/hardmatch
+   ④ 输出 name / product / version / extrainfo / cpe（可对接 CVE 库）
+</code></pre>
+<p>对比我们自己在示例 03 里写的指纹表（12 条 bytes 正则）：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Nmap <code>-sV</code></th>
+<th>示例 03 的 <code>FINGERPRINTS</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>规则数量</td>
+<td>上千条（还有 <code>-sV --version-all</code> 全量）</td>
+<td>12 条（够教学）</td>
+</tr>
+<tr>
+<td>探针策略</td>
+<td>按端口/协议<strong>分类选探针</strong>，多轮交互</td>
+<td>三级启发式（Web/Redis/只读）</td>
+</tr>
+<tr>
+<td>输出</td>
+<td>服务名 + 产品 + 版本 + CPE</td>
+<td>服务名（粗）</td>
+</tr>
+<tr>
+<td>代价</td>
+<td>慢（每端口可能多轮往返）</td>
+<td>快（1~4 次读）</td>
+</tr>
+<tr>
+<td>结论强度</td>
+<td>"很可能是 nginx 1.18.0"</td>
+<td>"看着像 HTTP"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么本文不直接抄 Nmap 的探针库？</strong> 因为它有上千条规则、依赖大量协议细节，<br>
+把它塞进一个教学脚本会让"原理"被淹没。本文的选择是：<strong>用一个能讲清楚的子集，<br>
+把"探针选择 + 响应匹配"这两个核心动作演示出来</strong>，并明确标注它的精度上限。</p>
+<h4 id="294-p-">2.9.4 一个常被忽略的事实：<code>-p-</code> 不是"更彻底"，而是"更久"</h4>
+<p><code>-p-</code> 是 65535 个端口。以 <code>-T3</code> 对同一台主机为例，端口数从 1000 涨到 65535，<br>
+<strong>扫描时间的量级是线性增长的</strong>（还要叠加慢速服务的超时）。所以正确顺序永远是：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1) 先快扫小范围，拿到&quot;哪些端口在活着&quot;</span>
+nmap<span class="w"> </span>-sT<span class="w"> </span>-Pn<span class="w"> </span>-T4<span class="w"> </span>--top-ports<span class="w"> </span><span class="m">100</span><span class="w"> </span>-oX<span class="w"> </span>-<span class="w"> </span><span class="m">127</span>.0.0.1
+<span class="c1"># 2) 再对**发现的开放端口**做深度版本探测（这才是耗时的部分）</span>
+nmap<span class="w"> </span>-sT<span class="w"> </span>-Pn<span class="w"> </span>-sV<span class="w"> </span>-p<span class="w"> </span><span class="m">22</span>,80,443<span class="w"> </span>-oX<span class="w"> </span>-<span class="w"> </span><span class="m">127</span>.0.0.1
+<span class="c1"># 3) 只有确实需要（合规基线核查 / 漏洞面盘点）才 -p- 全端口</span>
+</code></pre></div>
+<h3 id="210">2.10 深度机制：并发的<strong>代价</strong>，与"限流"为什么是硬要求</h3>
+<p>2.5 讲了"为什么用线程池"，2.6 讲了"为什么必须限流"。这里补上<strong>量化</strong>与<strong>踩坑</strong>。</p>
+<h4 id="2101">2.10.1 三种并发模型在扫描场景下的取舍</h4>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>实现</th>
+<th>优点</th>
+<th>缺点</th>
+<th>适用规模</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>串行</td>
+<td>一个 <code>for</code> 循环</td>
+<td>最简单、最不打扰目标</td>
+<td><code>端口数 × timeout</code> 的线性增长</td>
+<td>几十个端口</td>
+</tr>
+<tr>
+<td><strong>线程池</strong>（本日用法）</td>
+<td><code>ThreadPoolExecutor(max_workers=64)</code></td>
+<td>代码直观、阻塞 I/O 天然适配、易于限流</td>
+<td>线程栈内存（默认 8MB 虚拟内存/线程）、GIL 影响小但存在</td>
+<td>几千~几万端口</td>
+</tr>
+<tr>
+<td>协程</td>
+<td><code>asyncio</code> + <code>loop.sock_connect</code></td>
+<td>单线程扛极多并发、内存占用低</td>
+<td>阻塞 I/O 需要专门的 asyncio socket API；错误处理更绕</td>
+<td>数万端口以上</td>
+</tr>
+<tr>
+<td>原始套接字</td>
+<td><code>AF_PACKET</code> + 自己造 SYN</td>
+<td>精确的 SYN 扫描、可控到每个字段</td>
+<td>需要 root、要自己实现重传/超时/ICMP 解析</td>
+<td>专业工具（Nmap <code>-sS</code>）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="2102">2.10.2 你可能遇到的三个真实报错</h4>
+<pre class="plain"><code>OSError: [Errno 24] Too many open files
+→ 触发：并发数 × 每连接 fd 超过 ulimit -n（常见默认 1024）
+→ 排查：ulimit -n ；ls /proc/self/fd | wc -l
+→ 修法：把 connections 控制在 (ulimit -n) / 3 以内；或临时 ulimit -n 4096
+        （注意：不要把并发开到几百上千去&quot;压测&quot;目标）
+
+OSError: [Errno 99] Cannot assign requested address
+→ 触发：本机临时端口耗尽（大量 TIME_WAIT），内核找不到可用源端口
+→ 排查：ss -tan state time-wait | wc -l
+→ 修法：降低并发、缩短扫描范围、等 TIME_WAIT 回收；不要用改 sysctl 去&quot;硬扛&quot;
+
+socket.gaierror: [Errno -2] Name or service not known
+→ 触发：目标写成了域名且解析失败
+→ 修法：解析错误应当**单独归类**（本日脚本把它记成 filtered + 错误原因），
+        而不是混进&quot;端口关闭&quot;里 —— 否则你会去查一个根本没被扫描的端口
+</code></pre>
+<h4 id="2103">2.10.3 限流的"两条底线"</h4>
+<ol>
+<li><strong>不伤害目标</strong>：并发 × 每端口负载 ≈ 你对目标施加的压力。授权测试里<br>
+   扫描强度通常有明确约定（例如"不得高于每秒 N 个连接"），<br>
+<code>--workers</code> 与 <code>--timeout</code> 是你要向客户交代的两个数字。</li>
+<li><strong>不暴露自己</strong>：高频扫描会在<strong>双方</strong>日志里留痕（边界设备、IDS、云厂商的<br>
+   流量告警）。真实评估里"被发现了"有时比"扫到端口"后果更严重 ——<br>
+   因为对方可能直接封掉你的源 IP，让后续工作无法进行。</li>
+</ol>
+<blockquote>
+<p>📌 本文脚本的默认值（<code>--workers 64</code>、<code>--timeout 0.6</code>、只扫回环）<br>
+就是按这两条底线定的：<strong>它在你自己的机器上跑，永远不会对别人造成压力</strong>。</p>
+</blockquote>
+<h3 id="211">2.11 深度机制：服务识别的两个层次，与"证据强度"的概念</h3>
+<pre class="plain"><code>层次 1：端口号 → 服务名       （/etc/services，或本文的 FALLBACK_SERVICES）
+   6379 → &quot;redis&quot;？            纯属**惯例**，没有任何证据
+   ⚠️ 你可以把 MySQL 跑在 6379 上，也可以把 Redis 跑在 8080 上
+
+层次 2：主动探测 → 服务指纹    （banner / 探针响应 / 版本字符串）
+   connect 6379 发 PING → 收到 &quot;-NOAUTH Authentication required.&quot; → **有证据**
+</code></pre>
+<p><strong>为什么一定要强调"证据强度"？</strong> 因为在安全报告里，"6379 端口开放"与<br>
+"Redis 未授权可访问"是两个<strong>完全不同</strong>的结论：前者只是"门在"，后者是"门没锁，<br>
+而且房间里有什么"。报告里混用这两句话，会让读报告的人做出错误决策。</p>
+<p>本文脚本的做法（可以在 <code>identify_service()</code> 与 <code>scan_one_port()</code> 里看到）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">result</span><span class="o">.</span><span class="n">service</span> <span class="o">=</span> <span class="n">service_name</span><span class="p">(</span><span class="n">port</span><span class="p">)</span>      <span class="c1"># 先用&quot;惯例&quot;填一个（弱证据）</span>
+<span class="o">...</span>
+<span class="k">if</span> <span class="n">raw</span><span class="p">:</span>
+    <span class="n">guess</span> <span class="o">=</span> <span class="n">identify_service</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>        <span class="c1"># 再用指纹覆盖（强证据）</span>
+    <span class="k">if</span> <span class="n">guess</span><span class="p">:</span>
+        <span class="n">result</span><span class="o">.</span><span class="n">service</span> <span class="o">=</span> <span class="n">guess</span>
+</code></pre></div>
+<p><strong>证据强度对照表</strong>（写报告时按这个排序陈述）：</p>
+<table>
+<thead>
+<tr>
+<th>证据</th>
+<th>强度</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>端口号 + <code>/etc/services</code></td>
+<td>⭐</td>
+<td>"6379/tcp 通常是 Redis"</td>
+</tr>
+<tr>
+<td>收到协议特征响应</td>
+<td>⭐⭐⭐</td>
+<td>"发送 PING 后收到 <code>-NOAUTH</code>，确认是 Redis 协议"</td>
+</tr>
+<tr>
+<td>版本字符串</td>
+<td>⭐⭐⭐⭐</td>
+<td>"<code>SSH-2.0-OpenSSH_9.6p1</code>，可据此比对 CVE"</td>
+</tr>
+<tr>
+<td>版本 + 行为验证</td>
+<td>⭐⭐⭐⭐⭐</td>
+<td>"Redis 无密码且可执行 <code>INFO</code>，可读写数据"</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 还有一个现实：<strong>TLS 端口抓不到明文 banner</strong>。<br>
+443/8443 上的服务要<strong>先完成 TLS 握手</strong>才会说 HTTP，我们的 <code>choose_probe()</code><br>
+只发明文 HTTP 请求，所以通常会拿到空 banner。这不是 bug，是"探针与协议不匹配"。<br>
+Nmap 的 <code>-sV</code> 会先握手再探（这也是它慢的另一半原因）。</p>
+</blockquote>
+<h3 id="212">2.12 把扫描器用成"配置漂移监控"（防御视角的正确用法）</h3>
+<p>扫描器最有价值的用法<strong>不是</strong>"扫一次看看有什么"，而是<strong>周期性地扫同一批资产并比对</strong>：</p>
+<pre class="plain"><code>T0（基线）  127.0.0.1: 22(ssh) open, 80 closed, 3306 closed
+T1（一周后）127.0.0.1: 22(ssh) open, **3306(mysql) open**  ← 有人把数据库暴露出来了
+                            ↑ 新增开放端口 = 配置漂移 = 要立刻查证
+</code></pre>
+<p>这正是示例 03 设计 <code>--out-dir</code> 导出 JSON/CSV（内含 <code>scanned_at</code> 等 <code>meta</code> 字段）<br>
+以及退出码的原因：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 定时任务：把每次结果落到带时间戳的目录，异常时让 CI/监控告警</span>
+python3<span class="w"> </span><span class="m">03</span>-auto-port-scanner.py<span class="w"> </span>--ports<span class="w"> </span>top<span class="w"> </span>--out-dir<span class="w"> </span>/var/log/portscan/<span class="k">$(</span>date<span class="w"> </span>+%F<span class="k">)</span>
+<span class="k">if</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="nv">$?</span><span class="w"> </span>-ne<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="o">]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;存在 filtered 端口，检查防火墙策略漂移&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">fi</span>
+</code></pre></div>
+<p><strong>对比两份报告的步骤（不用装任何库）</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import json</span>
+<span class="s">a = json.load(open(&quot;/var/log/portscan/2026-09-01/scan-result.json&quot;))</span>
+<span class="s">b = json.load(open(&quot;/var/log/portscan/2026-09-08/scan-result.json&quot;))</span>
+<span class="s">def opens(d): return {r[&quot;port&quot;]: r[&quot;service&quot;] for r in d[&quot;results&quot;] if r[&quot;state&quot;] == &quot;open&quot;}</span>
+<span class="s">A, B = opens(a), opens(b)</span>
+<span class="s">print(&quot;新增开放端口:&quot;, {p: B[p] for p in set(B) - set(A)})</span>
+<span class="s">print(&quot;消失的开放端口:&quot;, {p: A[p] for p in set(A) - set(B)})</span>
+<span class="s">PY</span>
+</code></pre></div>
+<p>为什么 <code>filtered</code> 也必须单独记录？因为<strong>"被防火墙丢弃"本身是一份策略证据</strong>：<br>
+如果某天某个端口从 <code>filtered</code> 变成 <code>closed</code>，说明防火墙规则被改过 ——<br>
+这可能是运维变更，也可能是有人动了规则。<strong>差异里藏着故事，单次快照里没有。</strong></p>
+<hr>
+<h2 id="api">三、定义与使用方法（API 速查表）</h2>
+<h3 id="31-nmap">3.1 Nmap 命令行速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ── 扫描类型（互斥，默认 -sS 若有 root，否则 -sT）──</span>
+nmap<span class="w"> </span>-sT<span class="w">   </span>&lt;target&gt;<span class="w">     </span><span class="c1"># TCP connect</span>
+nmap<span class="w"> </span>-sS<span class="w">   </span>&lt;target&gt;<span class="w">     </span><span class="c1"># TCP SYN（需 root）</span>
+nmap<span class="w"> </span>-sU<span class="w">   </span>&lt;target&gt;<span class="w">     </span><span class="c1"># UDP（慢，建议配合 -p 限定范围）</span>
+nmap<span class="w"> </span>-sn<span class="w">   </span>&lt;target&gt;<span class="w">     </span><span class="c1"># Ping 扫描，只探主机存活，不扫端口</span>
+
+<span class="c1"># ── 服务与系统识别 ──</span>
+nmap<span class="w"> </span>-sV<span class="w">   </span>&lt;target&gt;<span class="w">     </span><span class="c1"># 服务版本探测</span>
+nmap<span class="w"> </span>-O<span class="w">    </span>&lt;target&gt;<span class="w">     </span><span class="c1"># 操作系统识别（需 root）</span>
+nmap<span class="w"> </span>-A<span class="w">    </span>&lt;target&gt;<span class="w">     </span><span class="c1"># 激进模式 = -sV -O -sC --traceroute</span>
+nmap<span class="w"> </span>-sC<span class="w">   </span>&lt;target&gt;<span class="w">     </span><span class="c1"># 用默认脚本集（等价 --script=default）</span>
+nmap<span class="w"> </span>--script<span class="o">=</span>http-title<span class="w"> </span>&lt;target&gt;<span class="w">          </span><span class="c1"># 指定 NSE 脚本</span>
+nmap<span class="w"> </span>--script<span class="o">=</span>vuln<span class="w"> </span>&lt;target&gt;<span class="w">                </span><span class="c1"># 漏洞脚本集（慎用，会真发攻击流量）</span>
+
+<span class="c1"># ── 端口与主机范围 ──</span>
+nmap<span class="w"> </span>-p<span class="w"> </span><span class="m">22</span>,80,443<span class="w"> </span>&lt;target&gt;
+nmap<span class="w"> </span>-p<span class="w"> </span><span class="m">1</span>-1024<span class="w"> </span>&lt;target&gt;
+nmap<span class="w"> </span>-p-<span class="w"> </span>&lt;target&gt;<span class="w">                          </span><span class="c1"># 全端口</span>
+nmap<span class="w"> </span>--top-ports<span class="w"> </span><span class="m">100</span><span class="w"> </span>&lt;target&gt;
+nmap<span class="w"> </span>-Pn<span class="w"> </span>&lt;target&gt;<span class="w">                          </span><span class="c1"># 跳过主机存活检测（对防火墙后主机必用）</span>
+nmap<span class="w"> </span><span class="m">192</span>.168.1.0/24<span class="w">                        </span><span class="c1"># 整个 C 段</span>
+nmap<span class="w"> </span>-iL<span class="w"> </span>targets.txt<span class="w">                       </span><span class="c1"># 从文件读目标</span>
+nmap<span class="w"> </span>--exclude<span class="w"> </span><span class="m">192</span>.168.1.1<span class="w"> </span>&lt;target&gt;
+
+<span class="c1"># ── 性能与时序 ──</span>
+nmap<span class="w"> </span>-T0..-T5<span class="w"> </span>&lt;target&gt;<span class="w">                     </span><span class="c1"># 时序模板</span>
+nmap<span class="w"> </span>--max-retries<span class="w"> </span><span class="m">2</span><span class="w"> </span>&lt;target&gt;<span class="w">              </span><span class="c1"># 最大重传次数</span>
+nmap<span class="w"> </span>--min-rate<span class="w"> </span><span class="m">100</span><span class="w"> </span>&lt;target&gt;<span class="w">               </span><span class="c1"># 每秒最少发包数</span>
+nmap<span class="w"> </span>--max-rate<span class="w"> </span><span class="m">50</span><span class="w"> </span>&lt;target&gt;<span class="w">                </span><span class="c1"># 限速（对目标礼貌）</span>
+
+<span class="c1"># ── 输出格式（重要：机器可解析的出口）──</span>
+nmap<span class="w"> </span>-oN<span class="w"> </span>normal.txt<span class="w"> </span>&lt;target&gt;<span class="w">               </span><span class="c1"># 人类可读文本</span>
+nmap<span class="w"> </span>-oX<span class="w"> </span>result.xml<span class="w"> </span>&lt;target&gt;<span class="w">               </span><span class="c1"># XML（**最推荐**）</span>
+nmap<span class="w"> </span>-oG<span class="w"> </span>greppable.txt<span class="w"> </span>&lt;target&gt;<span class="w">            </span><span class="c1"># greppable，一行一主机</span>
+nmap<span class="w"> </span>-oA<span class="w"> </span>scan<span class="w"> </span>&lt;target&gt;<span class="w">                     </span><span class="c1"># 同时生成上面三种（文件名前缀 scan）</span>
+nmap<span class="w"> </span>-oX<span class="w"> </span>-<span class="w"> </span>&lt;target&gt;<span class="w">                        </span><span class="c1"># XML 到 stdout（给程序用）</span>
+</code></pre></div>
+<h3 id="32-python-nmap-api">3.2 <code>python-nmap</code> API 速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">nmap</span>                                  <span class="c1"># pip install python-nmap</span>
+
+<span class="n">nm</span> <span class="o">=</span> <span class="n">nmap</span><span class="o">.</span><span class="n">PortScanner</span><span class="p">()</span>                      <span class="c1"># 构造（会检查 nmap 可执行文件）</span>
+
+<span class="c1"># scan() —— 三个参数与命令行的对应关系</span>
+<span class="n">nm</span><span class="o">.</span><span class="n">scan</span><span class="p">(</span><span class="n">hosts</span><span class="o">=</span><span class="s1">&#39;127.0.0.1&#39;</span><span class="p">,</span>                   <span class="c1">#   → 位置参数 target</span>
+        <span class="n">ports</span><span class="o">=</span><span class="s1">&#39;22,80,443&#39;</span><span class="p">,</span>                   <span class="c1">#   → -p</span>
+        <span class="n">arguments</span><span class="o">=</span><span class="s1">&#39;-sT -sV -T3&#39;</span><span class="p">)</span>             <span class="c1">#   → 其余所有参数</span>
+<span class="n">nm</span><span class="o">.</span><span class="n">command_line</span><span class="p">()</span>                            <span class="c1"># 看它实际拼出的命令行（调试神器）</span>
+<span class="n">nm</span><span class="o">.</span><span class="n">scaninfo</span><span class="p">()</span>                                <span class="c1"># {&#39;tcp&#39;: {&#39;method&#39;: &#39;connect&#39;, &#39;services&#39;: &#39;22,80,443&#39;}}</span>
+
+<span class="c1"># 遍历结果</span>
+<span class="n">nm</span><span class="o">.</span><span class="n">all_hosts</span><span class="p">()</span>                               <span class="c1"># [&#39;127.0.0.1&#39;]</span>
+<span class="n">nm</span><span class="p">[</span><span class="s1">&#39;127.0.0.1&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">state</span><span class="p">()</span>                      <span class="c1"># &#39;up&#39; / &#39;down&#39;</span>
+<span class="n">nm</span><span class="p">[</span><span class="s1">&#39;127.0.0.1&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">hostname</span><span class="p">()</span>                   <span class="c1"># 反向解析的主机名</span>
+<span class="n">nm</span><span class="p">[</span><span class="s1">&#39;127.0.0.1&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">all_protocols</span><span class="p">()</span>              <span class="c1"># [&#39;tcp&#39;]</span>
+<span class="n">nm</span><span class="p">[</span><span class="s1">&#39;127.0.0.1&#39;</span><span class="p">][</span><span class="s1">&#39;tcp&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span>                <span class="c1"># dict_keys([22, 80, 443])</span>
+<span class="n">info</span> <span class="o">=</span> <span class="n">nm</span><span class="p">[</span><span class="s1">&#39;127.0.0.1&#39;</span><span class="p">][</span><span class="s1">&#39;tcp&#39;</span><span class="p">][</span><span class="mi">80</span><span class="p">]</span>
+<span class="c1">#   info = {&#39;state&#39;: &#39;open&#39;, &#39;reason&#39;: &#39;syn-ack&#39;, &#39;name&#39;: &#39;http&#39;,</span>
+<span class="c1">#           &#39;product&#39;: &#39;nginx&#39;, &#39;version&#39;: &#39;1.24.0&#39;, &#39;extrainfo&#39;: &#39;&#39;,</span>
+<span class="c1">#           &#39;cpe&#39;: &#39;cpe:/a:igor_sysoev:nginx:1.24.0&#39;, &#39;conf&#39;: &#39;10&#39;}</span>
+<span class="n">info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;script&#39;</span><span class="p">,</span> <span class="p">{})</span>                       <span class="c1"># NSE 脚本输出（用 -sC 时有）</span>
+
+<span class="c1"># 常用异常</span>
+<span class="c1">#   nmap.PortScannerError: &#39;nmap program was not found in path.&#39;</span>
+<span class="c1">#   nmap.PortScannerError: &#39;Insufficient privileges to perform this scan.&#39;</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>python-nmap 成员</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PortScanner()</code></td>
+<td>构造</td>
+<td>内部 <code>subprocess.Popen</code> 调 nmap</td>
+</tr>
+<tr>
+<td><code>.scan(hosts, ports, arguments, ...)</code></td>
+<td>方法</td>
+<td>执行扫描（阻塞）</td>
+</tr>
+<tr>
+<td><code>.command_line()</code></td>
+<td>方法</td>
+<td>返回实际执行的命令行字符串</td>
+</tr>
+<tr>
+<td><code>.all_hosts()</code></td>
+<td>方法</td>
+<td>扫描到的主机列表</td>
+</tr>
+<tr>
+<td><code>.[host].state()</code></td>
+<td>方法</td>
+<td><code>up</code> / <code>down</code></td>
+</tr>
+<tr>
+<td><code>.[host].all_protocols()</code></td>
+<td>方法</td>
+<td>通常是 <code>['tcp']</code> 或 <code>['tcp','udp']</code></td>
+</tr>
+<tr>
+<td><code>.scaninfo()</code></td>
+<td>方法</td>
+<td>本次扫描的方法/端口/协议信息</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-socket">3.3 标准库 <code>socket</code> 速查（扫描必需部分）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">socket</span>
+
+<span class="c1"># ── 创建与超时 ──</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">socket</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>   <span class="c1"># TCP/IPv4</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">socket</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">AF_INET6</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>  <span class="c1"># TCP/IPv6</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">socket</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">SOCK_DGRAM</span><span class="p">)</span>    <span class="c1"># UDP</span>
+<span class="n">s</span><span class="o">.</span><span class="n">settimeout</span><span class="p">(</span><span class="mf">0.6</span><span class="p">)</span>                                       <span class="c1"># **读写**超时（秒，float 可用）</span>
+<span class="n">s</span><span class="o">.</span><span class="n">setsockopt</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">SOL_SOCKET</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">SO_REUSEADDR</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span> <span class="c1"># 服务端：端口可立即重用</span>
+
+<span class="c1"># ── 连接：两种语义 ──</span>
+<span class="n">s</span><span class="o">.</span><span class="n">connect</span><span class="p">((</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">))</span>          <span class="c1"># 失败抛异常（ConnectionRefusedError / socket.timeout）</span>
+<span class="n">code</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">connect_ex</span><span class="p">((</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">))</span>  <span class="c1"># 失败**返回 errno**，不抛异常 → 扫描循环首选</span>
+<span class="c1">#   0 → open   |   111 ECONNREFUSED → closed   |   110 ETIMEDOUT → filtered</span>
+<span class="c1">#   113 EHOSTUNREACH → 路由不可达             |   101 ENETUNREACH → 网络不可达</span>
+
+<span class="n">socket</span><span class="o">.</span><span class="n">create_connection</span><span class="p">((</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">),</span> <span class="n">timeout</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>  <span class="c1"># 一次性搞定连接 + 超时（推荐）</span>
+
+<span class="c1"># ── 收发 ──</span>
+<span class="n">s</span><span class="o">.</span><span class="n">sendall</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;GET / HTTP/1.0</span><span class="se">\r\n</span><span class="s2">Host: x</span><span class="se">\r\n\r\n</span><span class="s2">&quot;</span><span class="p">)</span>     <span class="c1"># 保证全部字节发出去</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="mi">1024</span><span class="p">)</span>                                  <span class="c1"># 最多读 1024 字节；b&quot;&quot; 表示对端关闭</span>
+<span class="n">s</span><span class="o">.</span><span class="n">shutdown</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">SHUT_WR</span><span class="p">)</span>                           <span class="c1"># 半关闭：只关写方向（发 FIN）</span>
+
+<span class="c1"># ── 关闭 ──</span>
+<span class="k">with</span> <span class="n">socket</span><span class="o">.</span><span class="n">create_connection</span><span class="p">(</span><span class="o">...</span><span class="p">)</span> <span class="k">as</span> <span class="n">s</span><span class="p">:</span>  <span class="c1"># 上下文管理器，异常也会关</span>
+    <span class="o">...</span>
+<span class="n">s</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+<span class="c1"># ── 名字与端口互查 ──</span>
+<span class="n">socket</span><span class="o">.</span><span class="n">getservbyport</span><span class="p">(</span><span class="mi">80</span><span class="p">,</span> <span class="s2">&quot;tcp&quot;</span><span class="p">)</span>      <span class="c1"># &#39;http&#39;（查 /etc/services）</span>
+<span class="n">socket</span><span class="o">.</span><span class="n">getservbyname</span><span class="p">(</span><span class="s2">&quot;https&quot;</span><span class="p">,</span> <span class="s2">&quot;tcp&quot;</span><span class="p">)</span> <span class="c1"># 443</span>
+<span class="n">socket</span><span class="o">.</span><span class="n">gethostbyname</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">)</span>    <span class="c1"># &#39;127.0.0.1&#39;</span>
+<span class="n">socket</span><span class="o">.</span><span class="n">getaddrinfo</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">80</span><span class="p">)</span>  <span class="c1"># 解析 → [(family, type, proto, canonname, sockaddr), ...]</span>
+</code></pre></div>
+<h3 id="34-concurrentfutures">3.4 <code>concurrent.futures</code> 速查（并发扫描骨架）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">concurrent.futures</span> <span class="kn">import</span> <span class="n">ThreadPoolExecutor</span><span class="p">,</span> <span class="n">as_completed</span>
+
+<span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">64</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>      <span class="c1"># 上下文退出会 join 所有线程</span>
+    <span class="n">futures</span> <span class="o">=</span> <span class="p">{</span><span class="n">pool</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">scan_one_port</span><span class="p">,</span> <span class="n">host</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">):</span> <span class="n">p</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">ports</span><span class="p">}</span>
+    <span class="k">for</span> <span class="n">fut</span> <span class="ow">in</span> <span class="n">as_completed</span><span class="p">(</span><span class="n">futures</span><span class="p">):</span>                 <span class="c1"># 按**完成顺序**收结果</span>
+        <span class="n">port</span> <span class="o">=</span> <span class="n">futures</span><span class="p">[</span><span class="n">fut</span><span class="p">]</span>                           <span class="c1"># 反查这个 future 是哪个端口</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>                         <span class="c1"># 取返回值（异常会在这里抛）</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>成员</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ThreadPoolExecutor(max_workers=N)</code></td>
+<td>最多 N 个线程同时工作</td>
+</tr>
+<tr>
+<td><code>pool.submit(fn, *args)</code></td>
+<td>提交任务，立即返回 <code>Future</code></td>
+</tr>
+<tr>
+<td><code>as_completed(futures)</code></td>
+<td>迭代器，谁先完成谁先出（<strong>不要用 <code>map</code>，它按提交顺序阻塞</strong>）</td>
+</tr>
+<tr>
+<td><code>fut.result()</code></td>
+<td>取结果；任务抛异常时在此重新抛出</td>
+</tr>
+<tr>
+<td><code>pool.map(fn, iterable)</code></td>
+<td>简化版，但结果是<strong>有序</strong>的，要等前面完成</td>
+</tr>
+<tr>
+<td><code>with</code> 语句</td>
+<td>退出时 <code>shutdown(wait=True)</code>，保证所有任务收尾</td>
+</tr>
+</tbody>
+</table>
+<h3 id="35">3.5 常见端口—服务对照（防御自查用）</h3>
+<table>
+<thead>
+<tr>
+<th>端口</th>
+<th>服务</th>
+<th>风险提示</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>21 / 20</td>
+<td>FTP</td>
+<td>明文传输，凭据可被嗅探；应换 SFTP/FTPS</td>
+</tr>
+<tr>
+<td>22</td>
+<td>SSH</td>
+<td>爆破重灾区；建议改端口 + 密钥登录 + 禁 root</td>
+</tr>
+<tr>
+<td>23</td>
+<td>Telnet</td>
+<td>明文，<strong>绝对不应对外开放</strong></td>
+</tr>
+<tr>
+<td>25 / 587</td>
+<td>SMTP</td>
+<td>开放中继会造成垃圾邮件泛滥</td>
+</tr>
+<tr>
+<td>53</td>
+<td>DNS</td>
+<td>开放递归解析会被用于 DNS 放大攻击</td>
+</tr>
+<tr>
+<td>80 / 443</td>
+<td>HTTP/S</td>
+<td>注意管理后台是否暴露</td>
+</tr>
+<tr>
+<td>445</td>
+<td>SMB</td>
+<td>永恒之蓝（MS17-010）；<strong>绝不可暴露公网</strong></td>
+</tr>
+<tr>
+<td>1433 / 3306 / 5432</td>
+<td>MSSQL/MySQL/PG</td>
+<td>数据库绝不应公网可达</td>
+</tr>
+<tr>
+<td>3389</td>
+<td>RDP</td>
+<td>爆破 + 勒索软件主要入口；建议加 VPN/网关</td>
+</tr>
+<tr>
+<td>5900</td>
+<td>VNC</td>
+<td>大量实例无密码</td>
+</tr>
+<tr>
+<td>6379</td>
+<td>Redis</td>
+<td>未授权访问 → 可写 SSH key / crontab → 直接拿 shell</td>
+</tr>
+<tr>
+<td>9200 / 9300</td>
+<td>Elasticsearch</td>
+<td>未授权可读全量数据 / RCE</td>
+</tr>
+<tr>
+<td>11211</td>
+<td>Memcached</td>
+<td>未授权 + UDP 放大攻击</td>
+</tr>
+<tr>
+<td>27017</td>
+<td>MongoDB</td>
+<td>未授权访问经典目标</td>
+</tr>
+<tr>
+<td>2375</td>
+<td>Docker API</td>
+<td>未授权 = 主机 root</td>
+</tr>
+<tr>
+<td>8888</td>
+<td>Jupyter</td>
+<td>未授权 = 任意代码执行</td>
+</tr>
+</tbody>
+</table>
+<p><strong>共同规律</strong>：<strong>"中间件/数据库 + 默认无认证 + 默认监听 0.0.0.0"</strong> 是导致<br>
+数据泄露的第一大原因。自检时优先查这几个端口。</p>
+<h3 id="36-connect_ex">3.6 <code>connect_ex</code> 返回码速查</h3>
+<table>
+<thead>
+<tr>
+<th>errno</th>
+<th>常量</th>
+<th>判定</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>—</td>
+<td><code>open</code></td>
+<td>连接成功</td>
+</tr>
+<tr>
+<td>111</td>
+<td><code>ECONNREFUSED</code></td>
+<td><code>closed</code></td>
+<td>目标回应了 RST，端口无监听</td>
+</tr>
+<tr>
+<td>110</td>
+<td><code>ETIMEDOUT</code></td>
+<td><code>filtered</code></td>
+<td>无任何响应，被 DROP</td>
+</tr>
+<tr>
+<td>113</td>
+<td><code>EHOSTUNREACH</code></td>
+<td><code>filtered</code></td>
+<td>主机/路由不可达</td>
+</tr>
+<tr>
+<td>101</td>
+<td><code>ENETUNREACH</code></td>
+<td><code>filtered</code></td>
+<td>网络不可达（本地无路由）</td>
+</tr>
+<tr>
+<td>104</td>
+<td><code>ECONNRESET</code></td>
+<td>视情况</td>
+<td>连接被重置（可能触发过 WAF）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">四、图解</h2>
+<h3 id="41-mermaid">4.1 扫描类型对比（Mermaid 时序图）</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as 扫描器
+    participant K as 目标内核
+    participant A as 目标应用(nginx/sshd)
+    participant F as 防火墙
+
+    Note over C,F: ① TCP connect 扫描（-sT）
+    C-&gt;&gt;K: SYN (到 80)
+    K-&gt;&gt;A: 交给监听 socket
+    K--&gt;&gt;C: SYN/ACK
+    C-&gt;&gt;K: ACK
+    Note over C,A: 连接 ESTABLISHED, 应用层可见并可能写日志
+    C-&gt;&gt;K: FIN/ACK (正常关闭)
+
+    Note over C,F: ② TCP SYN 扫描（-sS，需 root）
+    C-&gt;&gt;K: SYN (到 80)
+    K--&gt;&gt;C: SYN/ACK
+    C-&gt;&gt;K: RST   (不等第三次握手)
+    Note over A: 应用层从未感知 → 无日志
+
+    Note over C,F: ③ 防火墙 REJECT vs DROP
+    C-&gt;&gt;F: SYN (到 3306)
+    F--&gt;&gt;C: RST        (REJECT → 扫描器判定 closed)
+    C-&gt;&gt;F: SYN (到 3306)
+    Note over F: 静默丢弃      (DROP → 扫描器超时, 判定 filtered)
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as 扫描器
+    participant K as 目标内核
+    participant A as 目标应用(nginx/sshd)
+    participant F as 防火墙
+
+    Note over C,F: ① TCP connect 扫描（-sT）
+    C-&gt;&gt;K: SYN (到 80)
+    K-&gt;&gt;A: 交给监听 socket
+    K--&gt;&gt;C: SYN/ACK
+    C-&gt;&gt;K: ACK
+    Note over C,A: 连接 ESTABLISHED, 应用层可见并可能写日志
+    C-&gt;&gt;K: FIN/ACK (正常关闭)
+
+    Note over C,F: ② TCP SYN 扫描（-sS，需 root）
+    C-&gt;&gt;K: SYN (到 80)
+    K--&gt;&gt;C: SYN/ACK
+    C-&gt;&gt;K: RST   (不等第三次握手)
+    Note over A: 应用层从未感知 → 无日志
+
+    Note over C,F: ③ 防火墙 REJECT vs DROP
+    C-&gt;&gt;F: SYN (到 3306)
+    F--&gt;&gt;C: RST        (REJECT → 扫描器判定 closed)
+    C-&gt;&gt;F: SYN (到 3306)
+    Note over F: 静默丢弃      (DROP → 扫描器超时, 判定 filtered)
+</code></pre></div>
+<h3 id="42-banner-mermaid">4.2 banner 抓取决策流程（Mermaid 流程图）</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[connect host:port, timeout] --&gt; B{连接成功?}
+    B -- 否 ECONNREFUSED --&gt; C[state=closed]
+    B -- 否 timeout --&gt; D[state=filtered]
+    B -- 是 --&gt; E[state=open]
+    E --&gt; F{该端口服务会主动说话?}
+    F -- 是 SMTP/SSH/FTP --&gt; G[直接 recv]
+    F -- 否 HTTP/Redis/未知高位端口 --&gt; H[先 sendall 探针]
+    H --&gt; G
+    G --&gt; I{收到数据?}
+    I -- 是 --&gt; J[累加到 raw, 命中换行或到上限就停]
+    I -- 否 超时 --&gt; K[banner 为空, 但端口仍判 open]
+    J --&gt; L[用 bytes 正则匹配指纹]
+    L --&gt; M{命中?}
+    M -- 是 --&gt; N[service = 指纹结果]
+    M -- 否 --&gt; O[service = /etc/services 查询结果]
+    N --&gt; P[解码展示: errors=replace, 取首行, 截断]
+    O --&gt; P
+    K --&gt; P
+    P --&gt; Q[写入 PortResult]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[connect host:port, timeout] --&gt; B{连接成功?}
+    B -- 否 ECONNREFUSED --&gt; C[state=closed]
+    B -- 否 timeout --&gt; D[state=filtered]
+    B -- 是 --&gt; E[state=open]
+    E --&gt; F{该端口服务会主动说话?}
+    F -- 是 SMTP/SSH/FTP --&gt; G[直接 recv]
+    F -- 否 HTTP/Redis/未知高位端口 --&gt; H[先 sendall 探针]
+    H --&gt; G
+    G --&gt; I{收到数据?}
+    I -- 是 --&gt; J[累加到 raw, 命中换行或到上限就停]
+    I -- 否 超时 --&gt; K[banner 为空, 但端口仍判 open]
+    J --&gt; L[用 bytes 正则匹配指纹]
+    L --&gt; M{命中?}
+    M -- 是 --&gt; N[service = 指纹结果]
+    M -- 否 --&gt; O[service = /etc/services 查询结果]
+    N --&gt; P[解码展示: errors=replace, 取首行, 截断]
+    O --&gt; P
+    K --&gt; P
+    P --&gt; Q[写入 PortResult]
+</code></pre></div>
+<h3 id="43-ascii">4.3 并发扫描的时间线（ASCII）</h3>
+<pre class="plain"><code>串行（1 个 worker）—— 总耗时 = 各端口耗时之和
+ 端口 t=0ms                600ms               1200ms              1800ms
+  22  ████████ open（11ms）
+  80  ........................████████ closed （等 600ms 超时）
+  443 ........................................████████ filtered
+ 3306 ........................................................████████
+ 总耗时 ≈ 1800ms
+
+并发（8 个 worker）—— 总耗时 ≈ 最慢那个端口
+ 端口 t=0ms                600ms
+  22  ████ open
+  80  ████████████████████████ closed
+ 443  ████████████████████████ filtered
+ 3306 ████████████████████████ filtered
+ 总耗时 ≈ 620ms   →  提升约 2.9 倍（端口越多提升越明显）
+
+ ⚠️ 但并发度不是越高越好：
+   500 并发 → 目标 conntrack 表被打满 → 正常用户连不进来（事故！）
+</code></pre>
+<h3 id="44-ascii">4.4 自动化扫描器架构（ASCII）</h3>
+<pre class="plain"><code>                    ┌──────────────────────────────┐
+                    │          命令行参数            │
+                    │  --target  --ports  --workers │
+                    └──────────────┬───────────────┘
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │  授权护栏 enforce_scope()      │
+                    │  非本机目标 → 必须显式声明      │
+                    └──────────────┬───────────────┘
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │  parse_ports(&quot;22,8000-8100&quot;)  │
+                    │  → 去重、排序、校验范围         │
+                    └──────────────┬───────────────┘
+                                   ▼
+        ┌──────────────────────────────────────────────────┐
+        │        ThreadPoolExecutor(max_workers=64)         │
+        │  ┌────────┐ ┌────────┐ ┌────────┐      ┌────────┐ │
+        │  │worker 1│ │worker 2│ │worker 3│ ...  │worker N│ │
+        │  └───┬────┘ └───┬────┘ └───┬────┘      └───┬────┘ │
+        │      │ scan_one_port(host, port, timeout)  │      │
+        │      ▼          ▼          ▼                ▼      │
+        │  connect_ex → 判三态 → 发探针 → recv → 指纹匹配     │
+        └──────────────────────┬───────────────────────────┘
+                               ▼ as_completed（完成即收）
+                    ┌──────────────────────────────┐
+                    │   List[PortResult] 按端口排序  │
+                    └──────────────┬───────────────┘
+                    ┌──────────────┼───────────────┐
+                    ▼              ▼               ▼
+              scan-result.json  .csv        scan-report.md
+              （给程序/CI）    （给表格）    （给人看）
+</code></pre>
+<h3 id="45-ascii">4.5 端口三态与防火墙策略（ASCII）</h3>
+<pre class="plain"><code>                    扫描器发出 SYN
+                          │
+        ┌─────────────────┼──────────────────┐
+        │                 │                  │
+   收到 SYN/ACK       收到 RST           无任何响应
+        │                 │                  │
+      open             closed            filtered
+        │                 │                  │
+   &quot;有服务在听&quot;      &quot;主机活着，          &quot;有设备在丢包&quot;
+        │              端口没开&quot;              │
+        ▼                 ▼                  ▼
+   去查是什么服务     风险较低，但        检查防火墙规则；
+   + 版本漏洞         暴露了主机存活        这也是 IDS 会
+                                          记录你行为的信号
+</code></pre>
+<hr>
+<h2 id="_5">五、完整可运行实战代码</h2>
+<p>三个脚本都在 <code>code/</code> 下，<strong>只依赖标准库</strong>，<code>python3 xx.py</code> 直接跑通。<br>
+全部目标硬编码为 <code>127.0.0.1</code>。</p>
+<h3 id="51-code01-nmap-basicspy807-nmap">5.1 <code>code/01-nmap-basics.py</code>（807 行）— Nmap 基础与三种调用方式</h3>
+<ul>
+<li>打印四种扫描类型 / 时序模板 / 端口选择的<strong>知识矩阵</strong>与等价命令行；</li>
+<li><strong>方式 A</strong>：<code>subprocess</code> 调 <code>nmap -oX -</code>，用 <code>xml.etree</code> 解析 XML<br>
+  （推荐的生产做法，机器可读、版本稳定）；</li>
+<li><strong>方式 B</strong>：<code>python-nmap</code> 的 <code>PortScanner</code> / <code>scan()</code> / 结果结构，<br>
+  并演示<strong>未安装时如何优雅降级</strong>（打印安装提示 + 走兜底路径）；</li>
+<li><strong>方式 C</strong>：纯 <code>socket.connect_ex</code> 的 connect 扫描兜底（无依赖、无需 root）；</li>
+<li>脚本自己在本机随机端口起一个 HTTP 服务，保证扫描<strong>一定有结果</strong>可看。</li>
+</ul>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/01-nmap-basics.py
+</code></pre></div>
+<h4 id="511">5.1.1 本次加深点（相对旧版）</h4>
+<table>
+<thead>
+<tr>
+<th>改动</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>抽出纯函数 <code>build_nmap_args()</code></td>
+<td>命令行是<strong>最容易静默出错</strong>的地方（少了 <code>-oX -</code> 就永远解析不到结果）；抽出来才能在离线自测里逐字断言参数顺序与开关</td>
+</tr>
+<tr>
+<td>新增 <code>--self-test</code>（33 条断言）</td>
+<td>覆盖"目标白名单（默认拒绝）"+"命令构造"+"XML 解析"+"数据表自洽性"；<strong>不需要系统装 nmap</strong></td>
+</tr>
+<tr>
+<td><code>main()</code> 拆成 <code>main(argv)</code>（命令行入口）+ <code>demo()</code>（演示）</td>
+<td>自测模式不再需要启动演示服务、也不再跑 nmap</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 为什么要强调"<strong>自测不依赖 nmap</strong>"？因为很多 CI 容器里没有 nmap。<br>
+如果自测依赖它，就会变成"本地过、CI 挂"的假阴性测试，最后没人再信它。</p>
+</blockquote>
+<h4 id="512">5.1.2 代码逐节说明</h4>
+<table>
+<thead>
+<tr>
+<th>源码分区</th>
+<th>内容</th>
+<th>关键点（为什么这么写）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 常量与安全检查</td>
+<td><code>TARGET = "127.0.0.1"</code>（<strong>硬编码</strong>）、<code>ALLOWED_LOCAL_TARGETS</code>、<code>assert_target_is_allowed()</code></td>
+<td>目标写成常量而不是命令行参数：<strong>从设计上</strong>杜绝"把教学脚本当攻击工具"。白名单外的地址直接 <code>sys.exit(2)</code>，不做交互式确认（交互式能被 <code>yes \|</code> 绕过）</td>
+</tr>
+<tr>
+<td>② 本机演示服务</td>
+<td><code>_QuietHTTPServer</code> + <code>_QuietHandler</code> + <code>start_local_demo_server()</code></td>
+<td>服务绑 <code>127.0.0.1:0</code>（随机端口，永不撞端口）；重写 <code>handle_error()</code> 把扫描造成的 <code>ConnectionResetError</code> 噪声吞掉，否则正常扫描会刷满一屏 traceback</td>
+</tr>
+<tr>
+<td>③ 扫描类型知识矩阵</td>
+<td><code>TIMING_TEMPLATES</code> + <code>demo_scan_types()</code></td>
+<td>先讲"四种扫描类型的取舍"和"等价命令行"，再真跑一遍；<strong>知识在前、命令在后</strong></td>
+</tr>
+<tr>
+<td>④ 方式 A：<code>build_nmap_args()</code> + <code>nmap_via_subprocess()</code> + <code>parse_nmap_xml()</code></td>
+<td><code>subprocess</code> 调 <code>nmap -oX -</code>，<code>xml.etree</code> 解析</td>
+<td>① 参数用 <strong>list 不用字符串</strong>（不经 shell ⇒ 无命令注入面）；② 解析 XML 前<strong>剥掉 xmlns</strong>（否则标签变成 <code>{http://nmap.org/nmap}port</code>，<code>find()</code> 全落空）；③ 缺字段回落成空串而不是 <code>None</code>（下游拼字符串不会炸）</td>
+</tr>
+<tr>
+<td>⑤ 方式 B：<code>demo_python_nmap()</code></td>
+<td><code>try: import nmap</code> + <code>HAS_PYTHON_NMAP</code> 优雅降级</td>
+<td>第三方依赖的正确姿势：<strong>装了就用，没装就打印安装方法并走标准库兜底</strong>，绝不崩溃</td>
+</tr>
+<tr>
+<td>⑥ 方式 C：<code>connect_scan()</code></td>
+<td><code>socket.connect_ex()</code> 串行扫描，返回开放端口列表</td>
+<td>用 <code>connect_ex</code> 而不是 <code>connect</code>：失败<strong>返回错误码</strong>而不是抛异常（扫描 100 个端口不用写 100 个 try/except）。小超时（0.35s）把串行代价压下来，回环地址延迟 &lt; 0.1ms</td>
+</tr>
+<tr>
+<td>⑦ <code>demo()</code></td>
+<td>起服务 → 知识矩阵 → 方式 A/B/C → 单独验证演示端口 → 小结</td>
+<td>最后单独验证演示端口，保证"演示结果永远非空"，读者不会以为脚本坏了</td>
+</tr>
+<tr>
+<td>⑧ 自测（本次新增）</td>
+<td><code>_SelfTest</code> + <code>SAMPLE_NMAP_XML</code> + <code>self_test()</code></td>
+<td>用<strong>人造 XML 样本</strong>（故意带 <code>xmlns</code>）验证解析，覆盖缺字段/畸形输入/无 <code>&lt;port&gt;</code> 等边界</td>
+</tr>
+</tbody>
+</table>
+<h4 id="513">5.1.3 运行命令</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+
+<span class="c1"># ① 完整演示（会真跑 nmap；没装 nmap 会自动降级到 socket 兜底，照样跑完）</span>
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/01-nmap-basics.py
+
+<span class="c1"># ② 纯离线自测：不启动 nmap、不发任何包</span>
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/01-nmap-basics.py<span class="w"> </span>--self-test
+<span class="nb">echo</span><span class="w"> </span><span class="nv">$?</span><span class="w">        </span><span class="c1"># 0 = SELF-TEST OK；1 = 断言失败</span>
+</code></pre></div>
+<h4 id="514">5.1.4 预期输出（真实运行截取）</h4>
+<p>方式 A（本机实测，nmap 7.94）：注意 <strong>80/443/3306/6379 是 <code>closed</code> 而不是"没扫到"</strong> ——<br>
+这就是三态的价值：</p>
+<pre class="plain"><code>检测到 nmap: Nmap version 7.94SVN ( https://nmap.org )
+    $ nmap -sT -Pn -T3 -p 22,80,443,3306,6379,8080,42405 -sV -oX - 127.0.0.1
+    解析结果：
+      open     22    /tcp  ssh OpenSSH 9.6p1 Ubuntu 3ubuntu13.19
+      closed   80    /tcp  http
+      closed   443   /tcp  https
+      closed   3306  /tcp  mysql
+      closed   6379  /tcp  redis
+      closed   8080  /tcp  http-proxy
+      open     42405 /tcp  unknown
+</code></pre>
+<blockquote>
+<p>🔍 两处值得注意：① <code>closed</code> 的端口也带服务名（<code>http</code>/<code>https</code>/<code>mysql</code>）——<br>
+那是 <code>/etc/services</code> 的<strong>惯例猜测</strong>，不是"检测到了服务"（见 2.11 证据强度）；<br>
+② 演示端口是 <code>unknown</code>，因为我们那个假 HTTP 服务不会在 <code>-sV</code> 的探针下<br>
+暴露可识别的版本字符串。</p>
+</blockquote>
+<p>方式 C（socket 兜底，无 nmap 也能跑）：</p>
+<pre class="plain"><code>    扫描了 33 个常用端口，开放的有 1 个：
+      22/tcp  open
+    验证演示端口 42405: open ✅
+</code></pre>
+<p>自测输出（节选）：</p>
+<pre class="plain"><code>[B] 命令构造：参数顺序与开关（拼错一个字就解析不到结果）
+   ✅ -oX - 让 XML 输出到标准输出（而不是写文件）
+   ✅ 完整命令（供人工核对）
+   ✅ 命令是 list[str] 而不是字符串（不经 shell → 没有命令注入面）
+[C] XML 解析：把 nmap 的机器可读输出变成结构化数据
+   ✅ 解析出 3 条端口记录
+   ✅ 状态字段（open / closed / filtered 三种都保留）
+   ✅ 缺失的 product/version 回落为空串（不是 None，避免下游拼字符串炸掉）
+   ✅ 非 XML 文本 → 返回空列表（不抛异常）
+   ✅ 缺 portid 属性时回落成 0（而不是抛 KeyError）
+
+✅ SELF-TEST OK（命令构造与 XML 解析断言全部通过；未启动 nmap、未发起任何网络连接）
+</code></pre>
+<h4 id="515">5.1.5 常见疑问</h4>
+<ul>
+<li><strong>没装 nmap 怎么办？</strong> 直接跑，脚本会打印安装提示并自动降级到方式 C（socket 兜底）。<br>
+  自测模式则完全不需要 nmap。</li>
+<li><strong>为什么最后要单独 <code>connect_scan([demo_port])</code> 再验证一次？</strong> 因为演示服务监听在<strong>随机端口</strong>上，<br>
+  它不在 <code>COMMON_PORTS</code> 里。单独验证一次，能保证"脚本确实扫到了自己起的服务"，<br>
+  读者不会因为"输出里没看到它"而怀疑脚本坏了。</li>
+<li><strong><code>parse_nmap_xml</code> 为什么要自己剥 xmlns？</strong> 因为 nmap 的 XML 带默认命名空间，<br>
+  ElementTree 会把标签读成 <code>{http://nmap.org/nmap}port</code>。剥掉声明是最省事的做法<br>
+  （前提：确认文档里没有多命名空间混用）。</li>
+</ul>
+<h3 id="52-code02-banner-grab-pitfallspy838-banner-8">5.2 <code>code/02-banner-grab-pitfalls.py</code>（838 行）— banner 抓取的 8 个坑</h3>
+<p>先在本机起三个"性格不同"的服务（话痨型 / 冰柜型 / 请求-响应型），<br>
+然后逐个踩坑、逐个修复：</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>坑</th>
+<th>后果</th>
+<th>修复</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>不设超时</td>
+<td>脚本永久卡死（内核 keepalive 要 2 小时 11 分）</td>
+<td><code>create_connection(timeout=)</code> + <code>settimeout()</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>端口开着就干等 → 抓不到 banner</td>
+<td>HTTP 等协议要你先开口</td>
+<td>按协议选探针</td>
+</tr>
+<tr>
+<td>3</td>
+<td>只 <code>recv</code> 一次</td>
+<td>banner 被 TCP 分段切碎 → 指纹匹配失败</td>
+<td>循环读到超时/分隔符/上限</td>
+</tr>
+<tr>
+<td>4</td>
+<td>直接 <code>decode("utf-8")</code></td>
+<td>二进制 banner 抛异常炸掉线程</td>
+<td><code>errors="replace"</code> 或 <code>latin-1</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td>忘记关 socket</td>
+<td>fd 泄漏 → <code>Too many open files</code></td>
+<td><code>with socket...</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td>并发不限流</td>
+<td>打爆自己 + 打爆目标（DoS 风险）</td>
+<td><code>max_workers</code> + 超时预算</td>
+</tr>
+<tr>
+<td>7</td>
+<td>不发 FIN</td>
+<td>部分老服务等你示"说完了"</td>
+<td><code>shutdown(SHUT_WR)</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td>把超时当关闭</td>
+<td>混淆 filtered / closed，漏掉暴露面</td>
+<td>按 errno 分状态</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/02-banner-grab-pitfalls.py
+</code></pre></div>
+<h4 id="521">5.2.1 本次加深点（相对旧版）</h4>
+<table>
+<thead>
+<tr>
+<th>改动</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>抽出三个纯函数：<code>decode_banner()</code> / <code>banner_is_complete()</code> / <code>describe_connect_code()</code></td>
+<td>抓 banner 里<strong>最容易写错的不是 socket 调用，而是判读</strong>：二进制怎么解码、什么时候停止读、errno 各自代表什么。抽出来才能离线钉死</td>
+</tr>
+<tr>
+<td>新增 <code>--self-test</code>（24 条断言）</td>
+<td>覆盖解码容错、停止判据、errno 三态翻译、演示服务的协议特征、三种探针策略</td>
+</tr>
+<tr>
+<td>坑 8 增加"本机为什么看不到 DROP"的说明</td>
+<td>回环地址没有中间防火墙，<strong>必须说明"这里测不到 110"</strong>，否则读者会以为文档写错了</td>
+</tr>
+</tbody>
+</table>
+<h4 id="522">5.2.2 代码逐节说明</h4>
+<table>
+<thead>
+<tr>
+<th>源码分区</th>
+<th>内容</th>
+<th>关键点（为什么这么写）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>① 三个"性格不同"的演示服务</td>
+<td><code>ChatterboxServer</code>（主动打招呼，模拟 SMTP/FTP/SSH）、<code>MuteServer</code>（accept 后一言不发）、<code>_ProbeHTTPHandler</code>（要先开口才回应）</td>
+<td>三种性格覆盖了服务识别的全部难点；都绑 <code>127.0.0.1</code>，都用 <code>port=0</code> 随机端口，都开 <code>SO_REUSEADDR</code>（避免 TIME_WAIT 期间端口不可用）</td>
+</tr>
+<tr>
+<td>②-a 判读层（本次新增）</td>
+<td><code>decode_banner</code> / <code>banner_is_complete</code> / <code>CONNECT_CODE_MEANING</code> + <code>describe_connect_code</code></td>
+<td>把"拿到字节之后怎么判"从"怎么发包"里剥离：<code>errors="replace"</code> 保证二进制 banner 不炸线程；<code>b"\n" in chunk</code> 作为"够了"的启发式；errno 三态翻译表统一出口</td>
+</tr>
+<tr>
+<td>② <code>grab_banner()</code></td>
+<td>正确的抓取实现（被后面所有坑当作对照）</td>
+<td>每个参数都对应一个坑：<code>timeout</code>→坑1、<code>probe</code>→坑2、循环 <code>recv</code>→坑3、<code>errors="replace"</code>→坑4、<code>with</code>→坑5、<code>shutdown(SHUT_WR)</code>→坑7</td>
+</tr>
+<tr>
+<td>③ 八个坑</td>
+<td><code>pitfall_1</code> … <code>pitfall_8</code></td>
+<td>结构统一：<strong>错误写法 → 为什么错（含实测数据）→ 正确写法</strong>。每个坑都真在本机跑一遍，不是"讲道理"</td>
+</tr>
+<tr>
+<td>④ <code>combined_demo()</code></td>
+<td>用 <code>ThreadPoolExecutor</code> 同时识别三个服务</td>
+<td>顺带演示"并发把等待时间重叠起来"：3 个端口总耗时 ≈ max(各端口) 而不是求和</td>
+</tr>
+<tr>
+<td>⑤ <code>demo()</code> + <code>main(argv)</code></td>
+<td>命令行入口</td>
+<td>自测模式不启动任何服务</td>
+</tr>
+</tbody>
+</table>
+<h4 id="523">5.2.3 运行命令</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+
+<span class="c1"># ① 完整演示：起三个演示服务，逐个踩坑 + 综合识别（秒级返回）</span>
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/02-banner-grab-pitfalls.py
+
+<span class="c1"># ② 纯离线自测：不建立任何连接</span>
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/02-banner-grab-pitfalls.py<span class="w"> </span>--self-test
+<span class="nb">echo</span><span class="w"> </span><span class="nv">$?</span><span class="w">        </span><span class="c1"># 0 = SELF-TEST OK；1 = 断言失败</span>
+</code></pre></div>
+<h4 id="524">5.2.4 预期输出（真实运行截取）</h4>
+<p>坑 1（不设超时）—— <strong>扫描器卡死 99% 是这一条</strong>：</p>
+<pre class="plain"><code>  ✅ 正确写法：连接和读写都要设超时。
+        socket.create_connection(..., timeout=0.8)
+        实测：等待 0.80 秒后返回，banner=None（超时按「无 banner」处理）
+
+  【为什么 create_connection 也要传 timeout？】
+  因为默认的 connect 超时是**操作系统给的**（Linux 上 SYN 重试约 2 分钟），
+  一个被防火墙 DROP 的端口（不回 RST，只丢包）会让 connect 卡两分钟。
+</code></pre>
+<p>坑 2（端口开着但抓不到 banner）—— <strong>HTTP 要你先开口</strong>：</p>
+<pre class="plain"><code>  先看「只读不写」会发生什么：
+    ❌ 不发请求直接读：banner=None，等了 0.80 秒
+    ✅ 发 GET 探针后再读：拿到 153 字节，耗时 0.00 秒
+
+  响应头（前 8 行）：
+    | HTTP/1.0 200 OK
+    | Server: day153-probe-http/2.1
+</code></pre>
+<p>坑 3（只 <code>recv</code> 一次）—— <strong>一次 recv ≠ 一条完整 banner</strong>：</p>
+<pre class="plain"><code>  ✅ 正确写法：循环 recv，直到超时 / 对方关闭 / 达到上限。
+</code></pre>
+<p>坑 6（并发不限流）—— <strong>并发把等待时间重叠起来</strong>：</p>
+<pre class="plain"><code>  串行耗时（以哑巴端口 0.8s 超时为例，总耗时 = 各端口耗时之和）：
+    串行 3 个端口: 1.70s
+  ✅ 正确写法：ThreadPoolExecutor(max_workers=N) + 每个任务内部仍有超时预算
+    并发（max_workers=8）3 个端口: 0.80s
+      44407/tcp → 220 day153-demo ESMTP LearnPython Demo Server ready
+</code></pre>
+<p>坑 8（把超时当关闭）—— <strong>本机看不到 DROP，必须说明</strong>：</p>
+<pre class="plain"><code>    实测 127.0.0.1:9 → connect_ex 返回 111（closed/rejected）
+    【注意】本机没有中间防火墙，所以这里几乎只会看到 111/0 这两种；
+    要观察 110（DROP）请在有安全组的云主机或本机 iptables DROP 规则下实测。
+</code></pre>
+<p>综合演示（三个性格的服务被正确区分）：</p>
+<pre class="plain"><code>    http          43855/tcp  第一行: HTTP/1.0 200 OK
+    chatterbox    44407/tcp  第一行: 220 day153-demo ESMTP LearnPython Demo Server ready
+    mute          36021/tcp  第一行: (无响应)
+</code></pre>
+<blockquote>
+<p>🔍 <code>mute</code> 的 <code>(无响应)</code> 是<strong>故意</strong>的：它证明"没有 banner"≠"端口关闭"。<br>
+判断依据要回到 connect 阶段 —— connect 成功 + 无 banner = 端口开放但服务不说话。</p>
+</blockquote>
+<h4 id="525">5.2.5 常见疑问</h4>
+<ul>
+<li><strong>为什么本机测不出 <code>filtered</code>？</strong> 回环地址没有中间设备，端口没监听就直接回 RST（111）。<br>
+  要看 DROP 的效果，需要云安全组或在<strong>自己的</strong>机器上加 <code>iptables -j DROP</code> 规则。</li>
+<li><strong><code>shutdown(SHUT_WR)</code> 会不会把 HTTP 连接弄坏？</strong> 对 HTTP/1.0 通常没问题（服务端发完响应就关），<br>
+  但 HTTP/1.1 keep-alive 场景下对方可能直接关闭连接。所以本日脚本对 HTTP <strong>不用</strong> SHUT_WR<br>
+  （示例 03 里也是），只在"只读+需要促使对方说话"的场景用它。</li>
+<li><strong><code>banner_is_complete()</code> 用"有没有换行"当判据可靠吗？</strong> 对文本协议（SMTP/SSH/HTTP）可靠，<br>
+  对二进制协议可能提前收手。但抓 banner 的目的是<strong>识别服务</strong>而不是读完整会话，<br>
+  提前收手是可以接受的取舍 —— 重要的是<strong>别把"读得少"误判成"端口关闭"</strong>。</li>
+</ul>
+<h3 id="53-code03-auto-port-scannerpy949">5.3 <code>code/03-auto-port-scanner.py</code>（949 行）— 自动化扫描器（实战）</h3>
+<p>一个<strong>可以直接拿去用的防御性自检工具</strong>：</p>
+<ul>
+<li>多线程扫描（<code>ThreadPoolExecutor</code>，默认 64 并发，可 <code>--workers</code> 调）</li>
+<li>端口表达式解析：<code>top</code> / <code>1-1024</code> / <code>22,80,443</code> / 混合 <code>22,8000-8100</code></li>
+<li>banner 抓取 + 服务指纹识别（HTTP/SSH/SMTP/FTP/Redis/VNC/MongoDB…）</li>
+<li>三态判定（open / closed / filtered）+ 每端口耗时</li>
+<li><strong>结果导出三种格式</strong>：<code>scan-result.json</code>（程序）/ <code>.csv</code>（表格）/ <code>scan-report.md</code>（人读）</li>
+<li>授权护栏：非本机目标必须显式加 <code>--i-own-this-target</code> 并二次确认</li>
+<li>退出码：存在 filtered 端口返回 1（便于接 CI 做配置漂移告警）</li>
+</ul>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/03-auto-port-scanner.py
+python3<span class="w"> </span>code/03-auto-port-scanner.py<span class="w"> </span>--ports<span class="w"> </span><span class="m">1</span>-1024<span class="w"> </span>--workers<span class="w"> </span><span class="m">128</span><span class="w"> </span>--timeout<span class="w"> </span><span class="m">0</span>.5
+python3<span class="w"> </span>code/03-auto-port-scanner.py<span class="w"> </span>--ports<span class="w"> </span><span class="m">22</span>,80,443,8000-8100<span class="w"> </span>--show-closed
+</code></pre></div>
+<p><strong>实测输出（本机，54 个端口，0.61 秒）</strong>：</p>
+<pre class="plain"><code>  [   11/54] ✅    22/tcp open   ssh  |  SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.19
+  [   52/54] ✅ 38493/tcp open   smtp |  220 day153-demo ESMTP LearnPython ready
+  [   53/54] ✅ 37083/tcp open   http |  HTTP/1.0 200 OK
+  [   54/54] ✅   631/tcp open   ipp
+扫描完成：54 个端口，耗时 0.61s （平均 11.3 ms/端口）
+  open=4  filtered=0  closed=50
+</code></pre>
+<h4 id="531">5.3.1 本次加深点（相对旧版）</h4>
+<table>
+<thead>
+<tr>
+<th>改动</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>抽出 <code>state_for_errno()</code> 并让 <code>OSError</code> 分支也用它</td>
+<td>修正一处潜在误判：某些平台把 <code>ECONNREFUSED</code> 以裸 <code>OSError</code> 抛出时，旧代码会把它记成 <code>filtered</code>。<strong>把 filtered 误报成 closed（或反之）是扫描器最常见的错误</strong></td>
+</tr>
+<tr>
+<td>新增 <code>--self-test</code>（75 条断言）</td>
+<td>覆盖端口解析（含 6 种非法输入）、12 条指纹、探针策略、三态映射、<strong>三种导出格式的回读校验</strong>、数据表自洽性</td>
+</tr>
+<tr>
+<td><code>--out-dir</code> 默认改为<strong>系统临时目录</strong>（<code>tempfile.mkdtemp()</code>）</td>
+<td>旧默认 <code>./scan-output</code> 会污染代码仓库工作树；扫描报告含内网端口/服务信息，<strong>误提交等于把资产清单推到远端</strong></td>
+</tr>
+<tr>
+<td><code>--self-test</code> 在 <code>enforce_scope()</code> <strong>之前</strong>处理</td>
+<td>离线自测不扫任何目标，不该被授权护栏拦下（否则自测会莫名要求 <code>--i-own-this-target</code>）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="532">5.3.2 代码逐节说明</h4>
+<table>
+<thead>
+<tr>
+<th>源码分区</th>
+<th>内容</th>
+<th>关键点（为什么这么写）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>配置常量</td>
+<td><code>LOCAL_TARGETS</code> / <code>TOP_PORTS</code>（52 个）/ <code>FALLBACK_SERVICES</code> / <code>FINGERPRINTS</code></td>
+<td><code>FINGERPRINTS</code> 用 <code>re.compile</code> <strong>预编译</strong>：扫描上万个端口时，每条 banner 都要过全部规则，预编译省下可观的 CPU</td>
+</tr>
+<tr>
+<td><code>PortResult</code>（dataclass）</td>
+<td><code>host/port/state/service/banner/latency_ms/error</code></td>
+<td>用 dataclass 而不是 dict：字段有类型提示、<code>asdict()</code> 直通 JSON、语义清晰。<strong><code>state</code> 与 <code>banner</code> 是两个独立字段</strong> —— 这就是"无 banner ≠ 端口关闭"的代码体现</td>
+</tr>
+<tr>
+<td><code>parse_ports()</code></td>
+<td>支持 <code>top</code> / <code>1-1024</code> / <code>22,80,443</code> / 混合；非法输入抛 <code>ValueError</code></td>
+<td>去重 + 排序保证<strong>输出确定性</strong>；越界/倒序范围<strong>必须报错</strong>而不是静默变空（静默失败最坑人）</td>
+</tr>
+<tr>
+<td><code>service_name()</code></td>
+<td>先查 <code>/etc/services</code>，再查 <code>FALLBACK_SERVICES</code></td>
+<td>它是<strong>弱证据</strong>（惯例猜测），会被指纹结果覆盖（见 2.11）</td>
+</tr>
+<tr>
+<td><code>choose_probe()</code></td>
+<td>三级策略：明确 Web 端口 → HTTP 探针；6379 → <code>PING</code>；系统不认识的高位端口 → 猜 Web；其余 → 只读</td>
+<td>两段式探测（先只读、超时再补探针）会让每个未知端口的耗时翻倍，所以这里用"端口号 + <code>/etc/services</code> 认知度"做启发式</td>
+</tr>
+<tr>
+<td><code>identify_service()</code></td>
+<td>对<strong>原始 bytes</strong> 跑 12 条正则</td>
+<td>基于 bytes 而不是解码后的 str：<code>errors="replace"</code> 会把二进制特征变成 <code>U+FFFD</code>，丢失信息</td>
+</tr>
+<tr>
+<td><code>state_for_errno()</code>（本次新增）</td>
+<td>只有两个分支：<code>ECONNREFUSED → closed</code>，其余 → <code>filtered</code></td>
+<td>明确表达"<strong>不确定</strong>就不说成确定"。注释里直接写明"把 filtered 误报成 closed 是扫描器最常见的错误"</td>
+</tr>
+<tr>
+<td><code>scan_one_port()</code></td>
+<td>单端口扫描（<strong>纯函数式</strong>：不读写共享状态，结果通过返回值收集）</td>
+<td>线程安全的最简单办法：让工作函数保持纯函数。读取用"最多 4 次 <code>recv</code>"而不是"读到超时"，避免每个开放端口白等一个完整 timeout</td>
+</tr>
+<tr>
+<td><code>run_scan()</code></td>
+<td><code>ThreadPoolExecutor</code> + <code>as_completed</code> 边扫边打印；异常兜底</td>
+<td><code>max_workers</code> 天然限流（背压）；单个 worker 崩了不能带走整个扫描；结果按端口排序保证确定性</td>
+</tr>
+<tr>
+<td><code>export_json/csv/markdown</code></td>
+<td>三种导出</td>
+<td>JSON 带 <code>meta</code>（溯源）；CSV 用 <code>newline=""</code>（Windows 下防多空行，官方文档明确要求）；Markdown 转义 <code>\|</code>（否则表格错位）</td>
+</tr>
+<tr>
+<td>演示服务</td>
+<td><code>_QuietHTTPServer</code> / <code>_GreeterServer</code>（假 SMTP）</td>
+<td>保证"扫描一定有结果"：随机端口并入扫描列表；假 SMTP 用来演示指纹识别</td>
+</tr>
+<tr>
+<td>授权护栏</td>
+<td><code>enforce_scope()</code></td>
+<td>非本机目标必须 <code>--i-own-this-target</code>，并<strong>强制 5 秒冷静期</strong>（可 Ctrl+C 中止）—— 护栏很弱，但强制用户做一次明确的意思表示</td>
+</tr>
+<tr>
+<td><code>--self-test</code>（本次新增）</td>
+<td>75 条断言，写在 <code>tempfile.TemporaryDirectory()</code> 里</td>
+<td>自测的导出测试<strong>必须有地方落盘</strong>，所以用临时目录；断言里连"临时目录在系统 temp 下"都检查了</td>
+</tr>
+</tbody>
+</table>
+<h4 id="533">5.3.3 运行命令</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+
+<span class="c1"># ① 默认：起本机演示服务 + 扫 top 端口（结果默认落到系统临时目录）</span>
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/03-auto-port-scanner.py
+
+<span class="c1"># ② 扫指定范围，显示关闭/过滤的端口</span>
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/03-auto-port-scanner.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--ports<span class="w"> </span><span class="m">1</span>-1024<span class="w"> </span>--workers<span class="w"> </span><span class="m">128</span><span class="w"> </span>--timeout<span class="w"> </span><span class="m">0</span>.5<span class="w"> </span>--show-closed
+
+<span class="c1"># ③ 把报告落到自己指定的目录（比如做历次比对）</span>
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/03-auto-port-scanner.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--ports<span class="w"> </span>top<span class="w"> </span>--out-dir<span class="w"> </span>/tmp/my-portscan-<span class="k">$(</span>date<span class="w"> </span>+%F<span class="k">)</span>
+
+<span class="c1"># ④ 纯离线自测：不扫描任何目标、不污染工作树</span>
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/03-auto-port-scanner.py<span class="w"> </span>--self-test
+<span class="nb">echo</span><span class="w"> </span><span class="nv">$?</span><span class="w">        </span><span class="c1"># 0 = SELF-TEST OK；1 = 断言失败</span>
+</code></pre></div>
+<h4 id="534">5.3.4 预期输出（真实运行截取）</h4>
+<pre class="plain"><code>已启动本机演示服务（保证扫描有结果）：
+    41207/tcp  演示 HTTP 服务
+    35313/tcp  演示 SMTP(banner) 服务
+
+开始扫描 127.0.0.1，共 54 个端口，并发 64，超时 0.6s
+  [   25/54] ✅    22/tcp open   ssh  |  SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.19
+  [   52/54] ✅ 35313/tcp open   smtp  |  220 day153-demo ESMTP LearnPython ready
+  [   53/54] ✅ 41207/tcp open   http  |  HTTP/1.0 200 OK
+  [   54/54] ✅   631/tcp open   ipp
+扫描完成：54 个端口，耗时 0.61s （平均 11.3 ms/端口）
+  open=4  filtered=0  closed=50
+已导出：
+  /tmp/day153-scan-ttwt7bzn/scan-result.json  (10374 字节)
+  /tmp/day153-scan-ttwt7bzn/scan-result.csv  (2701 字节)
+  /tmp/day153-scan-ttwt7bzn/scan-report.md  (2771 字节)
+  （默认落在系统临时目录 /tmp/day153-scan-ttwt7bzn，不污染仓库；用 --out-dir 可指定固定位置）
+</code></pre>
+<blockquote>
+<p>🔍 三个演示服务被识别出来了：<code>smtp</code>（来自 banner <code>220 … ESMTP</code>）、<code>http</code>（来自 <code>HTTP/1.0 200</code>）、<br>
+以及真实环境里的 <code>ssh</code>（带版本号，可用于比对 CVE）。<code>631/tcp ipp</code> 是这台机器上真实监听的<br>
+CUPS 打印服务 —— 它同时说明了另一件事：<strong>扫描结果高度依赖环境</strong>，所以"基线比对"才比单次快照有价值。</p>
+</blockquote>
+<p>自测输出（节选）：</p>
+<pre class="plain"><code>[A] parse_ports()：端口表达式的解析与校验
+   ✅ 重复端口被去重（确定性输出）
+   ✅ 容忍空格与空片段（用户手写时很常见）
+   ✅ 倒序范围 80-79 → ValueError
+[D] state_for_errno()：closed / filtered 绝不能混淆
+   ✅ ECONNREFUSED(111) → closed（对方回了 RST，说明主机在、端口没监听）
+   ✅ ETIMEDOUT(110) → filtered（被 DROP，静默丢弃）
+   ✅ 未知 errno → filtered（保守：不把不确定的情况说成 closed）
+[E] 导出：JSON / CSV / Markdown 三件套
+   ✅ 自测的临时目录在系统 temp 下（不写进仓库工作树）
+   ✅ meta.open_ports 统计正确（2 个 open）
+   ✅ banner 里的裸管道符被转义（否则表格列错位）
+
+✅ SELF-TEST OK（解析 / 指纹 / 三态 / 导出断言全部通过；未扫描任何目标，未污染工作树）
+</code></pre>
+<h4 id="535">5.3.5 常见疑问</h4>
+<ul>
+<li><strong>为什么默认写到临时目录？</strong> 见上表：既不污染工作树，也避免"含内网拓扑的报告被误提交"。<br>
+  要用固定位置就 <code>--out-dir</code>。</li>
+<li><strong>退出码为什么是 1？</strong> 因为"存在 <code>filtered</code> 端口"意味着有策略在静默丢弃流量 ——<br>
+  这通常值得你去看一眼防火墙是否发生了漂移。把它接进 CI 就能做<strong>配置漂移告警</strong>。</li>
+<li><strong><code>--workers</code> 开多大合适？</strong> 三个约束取最小：礼貌（≤100）、自己的 fd 上限、目标承受力。<br>
+  本脚本默认 64，并且<strong>只扫回环</strong>，所以不会对任何真实资产造成压力。</li>
+</ul>
+<h2 id="-self-test">六、自测（<code>--self-test</code>）与可复现性</h2>
+<h3 id="61">6.1 两种运行模式，职责完全不同</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>命令</th>
+<th>干什么</th>
+<th>依赖</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>演示</strong>（默认）</td>
+<td><code>python3 &lt;脚本&gt;.py</code></td>
+<td>起本机回环靶场/演示服务、真实发包、打印过程与结果</td>
+<td>回环 socket；<code>01</code> 还<strong>可选</strong>依赖系统 <code>nmap</code></td>
+</tr>
+<tr>
+<td><strong>自测</strong></td>
+<td><code>python3 &lt;脚本&gt;.py --self-test</code></td>
+<td>对<strong>纯函数</strong>逐条断言，打印 <code>SELF-TEST OK</code> 并 <code>exit 0</code></td>
+<td>无（不建连接、不跑 nmap、无第三方库）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>扫描器的自测为什么不真的扫？</strong> 因为"扫一次"依赖端口是否被占用、系统有没有 nmap、<br>
+沙箱是否允许 socket —— 这些都会让自测<strong>随机失败</strong>。而一个会随机失败的测试，<br>
+谁都不会再跑它。所以本日的做法是：<strong>把判定逻辑都抽成纯函数，用离线断言钉死它们</strong>；<br>
+端到端链路由默认运行负责。</p>
+</blockquote>
+<h3 id="62">6.2 四个硬约束</h3>
+<ol>
+<li><strong>完全离线</strong>：<code>--self-test</code> 不建立任何连接（包括回环）。<code>01</code> 的自测也不会去跑 <code>nmap</code> 子进程。</li>
+<li><strong>结果确定</strong>：不依赖时间、随机端口、外部服务。唯一需要绕开的外部依赖是 <code>/etc/services</code><br>
+   —— 做法是<strong>动态探测</strong>（找出一个系统不认识的端口再断言），而不是写死一个端口号。</li>
+<li><strong>零第三方依赖</strong>：只用标准库（<code>socket</code> / <code>subprocess</code> / <code>xml.etree</code> / <code>concurrent.futures</code> /<br>
+<code>csv</code> / <code>json</code> / <code>tempfile</code> / <code>errno</code> / <code>re</code>）。<code>python3 -B</code> 直接可跑。</li>
+<li><strong>失败可诊断</strong>：断言失败打印<strong>期望值 vs 实际值</strong>。</li>
+</ol>
+<h3 id="63">6.3 退出码契约</h3>
+<table>
+<thead>
+<tr>
+<th>情形</th>
+<th>输出</th>
+<th>退出码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>自测全部通过</td>
+<td><code>✅ SELF-TEST OK（…）</code></td>
+<td><code>0</code></td>
+</tr>
+<tr>
+<td>自测有失败</td>
+<td><code>❌ SELF-TEST FAILED：N 项…</code> + 逐条期望/实际</td>
+<td><code>1</code></td>
+</tr>
+</tbody>
+</table>
+<p>作为 CI 门禁可以直接这样用：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span>days/day-153-port-scan-advanced/code/*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span>python3<span class="w"> </span>-B<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span>&gt;/dev/null<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="o">{</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;SELF-TEST FAILED: </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="o">}</span>
+<span class="k">done</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;all self-tests passed&quot;</span>
+</code></pre></div>
+<blockquote>
+<p>⚠️ 别混淆三种"退出码 1"：<strong>自测失败</strong>（1）、<strong>扫出 filtered 端口</strong>（1，设计行为）、<br>
+<strong>参数非法/未授权目标</strong>（2）。它们分别对应"代码坏了""环境有变化""用法不对"。</p>
+</blockquote>
+<h3 id="64">6.4 三个脚本各自的自测覆盖点</h3>
+<table>
+<thead>
+<tr>
+<th>脚本</th>
+<th>断言数</th>
+<th>覆盖内容（都是纯函数/离线可验证的逻辑）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01-nmap-basics.py</code></td>
+<td>33</td>
+<td>目标白名单（3 个允许 + 2 个必须退出码 2）；<code>build_nmap_args()</code> 参数顺序与开关（含"必须是 list 而非字符串"）；<code>parse_nmap_xml()</code> 解析 3 端口样本（带 <code>xmlns</code>）、缺失字段回落、畸形输入返回空列表；<code>COMMON_PORTS</code> 无重复/有序/在范围内；<code>TIMING_TEMPLATES</code> T0~T5 齐全</td>
+</tr>
+<tr>
+<td><code>02-banner-grab-pitfalls.py</code></td>
+<td>24</td>
+<td><code>decode_banner()</code> 对二进制 banner 不抛异常且用 <code>U+FFFD</code> 顶替；<code>banner_is_complete()</code> 的三种输入；<code>describe_connect_code()</code> 对 0/111/110/113/未知 errno 的翻译；演示服务的协议特征（SMTP 风格 220 + CRLF + ESMTP 关键字）；三种探针策略的形态</td>
+</tr>
+<tr>
+<td><code>03-auto-port-scanner.py</code></td>
+<td>75</td>
+<td><code>parse_ports()</code> 9 个合法 + 6 个非法输入；12 条服务指纹逐条回归；<code>choose_probe()</code> 三级策略（含动态找未知端口）；<code>state_for_errno()</code> 七种 errno；三种导出格式的<strong>回读校验</strong>（含 JSON <code>meta</code>、CSV 表头/行数、Markdown 管道符转义、临时目录位置）；<code>TOP_PORTS</code>/<code>FALLBACK_SERVICES</code> 自洽性</td>
+</tr>
+</tbody>
+</table>
+<h3 id="65">6.5 自测<strong>不</strong>覆盖什么（诚实声明）</h3>
+<table>
+<thead>
+<tr>
+<th>不在自测范围内</th>
+<th>为什么</th>
+<th>用什么验证</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>真实网络路径上的 <code>filtered</code>（DROP/REJECT）</td>
+<td>回环地址没有中间防火墙</td>
+<td>云安全组，或在自己机器上加 <code>iptables -j DROP</code> 后实测</td>
+</tr>
+<tr>
+<td>TLS 端口（443/8443）的服务识别</td>
+<td>需要先完成 TLS 握手</td>
+<td><code>nmap -sV</code> 或专门的 TLS 指纹工具</td>
+</tr>
+<tr>
+<td><code>nmap</code> 命令行本身的版本差异</td>
+<td>自测不跑子进程</td>
+<td>默认运行打印实际命令与版本，人工核对</td>
+</tr>
+<tr>
+<td>并发下的资源耗尽（fd / 临时端口）</td>
+<td>需要真实的高并发负载</td>
+<td>观察 <code>ulimit -n</code>、<code>ss -tan state time-wait</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="66">6.6 本地自证记录（本次升级实测）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-153-port-scan-advanced/code/01-nmap-basics.py<span class="w"> </span>--self-test<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-1
+✅<span class="w"> </span>SELF-TEST<span class="w"> </span>OK（命令构造与<span class="w"> </span>XML<span class="w"> </span>解析断言全部通过；未启动<span class="w"> </span>nmap、未发起任何网络连接）<span class="w">   </span><span class="c1"># exit 0</span>
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-153-port-scan-advanced/code/02-banner-grab-pitfalls.py<span class="w"> </span>--self-test<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-1
+✅<span class="w"> </span>SELF-TEST<span class="w"> </span>OK（banner<span class="w"> </span>判读逻辑断言全部通过；未建立任何<span class="w"> </span>socket<span class="w"> </span>连接）<span class="w">               </span><span class="c1"># exit 0</span>
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-153-port-scan-advanced/code/03-auto-port-scanner.py<span class="w"> </span>--self-test<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-1
+✅<span class="w"> </span>SELF-TEST<span class="w"> </span>OK（解析<span class="w"> </span>/<span class="w"> </span>指纹<span class="w"> </span>/<span class="w"> </span>三态<span class="w"> </span>/<span class="w"> </span>导出断言全部通过；未扫描任何目标，未污染工作树）<span class="w"> </span><span class="c1"># exit 0</span>
+</code></pre></div>
+<p>三个脚本的<strong>默认运行也全部回归通过</strong>（本机回环，秒级）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-153-port-scan-advanced/code/01-nmap-basics.py<span class="w">   </span><span class="c1"># 方式 A/B/C 全跑通</span>
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-153-port-scan-advanced/code/02-banner-grab-pitfalls.py<span class="w">  </span><span class="c1"># 8 个坑 + 综合识别</span>
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-153-port-scan-advanced/code/03-auto-port-scanner.py<span class="w">     </span><span class="c1"># open=4 closed=50</span>
+</code></pre></div>
+<h3 id="67">6.7 演示产物落盘策略（工作树必须干净）</h3>
+<table>
+<thead>
+<tr>
+<th>脚本</th>
+<th>是否写文件</th>
+<th>落盘位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01-nmap-basics.py</code></td>
+<td>❌ 不写</td>
+<td>全部打印到 stdout（<code>-oX -</code> 让 nmap 把 XML 输出到标准输出，不落文件）</td>
+</tr>
+<tr>
+<td><code>02-banner-grab-pitfalls.py</code></td>
+<td>❌ 不写</td>
+<td>演示数据全在内存</td>
+</tr>
+<tr>
+<td><code>03-auto-port-scanner.py</code></td>
+<td>✅ 写 3 个报告</td>
+<td><strong>默认 <code>tempfile.mkdtemp()</code>（系统临时目录）</strong>；仅 <code>--out-dir</code> 时落到指定位置</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 验证：跑完扫描后，仓库工作树里不应该出现 scan-output/ 之类的目录</span>
+<span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+python3<span class="w"> </span>days/day-153-port-scan-advanced/code/03-auto-port-scanner.py<span class="w"> </span>&gt;/dev/null
+git<span class="w"> </span>status<span class="w"> </span>--porcelain<span class="w"> </span>days/day-153-port-scan-advanced/<span class="w">    </span><span class="c1"># 只应看到代码/README 的改动</span>
+</code></pre></div>
+<blockquote>
+<p>📌 为什么这条重要：扫描报告里写着<strong>目标主机、开放端口、服务与版本</strong> ——<br>
+这是标准的资产清单。让工具"默认不落进仓库"，是防止敏感信息随 <code>git push</code> 外流的最便宜手段。</p>
+</blockquote>
+<hr>
+<h2 id="_6">七、思考题</h2>
+<ol>
+<li>
+<p><strong>为什么"端口开放"和"端口关闭"的证据强度不一样？</strong><br>
+   请从"收到 RST"和"超时"两种情况分别说明：扫描器到底拿到了什么信息？<br>
+   如果一台主机对所有端口都超时，你能得出"它没有任何服务"这个结论吗？<br>
+   为什么？（提示：想想 <code>DROP</code> 策略和 <code>filtered</code> 状态。）</p>
+</li>
+<li>
+<p><strong>SYN 扫描（<code>-sS</code>）比 connect 扫描（<code>-sT</code>）"隐蔽"，但隐蔽的本质是什么？</strong><br>
+   请从"内核 vs 应用层"的角度解释，应用层的 <code>accept()</code> 为什么看不到半开连接。<br>
+   再想一想：如果目标开着 <strong>SYN cookie + 连接数监控</strong>，SYN 扫描还隐蔽吗？</p>
+</li>
+<li>
+<p><strong>banner 抓取为什么要区分"话痨型"和"沉默型"服务？</strong><br>
+   请分别举出两个例子，并说明如果你对一个 HTTP 服务只 <code>recv</code> 不发请求，<br>
+   会发生什么、耗时多少、得出的结论会不会错。</p>
+</li>
+<li>
+<p><strong>并发度该设多大？</strong> 请从三个约束（自己的文件描述符上限、目标的承受能力、<br>
+   授权条款）分别推导一个上限，并说明为什么本日脚本选 64。<br>
+   如果把 <code>max_workers</code> 设成 5000，最可能先出什么问题？</p>
+</li>
+<li>
+<p><strong>防御视角的反向思考</strong>：假设你是运维，你从日志里发现有人在对你的服务器<br>
+   做端口扫描。你能观察到哪些<strong>可区分</strong>的信号（连接的 RST 比例、半开连接数、<br>
+   源 IP 的时序特征）？你会采取什么措施，又为什么<strong>不建议</strong>简单粗暴地<br>
+   永久封禁源 IP？（提示：源 IP 可能是被入侵的第三方主机。）</p>
+</li>
+<li>
+<p><strong><code>filtered</code> 为什么必须单独记录，而不是合并进 <code>closed</code>？</strong><br>
+   请结合 2.7 的"内核回 RST"与"防火墙 DROP"两条路径，说明：<br>
+   ① 这两种情况下扫描器<strong>分别拿到了什么信息</strong>；<br>
+   ② 如果把 <code>filtered</code> 合并成 <code>closed</code>，会在<strong>配置漂移监控</strong>里漏掉什么信号。</p>
+</li>
+<li>
+<p><strong><code>/etc/services</code> 给出的"服务名"算不算证据？</strong><br>
+   请用 2.11 的证据强度表说明"6379/tcp open（记为 redis）"与<br>
+   "发 PING 收到 <code>-NOAUTH</code>"这两句话在报告里的差别，<br>
+   并说明为什么报告必须写清"我们是怎么知道的"。</p>
+</li>
+<li>
+<p><strong>并发扫描的"代价"是可以量化的，请推导：</strong><br>
+   已知本机 <code>ulimit -n = 1024</code>、目标端口数 2000、单端口超时 0.5 秒。<br>
+   请分别估算：① 用 64 线程时的总耗时量级；② 用 2000 线程时最可能先遇到什么错误；<br>
+   ③ 如果把超时改成 5 秒，对"被 DROP 的端口"会有什么影响？<br>
+   最后说明：为什么把这三者写进授权测试的方案里，是"专业"而不是"啰嗦"。</p>
+</li>
+</ol>
+<hr>
+<h2 id="_7">附：本日文件清单</h2>
+<pre class="plain"><code>days/day-153-port-scan-advanced/
+├── README.md                          ← 本文
+├── code/                              每个脚本都有两种模式：
+│   ├── 01-nmap-basics.py              ← Nmap 基础 + 三种调用方式（含优雅降级）
+│   ├── 02-banner-grab-pitfalls.py     ← banner 抓取的 8 个坑与修复
+│   └── 03-auto-port-scanner.py        ← 实战：多线程扫描器 + 三种格式导出
+│                                      · 默认运行 = 起 127.0.0.1 演示服务做端到端验证
+│                                      · --self-test = 纯离线断言（33 / 24 / 75 条）
+│                                        通过打印 SELF-TEST OK 且 exit 0
+│                                      · 扫描报告默认落到系统临时目录（可用 --out-dir 指定）
+├── diagrams/
+│   └── README.md                      ← 扫描类型 / banner 流程 / 并发时间线图解
+└── exercises/
+    └── checklist.md                   ← 今日完成清单 + 5 道练习题
+</code></pre>
+<p><strong>明日预告</strong>：Day 154 会把端口扫描的结果接到"漏洞评估"上——<br>
+如何把服务指纹映射到 CVE，如何做不触发告警的资产清点。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-152/index.html">← Day 152 XSS 与 Web 漏洞：反射/存储/DOM 型、防护原理与本地检测实战</a><a class="nav-next" href="../day-154/index.html">Day 154 目录扫描与指纹识别：字典爆破、软 404 与资产发现 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

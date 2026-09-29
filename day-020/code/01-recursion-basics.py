@@ -1,0 +1,517 @@
+#!/usr/bin/env python3
+"""
+Day 020 - Recursion Basics
+递归基础：阶乘、斐波那契、汉诺塔、二分查找
+"""
+
+import sys
+sys.setrecursionlimit(10_000)
+
+
+# ============================================================
+# 1. 阶乘 (Factorial)
+# ============================================================
+
+def factorial_recursive(n: int) -> int:
+    """递归实现阶乘 n!
+
+    数学定义:
+        fact(0) = 1
+        fact(n) = n * fact(n-1)
+
+    调用栈示例 (n=4):
+        fact(4) = 4 * fact(3)
+               = 4 * 3 * fact(2)
+               = 4 * 3 * 2 * fact(1)
+               = 4 * 3 * 2 * 1 * fact(0)
+               = 4 * 3 * 2 * 1 * 1
+               = 24
+    """
+    if n == 0:  # 基线条件
+        return 1
+    return n * factorial_recursive(n - 1)  # 递归条件
+
+
+def factorial_iterative(n: int) -> int:
+    """迭代实现阶乘"""
+    result = 1
+    for i in range(2, n + 1):
+        result *= i
+    return result
+
+
+def factorial_tail(n: int, accumulator: int = 1) -> int:
+    """尾递归形式的阶乘
+
+    ⚠️ Python 不支持尾递归优化，这只是形式上的尾递归。
+    实际运行时仍然会消耗栈空间。
+    """
+    if n == 0:
+        return accumulator
+    return factorial_tail(n - 1, n * accumulator)
+
+
+# ============================================================
+# 2. 斐波那契数列 (Fibonacci)
+# ============================================================
+
+def fib_naive(n: int) -> int:
+    """原始递归斐波那契 — O(2ⁿ) 指数级复杂度
+
+    fib(40) 需要约 3.3 亿次调用 😱
+    """
+    if n <= 1:
+        return n
+    return fib_naive(n - 1) + fib_naive(n - 2)
+
+
+# 用 functools.lru_cache 添加记忆化
+from functools import lru_cache
+
+
+@lru_cache(maxsize=None)
+def fib_memo(n: int) -> int:
+    """带记忆化的递归斐波那契 — O(n)
+
+    lru_cache 自动缓存结果，避免重复计算
+    """
+    if n <= 1:
+        return n
+    return fib_memo(n - 1) + fib_memo(n - 2)
+
+
+def fib_iterative(n: int) -> int:
+    """迭代斐波那契 — O(n), O(1) 空间"""
+    if n <= 1:
+        return n
+    a, b = 0, 1
+    for _ in range(2, n + 1):
+        a, b = b, a + b
+    return b
+
+
+# 手动实现 memoization（不依赖 functools）
+def fib_manual_memo():
+    """返回一个带记忆化的斐波那契函数"""
+    cache = {0: 0, 1: 1}
+
+    def _fib(n: int) -> int:
+        if n not in cache:
+            cache[n] = _fib(n - 1) + _fib(n - 2)
+        return cache[n]
+
+    return _fib
+
+
+# ============================================================
+# 3. 汉诺塔 (Tower of Hanoi)
+# ============================================================
+
+def hanoi(n: int, source: str, target: str, auxiliary: str) -> list:
+    """汉诺塔递归解法
+
+    三步走策略：
+    1. 将 n-1 个盘子从 source 移到 auxiliary
+    2. 将第 n 个盘子从 source 移到 target
+    3. 将 n-1 个盘子从 auxiliary 移到 target
+
+    参数:
+        n: 盘子数量
+        source: 起始柱
+        target: 目标柱
+        auxiliary: 辅助柱
+
+    返回:
+        移动步骤列表 [(from, to), ...]
+
+    时间复杂度: O(2ⁿ) — 最少移动次数为 2ⁿ - 1
+    """
+    if n == 0:
+        return []
+
+    steps = []
+    # 1. 移动 n-1 个盘子到辅助柱
+    steps.extend(hanoi(n - 1, source, auxiliary, target))
+    # 2. 移动最大的盘子到目标柱
+    steps.append((source, target))
+    # 3. 移动 n-1 个盘子从辅助柱到目标柱
+    steps.extend(hanoi(n - 1, auxiliary, target, source))
+
+    return steps
+
+
+def hanoi_print(n: int, source: str, target: str, auxiliary: str, depth: int = 0):
+    """汉诺塔（带打印的版本，展示调用过程）"""
+    indent = "  " * depth
+    if n == 1:
+        print(f"{indent}移动 1 号盘: {source} → {target}")
+        return
+
+    hanoi_print(n - 1, source, auxiliary, target, depth + 1)
+    print(f"{indent}移动 {n} 号盘: {source} → {target}")
+    hanoi_print(n - 1, auxiliary, target, source, depth + 1)
+
+
+# ============================================================
+# 4. 二分查找 (Binary Search)
+# ============================================================
+
+def binary_search_recursive(arr: list, target: int,
+                            left: int = None, right: int = None) -> int:
+    """递归实现二分查找
+
+    参数:
+        arr: 已排序的列表
+        target: 要查找的目标值
+
+    返回:
+        目标值的索引，未找到返回 -1
+
+    时间复杂度: O(log n)
+    """
+    if left is None:
+        left, right = 0, len(arr) - 1
+
+    # 基线条件：搜索区间为空
+    if left > right:
+        return -1
+
+    mid = (left + right) // 2
+
+    if arr[mid] == target:
+        return mid
+    elif arr[mid] < target:
+        # 目标在右半边
+        return binary_search_recursive(arr, target, mid + 1, right)
+    else:
+        # 目标在左半边
+        return binary_search_recursive(arr, target, left, mid - 1)
+
+
+def binary_search_iterative(arr: list, target: int) -> int:
+    """迭代实现二分查找"""
+    left, right = 0, len(arr) - 1
+
+    while left <= right:
+        mid = (left + right) // 2
+        if arr[mid] == target:
+            return mid
+        elif arr[mid] < target:
+            left = mid + 1
+        else:
+            right = mid - 1
+
+    return -1
+
+
+# ============================================================
+# 5. 辅助：可视化递归调用
+# ============================================================
+
+def factorial_verbose(n: int, depth: int = 0) -> int:
+    """带调试输出的阶乘，展示递归调用过程"""
+    prefix = "  " * depth
+    print(f"{prefix}factorial({n}) 被调用")
+
+    if n == 0:
+        print(f"{prefix}→ 基线条件: 返回 1")
+        return 1
+
+    result = n * factorial_verbose(n - 1, depth + 1)
+    print(f"{prefix}→ 返回 {n} * fact({n-1}) = {result}")
+    return result
+
+
+# ============================================================
+# 6. Demo 入口
+# ============================================================
+
+def main():
+    print("=" * 60)
+    print("递归基础示例")
+    print("=" * 60)
+
+    # --- 阶乘 ---
+    print("\n📐 阶乘:")
+    n = 5
+    print(f"  factorial_recursive({n})  = {factorial_recursive(n)}")
+    print(f"  factorial_iterative({n})  = {factorial_iterative(n)}")
+    print(f"  factorial_tail({n})      = {factorial_tail(n)}")
+
+    # --- 可视化阶乘 ---
+    print("\n📊 可视化递归调用 factorial(4):")
+    factorial_verbose(4)
+
+    # --- 斐波那契 ---
+    print("\n📈 斐波那契:")
+    for n in [10, 20, 30]:
+        memo = fib_memo(n)
+        it = fib_iterative(n)
+        print(f"  fib({n:>2}) → memo={memo}, iterative={it}")
+
+    fib_with_cache = fib_manual_memo()
+    print(f"  fib(100) manual memo = {fib_with_cache(100)}")
+
+    # --- 汉诺塔 ---
+    print("\n🏯 汉诺塔 (3个盘子):")
+    steps = hanoi(3, "A", "C", "B")
+    print(f"  总步骤数: {len(steps)}")
+    for i, (f, t) in enumerate(steps, 1):
+        print(f"  步骤 {i:>2}: {f} → {t}")
+
+    print("\n  带缩进的可视化展示:")
+    hanoi_print(3, "A", "C", "B")
+
+    # --- 汉诺塔步数验证 ---
+    for n in range(1, 10):
+        steps = hanoi(n, "A", "C", "B")
+        expected = 2**n - 1
+        print(f"  n={n}: 实际步数={len(steps)}, 理论步数={expected}, "
+              f"{'✅' if len(steps) == expected else '❌'}")
+
+    # --- 二分查找 ---
+    print("\n🔍 二分查找:")
+    arr = list(range(0, 100, 2))  # [0, 2, 4, ..., 98]
+    targets = [0, 50, 98, 99]
+    for t in targets:
+        r = binary_search_recursive(arr, t)
+        i = binary_search_iterative(arr, t)
+        print(f"  搜索 {t:>2}: 递归={r}, 迭代={i}")
+def trap_no_base_case():
+    """陷阱1: 缺失基线条件 -> 无限递归 -> RecursionError"""
+    def infinite(x):
+        return infinite(x + 1)  # 没有基线条件！
+
+    try:
+        infinite(0)
+    except RecursionError as e:
+        return f"❌ RecursionError: {e}"
+    except Exception as e:
+        return f"❌ {type(e).__name__}: {e}"
+
+
+def trap_no_progress():
+    """陷阱2: 不向基线条件逼近 -> 也是无限递归"""
+    def bad_fact(n):
+        if n == 0:
+            return 1
+        # n 没有减小！始终调用 bad_fact(n)
+        return n * bad_fact(n)
+
+    try:
+        bad_fact(5)
+    except RecursionError as e:
+        return f"❌ RecursionError: {e}"
+
+
+def trap_shared_default_arg():
+    """陷阱3: 可变默认参数在递归中共享"""
+    def traverse(n, visited=[]):
+        visited.append(n)
+        if n <= 0:
+            return visited
+        return traverse(n - 1, visited)
+
+    # 多次调用会共享 visited
+    r1 = traverse(3)
+    r2 = traverse(2)  # 结果不是 [2,1,0] 而是 [3,2,1,0,2,1,0]!
+    return r2  # ❌ 错误的共享状态
+
+
+def trap_shared_default_fixed():
+    """陷阱3修复: 使用 None + 每次新建"""
+    def traverse(n, visited=None):
+        if visited is None:
+            visited = []
+        visited.append(n)
+        if n <= 0:
+            return visited
+        return traverse(n - 1, visited)
+
+    r1 = traverse(3)
+    r2 = traverse(2)  # ✅ 正确: [2, 1, 0]
+    return r2
+
+
+def trap_redundant_computation(n: int) -> tuple:
+    """陷阱4: 重复计算 — 展示 fib_naive 的调用计数"""
+    call_count = 0
+
+    def fib_count(x):
+        nonlocal call_count
+        call_count += 1
+        if x <= 1:
+            return x
+        return fib_count(x - 1) + fib_count(x - 2)
+
+    result = fib_count(n)
+    return result, call_count
+
+
+def trap_deep_recursion():
+    """陷阱5: 深度递归导致栈溢出"""
+    def recurse(depth):
+        if depth <= 0:
+            return 0
+        return 1 + recurse(depth - 1)
+
+    import sys
+    limit = sys.getrecursionlimit()
+    safe_depth = limit - 100  # 留 100 层的余量
+
+    try:
+        result = recurse(limit + 100)  # 超过限制
+        return f"完成: {result}"
+    except RecursionError as e:
+        return f"❌ 深度 {limit + 100} 超过限制 {limit}: {e}"
+
+
+def trap_demo():
+    """运行所有陷阱展示"""
+    print("\n⚠️ 常见递归陷阱演示")
+    print("=" * 60)
+
+    print("\n1️⃣ 陷阱: 缺失基线条件")
+    print(f"   {trap_no_base_case()}")
+
+    print("\n2️⃣ 陷阱: 不向基线条件逼近")
+    print(f"   {trap_no_progress()}")
+
+    print("\n3️⃣ 陷阱: 可变默认参数共享")
+    result = trap_shared_default_arg()
+    print(f"   traverse(3) 后 traverse(2) = {result}")
+    result2 = trap_shared_default_fixed()
+    print(f"   修复后 traverse(2) = {result2} ✅")
+
+    print("\n4️⃣ 陷阱: 重复计算 (fib(30))")
+    result, count = trap_redundant_computation(30)
+    print(f"   fib(30) = {result}")
+    print(f"   函数调用次数: {count:,} 次! 😱")
+    print(f"   (对比: 理论调用次数 = fib(31)*2-1 ≈ {2*1346269-1:,})")
+
+    print("\n5️⃣ 陷阱: 递归深度过深")
+    print(f"   {trap_deep_recursion()}")
+
+
+def hanoi_benchmark(max_n: int = 15):
+    """对 1 到 max_n 的汉诺塔进行基准测试"""
+    import time
+    print(f"{'n':>3} | {'步骤数':>8} | {'理论值':>8} | {'时间':>10} | 状态")
+    print("-" * 50)
+    for n in range(1, max_n + 1):
+        start = time.perf_counter()
+        steps = hanoi(n, 'A', 'C', 'B')
+        elapsed = time.perf_counter() - start
+        expected = 2**n - 1
+        ok = "\u2705" if len(steps) == expected else "\u274c"
+        print(f"{n:>3} | {len(steps):>8,} | {expected:>8,} | {elapsed * 1_000_000:>8.2f}us | {ok}")
+
+
+def binary_search_first_last(arr: list, target: int) -> tuple:
+    """递归二分查找：返回(任意索引, 首次出现, 末次出现)"""
+    def first_occurrence(left, right):
+        if left > right:
+            return -1
+        mid = (left + right) // 2
+        if arr[mid] < target:
+            return first_occurrence(mid + 1, right)
+        elif arr[mid] > target:
+            return first_occurrence(left, mid - 1)
+        else:
+            if mid == 0 or arr[mid - 1] != target:
+                return mid
+            return first_occurrence(left, mid - 1)
+
+    def last_occurrence(left, right):
+        if left > right:
+            return -1
+        mid = (left + right) // 2
+        if arr[mid] < target:
+            return last_occurrence(mid + 1, right)
+        elif arr[mid] > target:
+            return last_occurrence(left, mid - 1)
+        else:
+            if mid == len(arr) - 1 or arr[mid + 1] != target:
+                return mid
+            return last_occurrence(mid + 1, right)
+
+    idx = binary_search_recursive(arr, target)
+    first = first_occurrence(0, len(arr) - 1)
+    last = last_occurrence(0, len(arr) - 1)
+    return idx, first, last
+
+
+def reverse_string(s: str) -> str:
+    """递归反转字符串"""
+    if len(s) <= 1:  # 基线条件
+        return s
+    return reverse_string(s[1:]) + s[0]  # 递归条件
+
+
+def is_palindrome(s: str) -> bool:
+    """递归判断回文"""
+    if len(s) <= 1:
+        return True
+    if s[0] != s[-1]:
+        return False
+    return is_palindrome(s[1:-1])
+
+
+def flatten(nested: list) -> list:
+    """递归展开嵌套列表"""
+    result = []
+    for item in nested:
+        if isinstance(item, list):
+            result.extend(flatten(item))
+        else:
+            result.append(item)
+    return result
+
+
+def digital_root(n: int) -> int:
+    """递归数字根（各位数之和直到一位数）"""
+    if n < 10:
+        return n
+    return digital_root(sum(int(d) for d in str(n)))
+
+
+def gcd(a: int, b: int) -> int:
+    """欧几里得算法递归求最大公约数"""
+    if b == 0:
+        return a
+    return gcd(b, a % b)
+
+if __name__ == "__main__":
+    main()
+    print()
+    print("=" * 60)
+    print("额外练习验证")
+    print("=" * 60)
+    print(f'  reverse_string("hello") = {reverse_string("hello")}')
+    print(f'  is_palindrome("racecar") = {is_palindrome("racecar")}')
+    print(f'  is_palindrome("hello")   = {is_palindrome("hello")}')
+    print(f'  flatten([1, [2, [3, 4]]]) = {flatten([1, [2, [3, 4]]])}')
+    print(f'  digital_root(942) = {digital_root(942)}')
+    print(f'  gcd(48, 18) = {gcd(48, 18)}')
+
+    print()
+    print("=" * 60)
+    print("汉诺塔性能基准测试")
+    print("=" * 60)
+    hanoi_benchmark(10)
+
+    print()
+    print("=" * 60)
+    print("二分查找扩展测试 (重复元素)")
+    print("=" * 60)
+    arr_dup = [1, 2, 2, 2, 3, 4, 4, 5]
+    for t in [2, 4, 6]:
+        idx, first, last = binary_search_first_last(arr_dup, t)
+        print(f"  搜索 {t}: 索引={idx}, 首次={first}, 末次={last}")
+
+    trap_demo()
+
+
+# ============================================================
+# 7. 练习题答案验证
+# ============================================================

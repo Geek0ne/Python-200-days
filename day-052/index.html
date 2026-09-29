@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 52 — 深拷贝与浅拷贝</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 52 — 深拷贝与浅拷贝</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">438 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-052-copy-deepcopy" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📌 今日目标</a>
+<a class="toc-l2" href="#1">1. 什么是浅拷贝和深拷贝？</a>
+<a class="toc-l3" href="#11-vs-vs">1.1 赋值 vs 浅拷贝 vs 深拷贝</a>
+<a class="toc-l3" href="#12">1.2 可视化对比</a>
+<a class="toc-l2" href="#2">2. 浅拷贝详解</a>
+<a class="toc-l3" href="#21">2.1 浅拷贝的创建方式</a>
+<a class="toc-l3" href="#22">2.2 浅拷贝的行为</a>
+<a class="toc-l3" href="#23">2.3 浅拷贝的陷阱</a>
+<a class="toc-l2" href="#3">3. 深拷贝详解</a>
+<a class="toc-l3" href="#31">3.1 深拷贝的使用</a>
+<a class="toc-l3" href="#32">3.2 深拷贝与循环引用</a>
+<a class="toc-l3" href="#33">3.3 深拷贝的性能考量</a>
+<a class="toc-l2" href="#4-vs">4. 可变 vs 不可变对象的拷贝行为</a>
+<a class="toc-l3" href="#41">4.1 不可变对象</a>
+<a class="toc-l3" href="#42">4.2 可变对象</a>
+<a class="toc-l2" href="#5-__copy__-__deepcopy__">5. __copy__ 和 __deepcopy__ 魔术方法</a>
+<a class="toc-l3" href="#51">5.1 自定义浅拷贝</a>
+<a class="toc-l3" href="#52">5.2 自定义深拷贝</a>
+<a class="toc-l3" href="#53-memo">5.3 memo 参数的作用</a>
+<a class="toc-l2" href="#6">6. 实战：快照与回滚系统</a>
+<a class="toc-l2" href="#7">7. 最佳实践</a>
+<a class="toc-l3" href="#_2">注意事项</a>
+<a class="toc-l2" href="#8">8. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-052">Day 052 — 深拷贝与浅拷贝</h1>
+<blockquote>
+<p><strong>Phase 4 · 高阶特性 · Day 052</strong><br>
+主题：深拷贝与浅拷贝 —— 理解 Python 对象的复制机制</p>
+</blockquote>
+<hr>
+<h2 id="_1">📌 今日目标</h2>
+<ol>
+<li>理解浅拷贝与深拷贝的区别</li>
+<li>掌握 <code>copy.copy()</code> 和 <code>copy.deepcopy()</code> 的使用</li>
+<li>理解可变对象与不可变对象的拷贝行为差异</li>
+<li>掌握 <code>__copy__</code> 和 <code>__deepcopy__</code> 魔术方法</li>
+<li>实战：实现快照与回滚系统</li>
+</ol>
+<hr>
+<h2 id="1">1. 什么是浅拷贝和深拷贝？</h2>
+<h3 id="11-vs-vs">1.1 赋值 vs 浅拷贝 vs 深拷贝</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="c1"># 赋值：创建新引用，指向同一对象</span>
+<span class="n">a</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">a</span>                    <span class="c1"># b 和 a 是同一个列表对象</span>
+
+<span class="c1"># 浅拷贝：创建新对象，但内部元素仍是引用</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">a</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>             <span class="c1"># 或 list(a) 或 [x for x in a] 或 copy.copy(a)</span>
+<span class="n">d</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+
+<span class="c1"># 深拷贝：创建新对象，内部元素也递归拷贝</span>
+<span class="n">e</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="12">1.2 可视化对比</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph 赋值
+        A[变量 a] --&gt; Obj1[列表对象]
+        B[变量 b] --&gt; Obj1
+    end
+
+    subgraph 浅拷贝
+        C[变量 c] --&gt; Obj2[新列表对象]
+        Obj2 --&gt;|引用| Elem1[元素 1, 2, 3]
+        Obj1 --&gt;|引用| Elem1
+    end
+
+    subgraph 深拷贝
+        D[变量 d] --&gt; Obj3[新列表对象]
+        Obj3 --&gt;|引用| Elem2[新元素 1, 2, 3]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph 赋值
+        A[变量 a] --&gt; Obj1[列表对象]
+        B[变量 b] --&gt; Obj1
+    end
+
+    subgraph 浅拷贝
+        C[变量 c] --&gt; Obj2[新列表对象]
+        Obj2 --&gt;|引用| Elem1[元素 1, 2, 3]
+        Obj1 --&gt;|引用| Elem1
+    end
+
+    subgraph 深拷贝
+        D[变量 d] --&gt; Obj3[新列表对象]
+        Obj3 --&gt;|引用| Elem2[新元素 1, 2, 3]
+    end
+</code></pre></div>
+<hr>
+<h2 id="2">2. 浅拷贝详解</h2>
+<h3 id="21">2.1 浅拷贝的创建方式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="n">original</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]]</span>
+
+<span class="c1"># 方式 1: copy.copy()</span>
+<span class="n">copy1</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">original</span><span class="p">)</span>
+
+<span class="c1"># 方式 2: 列表的 copy 方法</span>
+<span class="n">copy2</span> <span class="o">=</span> <span class="n">original</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+<span class="c1"># 方式 3: 切片</span>
+<span class="n">copy3</span> <span class="o">=</span> <span class="n">original</span><span class="p">[:]</span>
+
+<span class="c1"># 方式 4: 列表推导式</span>
+<span class="n">copy4</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">original</span><span class="p">]</span>
+
+<span class="c1"># 方式 5: list() 构造函数</span>
+<span class="n">copy5</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">original</span><span class="p">)</span>
+
+<span class="c1"># 以上 5 种方式创建的都是浅拷贝</span>
+</code></pre></div>
+<h3 id="22">2.2 浅拷贝的行为</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="n">original</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]]</span>
+<span class="n">shallow</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">original</span><span class="p">)</span>
+
+<span class="c1"># 修改外层：不影响原对象</span>
+<span class="n">shallow</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mi">99</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">original</span><span class="p">)</span>  <span class="c1"># [1, 2, [3, 4]]  —— 没变</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">shallow</span><span class="p">)</span>   <span class="c1"># [99, 2, [3, 4]] —— 变了</span>
+
+<span class="c1"># 修改嵌套对象：影响原对象！</span>
+<span class="n">shallow</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">original</span><span class="p">)</span>  <span class="c1"># [1, 2, [3, 4, 5]]  —— 也被改了！</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">shallow</span><span class="p">)</span>   <span class="c1"># [99, 2, [3, 4, 5]]</span>
+</code></pre></div>
+<h3 id="23">2.3 浅拷贝的陷阱</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="c1"># 字典的浅拷贝</span>
+<span class="n">original</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;a&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="s2">&quot;b&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]}</span>
+<span class="n">shallow</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">original</span><span class="p">)</span>
+
+<span class="c1"># 修改嵌套列表</span>
+<span class="n">shallow</span><span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mi">99</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">original</span><span class="p">[</span><span class="s2">&quot;a&quot;</span><span class="p">])</span>  <span class="c1"># [1, 2, 99]  —— 原字典也被改了！</span>
+
+<span class="c1"># 这就是浅拷贝的&quot;共享引用&quot;问题</span>
+</code></pre></div>
+<hr>
+<h2 id="3">3. 深拷贝详解</h2>
+<h3 id="31">3.1 深拷贝的使用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="n">original</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]]</span>
+<span class="n">deep</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">original</span><span class="p">)</span>
+
+<span class="c1"># 修改嵌套对象：不影响原对象</span>
+<span class="n">deep</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">original</span><span class="p">)</span>  <span class="c1"># [1, 2, [3, 4]]  —— 没变</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">deep</span><span class="p">)</span>      <span class="c1"># [1, 2, [3, 4, 5]] —— 只有深拷贝变了</span>
+
+<span class="c1"># 完全独立</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">original</span> <span class="ow">is</span> <span class="n">deep</span><span class="p">)</span>          <span class="c1"># False</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">original</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="ow">is</span> <span class="n">deep</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>    <span class="c1"># False —— 嵌套对象也不同</span>
+</code></pre></div>
+<h3 id="32">3.2 深拷贝与循环引用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="c1"># 创建循环引用</span>
+<span class="n">a</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
+<span class="n">a</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>  <span class="c1"># a = [1, 2, [...]]</span>
+
+<span class="c1"># 深拷贝可以正确处理循环引用</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>       <span class="c1"># [1, 2, [...]]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">b</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="ow">is</span> <span class="n">b</span><span class="p">)</span>  <span class="c1"># True —— 保持了循环引用关系</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">b</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="ow">is</span> <span class="n">a</span><span class="p">)</span>  <span class="c1"># False —— 与原对象无关</span>
+</code></pre></div>
+<h3 id="33">3.3 深拷贝的性能考量</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="c1"># 大型嵌套对象</span>
+<span class="n">data</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">100000</span><span class="p">))</span>
+
+<span class="c1"># 浅拷贝很快</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">):</span>
+    <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;浅拷贝 1000 次: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+
+<span class="c1"># 深拷贝较慢（但对于简单列表差异不大）</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">):</span>
+    <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;深拷贝 1000 次: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="4-vs">4. 可变 vs 不可变对象的拷贝行为</h2>
+<h3 id="41">4.1 不可变对象</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="c1"># 整数（不可变）</span>
+<span class="n">a</span> <span class="o">=</span> <span class="mi">42</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">a</span> <span class="ow">is</span> <span class="n">b</span><span class="p">)</span>  <span class="c1"># True —— 不可变对象不需要拷贝</span>
+
+<span class="c1"># 字符串（不可变）</span>
+<span class="n">s1</span> <span class="o">=</span> <span class="s2">&quot;hello&quot;</span>
+<span class="n">s2</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">s1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">s1</span> <span class="ow">is</span> <span class="n">s2</span><span class="p">)</span>  <span class="c1"># True</span>
+
+<span class="c1"># 元组（不可变）</span>
+<span class="n">t1</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+<span class="n">t2</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">t1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">t1</span> <span class="ow">is</span> <span class="n">t2</span><span class="p">)</span>  <span class="c1"># True</span>
+
+<span class="c1"># 但元组中的可变元素仍会被浅拷贝引用</span>
+<span class="n">t3</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">])</span>
+<span class="n">t4</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">t3</span><span class="p">)</span>
+<span class="n">t4</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">t3</span><span class="p">[</span><span class="mi">2</span><span class="p">])</span>  <span class="c1"># [3, 4, 5]  —— 被改了！</span>
+</code></pre></div>
+<h3 id="42">4.2 可变对象</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="c1"># 列表（可变）</span>
+<span class="n">list1</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+<span class="n">list2</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">list1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">list1</span> <span class="ow">is</span> <span class="n">list2</span><span class="p">)</span>  <span class="c1"># False —— 创建了新对象</span>
+
+<span class="c1"># 字典（可变）</span>
+<span class="n">dict1</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;a&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}</span>
+<span class="n">dict2</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">dict1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">dict1</span> <span class="ow">is</span> <span class="n">dict2</span><span class="p">)</span>  <span class="c1"># False</span>
+
+<span class="c1"># 集合（可变）</span>
+<span class="n">set1</span> <span class="o">=</span> <span class="p">{</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">}</span>
+<span class="n">set2</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">set1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">set1</span> <span class="ow">is</span> <span class="n">set2</span><span class="p">)</span>  <span class="c1"># False</span>
+</code></pre></div>
+<hr>
+<h2 id="5-__copy__-__deepcopy__">5. <code>__copy__</code> 和 <code>__deepcopy__</code> 魔术方法</h2>
+<h3 id="51">5.1 自定义浅拷贝</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">data</span>
+
+    <span class="k">def</span> <span class="nf">__copy__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;自定义浅拷贝行为&quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  调用 __copy__: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="c1"># 创建新实例，但共享 data</span>
+        <span class="n">new_obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">new_obj</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;MyClass(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2">, </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">(</span><span class="s2">&quot;test&quot;</span><span class="p">,</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+<span class="n">copied</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;原始: </span><span class="si">{</span><span class="n">obj</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;拷贝: </span><span class="si">{</span><span class="n">copied</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;是同一个对象: </span><span class="si">{</span><span class="n">obj</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="n">copied</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;data 是同一个: </span><span class="si">{</span><span class="n">obj</span><span class="o">.</span><span class="n">data</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="n">copied</span><span class="o">.</span><span class="n">data</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="52">5.2 自定义深拷贝</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="k">class</span> <span class="nc">Config</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">settings</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">settings</span> <span class="o">=</span> <span class="n">settings</span>
+
+    <span class="k">def</span> <span class="nf">__deepcopy__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">memo</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;自定义深拷贝行为&quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  调用 __deepcopy__&quot;</span><span class="p">)</span>
+        <span class="c1"># memo 用于处理循环引用</span>
+        <span class="n">new_settings</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">settings</span><span class="p">,</span> <span class="n">memo</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">Config</span><span class="p">(</span><span class="n">new_settings</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Config(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">settings</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+
+<span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">({</span><span class="s2">&quot;debug&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;db&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]})</span>
+<span class="n">deep_copied</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;原始: </span><span class="si">{</span><span class="n">config</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;深拷贝: </span><span class="si">{</span><span class="n">deep_copied</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;是同一个对象: </span><span class="si">{</span><span class="n">config</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="n">deep_copied</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;settings 是同一个: </span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">settings</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="n">deep_copied</span><span class="o">.</span><span class="n">settings</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="53-memo">5.3 memo 参数的作用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+
+<span class="k">class</span> <span class="nc">Node</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">children</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">__deepcopy__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">memo</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  深拷贝 Node(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+        <span class="c1"># 检查是否已经拷贝过</span>
+        <span class="k">if</span> <span class="nb">id</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="ow">in</span> <span class="n">memo</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">memo</span><span class="p">[</span><span class="nb">id</span><span class="p">(</span><span class="bp">self</span><span class="p">)]</span>
+
+        <span class="n">new_node</span> <span class="o">=</span> <span class="n">Node</span><span class="p">(</span><span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">memo</span><span class="p">))</span>
+        <span class="n">new_node</span><span class="o">.</span><span class="n">children</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">,</span> <span class="n">memo</span><span class="p">)</span>
+        <span class="n">memo</span><span class="p">[</span><span class="nb">id</span><span class="p">(</span><span class="bp">self</span><span class="p">)]</span> <span class="o">=</span> <span class="n">new_node</span>
+        <span class="k">return</span> <span class="n">new_node</span>
+
+<span class="c1"># 创建循环引用</span>
+<span class="n">root</span> <span class="o">=</span> <span class="n">Node</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">child</span> <span class="o">=</span> <span class="n">Node</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">root</span><span class="o">.</span><span class="n">children</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">child</span><span class="p">)</span>
+<span class="n">child</span><span class="o">.</span><span class="n">children</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">root</span><span class="p">)</span>  <span class="c1"># 循环</span>
+
+<span class="c1"># 深拷贝</span>
+<span class="n">copy_root</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="n">root</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">原始: root.value=</span><span class="si">{</span><span class="n">root</span><span class="o">.</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;拷贝: copy_root.value=</span><span class="si">{</span><span class="n">copy_root</span><span class="o">.</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;循环引用保持: copy_root.children[0].children[0] is copy_root&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="6">6. 实战：快照与回滚系统</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">copy</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="k">class</span> <span class="nc">Document</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;文档类，支持快照和回滚&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">title</span><span class="p">,</span> <span class="n">content</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">title</span> <span class="o">=</span> <span class="n">title</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">content</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">history</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_snapshots</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">edit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_content</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;编辑文档，自动保存快照&quot;&quot;&quot;</span>
+        <span class="c1"># 保存当前状态的快照</span>
+        <span class="n">snapshot</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">content</span><span class="p">,</span>
+            <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_snapshots</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">snapshot</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">new_content</span>
+
+    <span class="k">def</span> <span class="nf">undo</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;回滚到上一个版本&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_snapshots</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;  没有可回滚的版本&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="n">snapshot</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_snapshots</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">snapshot</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  回滚到 </span><span class="si">{</span><span class="n">snapshot</span><span class="p">[</span><span class="s1">&#39;timestamp&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+    <span class="k">def</span> <span class="nf">get_snapshot</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;获取当前状态的深拷贝&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">&quot;title&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">title</span><span class="p">,</span>
+            <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">content</span><span class="p">,</span>
+            <span class="s2">&quot;timestamp&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">restore_snapshot</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">snapshot</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;从快照恢复&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">snapshot</span><span class="p">[</span><span class="s2">&quot;content&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">list_snapshots</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;列出所有快照&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">snap</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_snapshots</span><span class="p">):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  [</span><span class="si">{</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">snap</span><span class="p">[</span><span class="s1">&#39;timestamp&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">snap</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">][:</span><span class="mi">30</span><span class="p">]</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Document(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">title</span><span class="si">!r}</span><span class="s2">, content_len=</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">content</span><span class="p">)</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+
+<span class="c1"># 使用</span>
+<span class="n">doc</span> <span class="o">=</span> <span class="n">Document</span><span class="p">(</span><span class="s2">&quot;笔记&quot;</span><span class="p">,</span> <span class="s2">&quot;初始内容&quot;</span><span class="p">)</span>
+<span class="n">doc</span><span class="o">.</span><span class="n">edit</span><span class="p">(</span><span class="s2">&quot;第一次修改&quot;</span><span class="p">)</span>
+<span class="n">doc</span><span class="o">.</span><span class="n">edit</span><span class="p">(</span><span class="s2">&quot;第二次修改&quot;</span><span class="p">)</span>
+<span class="n">doc</span><span class="o">.</span><span class="n">edit</span><span class="p">(</span><span class="s2">&quot;第三次修改&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;当前内容: </span><span class="si">{</span><span class="n">doc</span><span class="o">.</span><span class="n">content</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">回滚...&quot;</span><span class="p">)</span>
+<span class="n">doc</span><span class="o">.</span><span class="n">undo</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;回滚后: </span><span class="si">{</span><span class="n">doc</span><span class="o">.</span><span class="n">content</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">快照列表:&quot;</span><span class="p">)</span>
+<span class="n">doc</span><span class="o">.</span><span class="n">list_snapshots</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="7">7. 最佳实践</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐方式</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>简单列表/字典拷贝</td>
+<td><code>copy.copy()</code></td>
+<td>性能好，满足需求</td>
+</tr>
+<tr>
+<td>嵌套对象独立副本</td>
+<td><code>copy.deepcopy()</code></td>
+<td>完全独立，无共享引用</td>
+</tr>
+<tr>
+<td>不可变对象</td>
+<td>不需要拷贝</td>
+<td>Python 优化了不可变对象</td>
+</tr>
+<tr>
+<td>自定义类</td>
+<td>实现 <code>__copy__</code> / <code>__deepcopy__</code></td>
+<td>控制拷贝行为</td>
+</tr>
+<tr>
+<td>循环引用对象</td>
+<td><code>copy.deepcopy()</code></td>
+<td>自动处理循环引用</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_2">注意事项</h3>
+<ol>
+<li><strong>浅拷贝陷阱</strong>：嵌套可变对象会被共享修改</li>
+<li><strong>深拷贝性能</strong>：大型复杂对象深拷贝较慢</li>
+<li><strong>循环引用</strong>：深拷贝可以正确处理，但需要 <code>memo</code> 参数</li>
+<li><strong>不可变对象</strong>：Python 不拷贝不可变对象，直接返回原对象引用</li>
+</ol>
+<hr>
+<h2 id="8">8. 思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 Python 对不可变对象不进行拷贝？</strong> 提示：考虑性能优化和内存管理。</p>
+</li>
+<li>
+<p><strong><code>copy.copy()</code> 和 <code>copy.deepcopy()</code> 对元组有什么区别？</strong> 提示：元组是不可变的，但可能包含可变元素。</p>
+</li>
+<li>
+<p><strong>如何让一个类同时支持浅拷贝和深拷贝？</strong> 提示：需要实现哪些魔术方法？</p>
+</li>
+<li>
+<p><strong>深拷贝的 <code>memo</code> 参数有什么作用？</strong> 提示：考虑循环引用和对象去重。</p>
+</li>
+<li>
+<p><strong>在什么情况下应该避免使用深拷贝？</strong> 提示：考虑性能、资源、线程安全等因素。</p>
+</li>
+</ol>
+<hr>
+<blockquote>
+<p><strong>明日预告</strong>：Day 053 — 内存管理与垃圾回收，深入了解 Python 的内存管理机制。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-051/index.html">← Day 51 弱引用（weakref）</a><a class="nav-next" href="../day-053/index.html">Day 53 内存管理与垃圾回收 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

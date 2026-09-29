@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 47 — 描述符（Descriptor）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 47 — 描述符（Descriptor）</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">649 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-047-descriptor" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📚 今日目标</a>
+<a class="toc-l2" href="#1">1. 描述符是什么？</a>
+<a class="toc-l3" href="#11">1.1 概念定义</a>
+<a class="toc-l3" href="#12">1.2 为什么需要描述符？</a>
+<a class="toc-l2" href="#2">2. 描述符协议详解</a>
+<a class="toc-l3" href="#21">2.1 三大核心方法</a>
+<a class="toc-l3" href="#22">2.2 描述符的访问机制</a>
+<a class="toc-l3" href="#23-vs">2.3 数据描述符 vs 非数据描述符</a>
+<a class="toc-l2" href="#3-property">3. property 的底层实现</a>
+<a class="toc-l3" href="#31-property">3.1 用描述符重写 property</a>
+<a class="toc-l2" href="#4">4. 实战：类型校验描述符</a>
+<a class="toc-l3" href="#41">4.1 基础版：类型检查描述符</a>
+<a class="toc-l3" href="#42">4.2 进阶版：带范围检查和自定义校验</a>
+<a class="toc-l3" href="#43">4.3 实战：懒加载 + 缓存描述符</a>
+<a class="toc-l2" href="#5">5. 高级技巧</a>
+<a class="toc-l3" href="#51-__set_name__">5.1 __set_name__ 的作用</a>
+<a class="toc-l3" href="#52-__slots__">5.2 描述符与 __slots__ 的交互</a>
+<a class="toc-l3" href="#53">5.3 描述符的适用场景总结</a>
+<a class="toc-l2" href="#6">6. 描述符执行顺序图解</a>
+<a class="toc-l2" href="#7">7. 常见陷阱</a>
+<a class="toc-l3" href="#1_1">陷阱 1：实例属性覆盖非数据描述符</a>
+<a class="toc-l3" href="#2_1">陷阱 2：描述符中的循环引用</a>
+<a class="toc-l3" href="#3">陷阱 3：描述符实例共享状态</a>
+<a class="toc-l2" href="#8">8. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-047-descriptor">Day 047 — 描述符（Descriptor）</h1>
+<h2 id="_1">📚 今日目标</h2>
+<p>深入理解 Python 描述符协议，掌握 <code>__get__</code>、<code>__set__</code>、<code>__delete__</code> 三大方法，理解 <code>property</code> 的底层实现，并实战构建类型校验描述符。</p>
+<hr>
+<h2 id="1">1. 描述符是什么？</h2>
+<h3 id="11">1.1 概念定义</h3>
+<p><strong>描述符（Descriptor）</strong> 是实现了特定协议方法的对象，当它作为另一个类的<strong>属性</strong>时，Python 会自动拦截对该属性的访问、赋值和删除操作。</p>
+<p>简单说：<strong>描述符就是"属性的代理人"</strong>——你访问 <code>obj.attr</code>，但实际执行的是描述符对象的 <code>__get__</code> 方法。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 普通属性：直接返回值</span>
+<span class="k">class</span> <span class="nc">Regular</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="s2">&quot;hello&quot;</span>  <span class="c1"># 普通属性</span>
+
+<span class="c1"># 描述符：拦截属性访问</span>
+<span class="k">class</span> <span class="nc">Descriptor</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;通过描述符访问&quot;</span>
+
+<span class="k">class</span> <span class="nc">WithDescriptor</span><span class="p">:</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">Descriptor</span><span class="p">()</span>  <span class="c1"># 类属性是一个描述符对象</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">WithDescriptor</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>  <span class="c1"># 输出: 通过描述符访问（而非 AttributeError）</span>
+</code></pre></div>
+<h3 id="12">1.2 为什么需要描述符？</h3>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>传统方案</th>
+<th>描述符方案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>类型检查</td>
+<td>每个属性都写 <code>@property</code></td>
+<td>写一个类型描述符复用</td>
+</tr>
+<tr>
+<td>值验证</td>
+<td>在 <code>__init__</code> 里逐个校验</td>
+<td>描述符自动校验</td>
+</tr>
+<tr>
+<td>懒加载</td>
+<td>每个属性写 getter</td>
+<td>一个描述符搞定</td>
+</tr>
+<tr>
+<td>访问控制</td>
+<td>每个属性写 <code>@prop.setter</code></td>
+<td>描述符统一管理</td>
+</tr>
+</tbody>
+</table>
+<p><strong>核心价值：DRY 原则（Don't Repeat Yourself）—— 把属性的通用行为抽成可复用的组件。</strong></p>
+<hr>
+<h2 id="2">2. 描述符协议详解</h2>
+<h3 id="21">2.1 三大核心方法</h3>
+<p>描述符协议由三个可选方法组成：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyDescriptor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;描述符协议示例&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        参数:</span>
+<span class="sd">            obj     - 实例对象（通过实例访问时），静态访问时为 None</span>
+<span class="sd">            objtype - 所属类</span>
+<span class="sd">        返回: 属性值</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;__get__ 被调用: obj=</span><span class="si">{</span><span class="n">obj</span><span class="si">}</span><span class="s2">, objtype=</span><span class="si">{</span><span class="n">objtype</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_value</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        参数:</span>
+<span class="sd">            obj   - 实例对象</span>
+<span class="sd">            value - 要设置的新值</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;__set__ 被调用: obj=</span><span class="si">{</span><span class="n">obj</span><span class="si">}</span><span class="s2">, value=</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_value</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="k">def</span> <span class="fm">__delete__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        参数:</span>
+<span class="sd">            obj - 实例对象</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;__delete__ 被调用: obj=</span><span class="si">{</span><span class="n">obj</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">_value</span>
+</code></pre></div>
+<h3 id="22">2.2 描述符的访问机制</h3>
+<p>当 Python 执行 <code>obj.attr</code> 时，查找顺序如下：</p>
+<pre class="plain"><code>                    obj.attr 查找流程
+                    ─────────────────
+                         │
+                         ▼
+              ┌─────────────────────┐
+              │ obj.__class__.__mro │  ← 沿 MRO 查找
+              └─────────┬───────────┘
+                        │
+                        ▼
+              ┌─────────────────────┐
+              │ 找到 attr 所在类    │
+              └─────────┬───────────┘
+                        │
+                        ▼
+              ┌─────────────────────┐
+              │ attr 是否描述符?    │──── 否 ──→ 返回类属性值
+              └─────────┬───────────┘
+                        │ 是
+                        ▼
+              ┌─────────────────────┐
+              │ obj 是否实例?       │──── 否 ──→ 返回描述符本身
+              └─────────┬───────────┘
+                        │ 是
+                        ▼
+              ┌─────────────────────┐
+              │ 调用 __get__(obj)   │
+              └─────────────────────┘
+</code></pre>
+<blockquote>
+<p><strong>关键规则：描述符只在类属性上有效，实例属性上的同名对象不会触发描述符协议！</strong></p>
+</blockquote>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Desc</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;desc value&quot;</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="n">Desc</span><span class="p">()</span>  <span class="c1"># 类属性 → 描述符生效</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">x</span><span class="p">)</span>          <span class="c1"># &quot;desc value&quot; ✅ 描述符拦截</span>
+
+<span class="n">obj</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="s2">&quot;instance&quot;</span>    <span class="c1"># 赋值到实例属性</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">x</span><span class="p">)</span>          <span class="c1"># &quot;instance&quot; ❌ 描述符被绕过！</span>
+</code></pre></div>
+<h3 id="23-vs">2.3 数据描述符 vs 非数据描述符</h3>
+<p>这是理解描述符最重要的分类：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>必须实现的方法</th>
+<th>优先级</th>
+<th>典型例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>数据描述符</strong></td>
+<td><code>__get__</code> + <code>__set__</code>（或 <code>__delete__</code>）</td>
+<td><strong>高于</strong>实例 <code>__dict__</code></td>
+<td><code>property</code>, <code>classmethod</code></td>
+</tr>
+<tr>
+<td><strong>非数据描述符</strong></td>
+<td>仅 <code>__get__</code></td>
+<td><strong>低于</strong>实例 <code>__dict__</code></td>
+<td>方法、<code>@staticmethod</code></td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 数据描述符：有 __get__ + __set__</span>
+<span class="k">class</span> <span class="nc">DataDesc</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;data descriptor&quot;</span>
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;数据描述符拦截了赋值: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># 非数据描述符：只有 __get__</span>
+<span class="k">class</span> <span class="nc">NonDataDesc</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;non-data descriptor&quot;</span>
+
+<span class="k">class</span> <span class="nc">Test</span><span class="p">:</span>
+    <span class="n">a</span> <span class="o">=</span> <span class="n">DataDesc</span><span class="p">()</span>
+    <span class="n">b</span> <span class="o">=</span> <span class="n">NonDataDesc</span><span class="p">()</span>
+
+<span class="n">t</span> <span class="o">=</span> <span class="n">Test</span><span class="p">()</span>
+<span class="n">t</span><span class="o">.</span><span class="n">a</span> <span class="o">=</span> <span class="s2">&quot;try&quot;</span>          <span class="c1"># 输出: 数据描述符拦截了赋值: try</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">a</span><span class="p">)</span>           <span class="c1"># &quot;data descriptor&quot; ✅</span>
+
+<span class="n">t</span><span class="o">.</span><span class="n">b</span> <span class="o">=</span> <span class="s2">&quot;try&quot;</span>          <span class="c1"># 不触发 __set__（因为没有）</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">b</span><span class="p">)</span>           <span class="c1"># &quot;try&quot; ← 实例属性覆盖了描述符！</span>
+</code></pre></div>
+<p><strong>为什么方法也是描述符？</strong> 函数实现了 <code>__get__</code>，所以当你在实例上调用方法时：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">greet</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;hello&quot;</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="c1"># obj.greet 是一个非数据描述符</span>
+<span class="c1"># Python 调用 Function.__get__(obj, MyClass)</span>
+<span class="c1"># 返回一个绑定方法（bound method），自动绑定 self</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">greet</span><span class="p">())</span>  <span class="c1"># &quot;hello&quot; — 描述符帮你做了 self 绑定！</span>
+</code></pre></div>
+<hr>
+<h2 id="3-property">3. property 的底层实现</h2>
+<p><code>property</code> 本质上就是一个<strong>数据描述符</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 等价关系</span>
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name</span>
+
+<span class="c1"># 底层等价于</span>
+<span class="k">class</span> <span class="nc">name_property</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>          <span class="c1"># 类访问返回描述符本身</span>
+        <span class="k">return</span> <span class="n">obj</span><span class="o">.</span><span class="n">_name</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="n">obj</span><span class="o">.</span><span class="n">_name</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="k">def</span> <span class="fm">__delete__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">):</span>
+        <span class="k">del</span> <span class="n">obj</span><span class="o">.</span><span class="n">_name</span>
+
+    <span class="k">def</span> <span class="nf">getter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_getter</span> <span class="o">=</span> <span class="n">func</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="nf">setter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_setter</span> <span class="o">=</span> <span class="n">func</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">name_property</span><span class="p">()</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">getter</span><span class="p">(</span><span class="k">lambda</span> <span class="bp">self</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name</span><span class="p">)</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">setter</span><span class="p">(</span><span class="k">lambda</span> <span class="bp">self</span><span class="p">,</span> <span class="n">v</span><span class="p">:</span> <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;_name&#39;</span><span class="p">,</span> <span class="n">v</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="31-property">3.1 用描述符重写 property</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Property</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;自己实现一个简化版 property&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fget</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fset</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">fdel</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fget</span> <span class="o">=</span> <span class="n">fget</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fset</span> <span class="o">=</span> <span class="n">fset</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fdel</span> <span class="o">=</span> <span class="n">fdel</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">fget</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;unreadable attribute&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">fget</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">fset</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;can&#39;t set attribute&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fset</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__delete__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">fdel</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span><span class="s2">&quot;can&#39;t delete attribute&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fdel</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">getter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fget</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)(</span><span class="n">fget</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">fset</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">fdel</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">setter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fset</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)(</span><span class="bp">self</span><span class="o">.</span><span class="n">fget</span><span class="p">,</span> <span class="n">fset</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">fdel</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">deleter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fdel</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)(</span><span class="bp">self</span><span class="o">.</span><span class="n">fget</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">fset</span><span class="p">,</span> <span class="n">fdel</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 实战：类型校验描述符</h2>
+<h3 id="41">4.1 基础版：类型检查描述符</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">TypeChecked</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;类型检查描述符 —— 自动校验属性类型&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">expected_type</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">expected_type</span> <span class="o">=</span> <span class="n">expected_type</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">default</span> <span class="o">=</span> <span class="n">default</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># 会在 __set_name__ 中设置</span>
+
+    <span class="k">def</span> <span class="nf">__set_name__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Python 3.6+ 自动调用，告诉描述符它在哪个类、叫什么名字&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;_</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">default</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">expected_type</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> 必须是 </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">expected_type</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> 类型，&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;但收到 </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">value</span><span class="si">!r}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="nb">setattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;TypeChecked(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">expected_type</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">, default=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">default</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">User</span><span class="p">:</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">TypeChecked</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="n">age</span> <span class="o">=</span> <span class="n">TypeChecked</span><span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    <span class="n">email</span> <span class="o">=</span> <span class="n">TypeChecked</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">age</span><span class="p">,</span> <span class="n">email</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">age</span> <span class="o">=</span> <span class="n">age</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">email</span> <span class="o">=</span> <span class="n">email</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;User(name=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2">, age=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">age</span><span class="si">}</span><span class="s2">, email=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">email</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+
+
+<span class="c1"># 使用</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="s2">&quot;alice@example.com&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">u</span><span class="p">)</span>  <span class="c1"># User(name=&#39;Alice&#39;, age=30, email=&#39;alice@example.com&#39;)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">u</span><span class="o">.</span><span class="n">age</span> <span class="o">=</span> <span class="s2">&quot;thirty&quot;</span>  <span class="c1"># TypeError!</span>
+<span class="k">except</span> <span class="ne">TypeError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ 拦截成功: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="42">4.2 进阶版：带范围检查和自定义校验</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Validated</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;支持多种校验规则的描述符&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">validators</span><span class="p">,</span> <span class="n">error_msg</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">validators</span> <span class="o">=</span> <span class="n">validators</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">error_msg</span> <span class="o">=</span> <span class="n">error_msg</span> <span class="ow">or</span> <span class="s2">&quot;验证失败&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">__set_name__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;_</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">validator</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">validators</span><span class="p">:</span>
+            <span class="n">error</span> <span class="o">=</span> <span class="n">validator</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">error</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">setattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Validated(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+
+<span class="c1"># 校验器函数</span>
+<span class="k">def</span> <span class="nf">not_empty</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+    <span class="k">return</span> <span class="s2">&quot;不能为空&quot;</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">value</span> <span class="k">else</span> <span class="kc">None</span>
+
+<span class="k">def</span> <span class="nf">min_length</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">check</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;长度不能少于 </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">n</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="k">return</span> <span class="n">check</span>
+
+<span class="k">def</span> <span class="nf">positive</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+    <span class="k">return</span> <span class="s2">&quot;必须为正数&quot;</span> <span class="k">if</span> <span class="n">value</span> <span class="o">&lt;=</span> <span class="mi">0</span> <span class="k">else</span> <span class="kc">None</span>
+
+<span class="k">def</span> <span class="nf">in_range</span><span class="p">(</span><span class="n">low</span><span class="p">,</span> <span class="n">high</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">check</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;必须在 </span><span class="si">{</span><span class="n">low</span><span class="si">}</span><span class="s2">-</span><span class="si">{</span><span class="n">high</span><span class="si">}</span><span class="s2"> 之间&quot;</span> <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">low</span> <span class="o">&lt;=</span> <span class="n">value</span> <span class="o">&lt;=</span> <span class="n">high</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
+    <span class="k">return</span> <span class="n">check</span>
+
+
+<span class="k">class</span> <span class="nc">Product</span><span class="p">:</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">Validated</span><span class="p">(</span><span class="n">not_empty</span><span class="p">,</span> <span class="n">min_length</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span>
+    <span class="n">price</span> <span class="o">=</span> <span class="n">Validated</span><span class="p">(</span><span class="n">positive</span><span class="p">)</span>
+    <span class="n">quantity</span> <span class="o">=</span> <span class="n">Validated</span><span class="p">(</span><span class="n">positive</span><span class="p">,</span> <span class="n">in_range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">10000</span><span class="p">))</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">price</span><span class="p">,</span> <span class="n">quantity</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">price</span> <span class="o">=</span> <span class="n">price</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">quantity</span> <span class="o">=</span> <span class="n">quantity</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Product(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2">, ¥</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">price</span><span class="si">}</span><span class="s2">, x</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">quantity</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+
+<span class="c1"># 正常使用</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">Product</span><span class="p">(</span><span class="s2">&quot;Python教程&quot;</span><span class="p">,</span> <span class="mf">59.9</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+
+<span class="c1"># 校验失败</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">Product</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="mf">59.9</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>     <span class="c1"># 空名字</span>
+<span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">Product</span><span class="p">(</span><span class="s2">&quot;Py&quot;</span><span class="p">,</span> <span class="mf">59.9</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>   <span class="c1"># 名字太短</span>
+<span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">Product</span><span class="p">(</span><span class="s2">&quot;Python&quot;</span><span class="p">,</span> <span class="o">-</span><span class="mi">10</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span> <span class="c1"># 负价格</span>
+<span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="43">4.3 实战：懒加载 + 缓存描述符</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+
+<span class="k">class</span> <span class="nc">LazyProperty</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;惰性求值描述符 —— 第一次访问时计算，之后缓存&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">func</span> <span class="o">=</span> <span class="n">func</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attrname</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">__set_name__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attrname</span> <span class="o">=</span> <span class="n">name</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="c1"># 计算值并存到实例 __dict__（绕过描述符）</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">func</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+        <span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">attrname</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="k">return</span> <span class="n">value</span>
+
+
+<span class="k">class</span> <span class="nc">DataAnalyzer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;数据分析器 —— 用懒加载延迟昂贵计算&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">data</span>
+
+    <span class="nd">@LazyProperty</span>
+    <span class="k">def</span> <span class="nf">mean</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;平均值 —— 只在第一次访问时计算&quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;⏳ 计算平均值中...&quot;</span><span class="p">)</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>  <span class="c1"># 模拟耗时操作</span>
+        <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="nd">@LazyProperty</span>
+    <span class="k">def</span> <span class="nf">variance</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;方差 —— 依赖 mean&quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;⏳ 计算方差中...&quot;</span><span class="p">)</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mean</span>  <span class="c1"># 会触发缓存</span>
+        <span class="k">return</span> <span class="nb">sum</span><span class="p">((</span><span class="n">x</span> <span class="o">-</span> <span class="n">m</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="nd">@LazyProperty</span>
+    <span class="k">def</span> <span class="nf">std_dev</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;标准差&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">variance</span> <span class="o">**</span> <span class="mf">0.5</span>
+
+
+<span class="n">analyzer</span> <span class="o">=</span> <span class="n">DataAnalyzer</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">100</span><span class="p">)))</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;首次访问 mean:&quot;</span><span class="p">)</span>
+<span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  mean = </span><span class="si">{</span><span class="n">analyzer</span><span class="o">.</span><span class="n">mean</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  ⏱️ 耗时: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">t</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">再次访问 mean（使用缓存）:&quot;</span><span class="p">)</span>
+<span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  mean = </span><span class="si">{</span><span class="n">analyzer</span><span class="o">.</span><span class="n">mean</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  ⏱️ 耗时: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">t</span><span class="si">:</span><span class="s2">.6f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">访问 std_dev（触发 variance + mean）:&quot;</span><span class="p">)</span>
+<span class="n">t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  std_dev = </span><span class="si">{</span><span class="n">analyzer</span><span class="o">.</span><span class="n">std_dev</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  ⏱️ 耗时: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">t</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 高级技巧</h2>
+<h3 id="51-__set_name__">5.1 <code>__set_name__</code> 的作用</h3>
+<p>Python 3.6+ 新增，描述符被定义为类属性时自动调用：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Descriptor</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">__set_name__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">public_name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;_</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="nb">setattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">private_name</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="52-__slots__">5.2 描述符与 <code>__slots__</code> 的交互</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Slotted</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;x&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x</span> <span class="o">=</span> <span class="n">x</span>  <span class="c1"># 触发描述符 __set__</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y</span> <span class="o">=</span> <span class="n">y</span>
+
+<span class="c1"># 注意：__slots__ 中的条目可以是描述符！</span>
+<span class="k">class</span> <span class="nc">ValidatedSlot</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">check</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">check</span> <span class="o">=</span> <span class="n">check</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">__set_name__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">return</span> <span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> 校验失败: </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+</code></pre></div>
+<h3 id="53">5.3 描述符的适用场景总结</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────┐
+│                  描述符适用场景                       │
+├─────────────┬───────────────────────────────────────┤
+│ 类型检查     │ TypeChecked, TypedField              │
+│ 值校验       │ Validated, RangeChecked              │
+│ 懒加载       │ LazyProperty, CachedProperty         │
+│ 访问控制     │ ReadOnly, Private, Protected          │
+│ 单位转换     │ Celsius, Fahrenheit                  │
+│ 数据库字段映射│ SQLAlchemy Column                    │
+│ ORM 字段     │ Django Model 字段                    │
+│ 计算属性     │ property 的本质就是描述符             │
+│ 方法绑定     │ 普通方法也是非数据描述符               │
+└─────────────┴───────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="6">6. 描述符执行顺序图解</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[&quot;obj.attr&quot;] --&gt; B{attr 在类的 MRO 中?}
+    B --&gt;|否| C[返回 AttributeError]
+    B --&gt;|是| D{attr 是描述符?}
+    D --&gt;|否| E[返回类属性值]
+    D --&gt;|是| F{obj 有 __dict__ 且有 attr?}
+    F --&gt;|有| G{描述符是数据描述符?}
+    G --&gt;|是| H[调用 __get__]
+    G --&gt;|否| I[返回实例 __dict__[attr]]
+    F --&gt;|无| H
+    H --&gt; J{obj 是否为 None?}
+    J --&gt;|是| K[返回描述符本身]
+    J --&gt;|否| L[&quot;调用 __get__(obj, type(obj))&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[&quot;obj.attr&quot;] --&gt; B{attr 在类的 MRO 中?}
+    B --&gt;|否| C[返回 AttributeError]
+    B --&gt;|是| D{attr 是描述符?}
+    D --&gt;|否| E[返回类属性值]
+    D --&gt;|是| F{obj 有 __dict__ 且有 attr?}
+    F --&gt;|有| G{描述符是数据描述符?}
+    G --&gt;|是| H[调用 __get__]
+    G --&gt;|否| I[返回实例 __dict__[attr]]
+    F --&gt;|无| H
+    H --&gt; J{obj 是否为 None?}
+    J --&gt;|是| K[返回描述符本身]
+    J --&gt;|否| L[&quot;调用 __get__(obj, type(obj))&quot;]
+</code></pre></div>
+<hr>
+<h2 id="7">7. 常见陷阱</h2>
+<h3 id="1_1">陷阱 1：实例属性覆盖非数据描述符</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyMethod</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">def</span> <span class="nf">wrapper</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">):</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;called on </span><span class="si">{</span><span class="n">obj</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="n">wrapper</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="n">method</span> <span class="o">=</span> <span class="n">MyMethod</span><span class="p">()</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">())</span>  <span class="c1"># &quot;called on &lt;__main__.MyClass object...&gt;&quot;</span>
+
+<span class="c1"># 但如果手动赋值实例属性，会覆盖描述符</span>
+<span class="n">obj</span><span class="o">.</span><span class="n">method</span> <span class="o">=</span> <span class="s2">&quot;overwritten&quot;</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">)</span>     <span class="c1"># &quot;overwritten&quot; — 描述符被绕过！</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">obj</span><span class="o">.</span><span class="n">method</span><span class="p">())</span>   <span class="c1"># TypeError: &#39;str&#39; is not callable</span>
+</code></pre></div>
+<h3 id="2_1">陷阱 2：描述符中的循环引用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Parent</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">obj</span>  <span class="c1"># 返回实例本身 —— 可能导致无限递归</span>
+
+<span class="c1"># 解决：缓存到 __dict__</span>
+<span class="k">class</span> <span class="nc">SafeDescriptor</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">if</span> <span class="s1">&#39;_cached&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">:</span>
+            <span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="s1">&#39;_cached&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">compute_value</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="s1">&#39;_cached&#39;</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="3">陷阱 3：描述符实例共享状态</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">SharedState</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;⚠️ 错误示范：描述符实例在所有类实例间共享状态！&quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>  <span class="c1"># self 是描述符对象，不是实例！</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">value</span>  <span class="c1"># 所有实例都会看到同一个值</span>
+
+<span class="c1"># ✅ 正确做法：把状态存到实例 __dict__</span>
+<span class="k">class</span> <span class="nc">CorrectDescriptor</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">__set_name__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">owner</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+
+    <span class="k">def</span> <span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">objtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">obj</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span>
+        <span class="k">return</span> <span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__set__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="n">obj</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+</code></pre></div>
+<hr>
+<h2 id="8">8. 思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 <code>property</code> 是数据描述符，而普通方法（函数）是非数据描述符？</strong> 这种设计有什么好处？</p>
+</li>
+<li>
+<p><strong>如果要实现一个 <code>@cached_property</code> 装饰器</strong>（值计算后缓存到实例 <code>__dict__</code>，后续直接读取），它的描述符需要实现 <code>__set__</code> 吗？为什么？</p>
+</li>
+<li>
+<p><strong><code>__set_name__</code> 是什么时候被调用的？</strong> 如果你的描述符不写 <code>__set_name__</code>，有什么替代方案？</p>
+</li>
+<li>
+<p><strong>Django 的 <code>Model.field</code> 和 SQLAlchemy 的 <code>Column</code> 都用了描述符</strong>，试想它们是如何通过描述符将数据库值映射到 Python 属性的。</p>
+</li>
+<li>
+<p><strong>如果一个类同时有 <code>__slots__</code> 和描述符</strong>，描述符的 <code>__set__</code> 会被调用吗？为什么？</p>
+</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-046/index.html">← Day 46 元类（Metaclass）</a><a class="nav-next" href="../day-048/index.html">Day 48 混入（Mixin） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

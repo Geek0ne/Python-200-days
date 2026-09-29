@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 82 — Fabric 与 Paramiko：远程服务器自动化</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 82 — Fabric 与 Paramiko：远程服务器自动化</h1>
+  <div class="lmeta">
+    <span class="badge">实战项目（一）</span>
+    <span class="badge">546 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-082-fabric-paramiko" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 今日目标</a>
+<a class="toc-l2" href="#_2">一、远程自动化概述</a>
+<a class="toc-l3" href="#11">1.1 为什么需要远程自动化？</a>
+<a class="toc-l3" href="#12">1.2 工具对比</a>
+<a class="toc-l2" href="#paramiko">二、Paramiko 基础</a>
+<a class="toc-l3" href="#21-ssh">2.1 SSH 连接原理</a>
+<a class="toc-l3" href="#22">2.2 密码认证连接</a>
+<a class="toc-l3" href="#23">2.3 密钥认证连接（推荐）</a>
+<a class="toc-l3" href="#24-sftp">2.4 SFTP 文件传输</a>
+<a class="toc-l3" href="#25-shell">2.5 交互式 Shell</a>
+<a class="toc-l2" href="#fabric">三、Fabric 核心用法</a>
+<a class="toc-l3" href="#31-fabric">3.1 Fabric 简介</a>
+<a class="toc-l3" href="#32">3.2 基础连接</a>
+<a class="toc-l3" href="#33">3.3 远程命令执行</a>
+<a class="toc-l3" href="#34">3.4 文件操作</a>
+<a class="toc-l3" href="#35-context-manager">3.5 Context Manager</a>
+<a class="toc-l2" href="#_3">四、批量服务器管理</a>
+<a class="toc-l3" href="#41">4.1 多服务器并行执行</a>
+<a class="toc-l3" href="#42">4.2 批量部署</a>
+<a class="toc-l2" href="#fabric_1">五、Fabric 项目配置</a>
+<a class="toc-l3" href="#51-fabricyml">5.1 fabric.yml 配置文件</a>
+<a class="toc-l3" href="#52">5.2 使用配置文件</a>
+<a class="toc-l2" href="#_4">六、安全最佳实践</a>
+<a class="toc-l3" href="#61">6.1 密钥管理</a>
+<a class="toc-l3" href="#62">6.2 连接超时</a>
+<a class="toc-l3" href="#63">6.3 错误处理</a>
+<a class="toc-l2" href="#_5">七、实战：服务器巡检工具</a>
+<a class="toc-l2" href="#_6">八、思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-082-fabric-paramiko">Day 082 — Fabric 与 Paramiko：远程服务器自动化</h1>
+<h2 id="_1">📋 今日目标</h2>
+<p>掌握使用 Fabric 和 Paramiko 实现远程服务器自动化操作，包括远程命令执行、文件传输、批量管理。</p>
+<hr>
+<h2 id="_2">一、远程自动化概述</h2>
+<h3 id="11">1.1 为什么需要远程自动化？</h3>
+<p>在运维场景中，经常需要：<br>
+- 批量在多台服务器上执行命令<br>
+- 上传/下载文件<br>
+- 部署应用<br>
+- 收集系统信息<br>
+- 监控服务状态</p>
+<p>手动 SSH 操作效率低且容易出错，自动化工具是必选项。</p>
+<h3 id="12">1.2 工具对比</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>Paramiko</th>
+<th>Fabric</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>定位</td>
+<td>SSH 底层库</td>
+<td>高级运维框架</td>
+</tr>
+<tr>
+<td>接口</td>
+<td>低级、灵活</td>
+<td>高级、简洁</td>
+</tr>
+<tr>
+<td>学习曲线</td>
+<td>陡峭</td>
+<td>平缓</td>
+</tr>
+<tr>
+<td>适合场景</td>
+<td>自定义 SSH 协议操作</td>
+<td>批量运维任务</td>
+</tr>
+<tr>
+<td>连接管理</td>
+<td>手动管理</td>
+<td>内置连接池</td>
+</tr>
+</tbody>
+</table>
+<p><strong>选择建议：</strong><br>
+- 简单运维任务 → <strong>Fabric</strong>（推荐）<br>
+- 需要精细控制 SSH 协议 → <strong>Paramiko</strong><br>
+- 两者结合使用 → Fabric 内部调用 Paramiko</p>
+<hr>
+<h2 id="paramiko">二、Paramiko 基础</h2>
+<h3 id="21-ssh">2.1 SSH 连接原理</h3>
+<pre class="plain"><code>┌──────────┐                          ┌──────────┐
+│  客户端    │    TCP 连接 (22端口)       │  服务端    │
+│  Python   │◄────────────────────────►│  SSHD    │
+│           │                          │          │
+│  Paramiko │  1. TCP 握手              │  Linux   │
+│           │  2. SSH 协议协商           │          │
+│           │  3. 密钥交换               │          │
+│           │  4. 认证 (密码/密钥)        │          │
+│           │  5. 通道建立               │          │
+│           │  6. 命令执行               │          │
+└──────────┘                          └──────────┘
+</code></pre>
+<h3 id="22">2.2 密码认证连接</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">paramiko</span>
+
+<span class="c1"># 创建 SSH 客户端</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">SSHClient</span><span class="p">()</span>
+
+<span class="c1"># 自动添加未知主机密钥（生产环境应谨慎）</span>
+<span class="n">client</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">())</span>
+
+<span class="c1"># 连接服务器</span>
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span>
+    <span class="n">hostname</span><span class="o">=</span><span class="s1">&#39;192.168.1.100&#39;</span><span class="p">,</span>
+    <span class="n">port</span><span class="o">=</span><span class="mi">22</span><span class="p">,</span>
+    <span class="n">username</span><span class="o">=</span><span class="s1">&#39;root&#39;</span><span class="p">,</span>
+    <span class="n">password</span><span class="o">=</span><span class="s1">&#39;your_password&#39;</span><span class="p">,</span>
+    <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span>
+<span class="p">)</span>
+
+<span class="c1"># 执行命令</span>
+<span class="n">stdin</span><span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="s1">&#39;uname -a&#39;</span><span class="p">)</span>
+<span class="n">output</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+<span class="n">error</span> <span class="o">=</span> <span class="n">stderr</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+<span class="n">exit_code</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">channel</span><span class="o">.</span><span class="n">recv_exit_status</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;输出: </span><span class="si">{</span><span class="n">output</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;错误: </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;退出码: </span><span class="si">{</span><span class="n">exit_code</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># 关闭连接</span>
+<span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="23">2.3 密钥认证连接（推荐）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">paramiko</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">SSHClient</span><span class="p">()</span>
+<span class="n">client</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">())</span>
+
+<span class="c1"># 使用私钥认证</span>
+<span class="n">private_key</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">RSAKey</span><span class="o">.</span><span class="n">from_private_key_file</span><span class="p">(</span><span class="s1">&#39;/root/.ssh/id_rsa&#39;</span><span class="p">)</span>
+<span class="c1"># 或 Ed25519Key</span>
+<span class="c1"># private_key = paramiko.Ed25519Key.from_private_key_file(&#39;/root/.ssh/id_ed25519&#39;)</span>
+
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span>
+    <span class="n">hostname</span><span class="o">=</span><span class="s1">&#39;192.168.1.100&#39;</span><span class="p">,</span>
+    <span class="n">username</span><span class="o">=</span><span class="s1">&#39;root&#39;</span><span class="p">,</span>
+    <span class="n">pkey</span><span class="o">=</span><span class="n">private_key</span>
+<span class="p">)</span>
+
+<span class="n">stdin</span><span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="s1">&#39;hostname&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">stdout</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">())</span>
+
+<span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="24-sftp">2.4 SFTP 文件传输</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">paramiko</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">SSHClient</span><span class="p">()</span>
+<span class="n">client</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">())</span>
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">&#39;192.168.1.100&#39;</span><span class="p">,</span> <span class="n">username</span><span class="o">=</span><span class="s1">&#39;root&#39;</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="s1">&#39;pass&#39;</span><span class="p">)</span>
+
+<span class="c1"># 打开 SFTP 会话</span>
+<span class="n">sftp</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">open_sftp</span><span class="p">()</span>
+
+<span class="c1"># 上传文件</span>
+<span class="n">sftp</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s1">&#39;/local/path/file.txt&#39;</span><span class="p">,</span> <span class="s1">&#39;/remote/path/file.txt&#39;</span><span class="p">)</span>
+
+<span class="c1"># 下载文件</span>
+<span class="n">sftp</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;/remote/path/file.txt&#39;</span><span class="p">,</span> <span class="s1">&#39;/local/path/downloaded.txt&#39;</span><span class="p">)</span>
+
+<span class="c1"># 列出远程目录</span>
+<span class="n">files</span> <span class="o">=</span> <span class="n">sftp</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="s1">&#39;/remote/path/&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">files</span><span class="p">)</span>
+
+<span class="c1"># 检查文件是否存在</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">stat</span> <span class="o">=</span> <span class="n">sftp</span><span class="o">.</span><span class="n">stat</span><span class="p">(</span><span class="s1">&#39;/remote/path/file.txt&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;文件大小: </span><span class="si">{</span><span class="n">stat</span><span class="o">.</span><span class="n">st_size</span><span class="si">}</span><span class="s2"> bytes&quot;</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;文件不存在&quot;</span><span class="p">)</span>
+
+<span class="n">sftp</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="25-shell">2.5 交互式 Shell</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">paramiko</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="n">client</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">SSHClient</span><span class="p">()</span>
+<span class="n">client</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">())</span>
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">&#39;192.168.1.100&#39;</span><span class="p">,</span> <span class="n">username</span><span class="o">=</span><span class="s1">&#39;root&#39;</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="s1">&#39;pass&#39;</span><span class="p">)</span>
+
+<span class="c1"># 获取交互式 shell</span>
+<span class="n">shell</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">invoke_shell</span><span class="p">()</span>
+
+<span class="c1"># 发送命令</span>
+<span class="n">shell</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s1">&#39;ls -la</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># 读取输出</span>
+<span class="n">output</span> <span class="o">=</span> <span class="n">shell</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="mi">65536</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
+
+<span class="c1"># 继续发送命令</span>
+<span class="n">shell</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s1">&#39;df -h</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">output</span> <span class="o">=</span> <span class="n">shell</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="mi">65536</span><span class="p">)</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">output</span><span class="p">)</span>
+
+<span class="n">shell</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="fabric">三、Fabric 核心用法</h2>
+<h3 id="31-fabric">3.1 Fabric 简介</h3>
+<p>Fabric 是基于 Paramiko 的高级运维框架，提供简洁的 Python API 来执行远程命令和管理服务器。</p>
+<h3 id="32">3.2 基础连接</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+
+<span class="c1"># 基础连接</span>
+<span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@192.168.1.100&#39;</span><span class="p">)</span>
+
+<span class="c1"># 带密码连接</span>
+<span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@192.168.1.100&#39;</span><span class="p">,</span> <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;password&#39;</span><span class="p">:</span> <span class="s1">&#39;pass&#39;</span><span class="p">})</span>
+
+<span class="c1"># 带密钥连接</span>
+<span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@192.168.1.100&#39;</span><span class="p">,</span>
+                  <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;key_filename&#39;</span><span class="p">:</span> <span class="s1">&#39;/root/.ssh/id_rsa&#39;</span><span class="p">})</span>
+
+<span class="c1"># 执行命令</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;uname -a&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="33">3.3 远程命令执行</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+
+<span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@192.168.1.100&#39;</span><span class="p">)</span>
+
+<span class="c1"># run() — 执行命令</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;ls -la /var/log&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+
+<span class="c1"># sudo() — 以 root 执行</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">sudo</span><span class="p">(</span><span class="s1">&#39;apt update&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># 检查命令是否成功</span>
+<span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">exited</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;命令执行成功&quot;</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;命令失败: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">stderr</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># 多行脚本</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;&#39;&#39;</span>
+<span class="s1">    cd /opt/app</span>
+<span class="s1">    source venv/bin/activate</span>
+<span class="s1">    python manage.py migrate</span>
+<span class="s1">    python manage.py collectstatic --noinput</span>
+<span class="s1">&#39;&#39;&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="34">3.4 文件操作</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+
+<span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@192.168.1.100&#39;</span><span class="p">)</span>
+
+<span class="c1"># 上传文件</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s1">&#39;/local/app.tar.gz&#39;</span><span class="p">,</span> <span class="s1">&#39;/opt/deploy/app.tar.gz&#39;</span><span class="p">)</span>
+
+<span class="c1"># 下载文件</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;/var/log/syslog&#39;</span><span class="p">,</span> <span class="s1">&#39;/tmp/remote_syslog.txt&#39;</span><span class="p">)</span>
+
+<span class="c1"># 创建目录</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;mkdir -p /opt/deploy/backup&#39;</span><span class="p">)</span>
+
+<span class="c1"># 解压</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;cd /opt/deploy &amp;&amp; tar xzf app.tar.gz&#39;</span><span class="p">)</span>
+
+<span class="c1"># 搜索文件</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;find /var/log -name &quot;*.log&quot; -mtime -7&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="35-context-manager">3.5 Context Manager</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+
+<span class="c1"># 使用 context manager 自动管理连接</span>
+<span class="k">with</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@192.168.1.100&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;echo &quot;Connected!&quot;&#39;</span><span class="p">)</span>
+    <span class="c1"># 离开 with 块时自动关闭连接</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">四、批量服务器管理</h2>
+<h3 id="41">4.1 多服务器并行执行</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+<span class="kn">from</span> <span class="nn">concurrent.futures</span> <span class="kn">import</span> <span class="n">ThreadPoolExecutor</span>
+
+<span class="n">servers</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s1">&#39;root@192.168.1.101&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;root@192.168.1.102&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;root@192.168.1.103&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;root@192.168.1.104&#39;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="k">def</span> <span class="nf">check_server</span><span class="p">(</span><span class="n">host</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;检查单台服务器状态&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;timeout&#39;</span><span class="p">:</span> <span class="mi">5</span><span class="p">})</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;uptime &amp;&amp; free -h&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s1">&#39;host&#39;</span><span class="p">:</span> <span class="n">host</span><span class="p">,</span> <span class="s1">&#39;status&#39;</span><span class="p">:</span> <span class="s1">&#39;ok&#39;</span><span class="p">,</span> <span class="s1">&#39;output&#39;</span><span class="p">:</span> <span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="p">}</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s1">&#39;host&#39;</span><span class="p">:</span> <span class="n">host</span><span class="p">,</span> <span class="s1">&#39;status&#39;</span><span class="p">:</span> <span class="s1">&#39;error&#39;</span><span class="p">,</span> <span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)}</span>
+
+<span class="c1"># 并行执行</span>
+<span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span> <span class="k">as</span> <span class="n">executor</span><span class="p">:</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">executor</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">check_server</span><span class="p">,</span> <span class="n">servers</span><span class="p">))</span>
+
+<span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s1">&#39;status&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;ok&#39;</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;host&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">:</span><span class="se">\n</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;output&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;❌ </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;host&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">&#39;error&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="42">4.2 批量部署</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+
+<span class="k">def</span> <span class="nf">deploy</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">app_path</span><span class="o">=</span><span class="s1">&#39;/opt/myapp&#39;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;部署应用到指定服务器&quot;&quot;&quot;</span>
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="n">host</span><span class="p">)</span>
+
+    <span class="c1"># 1. 上传代码</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📦 部署到 </span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s1">&#39;app.tar.gz&#39;</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">app_path</span><span class="si">}</span><span class="s1">/app.tar.gz&#39;</span><span class="p">)</span>
+
+    <span class="c1"># 2. 解压备份</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">sudo</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&#39;&#39;</span>
+<span class="s1">        cd </span><span class="si">{</span><span class="n">app_path</span><span class="si">}</span>
+<span class="s1">        cp -r current backup_$(date +%Y%m%d)</span>
+<span class="s1">        tar xzf app.tar.gz -C current</span>
+<span class="s1">    &#39;&#39;&#39;</span><span class="p">)</span>
+
+    <span class="c1"># 3. 安装依赖</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">sudo</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;&#39;&#39;</span>
+<span class="s1">        cd </span><span class="si">{</span><span class="n">app_path</span><span class="si">}</span><span class="s1">/current</span>
+<span class="s1">        source venv/bin/activate</span>
+<span class="s1">        pip install -r requirements.txt</span>
+<span class="s1">    &#39;&#39;&#39;</span><span class="p">)</span>
+
+    <span class="c1"># 4. 重启服务</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">sudo</span><span class="p">(</span><span class="s1">&#39;systemctl restart myapp&#39;</span><span class="p">)</span>
+
+    <span class="c1"># 5. 验证</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;systemctl is-active myapp&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">==</span> <span class="s1">&#39;active&#39;</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ </span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s2"> 部署成功！&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;❌ </span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s2"> 部署失败！&quot;</span><span class="p">)</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">return</span> <span class="kc">True</span>
+
+<span class="c1"># 批量部署</span>
+<span class="n">servers</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;192.168.1.101&#39;</span><span class="p">,</span> <span class="s1">&#39;192.168.1.102&#39;</span><span class="p">,</span> <span class="s1">&#39;192.168.1.103&#39;</span><span class="p">]</span>
+<span class="k">for</span> <span class="n">server</span> <span class="ow">in</span> <span class="n">servers</span><span class="p">:</span>
+    <span class="n">deploy</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;root@</span><span class="si">{</span><span class="n">server</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="fabric_1">五、Fabric 项目配置</h2>
+<h3 id="51-fabricyml">5.1 fabric.yml 配置文件</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># fabric.yml</span>
+<span class="nt">host1</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.1.101</span>
+<span class="w">  </span><span class="nt">user</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">root</span>
+<span class="w">  </span><span class="nt">connect_kwargs</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">key_filename</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_rsa</span>
+
+<span class="nt">host2</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">192.168.1.102</span>
+<span class="w">  </span><span class="nt">user</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">deploy</span>
+<span class="w">  </span><span class="nt">connect_kwargs</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">password</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secret</span>
+
+<span class="nt">web_servers</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">hosts</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">host1</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">host2</span>
+</code></pre></div>
+<h3 id="52">5.2 使用配置文件</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+<span class="kn">from</span> <span class="nn">yaml</span> <span class="kn">import</span> <span class="n">safe_load</span>
+
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;fabric.yml&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">safe_load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+<span class="c1"># 连接单个服务器</span>
+<span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="o">.</span><span class="n">from_config</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;host1&#39;</span><span class="p">])</span>
+
+<span class="c1"># 批量连接</span>
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">cfg</span> <span class="ow">in</span> <span class="n">config</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">cfg</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="s1">&#39;host&#39;</span> <span class="ow">in</span> <span class="n">cfg</span><span class="p">:</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="o">.</span><span class="n">from_config</span><span class="p">(</span><span class="n">cfg</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;hostname&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_4">六、安全最佳实践</h2>
+<h3 id="61">6.1 密钥管理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ 推荐：使用 SSH Agent</span>
+<span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+
+<span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@server&#39;</span><span class="p">,</span> <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span>
+    <span class="s1">&#39;allow_agent&#39;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="s1">&#39;look_for_keys&#39;</span><span class="p">:</span> <span class="kc">True</span>
+<span class="p">})</span>
+
+<span class="c1"># ❌ 避免：硬编码密码</span>
+<span class="c1"># conn = Connection(&#39;root@server&#39;, connect_kwargs={&#39;password&#39;: &#39;hardcoded&#39;})</span>
+</code></pre></div>
+<h3 id="62">6.2 连接超时</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@server&#39;</span><span class="p">,</span> <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span>
+    <span class="s1">&#39;timeout&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>         <span class="c1"># 连接超时 10 秒</span>
+    <span class="s1">&#39;banner_timeout&#39;</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span>  <span class="c1"># SSH banner 超时</span>
+    <span class="s1">&#39;auth_timeout&#39;</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span>    <span class="c1"># 认证超时</span>
+<span class="p">})</span>
+</code></pre></div>
+<h3 id="63">6.3 错误处理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+<span class="kn">from</span> <span class="nn">paramiko.ssh_exception</span> <span class="kn">import</span> <span class="n">SSHException</span><span class="p">,</span> <span class="n">AuthenticationException</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s1">&#39;root@server&#39;</span><span class="p">)</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s1">&#39;ls /nonexistent&#39;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">AuthenticationException</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;认证失败：检查用户名/密码/密钥&quot;</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">SSHException</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;SSH 错误: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;未知错误: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">finally</span><span class="p">:</span>
+    <span class="k">if</span> <span class="s1">&#39;conn&#39;</span> <span class="ow">in</span> <span class="nb">locals</span><span class="p">():</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">七、实战：服务器巡检工具</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="ch">#!/usr/bin/env python3</span>
+<span class="sd">&quot;&quot;&quot;服务器巡检工具 — 使用 Paramiko 批量检查服务器状态&quot;&quot;&quot;</span>
+
+<span class="kn">import</span> <span class="nn">paramiko</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="k">class</span> <span class="nc">ServerInspector</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">servers</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">servers</span> <span class="o">=</span> <span class="n">servers</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">inspect</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">22</span><span class="p">,</span> <span class="n">username</span><span class="o">=</span><span class="s1">&#39;root&#39;</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">key_file</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;检查单台服务器&quot;&quot;&quot;</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;host&#39;</span><span class="p">:</span> <span class="n">host</span><span class="p">,</span>
+            <span class="s1">&#39;timestamp&#39;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(),</span>
+            <span class="s1">&#39;status&#39;</span><span class="p">:</span> <span class="s1">&#39;unknown&#39;</span><span class="p">,</span>
+            <span class="s1">&#39;metrics&#39;</span><span class="p">:</span> <span class="p">{}</span>
+        <span class="p">}</span>
+
+        <span class="n">client</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">SSHClient</span><span class="p">()</span>
+        <span class="n">client</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">())</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># 连接</span>
+            <span class="n">connect_kwargs</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;hostname&#39;</span><span class="p">:</span> <span class="n">host</span><span class="p">,</span> <span class="s1">&#39;port&#39;</span><span class="p">:</span> <span class="n">port</span><span class="p">,</span> <span class="s1">&#39;username&#39;</span><span class="p">:</span> <span class="n">username</span><span class="p">,</span> <span class="s1">&#39;timeout&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}</span>
+            <span class="k">if</span> <span class="n">key_file</span><span class="p">:</span>
+                <span class="n">connect_kwargs</span><span class="p">[</span><span class="s1">&#39;key_filename&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">key_file</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">connect_kwargs</span><span class="p">[</span><span class="s1">&#39;password&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">password</span>
+            <span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="o">**</span><span class="n">connect_kwargs</span><span class="p">)</span>
+
+            <span class="c1"># 收集信息</span>
+            <span class="n">commands</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="s1">&#39;hostname&#39;</span><span class="p">:</span> <span class="s1">&#39;hostname&#39;</span><span class="p">,</span>
+                <span class="s1">&#39;uptime&#39;</span><span class="p">:</span> <span class="s1">&#39;uptime&#39;</span><span class="p">,</span>
+                <span class="s1">&#39;cpu_usage&#39;</span><span class="p">:</span> <span class="s2">&quot;top -bn1 | grep &#39;Cpu(s)&#39; | awk &#39;{print $2}&#39;&quot;</span><span class="p">,</span>
+                <span class="s1">&#39;memory&#39;</span><span class="p">:</span> <span class="s2">&quot;free -h | grep Mem | awk &#39;{printf </span><span class="se">\&quot;</span><span class="si">%s</span><span class="s2">/</span><span class="si">%s</span><span class="s2"> (</span><span class="si">%.1f%%</span><span class="s2">)</span><span class="se">\&quot;</span><span class="s2">, $3, $2, $3/$2*100}&#39;&quot;</span><span class="p">,</span>
+                <span class="s1">&#39;disk&#39;</span><span class="p">:</span> <span class="s2">&quot;df -h / | tail -1 | awk &#39;{printf </span><span class="se">\&quot;</span><span class="si">%s</span><span class="s2">/</span><span class="si">%s</span><span class="s2"> (</span><span class="si">%s</span><span class="s2">)</span><span class="se">\&quot;</span><span class="s2">, $3, $2, $5}&#39;&quot;</span><span class="p">,</span>
+                <span class="s1">&#39;load_avg&#39;</span><span class="p">:</span> <span class="s2">&quot;cat /proc/loadavg | awk &#39;{print $1, $2, $3}&#39;&quot;</span><span class="p">,</span>
+                <span class="s1">&#39;connections&#39;</span><span class="p">:</span> <span class="s2">&quot;ss -s | grep &#39;estab&#39; | awk &#39;{print $4}&#39;&quot;</span><span class="p">,</span>
+            <span class="p">}</span>
+
+            <span class="k">for</span> <span class="n">metric</span><span class="p">,</span> <span class="n">cmd</span> <span class="ow">in</span> <span class="n">commands</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">stdin</span><span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">value</span><span class="p">:</span>
+                    <span class="n">result</span><span class="p">[</span><span class="s1">&#39;metrics&#39;</span><span class="p">][</span><span class="n">metric</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+
+            <span class="n">result</span><span class="p">[</span><span class="s1">&#39;status&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;healthy&#39;</span>
+
+        <span class="k">except</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">AuthenticationException</span><span class="p">:</span>
+            <span class="n">result</span><span class="p">[</span><span class="s1">&#39;status&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;auth_error&#39;</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">result</span><span class="p">[</span><span class="s1">&#39;status&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;error&#39;</span>
+            <span class="n">result</span><span class="p">[</span><span class="s1">&#39;error&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">client</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">result</span>
+
+    <span class="k">def</span> <span class="nf">run_inspection</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;批量巡检&quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;🔍 开始服务器巡检...</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">server</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">servers</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  检查 </span><span class="si">{</span><span class="n">server</span><span class="p">[</span><span class="s1">&#39;host&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">...&quot;</span><span class="p">)</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">inspect</span><span class="p">(</span><span class="o">**</span><span class="n">server</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">result</span><span class="p">[</span><span class="s1">&#39;status&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="s1">&#39;healthy&#39;</span><span class="p">:</span>
+                <span class="n">metrics</span> <span class="o">=</span> <span class="n">result</span><span class="p">[</span><span class="s1">&#39;metrics&#39;</span><span class="p">]</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    ✅ CPU: </span><span class="si">{</span><span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;cpu_usage&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;N/A&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    ✅ 内存: </span><span class="si">{</span><span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;memory&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;N/A&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    ✅ 磁盘: </span><span class="si">{</span><span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;disk&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;N/A&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    ❌ 状态: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="s1">&#39;status&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">results</span>
+
+    <span class="k">def</span> <span class="nf">save_report</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="s1">&#39;inspection_report.json&#39;</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;保存巡检报告&quot;&quot;&quot;</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">results</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📋 报告已保存: </span><span class="si">{</span><span class="n">filename</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># 使用示例</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">servers</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="p">{</span><span class="s1">&#39;host&#39;</span><span class="p">:</span> <span class="s1">&#39;192.168.1.101&#39;</span><span class="p">,</span> <span class="s1">&#39;username&#39;</span><span class="p">:</span> <span class="s1">&#39;root&#39;</span><span class="p">,</span> <span class="s1">&#39;password&#39;</span><span class="p">:</span> <span class="s1">&#39;pass1&#39;</span><span class="p">},</span>
+        <span class="p">{</span><span class="s1">&#39;host&#39;</span><span class="p">:</span> <span class="s1">&#39;192.168.1.102&#39;</span><span class="p">,</span> <span class="s1">&#39;username&#39;</span><span class="p">:</span> <span class="s1">&#39;root&#39;</span><span class="p">,</span> <span class="s1">&#39;key_file&#39;</span><span class="p">:</span> <span class="s1">&#39;/root/.ssh/id_rsa&#39;</span><span class="p">},</span>
+    <span class="p">]</span>
+
+    <span class="n">inspector</span> <span class="o">=</span> <span class="n">ServerInspector</span><span class="p">(</span><span class="n">servers</span><span class="p">)</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="n">inspector</span><span class="o">.</span><span class="n">run_inspection</span><span class="p">()</span>
+    <span class="n">inspector</span><span class="o">.</span><span class="n">save_report</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="_6">八、思考题</h2>
+<ol>
+<li><strong>Paramiko 的 SSH 通道机制是什么？</strong> 它如何在同一连接上复用多个命令执行？</li>
+<li><strong>Fabric 的 <code>run()</code> 和 <code>sudo()</code> 底层有什么区别？</strong> sudo 是如何实现提权的？</li>
+<li><strong>在批量部署中，如果某台服务器部署失败，你会如何设计回滚策略？</strong></li>
+<li><strong>SSH 密钥认证比密码认证更安全，为什么？</strong> 从密码学角度解释。</li>
+<li><strong>如何设计一个断线重连机制？</strong> 当网络不稳定时，如何保证批量任务的可靠性？</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-081/index.html">← Day 81 Matplotlib 与 Plotly 数据可视化</a><a class="nav-next" href="../day-083/index.html">Day 83 远程执行与部署：自动化运维实战 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

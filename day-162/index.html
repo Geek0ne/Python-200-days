@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 162 — 阶段项目（一）：安全审计工具箱 · 端口扫描 + 目录爆破 + 指纹识别</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 162 — 阶段项目（一）：安全审计工具箱 · 端口扫描 + 目录爆破 + 指纹识别</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">563 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-162-安全审计工具箱-part1" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 阶段项目要做什么</a>
+<a class="toc-l3" href="#22">2.2 三个模块的职责与失败模式</a>
+<a class="toc-l3" href="#23">2.3 目录爆破的判定逻辑（这是本课最容易写错的地方）</a>
+<a class="toc-l3" href="#24">2.4 指纹识别：信号与可信度</a>
+<a class="toc-l3" href="#25">2.5 为什么要限速：目录爆破的伦理下限</a>
+<a class="toc-l3" href="#26">2.6 从&quot;线索&quot;到&quot;报告&quot;：三档措辞</a>
+<a class="toc-l2" href="#3">3. 原理深入</a>
+<a class="toc-l3" href="#31-url-urljoin">3.1 URL 拼接：为什么必须用 urljoin 而不是字符串相加</a>
+<a class="toc-l3" href="#32">3.2 不跟随重定向：为什么要&quot;看见&quot;而不是&quot;走完&quot;</a>
+<a class="toc-l3" href="#33">3.3 响应长度噪声：为什么用&quot;接近&quot;而不是&quot;相等&quot;</a>
+<a class="toc-l3" href="#34-cookie">3.4 会话与 Cookie：为什么本课不发第二类请求</a>
+<a class="toc-l3" href="#35">3.5 指纹识别为什么&quot;必须允许被证伪&quot;</a>
+<a class="toc-l2" href="#4">4. 核心机制详解</a>
+<a class="toc-l3" href="#41">4.1 端口扫描：三态与&quot;服务推断&quot;的两步走</a>
+<a class="toc-l3" href="#42">4.2 目录爆破的完整判定流水线</a>
+<a class="toc-l3" href="#43-2-15">4.3 指数退避的数学：为什么是 ×2 而不是 ×1.5</a>
+<a class="toc-l3" href="#44-if-else">4.4 指纹信号聚合：为什么用&quot;清单 + 打分&quot;而不是&quot;if-else 大判断&quot;</a>
+<a class="toc-l3" href="#45">4.5 统一报告：三模块结果如何合并</a>
+<a class="toc-l3" href="#46">4.6 退出码与覆盖缺口</a>
+<a class="toc-l2" href="#5-api">5. API 速查</a>
+<a class="toc-l3" href="#51-audit_core">5.1 audit_core 模块速查</a>
+<a class="toc-l3" href="#52-8">5.2 目录分类速查（8 类）</a>
+<a class="toc-l3" href="#53">5.3 指纹信号权重表（实现值）</a>
+<a class="toc-l3" href="#54">5.4 退出码</a>
+<a class="toc-l2" href="#6">6. 实战代码案例：一次完整的工具箱运行</a>
+<a class="toc-l3" href="#61">6.1 正常运行</a>
+<a class="toc-l3" href="#62-40419-200">6.2 软 404：19 条&quot;200&quot;其实是&quot;不存在&quot;</a>
+<a class="toc-l3" href="#63-429-4">6.3 429：覆盖缺口必须抬到退出码 4</a>
+<a class="toc-l3" href="#64-url">6.4 越界：URL 层门禁</a>
+<a class="toc-l3" href="#65">6.5 各子命令速览</a>
+<a class="toc-l2" href="#7">7. 常见陷阱（对照表）</a>
+<a class="toc-l2" href="#8">8. 局限与边界（必须写进交付报告）</a>
+<a class="toc-l2" href="#9">9. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-162">Day 162 — 阶段项目（一）：安全审计工具箱 · 端口扫描 + 目录爆破 + 指纹识别</h1>
+<blockquote>
+<p><strong>Phase 10 — 网络安全开发（Day 146–165）</strong> · 主题：安全审计工具箱（Day 162–165 四天项目的第 1 天）</p>
+<p><strong>使用边界（重要）</strong>：<br>
+- 只对<strong>你自己拥有、或已获书面授权</strong>的目标做审计。<br>
+- 本课所有实验都跑在 <code>127.0.0.1</code> 上的<strong>自建实验服务</strong>（<code>code/audit_core.py</code> 里的 <code>LabHTTP</code>）。<br>
+- 探测全部<strong>只读</strong>：TCP connect、<code>GET</code> 请求。<strong>不做</strong>登录爆破、<strong>不做</strong>参数注入、<br>
+<strong>不上传</strong>任何文件、<strong>不改动</strong>目标任何数据。<br>
+- 目录爆破使用<strong>内置的 30 个词条</strong>，且默认限速 5 请求/秒——<br>
+  目的是讲清机制，不是提供"扫站武器"。<br>
+- 教材中的地址一律为回环或文档网段（RFC 5737）。</p>
+</blockquote>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>说清"安全审计工具箱"这个项目的模块边界：<strong>端口扫描 / 目录爆破 / 指纹识别</strong>各解决什么问题</li>
+<li>解释 <strong>TCP connect 三态</strong>（<code>open</code> / <code>closed</code> / <code>filtered</code>）在<strong>报告层面</strong>的区别，<br>
+  以及为什么 <code>filtered</code> 必须写成"不可判定"</li>
+<li>解释<strong>目录爆破</strong>的判定逻辑：状态码分类 + <strong>软 404 基线</strong> + 响应长度噪声</li>
+<li>说清 <code>403</code> / <code>301</code> / <code>200</code> / <code>429</code> 在目录爆破中<strong>分别意味着什么</strong>，<br>
+  以及为什么"只认 200"会漏掉最关键的一类发现（<strong>403 往往才是真正的入口</strong>）</li>
+<li>实现一个<strong>指纹识别器</strong>：把 Server 头、<code>X-Powered-By</code>、Cookie 名、<code>&lt;title&gt;</code>、<br>
+<code>meta generator</code> 等信号汇总成"技术栈推断 + 置信度"</li>
+<li>明确指纹识别<strong>为什么天然低置信</strong>：所有信号都由目标控制，可以被任意伪造</li>
+<li>把三个模块整合成一个 CLI，输出统一的 JSON/Markdown 报告与语义化退出码</li>
+<li>说清本工具<strong>不做</strong>什么（利用、提权、绕过、处置），以及这些边界为什么是必要的</li>
+</ul>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 阶段项目要做什么</h3>
+<p>Day 159 做了"审计工具箱 v0"（规则引擎 + 报告 + CLI 门禁），Day 160 做了日志分析。<br>
+Day 162–165 把这几天分散的能力<strong>拼成一个完整的资产审计工具</strong>，四天分工：</p>
+<pre class="plain"><code>Day 162（今天）  资产面：端口扫描 + 目录爆破 + 指纹识别   ← 先知道&quot;有什么&quot;
+Day 163          漏洞面：SQLi 检测 + XSS 检测             ← 再知道&quot;哪里可能有问题&quot;
+Day 164          流量面：代理中间人 + 流量分析             ← 再看&quot;实际发生了什么&quot;
+Day 165          交付面：报告生成 + Docker 部署            ← 最后&quot;怎么交出去&quot;
+</code></pre>
+<p><strong>为什么资产面必须先做？</strong> 因为漏洞检测需要"目标清单 + 参数清单 + 技术栈",<br>
+这三样全靠今天这三个模块产出。没有它们，后面的检测器只能靠人工喂 URL。</p>
+<h3 id="22">2.2 三个模块的职责与失败模式</h3>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>输入 → 输出</th>
+<th>核心难点</th>
+<th>典型失败模式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>端口扫描</strong></td>
+<td>IP/CIDR + 端口范围 → 开放端口 + 服务</td>
+<td>三态判定、超时、限速</td>
+<td>把 <code>filtered</code> 当 <code>closed</code>；超时不合理</td>
+</tr>
+<tr>
+<td><strong>目录爆破</strong></td>
+<td>URL + 词表 → 可访问路径 + 状态分类</td>
+<td><strong>软 404</strong>、响应长度噪声、限速</td>
+<td>把软 404 全当"发现"；漏掉 403</td>
+</tr>
+<tr>
+<td><strong>指纹识别</strong></td>
+<td>响应头 + HTML → 技术栈推断</td>
+<td>信号可信度、误判、版本泄露</td>
+<td>把可伪造的头当事实；置信度虚高</td>
+</tr>
+</tbody>
+</table>
+<p>三者的共同点：<strong>它们都只产出"线索"，不产出"结论"。</strong><br>
+报告里必须区分"看到的事实"（<code>Server: lab-nginx/1.18.0</code> 这个字符串出现了）<br>
+与"推断的结论"（"这可能是 nginx 1.18.0"），后者置信度上限受目标可控性限制。</p>
+<h3 id="23">2.3 目录爆破的判定逻辑（这是本课最容易写错的地方）</h3>
+<p>一个朴素实现是：<strong>状态码 200 → 存在；其他 → 不存在</strong>。它有三个致命问题：</p>
+<p><strong>问题 1：软 404（soft 404）。</strong> 很多服务对不存在的路径也返回 <code>200</code> +<br>
+一个"页面不存在"的 HTML。这时"200 即存在"会产出成百个假发现。</p>
+<pre class="plain"><code>GET /a7f3k2  → 200, len=812, body=&quot;&lt;h1&gt;Page Not Found&lt;/h1&gt;…&quot;   ← 随机路径也是 200！
+GET /admin/  → 200, len=1240                                   ← 这才是真的
+</code></pre>
+<p><strong>解法：先取基线。</strong> 用<strong>随机生成</strong>的路径发若干次请求，得到"不存在时"的<br>
+<code>(状态码, 响应长度)</code> 基线；之后凡是与基线"状态码相同且长度接近"的结果，<br>
+一律标记为 <code>soft_404</code>（<strong>可疑但不确认</strong>）。</p>
+<p><strong>问题 2：只认 200，漏掉最有价值的发现。</strong></p>
+<table>
+<thead>
+<tr>
+<th>状态码</th>
+<th>含义</th>
+<th>在目录爆破里的意义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>200</code></td>
+<td>可访问</td>
+<td>存在且可读（但也可能是软 404）</td>
+</tr>
+<tr>
+<td><code>301</code>/<code>302</code></td>
+<td>重定向</td>
+<td>存在；常是"目录少了斜杠"或登录跳转</td>
+</tr>
+<tr>
+<td><strong><code>403</code></strong></td>
+<td><strong>存在但禁止访问</strong></td>
+<td><strong>最值得关注</strong>：路径真实存在，只是当前身份没权限；往往是管理入口</td>
+</tr>
+<tr>
+<td><code>401</code></td>
+<td>需要认证</td>
+<td>存在，且明确要求凭据</td>
+</tr>
+<tr>
+<td><code>429</code></td>
+<td>被限速</td>
+<td><strong>不是"不存在"</strong>，而是"你问得太快"——必须退避</td>
+</tr>
+<tr>
+<td><code>404</code></td>
+<td>不存在</td>
+<td>常规"没有"</td>
+</tr>
+<tr>
+<td><code>500</code></td>
+<td>服务端错误</td>
+<td>路径可能触发了异常处理分支（也要记）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>问题 3：429 被当成 404。</strong> 目录爆破最容易被目标的反自动化机制拦下。<br>
+一旦出现 <code>429</code>，正确动作是<strong>指数退避 + 记录覆盖缺口</strong>，而不是继续猛冲，<br>
+更不是把 429 记成"不存在"——那会让报告谎称"扫描完成、无发现"。</p>
+<h3 id="24">2.4 指纹识别：信号与可信度</h3>
+<p>指纹识别的本质是<strong>从响应里找"厂商线索"</strong>，然后推断。常用信号及可信度：</p>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>例子</th>
+<th>可信度</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Server</code> 响应头</td>
+<td><code>lab-nginx/1.18.0</code></td>
+<td><strong>低</strong></td>
+<td>可任意伪造；反向代理会覆盖</td>
+</tr>
+<tr>
+<td><code>X-Powered-By</code></td>
+<td><code>PHP/7.4.33</code></td>
+<td>低</td>
+<td>同上，且常被安全加固移除</td>
+</tr>
+<tr>
+<td><code>Set-Cookie</code> 名称</td>
+<td><code>LABSESSID</code>、<code>PHPSESSID</code></td>
+<td>中</td>
+<td>改名容易，但改名成本高于改头</td>
+</tr>
+<tr>
+<td>HTML <code>&lt;title&gt;</code></td>
+<td><code>Lab Portal</code></td>
+<td>中</td>
+<td>反映业务，不反映技术栈</td>
+</tr>
+<tr>
+<td><code>&lt;meta name="generator"&gt;</code></td>
+<td><code>lab-cms 0.9</code></td>
+<td>中</td>
+<td>由 CMS 模板输出，改动需改模板</td>
+</tr>
+<tr>
+<td>特有路径</td>
+<td><code>/server-status</code> + <code>Apache</code> 风格输出</td>
+<td>中高</td>
+<td>需要真的存在该模块</td>
+</tr>
+<tr>
+<td>错误页特征</td>
+<td>Tomcat 的 <code>404</code> 页样式</td>
+<td>中</td>
+<td>需要覆盖默认配置才会变</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论：单靠响应头的指纹，置信度上限是"低"。</strong><br>
+要提升到"中"，必须<strong>多信号交叉</strong>（例如 <code>Server</code> + Cookie 名 + 特有路径 三者一致）。<br>
+要提升到"高"，需要<strong>主动验证</strong>——而主动验证通常意味着发更多请求，<br>
+<strong>可能越界</strong>，所以本课刻意停在"中"，并在报告里写明"需要人工确认"。</p>
+<h3 id="25">2.5 为什么要限速：目录爆破的伦理下限</h3>
+<p>目录爆破是<strong>请求量最大</strong>的模块。1000 词表 × 10 个目录 = 10000 次请求，<br>
+这已经不是"测试"，而是"压力测试"。所以本课设了三条硬规则：</p>
+<ol>
+<li><strong>默认 5 请求/秒</strong>（约等于人工浏览的速度），并发 1（串行）。</li>
+<li><strong>词表上限 30 条</strong>（内置），且每条例都是常见的<strong>公开文档化路径</strong>。</li>
+<li><strong>出现 429 立刻退避</strong>（0.5s → 1s → 2s，上限 4s），并把"未完成"写进报告。</li>
+</ol>
+<p>这三条不是性能妥协，而是<strong>授权边界的技术表达</strong>：<br>
+"我被允许探测，但没有被允许压垮目标。"</p>
+<h3 id="26">2.6 从"线索"到"报告"：三档措辞</h3>
+<table>
+<thead>
+<tr>
+<th>档位</th>
+<th>措辞模板</th>
+<th>用于</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>事实</td>
+<td>"响应中出现 <code>Server: lab-nginx/1.18.0</code>"</td>
+<td>头字段、状态码、长度</td>
+</tr>
+<tr>
+<td>推断</td>
+<td>"疑似 nginx 1.18.0（多信号交叉，置信度中）"</td>
+<td>指纹</td>
+</tr>
+<tr>
+<td>待验证</td>
+<td>"需要人工在授权窗口内确认（登录页是否存在默认凭据）"</td>
+<td>403/401 的入口</td>
+</tr>
+</tbody>
+</table>
+<p><strong>永远不要在报告里写"发现漏洞"</strong> ——除非有人工验证记录。<br>
+本工具只做到第二档。</p>
+<h2 id="3">3. 原理深入</h2>
+<h3 id="31-url-urljoin">3.1 URL 拼接：为什么必须用 <code>urljoin</code> 而不是字符串相加</h3>
+<p>目录爆破要处理三类路径：</p>
+<pre class="plain"><code>/admin      （相对路径）
+/admin/     （目录）
+http://other/evil   （绝对 URL —— 危险！）
+</code></pre>
+<p>如果直接 <code>base + path</code>，第三条会拼成 <code>http://127.0.0.1:8080http://other/evil</code>；<br>
+如果用 <code>urljoin(base, path)</code>，第三条会变成 <strong><code>http://other/evil</code></strong> ——<br>
+<strong>跳出授权范围</strong>。所以本课在拼接后<strong>必须再做一次范围校验</strong>：</p>
+<pre class="plain"><code>urljoin(base, word)  →  scope.check_url(url)  →  通过才允许发请求
+</code></pre>
+<p>这是 Day 161 "范围门禁" 在 HTTP 层的复刻：<strong>任何由外部输入构造出的目标，<br>
+在使用前都要重新校验。</strong></p>
+<h3 id="32">3.2 不跟随重定向：为什么要"看见"而不是"走完"</h3>
+<p><code>urllib</code> 默认自动跟随 301/302。目录爆破里这会导致两个问题：</p>
+<ol>
+<li><strong>真实状态被隐藏</strong>：<code>/admin</code> → 301 → <code>/admin/</code> → 200，<br>
+   你只知道最终 200，看不出"少了斜杠"这个事实；</li>
+<li><strong>可能被引到范围外</strong>：<code>Location: http://other/...</code> 会被自动跟随。</li>
+</ol>
+<p>所以本课用自定义 <code>HTTPRedirectHandler</code> 捕获重定向而<strong>不自动跟随</strong>，<br>
+在结果里记录 <code>redirect_to</code>，由调用方决定是否人工跟进（并重新校验范围）。</p>
+<h3 id="33">3.3 响应长度噪声：为什么用"接近"而不是"相等"</h3>
+<p>软 404 的页面里常常嵌有时间戳、随机 token、访问 ID。同一个 404 页面<br>
+两次请求的长度可能差 30~50 字节。所以判定要容差：</p>
+<pre class="plain"><code>|len(result) - len(baseline)| ≤ max(32, 5% × len(baseline))  →  视为与基线一致（软 404）
+</code></pre>
+<p><strong>但要注意反向风险</strong>：容差太大，会把真实存在的页面误判成软 404（漏报）。<br>
+所以本课的做法是<strong>双重标记</strong>：既算 <code>soft_404_suspect</code>，也保留原始长度，<br>
+让人工复核时能看到"它到底有多像基线"。</p>
+<h3 id="34-cookie">3.4 会话与 Cookie：为什么本课不发第二类请求</h3>
+<p>真实工具常做"先登录、再带 Cookie 扫"以发现更多路径。本课<strong>不做</strong>：</p>
+<ul>
+<li>登录尝试 = 凭据爆破边缘，必须有<strong>单独的书面授权</strong>；</li>
+<li>带 Cookie 的扫描会访问<strong>已认证区域</strong>，可能触碰到真实业务数据；</li>
+<li>一旦自动化登录出错（例如被锁账号），会造成<strong>生产事故</strong>。</li>
+</ul>
+<p>所以本课只做<strong>匿名视角</strong>的审计，并在报告里明确声明："本次未使用任何凭据，<br>
+因此认证后可见的路径不在覆盖范围内。" 这句话本身就是报告可信度的一部分。</p>
+<h3 id="35">3.5 指纹识别为什么"必须允许被证伪"</h3>
+<p>指纹断言的形式必须是<strong>可证伪</strong>的：</p>
+<pre class="plain"><code>❌ 不受证伪：&quot;目标使用 nginx&quot;
+✅ 可证伪：  &quot;响应头 Server 的值为 &#x27;lab-nginx/1.18.0&#x27;（证据），
+              推断为 nginx 系（置信度：中，依据：单信号未交叉验证）&quot;
+</code></pre>
+<p>为什么？因为指纹会直接影响后续行动（决定测哪些漏洞、用什么手法）。<br>
+一个不可证伪的断言会让人<strong>无法反驳、也难以复核</strong>。<br>
+把"证据 + 推断 + 置信度"三件套写在一起，<br>
+复核者才能独立判断"这个推断值不值得信"。</p>
+<h2 id="4">4. 核心机制详解</h2>
+<h3 id="41">4.1 端口扫描：三态与"服务推断"的两步走</h3>
+<pre class="plain"><code>目标 host:port
+   │
+   ├─ connect_ex == 0        → open       → 抓 banner（只读服务主动发的问候语）
+   ├─ errno == 111 (ECONNREFUSED) → closed → 主机存活，该端口无服务
+   ├─ timeout / errno == 11  → filtered   → 不可判定（被过滤或链路问题）
+   └─ 其他 OSError           → error      → 本轮无有效结论
+</code></pre>
+<p><strong>服务名是两步推断的</strong>：</p>
+<ol>
+<li><strong>banner 优先</strong>：<code>SSH-2.0-…</code> → ssh；<code>HTTP/1.1 …</code> → http；<br>
+<code>220 …ESMTP</code> → smtp。banner 是服务自报家门，比端口号可靠。</li>
+<li><strong>端口号兜底</strong>：没有 banner 时用 IANA 端口对照表（80 → http），<br>
+   但要在报告里标注 <code>service_source="port_map"</code>（<strong>低置信</strong>），<br>
+   因为端口可以随意改（把 SSH 放到 443 是很常见的做法）。</li>
+</ol>
+<p>为什么必须标注来源？因为"8080 是 HTTP"和"8080 的 banner 自称 HTTP"<br>
+是两个完全不同可信度的断言。</p>
+<h3 id="42">4.2 目录爆破的完整判定流水线</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[base URL + 词表] --&gt; B[基线探测&lt;br/&gt;3 个随机路径]
+    B --&gt; C[取基线: 状态码 + 长度分布]
+    C --&gt; D{对每个词条}
+    D --&gt; E[urljoin 拼接]
+    E --&gt; F[scope.check_url&lt;br/&gt;越界即拒绝]
+    F --&gt; G[限速 + GET 只读]
+    G --&gt; H{状态码}
+    H --&gt;|200| I{长度接近基线?}
+    I --&gt;|是| J[soft_404_suspect&lt;br/&gt;可疑，人工复核]
+    I --&gt;|否| K[hit: 200 可访问]
+    H --&gt;|301/302| L[redirect: 记 Location&lt;br/&gt;不自动跟随]
+    H --&gt;|401/403| M[protected: 存在但需权限&lt;br/&gt;★ 重点线索]
+    H --&gt;|429| N[throttled: 指数退避&lt;br/&gt;并记覆盖缺口]
+    H --&gt;|404| O[absent]
+    H --&gt;|5xx| P[server_error: 记下&lt;br/&gt;可能是异常分支]
+    J --&gt; Q[结果汇总]
+    K --&gt; Q
+    L --&gt; Q
+    M --&gt; Q
+    N --&gt; Q
+    O --&gt; Q
+    P --&gt; Q
+    Q --&gt; R[报告: 事实 + 推断 + 待验证]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[base URL + 词表] --&gt; B[基线探测&lt;br/&gt;3 个随机路径]
+    B --&gt; C[取基线: 状态码 + 长度分布]
+    C --&gt; D{对每个词条}
+    D --&gt; E[urljoin 拼接]
+    E --&gt; F[scope.check_url&lt;br/&gt;越界即拒绝]
+    F --&gt; G[限速 + GET 只读]
+    G --&gt; H{状态码}
+    H --&gt;|200| I{长度接近基线?}
+    I --&gt;|是| J[soft_404_suspect&lt;br/&gt;可疑，人工复核]
+    I --&gt;|否| K[hit: 200 可访问]
+    H --&gt;|301/302| L[redirect: 记 Location&lt;br/&gt;不自动跟随]
+    H --&gt;|401/403| M[protected: 存在但需权限&lt;br/&gt;★ 重点线索]
+    H --&gt;|429| N[throttled: 指数退避&lt;br/&gt;并记覆盖缺口]
+    H --&gt;|404| O[absent]
+    H --&gt;|5xx| P[server_error: 记下&lt;br/&gt;可能是异常分支]
+    J --&gt; Q[结果汇总]
+    K --&gt; Q
+    L --&gt; Q
+    M --&gt; Q
+    N --&gt; Q
+    O --&gt; Q
+    P --&gt; Q
+    Q --&gt; R[报告: 事实 + 推断 + 待验证]
+</code></pre></div>
+<h3 id="43-2-15">4.3 指数退避的数学：为什么是 ×2 而不是 ×1.5</h3>
+<p>被限速（429）时，目标是"在不加剧压力的前提下尽快恢复"。退避序列：</p>
+<pre class="plain"><code>第 1 次 429 → 等 0.5s
+第 2 次     → 等 1.0s
+第 3 次     → 等 2.0s
+第 4 次     → 等 4.0s（上限）
+</code></pre>
+<p>为什么翻倍？因为 429 通常来自<strong>滑动窗口限流</strong>：如果窗口是 60 秒 100 次，<br>
+等待时间必须与"超出量"同量级才能复原。×2 的增长在 4 次内就能覆盖 8 倍量级，<br>
+而 ×1.5 需要约 5~6 次；同时 ×2 的实现最简单（一个乘法），不容易写出 bug。</p>
+<p><strong>上限 4 秒的意义</strong>：防止退避退到"扫描实际停止"。<br>
+如果连续 429 到上限仍然被拒，正确动作是<strong>停止并把"未完成的词条数"写进报告</strong>，<br>
+而不是无限等待（那会变成对目标的持久占用）。</p>
+<h3 id="44-if-else">4.4 指纹信号聚合：为什么用"清单 + 打分"而不是"if-else 大判断"</h3>
+<p>朴素写法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">if</span> <span class="s2">&quot;nginx&quot;</span> <span class="ow">in</span> <span class="n">server</span><span class="p">:</span> <span class="n">tech</span> <span class="o">=</span> <span class="s2">&quot;nginx&quot;</span>
+<span class="k">elif</span> <span class="s2">&quot;apache&quot;</span> <span class="ow">in</span> <span class="n">server</span><span class="p">:</span> <span class="n">tech</span> <span class="o">=</span> <span class="s2">&quot;apache&quot;</span>
+</code></pre></div>
+<p>它的问题：<strong>无法表达多信号、无法表达置信度、无法表达证据</strong>。<br>
+本课改成"信号清单"结构：</p>
+<pre class="plain"><code>Signals = [ (tech, source, value, weight), ... ]
+
+Server: lab-nginx/1.18.0     → (lab-nginx, &quot;header:Server&quot;, &quot;lab-nginx/1.18.0&quot;, 0.40)
+X-Powered-By: PHP/7.4.33     → (php, &quot;header:X-Powered-By&quot;, &quot;PHP/7.4.33&quot;, 0.25)
+Set-Cookie: LABSESSID=…      → (lab-cms, &quot;cookie&quot;, &quot;LABSESSID&quot;, 0.20)
+&lt;meta generator=&quot;lab-cms 0.9&quot;&gt;→ (lab-cms, &quot;html:meta&quot;, &quot;lab-cms 0.9&quot;, 0.30)
+/server-status 200 Apache 风格→ (apache, &quot;path:/server-status&quot;, &quot;…&quot;, 0.60)
+
+聚合：按 tech 累加 weight（上限 0.95）
+  lab-cms   = 0.20 + 0.30 = 0.50 → medium   （cookie 与 meta 两个信号交叉）
+  apache    = 0.60            → medium
+  lab-nginx = 0.40            → low
+  置信度 = high ≥0.8 ；medium ≥0.5 ；low ≥0.2 ；info &lt;0.2
+</code></pre>
+<p>好处：<strong>可解释</strong>。报告能写出"因为看到 A、B、C，所以推断 X（权重合计 0.5）"。<br>
+复核者可以逐条反驳——这就是 3.5 节说的"可证伪"。</p>
+<h3 id="45">4.5 统一报告：三模块结果如何合并</h3>
+<p>三个模块产出三类不同结构，报告层用一个<strong>统一的 Finding 模型</strong>收敛：</p>
+<pre class="plain"><code>Finding(key, title, severity, confidence, target, evidence, detail)
+priority = (severity+1) × (confidence+1) → P0/P1/P2/P3
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>模块</th>
+<th>产出 Finding 的示例</th>
+<th>severity / confidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>端口扫描</td>
+<td><code>unexpected_open_port</code>（高位端口暴露）</td>
+<td>info / medium</td>
+</tr>
+<tr>
+<td>端口扫描</td>
+<td><code>cleartext_service</code>（http/telnet）</td>
+<td>high / medium</td>
+</tr>
+<tr>
+<td>目录爆破</td>
+<td><code>protected_path</code>（403/401）</td>
+<td>medium / <strong>high</strong>（状态码是硬事实）</td>
+</tr>
+<tr>
+<td>目录爆破</td>
+<td><code>backup_artifact</code>（<code>/backup.zip</code> 可下载）</td>
+<td>high / medium</td>
+</tr>
+<tr>
+<td>目录爆破</td>
+<td><code>soft_404_noise</code>（基线一致）</td>
+<td>info / high</td>
+</tr>
+<tr>
+<td>指纹识别</td>
+<td><code>tech_fingerprint</code>（多信号）</td>
+<td>info / medium</td>
+</tr>
+<tr>
+<td>指纹识别</td>
+<td><code>version_disclosure</code></td>
+<td>low / medium</td>
+</tr>
+</tbody>
+</table>
+<p><strong>注意 <code>protected_path</code> 的置信度是 high</strong>：<code>403</code> 这个状态码本身是硬事实<br>
+（服务器明确说了"存在但禁止"），只是"它是否重要"需要人工判断。<br>
+<strong>事实的置信度</strong>和<strong>重要性的置信度</strong>是两回事，报告里必须分开。</p>
+<h3 id="46">4.6 退出码与覆盖缺口</h3>
+<p>沿用 Day 159–161 的语义：</p>
+<pre class="plain"><code>2  用法/范围错误（越界 URL、参数非法）        → 不可执行
+4  覆盖不完整（存在 429/timeout/filtered）    → 本轮无结论
+3  有 P0/P1 发现                              → 进入人工复核
+0  干净完成                                   → 归档
+优先级：2 &gt; 4 &gt; 3 &gt; 0
+</code></pre>
+<p><strong>新增一条与 429 相关的规则</strong>：目录爆破只要出现 <strong>≥1 次 429</strong>，<br>
+整轮就标记 <code>coverage.incomplete=True</code>，退出码至少为 4。<br>
+理由：429 说明"目标认为我在压它"，此时任何"未发现"的结论都不成立——<br>
+<strong>漏掉的路径可能就在被限速的那段时间里。</strong></p>
+<h2 id="5-api">5. API 速查</h2>
+<h3 id="51-audit_core">5.1 <code>audit_core</code> 模块速查</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>类型</th>
+<th>作用</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Scope(networks, ports, http_bases, ticket)</code></td>
+<td>dataclass</td>
+<td>授权范围</td>
+<td><code>check_host_port</code> / <code>check_url</code> 是仅有的两个出口</td>
+</tr>
+<tr>
+<td><code>Scope.check_url(url)</code></td>
+<td>方法</td>
+<td><strong>HTTP 层门禁</strong></td>
+<td>协议/主机/端口 + 基址前缀三重校验</td>
+</tr>
+<tr>
+<td><code>parse_host_spec(spec)</code></td>
+<td>函数</td>
+<td>IP/CIDR → 主机表</td>
+<td><strong>拒绝域名</strong>（避免 DNS 外发）</td>
+</tr>
+<tr>
+<td><code>parse_port_spec(spec)</code></td>
+<td>函数</td>
+<td><code>"8080,8000-8002"</code> → 端口表</td>
+<td>有序去重</td>
+</tr>
+<tr>
+<td><code>LabHTTP(port, throttle_after)</code></td>
+<td>类</td>
+<td>本机实验服务</td>
+<td><code>throttle_after=N</code>：第 N 个请求后返回 429</td>
+</tr>
+<tr>
+<td><code>fetch(url, timeout)</code></td>
+<td>函数</td>
+<td><strong>只读 GET</strong></td>
+<td>不跟随重定向、不带凭据、体只读 4KB</td>
+</tr>
+<tr>
+<td><code>HttpResult</code></td>
+<td>dataclass</td>
+<td>响应快照</td>
+<td><code>status/length/headers/redirect_to/error</code></td>
+</tr>
+<tr>
+<td><code>scan_port(host, port, timeout, retries)</code></td>
+<td>函数</td>
+<td>单端口探测</td>
+<td>三态 + banner + <code>service_source</code></td>
+</tr>
+<tr>
+<td><code>scan_ports(hosts, ports, scope, ...)</code></td>
+<td>函数</td>
+<td>批量探测</td>
+<td>内部先过门禁，再限速</td>
+</tr>
+<tr>
+<td><code>TokenBucket(rate, capacity).acquire()</code></td>
+<td>类</td>
+<td>限速</td>
+<td>默认 5 请求/秒（目录爆破）</td>
+</tr>
+<tr>
+<td><code>build_baseline(base, scope, samples=3)</code></td>
+<td>函数</td>
+<td><strong>软 404 基线</strong></td>
+<td>随机路径取 (状态码, 长度)</td>
+</tr>
+<tr>
+<td><code>Baseline.matches(status, length)</code></td>
+<td>方法</td>
+<td>容差判定</td>
+<td><code>max(32, 5% × baseline)</code></td>
+</tr>
+<tr>
+<td><code>dir_brute(base, words, scope, rate, max_backoff)</code></td>
+<td>函数</td>
+<td>目录爆破</td>
+<td>返回 (条目, 基线, 覆盖统计)；429 指数退避</td>
+</tr>
+<tr>
+<td><code>classify(status, length, baseline, soft)</code></td>
+<td>函数</td>
+<td>状态码分类</td>
+<td>8 个分类，见 5.2</td>
+</tr>
+<tr>
+<td><code>collect_signals(main, probes)</code></td>
+<td>函数</td>
+<td>指纹信号采集</td>
+<td>每条信号带 <code>source</code> 与 <code>weight</code></td>
+</tr>
+<tr>
+<td><code>score_signals(signals, cap=0.95)</code></td>
+<td>函数</td>
+<td>指纹打分</td>
+<td>上限 0.95：永不"确定"</td>
+</tr>
+<tr>
+<td><code>Finding.priority</code></td>
+<td>属性</td>
+<td><code>(sev+1)×(conf+1)</code></td>
+<td>P0≥20 / P1≥12 / P2≥6 / P3</td>
+</tr>
+<tr>
+<td><code>build_report(...)</code> / <code>render_markdown(...)</code></td>
+<td>函数</td>
+<td>报告</td>
+<td>JSON + Markdown 双份</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52-8">5.2 目录分类速查（8 类）</h3>
+<table>
+<thead>
+<tr>
+<th>分类</th>
+<th>触发条件</th>
+<th>报告措辞</th>
+<th>典型置信度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>accessible</code></td>
+<td>200 且长度<strong>不接近</strong>基线</td>
+<td>"可访问，需确认内容与权限"</td>
+<td>状态码 high，内容 medium</td>
+</tr>
+<tr>
+<td><code>soft_404</code></td>
+<td>200 且长度<strong>接近</strong>基线</td>
+<td>"软 404 可疑（疑似不存在）"</td>
+<td>high（但含义是"不存在"）</td>
+</tr>
+<tr>
+<td><code>protected</code></td>
+<td>401 / 403</td>
+<td>"存在但当前身份无权限"</td>
+<td><strong>high</strong>（状态码是硬事实）</td>
+</tr>
+<tr>
+<td><code>redirect</code></td>
+<td>301/302/303/307/308</td>
+<td>"重定向至 X（未跟随）"</td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>missing</code></td>
+<td>404</td>
+<td>"不存在"</td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>throttled</code></td>
+<td>429</td>
+<td>"<strong>未完成</strong>：目标限速"</td>
+<td>high（覆盖缺口）</td>
+</tr>
+<tr>
+<td><code>server_error</code></td>
+<td>5xx</td>
+<td>"响应异常，可能是错误处理分支"</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>网络异常（status=0）</td>
+<td>"本轮无有效结论"</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h3 id="53">5.3 指纹信号权重表（实现值）</h3>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>source 前缀</th>
+<th>权重</th>
+<th>单信号置信度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Server</code> 头</td>
+<td><code>header:Server</code></td>
+<td>0.40</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>X-Powered-By</code> 头</td>
+<td><code>header:X-Powered-By</code></td>
+<td>0.25</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>Set-Cookie</code> 名</td>
+<td><code>cookie</code></td>
+<td>0.20</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>&lt;meta name="generator"&gt;</code></td>
+<td><code>html:meta</code></td>
+<td>0.30</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>&lt;title&gt;</code></td>
+<td><code>html:title</code></td>
+<td>0.10</td>
+<td>info</td>
+</tr>
+<tr>
+<td>特有路径（<code>/server-status</code> + Apache 风格输出）</td>
+<td><code>path:…</code></td>
+<td>0.60</td>
+<td>medium</td>
+</tr>
+<tr>
+<td>ZIP 魔数 <code>PK</code></td>
+<td><code>path:…</code></td>
+<td>0.50</td>
+<td>medium</td>
+</tr>
+</tbody>
+</table>
+<p>分档：<code>high ≥0.80</code>｜<code>medium ≥0.50</code>｜<code>low ≥0.20</code>｜<code>info &lt;0.20</code>；<br>
+<strong>上限 0.95</strong>（永不 1.0）。实测：<code>lab-cms</code> = cookie 0.20 + meta 0.30 = <strong>0.50 → medium</strong>。</p>
+<h3 id="54">5.4 退出码</h3>
+<table>
+<thead>
+<tr>
+<th>码</th>
+<th>触发</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>范围/参数错误（越界 URL、域名、非法端口）</td>
+<td>不可执行，修范围重跑</td>
+</tr>
+<tr>
+<td>4</td>
+<td>覆盖不完整：<strong>任意 429</strong>、端口 filtered/error、目录错误</td>
+<td>本轮无结论，缩小词表/降速重跑</td>
+</tr>
+<tr>
+<td>3</td>
+<td>有 P0/P1 发现</td>
+<td>进入人工复核队列</td>
+</tr>
+<tr>
+<td>0</td>
+<td>干净完成</td>
+<td>归档</td>
+</tr>
+</tbody>
+</table>
+<p>优先级 <code>2 &gt; 4 &gt; 3 &gt; 0</code>。<strong>429 必须把退出码抬到 4</strong>，因为漏掉的路径可能就在被限速那段时间里。</p>
+<h2 id="6">6. 实战代码案例：一次完整的工具箱运行</h2>
+<p>以下输出为 <code>03-audit-toolkit.py lab</code> 的<strong>实测结果</strong>（本机 Linux + Python 3.12，<br>
+实验服务 <code>LabHTTP</code> 绑定 <code>127.0.0.1:8080</code>，词表 30 条，20 请求/秒）。</p>
+<h3 id="61">6.1 正常运行</h3>
+<pre class="plain"><code>$ python3 code/03-audit-toolkit.py lab
+[lab]    实验 HTTP 服务已启动：http://127.0.0.1:8080
+[ports]  目标 3 个 → open 1 (127.0.0.1:8080)
+[dirs]   完成 30/30｜限速 0｜退避事件 0｜耗时 1.46s
+[dirs]   基线：status=200 len=77（随机路径实测，用于识别软 404）
+[fp]     信号 7 条 → 推断 6 项：apache(0.6/medium), lab-cms(0.5/medium),
+         zip-artifact(0.5/medium), lab-nginx(0.4/low), php(0.25/low), lab portal(0.1/info)
+[find]   发现 33 条：{&#x27;P3&#x27;: 27, &#x27;P1&#x27;: 4, &#x27;P2&#x27;: 2}
+         P1 protected_path     受保护路径（403）: /admin/
+         P1 backup_artifact    可下载的备份/归档文件: /backup.zip
+         P1 protected_path     受保护路径（403）: /config.json
+         P1 protected_path     受保护路径（401）: /logs/
+         P2 version_disclosure Server 暴露版本: lab-nginx/1.18.0
+[exit]   3
+</code></pre>
+<p><strong>三条 P1 的构成很值得看</strong>：</p>
+<ul>
+<li><code>protected_path × 3</code>（<code>/admin/</code> 403、<code>/config.json</code> 403、<code>/logs/</code> 401）<br>
+  —— 这正是"只认 200 的工具会全部漏掉"的那一类；它们是<strong>最值得人工跟进的入口</strong>。</li>
+<li><code>backup_artifact</code>（<code>/backup.zip</code> 可下载）—— 报告只写"可下载"这一<strong>事实</strong>，<br>
+<strong>不去下载、不去解包</strong>（那会越界，也可能触碰真实数据）。</li>
+</ul>
+<h3 id="62-40419-200">6.2 软 404：19 条"200"其实是"不存在"</h3>
+<p>同一轮里，30 条词条的分类实测分布：</p>
+<pre class="plain"><code>accessible  5 条：healthz, login, backup.zip, api/v1/users, index.html
+missing     1 条：phpinfo.php
+protected   3 条：admin/, config.json, logs/
+redirect    2 条：admin, portal
+soft_404   19 条：robots.txt, sitemap.xml, favicon.ico, server-status, dashboard, …
+</code></pre>
+<p><strong>19 条 <code>soft_404</code></strong> 就是这个实验服务的价值所在：它模拟了真实世界里<br>
+"重写规则把未匹配路径统统交给同一页面"的常见错误配置。<br>
+没有基线的脚本会把这 19 条全部报成"发现"。</p>
+<blockquote>
+<p>⚠️ 一个诚实的小坑（实测可见）：<code>/server-status</code>（len=65）与 <code>/robots.txt</code>（len=54）<br>
+因为长度落在基线容差内，被标成了 <code>soft_404_suspect</code>，而它们<strong>其实存在</strong>。<br>
+这说明容差参数是<strong>误报/漏报的滑块</strong>；本课的做法是同时保留<br>
+<code>soft_404_suspect</code> 与原始长度，让人工复核时能看到"它到底有多像基线"。</p>
+</blockquote>
+<h3 id="63-429-4">6.3 429：覆盖缺口必须抬到退出码 4</h3>
+<pre class="plain"><code>$ python3 code/03-audit-toolkit.py lab --http-port 8085 --throttle-after 8
+[lab]    实验 HTTP 服务已启动：http://127.0.0.1:8085（429 限速演示：第 8 个请求后开始限速）
+[ports]  目标 3 个 → open 0 (无)
+[dirs]   完成 5/30｜限速 25｜退避事件 25｜耗时 91.79s
+[find]   P1 coverage_gap  目录爆破未完成：目标限速
+[exit]   4（覆盖不完整 → 本轮无结论）
+</code></pre>
+<p>三个数字连起来读：</p>
+<ul>
+<li><code>限速 25</code> —— 30 条词条里有 25 条<strong>没拿到有效结果</strong>；</li>
+<li><code>耗时 91.79s</code> —— 25 次退避 × 最长达 4 秒，这就是"礼貌"的代价；</li>
+<li><code>exit 4</code> —— <strong>"未发现"这个结论不成立</strong>，必须重跑（降速、缩词表，或与客户约定窗口）。</li>
+</ul>
+<h3 id="64-url">6.4 越界：URL 层门禁</h3>
+<pre class="plain"><code>$ python3 code/03-audit-toolkit.py dirs --base http://192.0.2.1:8080 --rate 500
+⛔ AuthorizationError: 主机不在授权网段内: 192.0.2.1（URL: http://192.0.2.1:8080）
+   （越界是策略拒绝：不重试、不跳过、整轮终止）
+退出码：2
+</code></pre>
+<p>词表里出现 <code>//evil.example/x</code> 时也是同样的结果——<code>urljoin</code> 会<br>
+<strong>正确地</strong>拼出 <code>http://evil.example/x</code>，所以拼接后必须再过一次门禁（见 6.5）。</p>
+<h3 id="65">6.5 各子命令速览</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nv">D</span><span class="o">=</span><span class="s2">&quot;days/day-162-安全审计工具箱-part1/code&quot;</span>
+python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$D</span><span class="s2">/03-audit-toolkit.py&quot;</span><span class="w"> </span>ports<span class="w"> </span>--hosts<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--ports<span class="w"> </span><span class="m">8080</span>-8082
+python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$D</span><span class="s2">/03-audit-toolkit.py&quot;</span><span class="w"> </span><span class="nb">dirs</span><span class="w">  </span>--base<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--rate<span class="w"> </span><span class="m">20</span>
+python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$D</span><span class="s2">/03-audit-toolkit.py&quot;</span><span class="w"> </span>fingerprint<span class="w"> </span>--base<span class="w"> </span>http://127.0.0.1:8080
+python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$D</span><span class="s2">/03-audit-toolkit.py&quot;</span><span class="w"> </span>scan<span class="w"> </span>--hosts<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--ports<span class="w"> </span><span class="m">8080</span><span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--base<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--rate<span class="w"> </span><span class="m">20</span><span class="w"> </span>--tag<span class="w"> </span>day162-scan
+</code></pre></div>
+<p>报告落在 <code>out/&lt;tag&gt;-report.json</code> 与 <code>out/&lt;tag&gt;-report.md</code>（<code>out/</code> 已在 <code>.gitignore</code>）。</p>
+<h2 id="7">7. 常见陷阱（对照表）</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>陷阱</th>
+<th>症状</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>只认 200</td>
+<td>满屏假发现；漏掉 403/401 的真正入口</td>
+<td>分类 + 软 404 基线</td>
+</tr>
+<tr>
+<td>2</td>
+<td>不取基线就先扫</td>
+<td>无法判断"200 是否存在"</td>
+<td>先随机路径取基线（samples≥3）</td>
+</tr>
+<tr>
+<td>3</td>
+<td>基线长度用<strong>相等</strong>判定</td>
+<td>有噪声的软 404 被当成发现</td>
+<td>容差 <code>max(32, 5%)</code>，并保留原始长度</td>
+</tr>
+<tr>
+<td>4</td>
+<td>容差过大</td>
+<td>真实小页面被误判为软 404（漏报）</td>
+<td>保留双标记，人工复核</td>
+</tr>
+<tr>
+<td>5</td>
+<td>429 记成 404</td>
+<td>报告谎称"扫描完成、无发现"</td>
+<td>429 单列 + 退出码抬到 4</td>
+</tr>
+<tr>
+<td>6</td>
+<td>429 后继续猛冲</td>
+<td>加剧目标压力，可能被拉黑</td>
+<td>指数退避 0.5→1→2→4（上限）</td>
+</tr>
+<tr>
+<td>7</td>
+<td>自动跟随重定向</td>
+<td>真实状态码被隐藏；可能被引到范围外</td>
+<td>自定义 handler 捕获而不跟随</td>
+</tr>
+<tr>
+<td>8</td>
+<td>词条字符串相加</td>
+<td>拼出坏 URL（问题被掩盖）</td>
+<td><code>urljoin</code> + <strong>拼接后复检范围</strong></td>
+</tr>
+<tr>
+<td>9</td>
+<td>词表无上限、无限速</td>
+<td>事实上的压力测试</td>
+<td>内置短词表 + 默认 5 请求/秒</td>
+</tr>
+<tr>
+<td>10</td>
+<td>把响应头当事实</td>
+<td>指纹置信度虚高（头可任意伪造）</td>
+<td>多信号交叉 + 写明"需人工确认"</td>
+</tr>
+<tr>
+<td>11</td>
+<td>把 banner/HTML 原样写进报告</td>
+<td>目标可注入控制字符/Markdown</td>
+<td><code>sanitize()</code> 净化 + 截断</td>
+</tr>
+<tr>
+<td>12</td>
+<td>登录后再扫（带 Cookie）</td>
+<td>触碰真实业务数据、可能锁账号</td>
+<td>本课只做<strong>匿名视角</strong>，并在报告声明覆盖边界</td>
+</tr>
+<tr>
+<td>13</td>
+<td>报告写"发现漏洞"</td>
+<td>措辞越界，责任无法界定</td>
+<td>只到"事实/推断/待验证"三档</td>
+</tr>
+</tbody>
+</table>
+<h2 id="8">8. 局限与边界（必须写进交付报告）</h2>
+<p><strong>能力局限</strong></p>
+<ul>
+<li><strong>只有资产面</strong>：本工具产出的都是"线索"，<strong>没有任何"已验证漏洞"</strong>。<br>
+  漏洞面在 Day 163，验证与利用必须由人工在单独授权的窗口完成。</li>
+<li><strong>匿名视角</strong>：不使用任何凭据，因此<strong>认证后可见的路径完全不在覆盖范围内</strong>。</li>
+<li><strong>词表只有 30 条</strong>：真实审计需要按业务定制词表（并单独授权）。</li>
+<li><strong>指纹低置信</strong>：单信号不可信；<code>Server</code> 头可被任意伪造。</li>
+<li><strong>无 WAF 绕过能力</strong>：本课刻意不做绕过。遇到 403/429 就记录并停下，交给人工。</li>
+<li><strong>不评测检出率</strong>：没有带标签的基准集，<strong>不能</strong>作为合规审计的唯一依据。</li>
+</ul>
+<p><strong>刻意不做（设计选择）</strong></p>
+<table>
+<thead>
+<tr>
+<th>不做</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>登录 / 凭据爆破 / 带 Cookie 扫描</td>
+<td>需要单独书面授权；错误尝试可能导致账号锁定（生产事故）</td>
+</tr>
+<tr>
+<td>POST / 上传 / 参数注入</td>
+<td>会修改目标数据，超出"只读审计"边界</td>
+</tr>
+<tr>
+<td>下载备份文件、解包查看</td>
+<td>可能触碰真实敏感数据；报告只写"可下载"这一事实</td>
+</tr>
+<tr>
+<td>绕过 403/429（改头、代理轮换、并发压制）</td>
+<td>绕过防护 = 攻击能力；授权测试应留下痕迹而非隐藏自己</td>
+</tr>
+<tr>
+<td>自动处置（封 IP、改配置）</td>
+<td>误报会升级为生产事故；处置必须走独立授权流程</td>
+</tr>
+<tr>
+<td>扩大范围（"顺手扫一下邻居网段"）</td>
+<td>越界不是技术失误，是合规事故</td>
+</tr>
+</tbody>
+</table>
+<h2 id="9">9. 思考题</h2>
+<ol>
+<li>软 404 基线用"随机路径"取。如果服务器的 404 页面<strong>每次都带一个随机 token</strong>，<br>
+   长度会在 ±40 字节内跳动。你的容差策略要如何调整，才能既不误报又不漏报？<br>
+   有没有比"随机路径"更可靠的基线取法（提示：两次请求同一条不存在的路径）？</li>
+<li>本课把 <code>protected_path</code>（403/401）定为<strong>高置信度</strong>，但严重度只有 medium。<br>
+   请说明"事实置信度"与"影响严重度"为什么必须分开评估。<br>
+   如果 403 出现在 <code>/admin/</code> 而不是 <code>/logs/</code>，你会怎么调整严重度，依据是什么？</li>
+<li>429 出现时必须把退出码抬到 4。如果客户明确说"我不在乎完整覆盖，<br>
+   我只要你在 5 分钟内给我能扫到的部分"，你会怎么设计报告与退出码才既不撒谎又不碍事？</li>
+<li>指纹识别的信号全部可被目标伪造。请设计一个<strong>不增加请求、不越界</strong>的方法，<br>
+   把"lab-nginx"这条推断从 <code>low</code> 提升到 <code>medium</code>，并说明为什么它仍然不能到 <code>high</code>。</li>
+<li>本课刻意不做"带 Cookie 扫描"。如果业务方要求覆盖认证后区域，<br>
+   你会要求哪些前置条件（授权、环境、账号、时间窗、回滚）？至少 4 条，并说明各自对应什么风险。</li>
+<li>把这三个模块接入 CI（每次发布前对测试环境跑一遍）时，<br>
+<code>429</code> 和 <code>soft_404</code> 两类结果会怎么影响流水线稳定性？你会如何取舍？</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-161/index.html">← Day 161 渗透测试框架：流程编排 · 信息收集 → 检测 → 利用 · 自动化扫描框架</a><a class="nav-next" href="../day-163/index.html">Day 163 阶段项目（二）：安全审计工具箱 · SQLi 检测 + XSS 检测 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

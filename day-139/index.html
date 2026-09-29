@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 139 — 数据存储管道（Data Storage Pipelines）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 139 — 数据存储管道（Data Storage Pipelines）</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">171 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-139-storage-pipelines" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11">1.1 为什么&quot;管道&quot;很重要？</a>
+<a class="toc-l3" href="#12-scrapy-item-pipeline">1.2 Scrapy Item 与 Pipeline 机制</a>
+<a class="toc-l3" href="#13">1.3 存储选型速查</a>
+<a class="toc-l2" href="#_2">二、原理深入</a>
+<a class="toc-l3" href="#21">2.1 数据管道分层架构</a>
+<a class="toc-l3" href="#22">2.2 批量写入：为什么必须缓冲？</a>
+<a class="toc-l3" href="#23-on-duplicate-key-update">2.3 幂等入库：ON DUPLICATE KEY UPDATE</a>
+<a class="toc-l3" href="#24">2.4 数据质量控制四指标</a>
+<a class="toc-l2" href="#api">三、定义与方法（API 速查）</a>
+<a class="toc-l3" href="#31-item">3.1 Item 定义</a>
+<a class="toc-l3" href="#32-pipeline">3.2 Pipeline 骨架</a>
+<a class="toc-l3" href="#33-api">3.3 常用 API 速查表</a>
+<a class="toc-l2" href="#_3">四、图解</a>
+<a class="toc-l2" href="#_4">五、实战代码案例</a>
+<a class="toc-l2" href="#_5">六、思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-139-data-storage-pipelines">Day 139 - 数据存储管道（Data Storage Pipelines）</h1>
+<blockquote>
+<p>阶段：Phase 7 - 进阶与性能优化 | 主题：实战</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11">1.1 为什么"管道"很重要？</h3>
+<p>爬虫的价值不在"爬到"，而在"存对"。脏数据入库 = 后续所有分析失真。数据管道要回答三个问题：</p>
+<ol>
+<li><strong>清洗</strong>：数据进库前怎么去噪、标准化？</li>
+<li><strong>选型</strong>：MySQL / MongoDB / Redis 各适合存什么？</li>
+<li><strong>质量</strong>：如何保证不重复、不丢、可追溯？</li>
+</ol>
+<h3 id="12-scrapy-item-pipeline">1.2 Scrapy Item 与 Pipeline 机制</h3>
+<ul>
+<li><strong>Item</strong> 是结构化数据的容器（类似 ORM 的 model），定义字段 + 校验规则。</li>
+<li><strong>Item Pipeline</strong> 是流水线：每个 Pipeline 类实现 <code>process_item(item, spider)</code>，返回 item 传给下一级，抛 <code>DropItem</code> 则丢弃。</li>
+</ul>
+<p>Pipeline 的四个常用钩子：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>时机</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>open_spider(spider)</code></td>
+<td>爬虫启动</td>
+<td>建连接、建表</td>
+</tr>
+<tr>
+<td><code>close_spider(spider)</code></td>
+<td>爬虫关闭</td>
+<td>关连接、批量 flush</td>
+</tr>
+<tr>
+<td><code>process_item(item, spider)</code></td>
+<td>每条数据</td>
+<td>清洗、去重、入库</td>
+</tr>
+<tr>
+<td><code>from_crawler(cls, crawler)</code></td>
+<td>实例化</td>
+<td>读 settings、注入依赖</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13">1.3 存储选型速查</h3>
+<table>
+<thead>
+<tr>
+<th>存储</th>
+<th>数据模型</th>
+<th>适用场景</th>
+<th>不适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MySQL</td>
+<td>关系表</td>
+<td>结构稳定、需要 JOIN/事务/报表</td>
+<td>字段经常变化的半结构化数据</td>
+</tr>
+<tr>
+<td>MongoDB</td>
+<td>文档(BSON)</td>
+<td>字段多变、嵌套深（如整页 JSON）</td>
+<td>强事务、复杂关联查询</td>
+</tr>
+<tr>
+<td>Redis</td>
+<td>KV/内存</td>
+<td>去重缓存、增量队列、热数据、计数</td>
+<td>大容量冷数据（内存贵）</td>
+</tr>
+</tbody>
+</table>
+<p>经验法则：<strong>爬虫原始层存 MongoDB（保留灵活性），分析层 ETL 到 MySQL（结构化报表），去重/状态用 Redis。</strong></p>
+<hr>
+<h2 id="_2">二、原理深入</h2>
+<h3 id="21">2.1 数据管道分层架构</h3>
+<pre class="plain"><code> Spider yield item
+      │
+      ▼
+ [P1 清洗层]  去空白/类型转换/默认值  -&gt; 不合格 DropItem
+      │
+      ▼
+ [P2 去重层]  Redis SADD 唯一键      -&gt; 重复 DropItem
+      │
+      ▼
+ [P3 入库层]  批量缓冲 + 事务写入 MySQL/MongoDB
+      │
+      ▼
+ [P4 监控层]  统计计数、报警指标
+</code></pre>
+<p>为什么要分层？<strong>单一职责</strong>：清洗规则变化不影响入库逻辑，新增存储后端只需追加一层。</p>
+<h3 id="22">2.2 批量写入：为什么必须缓冲？</h3>
+<p>逐条 INSERT 的问题：每条一次网络往返 + 一次事务提交，吞吐约几百条/秒。改成攒 N 条（如 100）或 T 秒批量 <code>executemany</code> / <code>insert_many</code>，吞吐可提升 10~50 倍。</p>
+<p>代价：<strong>缓冲在内存，进程崩溃会丢最后一批</strong>。生产上用 <code>close_spider</code> 兜底 flush + 定时器双保险。</p>
+<h3 id="23-on-duplicate-key-update">2.3 幂等入库：ON DUPLICATE KEY UPDATE</h3>
+<p>爬虫重跑是常态。MySQL 侧靠唯一索引 + <code>INSERT ... ON DUPLICATE KEY UPDATE</code> 实现幂等；MongoDB 侧靠唯一索引 + <code>ReplaceOne(upsert=True)</code>；Redis 侧天然幂等（SET 覆盖）。<strong>没有唯一键的表不允许爬虫直接写入</strong>——这是数据质量的第一道红线。</p>
+<h3 id="24">2.4 数据质量控制四指标</h3>
+<ul>
+<li><strong>完整性</strong>：必填字段非空率（schema 校验，可用 <code>itemadapter</code> + pydantic）</li>
+<li><strong>唯一性</strong>：业务主键去重率</li>
+<li><strong>时效性</strong>：数据从抓取到可查询的延迟</li>
+<li><strong>可追溯性</strong>：每条数据记录 <code>source_url</code>、<code>crawl_time</code>、<code>spider_name</code>，出问题能回溯重爬</li>
+</ul>
+<hr>
+<h2 id="api">三、定义与方法（API 速查）</h2>
+<h3 id="31-item">3.1 Item 定义</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">scrapy</span>
+
+<span class="k">class</span> <span class="nc">BookItem</span><span class="p">(</span><span class="n">scrapy</span><span class="o">.</span><span class="n">Item</span><span class="p">):</span>
+    <span class="n">title</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>          <span class="c1"># 必填</span>
+    <span class="n">price</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>          <span class="c1"># 会被清洗成 float</span>
+    <span class="n">source_url</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>     <span class="c1"># 溯源字段（强烈建议所有 Item 都有）</span>
+    <span class="n">crawled_at</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="32-pipeline">3.2 Pipeline 骨架</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MySQLPipeline</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">open_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">buf_size</span> <span class="o">=</span> <span class="p">[],</span> <span class="mi">100</span>
+
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">dict</span><span class="p">(</span><span class="n">item</span><span class="p">))</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">buf_size</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_flush</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">item</span>          <span class="c1"># 一定要 return，否则后续管道收不到</span>
+
+    <span class="k">def</span> <span class="nf">close_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_flush</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">_flush</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># executemany + ON DUPLICATE KEY UPDATE</span>
+        <span class="o">...</span>
+</code></pre></div>
+<h3 id="33-api">3.3 常用 API 速查表</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>MySQL</th>
+<th>MongoDB</th>
+<th>Redis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>幂等写</td>
+<td><code>INSERT ... ON DUPLICATE KEY UPDATE</code></td>
+<td><code>replace_one(f, d, upsert=True)</code></td>
+<td><code>SET</code> / <code>SADD</code></td>
+</tr>
+<tr>
+<td>批量写</td>
+<td><code>executemany</code></td>
+<td><code>insert_many(ordered=False)</code></td>
+<td>pipeline 批量命令</td>
+</tr>
+<tr>
+<td>唯一约束</td>
+<td><code>UNIQUE KEY(url)</code></td>
+<td><code>create_index(url, unique=True)</code></td>
+<td>set 天然唯一</td>
+</tr>
+<tr>
+<td>连接库</td>
+<td>PyMySQL / mysqlclient</td>
+<td>pymongo</td>
+<td>redis-py</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">四、图解</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[Spider yield item] --&gt; B{清洗层}
+    B -- 不合格 --&gt; X[DropItem + 计数]
+    B -- 合格 --&gt; C{Redis 去重 SADD}
+    C -- 已存在 --&gt; Y[DropItem]
+    C -- 新数据 --&gt; D[批量缓冲区 buffer=100]
+    D --&gt; E[(MongoDB 原始层)]
+    D --&gt; F[(MySQL 结构层)]
+    E --&gt; G[ETL 分析/报表]
+    F --&gt; G
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[Spider yield item] --&gt; B{清洗层}
+    B -- 不合格 --&gt; X[DropItem + 计数]
+    B -- 合格 --&gt; C{Redis 去重 SADD}
+    C -- 已存在 --&gt; Y[DropItem]
+    C -- 新数据 --&gt; D[批量缓冲区 buffer=100]
+    D --&gt; E[(MongoDB 原始层)]
+    D --&gt; F[(MySQL 结构层)]
+    E --&gt; G[ETL 分析/报表]
+    F --&gt; G
+</code></pre></div>
+<pre class="plain"><code>数据生命周期：
+  抓取(parse) -&gt; 校验 -&gt; 去重 -&gt; 缓冲 -&gt; 落库 -&gt; 可查询
+  T+0s          T+0s    T+0s    T+~30s   T+~30s   T+~30s
+                          ↑ 崩溃窗口：缓冲未 flush 的数据会丢（需 close_spider 兜底）
+</code></pre>
+<hr>
+<h2 id="_4">五、实战代码案例</h2>
+<p>见 <code>code/</code>：</p>
+<ul>
+<li><code>01-cleaning-pipeline.py</code> -- 清洗 + 校验 + DropItem（基础）</li>
+<li><code>02-multi-backend-pipeline.py</code> -- Redis 去重 + MySQL/MongoDB 双写 + 批量缓冲（进阶避坑）</li>
+<li><code>03-full-data-pipeline.py</code> -- 完整管道：清洗→去重→双库→质量报表（实战）</li>
+</ul>
+<hr>
+<h2 id="_5">六、思考题</h2>
+<ol>
+<li>批量缓冲 100 条 vs 1000 条，各有什么代价？怎么选择缓冲大小的实验方法？</li>
+<li>为什么推荐"原始层 MongoDB + 分析层 MySQL"而不是直接写 MySQL？</li>
+<li>如果爬虫在凌晨 3 点崩溃，怎么保证缓冲区里没 flush 的数据不丢？（提示：本地 WAL 文件 / 缩短定时 flush / 消息队列）</li>
+<li><code>insert_many(ordered=False)</code> 和默认 True 的区别是什么？部分文档主键冲突时行为有何不同？</li>
+<li>如何设计一套"数据质量日报"，用哪些指标衡量昨天爬虫产出数据的质量？</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-138/index.html">← Day 138 Scrapy 分布式（Scrapy-Redis）</a><a class="nav-next" href="../day-140/index.html">Day 140 App 爬虫基础 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

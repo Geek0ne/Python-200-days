@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 124 — 时间序列预测</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 124 — 时间序列预测</h1>
+  <div class="lmeta">
+    <span class="badge">数据分析与AI/ML</span>
+    <span class="badge">376 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-124-time-series-forecasting" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 时间序列基础</a>
+<a class="toc-l3" href="#11">1.1 什么是时间序列</a>
+<a class="toc-l3" href="#12">1.2 时间序列的组成成分</a>
+<a class="toc-l3" href="#13">1.3 时间序列的类型</a>
+<a class="toc-l2" href="#2">2. 时间序列分解</a>
+<a class="toc-l3" href="#21">2.1 加法分解</a>
+<a class="toc-l3" href="#22">2.2 乘法分解</a>
+<a class="toc-l3" href="#23-statsmodels">2.3 使用 statsmodels 分解</a>
+<a class="toc-l2" href="#3">3. 平稳性检验</a>
+<a class="toc-l3" href="#31">3.1 什么是平稳性</a>
+<a class="toc-l3" href="#32-adf-augmented-dickey-fuller">3.2 ADF 检验（Augmented Dickey-Fuller）</a>
+<a class="toc-l3" href="#33-differencing">3.3 差分（Differencing）</a>
+<a class="toc-l2" href="#4-arima">4. ARIMA 模型</a>
+<a class="toc-l3" href="#41-arima">4.1 ARIMA 简介</a>
+<a class="toc-l3" href="#42-arima">4.2 ARIMA 各部分</a>
+<a class="toc-l3" href="#43-arima">4.3 ARIMA 建模流程</a>
+<a class="toc-l3" href="#44-statsmodels">4.4 使用 statsmodels 实现</a>
+<a class="toc-l2" href="#5-prophet">5. Prophet 模型</a>
+<a class="toc-l3" href="#51-prophet">5.1 Prophet 简介</a>
+<a class="toc-l3" href="#52-prophet">5.2 Prophet 核心思想</a>
+<a class="toc-l3" href="#53-prophet">5.3 使用 Prophet</a>
+<a class="toc-l3" href="#54-prophet-vs-arima">5.4 Prophet vs ARIMA 对比</a>
+<a class="toc-l2" href="#6">6. 评估指标</a>
+<a class="toc-l3" href="#61">6.1 常用指标</a>
+<a class="toc-l3" href="#62-mape">6.2 MAPE 的陷阱</a>
+<a class="toc-l2" href="#7">7. 特征工程</a>
+<a class="toc-l3" href="#71">7.1 时间特征</a>
+<a class="toc-l3" href="#72">7.2 滞后特征</a>
+<a class="toc-l3" href="#73">7.3 滚动统计</a>
+<a class="toc-l2" href="#8">8. 实战代码</a>
+<a class="toc-l2" href="#9">9. 思考题</a>
+<a class="toc-l2" href="#_1">参考资料</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-124">Day 124 — 时间序列预测</h1>
+<blockquote>
+<p>时间序列数据无处不在：股票价格、天气温度、网站流量、销售额。掌握时间序列分析是数据科学家的必备技能。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 时间序列基础</h2>
+<h3 id="11">1.1 什么是时间序列</h3>
+<p>时间序列（Time Series）是按时间顺序排列的数据点序列。与普通数据不同，时间序列具有 <strong>时序依赖性</strong>——当前值与过去值相关。</p>
+<pre class="plain"><code>时间序列数据示例 (每日销售额):
+日期        销售额
+2026-01-01   100
+2026-01-02   120
+2026-01-03   115
+2026-01-04   130
+2026-01-05   125
+    ...
+</code></pre>
+<h3 id="12">1.2 时间序列的组成成分</h3>
+<pre class="plain"><code>时间序列 = 趋势 + 季节性 + 周期性 + 残差
+
+Y(t) = T(t) + S(t) + C(t) + ε(t)
+
+┌─────────────────────────────────────────────────┐
+│ 原始序列                                         │
+│   /\    /\    /\    /\                           │
+│  /  \  /  \  /  \  /  \                         │
+│ /    \/    \/    \/    \                        │
+│ ────────────────────────  ← 趋势 (上升)         │
+├─────────────────────────────────────────────────┤
+│ 趋势分量 T(t)                                    │
+│              ╱                                  │
+│           ╱                                     │
+│        ╱                                        │
+│     ╱                                           │
+├─────────────────────────────────────────────────┤
+│ 季节性分量 S(t)                                  │
+│  /\    /\    /\    /\                           │
+│ /  \  /  \  /  \  /  \                         │
+│/    \/    \/    \/    \                        │
+├─────────────────────────────────────────────────┤
+│ 残差 ε(t)                                       │
+│  ~  ~   ~  ~    ~   ~  ~                       │
+└─────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="13">1.3 时间序列的类型</h3>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>特征</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>平稳序列</td>
+<td>均值、方差恒定</td>
+<td>白噪声</td>
+</tr>
+<tr>
+<td>非平稳序列</td>
+<td>均值或方差变化</td>
+<td>股票价格</td>
+</tr>
+<tr>
+<td>有季节性</td>
+<td>固定周期重复模式</td>
+<td>冬装销量</td>
+</tr>
+<tr>
+<td>有趋势</td>
+<td>长期上升或下降</td>
+<td>GDP增长</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2">2. 时间序列分解</h2>
+<h3 id="21">2.1 加法分解</h3>
+<pre class="plain"><code>Y(t) = T(t) + S(t) + ε(t)
+
+适用: 季节性波动幅度恒定
+示例: 每年固定增加100台销量
+</code></pre>
+<h3 id="22">2.2 乘法分解</h3>
+<pre class="plain"><code>Y(t) = T(t) × S(t) × ε(t)
+
+适用: 季节性波动随趋势增大
+示例: 每年销量翻倍，季节性波动也翻倍
+</code></pre>
+<h3 id="23-statsmodels">2.3 使用 statsmodels 分解</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">statsmodels.tsa.seasonal</span> <span class="kn">import</span> <span class="n">seasonal_decompose</span>
+<span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+
+<span class="c1"># 加法分解</span>
+<span class="n">result_add</span> <span class="o">=</span> <span class="n">seasonal_decompose</span><span class="p">(</span><span class="n">series</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s1">&#39;additive&#39;</span><span class="p">,</span> <span class="n">period</span><span class="o">=</span><span class="mi">12</span><span class="p">)</span>
+
+<span class="c1"># 乘法分解</span>
+<span class="n">result_mul</span> <span class="o">=</span> <span class="n">seasonal_decompose</span><span class="p">(</span><span class="n">series</span><span class="p">,</span> <span class="n">model</span><span class="o">=</span><span class="s1">&#39;multiplicative&#39;</span><span class="p">,</span> <span class="n">period</span><span class="o">=</span><span class="mi">12</span><span class="p">)</span>
+
+<span class="c1"># 访问分量</span>
+<span class="n">trend</span> <span class="o">=</span> <span class="n">result_add</span><span class="o">.</span><span class="n">trend</span>       <span class="c1"># 趋势</span>
+<span class="n">seasonal</span> <span class="o">=</span> <span class="n">result_add</span><span class="o">.</span><span class="n">seasonal</span> <span class="c1"># 季节性</span>
+<span class="n">residual</span> <span class="o">=</span> <span class="n">result_add</span><span class="o">.</span><span class="n">resid</span>    <span class="c1"># 残差</span>
+</code></pre></div>
+<hr>
+<h2 id="3">3. 平稳性检验</h2>
+<h3 id="31">3.1 什么是平稳性</h3>
+<p>平稳时间序列的统计特性（均值、方差、自相关）不随时间变化。</p>
+<pre class="plain"><code>平稳序列:                    非平稳序列:
+  ~~~~波动恒定~~~~             / 逐渐上升 \
+  均值恒定                    均值在变化
+  方差恒定                    方差可能变化
+</code></pre>
+<h3 id="32-adf-augmented-dickey-fuller">3.2 ADF 检验（Augmented Dickey-Fuller）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">statsmodels.tsa.stattools</span> <span class="kn">import</span> <span class="n">adfuller</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">adfuller</span><span class="p">(</span><span class="n">series</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;ADF Statistic: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">:</span><span class="s1">.4f</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;p-value: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s1">.4f</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="c1"># 判断:</span>
+<span class="c1"># p-value &lt; 0.05 → 序列平稳</span>
+<span class="c1"># p-value &gt;= 0.05 → 序列非平稳，需要差分</span>
+</code></pre></div>
+<h3 id="33-differencing">3.3 差分（Differencing）</h3>
+<p>差分是将非平稳序列转化为平稳序列的常用方法：</p>
+<pre class="plain"><code>一阶差分: Δy(t) = y(t) - y(t-1)
+二阶差分: Δ²y(t) = Δy(t) - Δy(t-1)
+
+示例:
+原始:    [100, 110, 105, 120, 115]
+一阶差分: [ 10,  -5,  15,  -5]
+二阶差分: [-15,  20, -20]
+</code></pre>
+<hr>
+<h2 id="4-arima">4. ARIMA 模型</h2>
+<h3 id="41-arima">4.1 ARIMA 简介</h3>
+<p>ARIMA (AutoRegressive Integrated Moving Average) 是最经典的时间序列预测模型。</p>
+<pre class="plain"><code>ARIMA(p, d, q)
+
+p: 自回归阶数 (AR) - 用过去p个值预测
+d: 差分阶数 (I) - 使序列平稳
+q: 移动平均阶数 (MA) - 用过去q个误差预测
+</code></pre>
+<h3 id="42-arima">4.2 ARIMA 各部分</h3>
+<p><strong>AR (自回归):</strong></p>
+<pre class="plain"><code>y(t) = c + φ₁y(t-1) + φ₂y(t-2) + ... + φₚy(t-p) + ε(t)
+
+含义: 当前值是过去值的线性组合
+</code></pre>
+<p><strong>I (差分):</strong></p>
+<pre class="plain"><code>Δy(t) = y(t) - y(t-1)
+
+含义: 用差分使序列平稳
+</code></pre>
+<p><strong>MA (移动平均):</strong></p>
+<pre class="plain"><code>y(t) = c + ε(t) + θ₁ε(t-1) + θ₂ε(t-2) + ... + θ_qε(t-q)
+
+含义: 当前值受过去误差的影响
+</code></pre>
+<h3 id="43-arima">4.3 ARIMA 建模流程</h3>
+<pre class="plain"><code>Step 1: 平稳性检验
+    │
+    ▼
+Step 2: 差分 (如果需要)
+    │
+    ▼
+Step 3: 确定 p, q (ACF/PACF 图)
+    │
+    ├── ACF 拖尾, PACF 截尾 → AR(p)
+    ├── ACF 截尾, PACF 拖尾 → MA(q)
+    └── ACF 拖尾, PACF 拖尾 → ARIMA(p,q)
+    │
+    ▼
+Step 4: 拟合模型
+    │
+    ▼
+Step 5: 残差检验 (Ljung-Box 检验)
+    │
+    ▼
+Step 6: 预测
+</code></pre>
+<h3 id="44-statsmodels">4.4 使用 statsmodels 实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">statsmodels.tsa.arima.model</span> <span class="kn">import</span> <span class="n">ARIMA</span>
+<span class="kn">from</span> <span class="nn">statsmodels.graphics.tsaplots</span> <span class="kn">import</span> <span class="n">plot_acf</span><span class="p">,</span> <span class="n">plot_pacf</span>
+
+<span class="c1"># 拟合 ARIMA 模型</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">ARIMA</span><span class="p">(</span><span class="n">series</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+<span class="n">fitted</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">fitted</span><span class="o">.</span><span class="n">summary</span><span class="p">())</span>
+
+<span class="c1"># 预测</span>
+<span class="n">forecast</span> <span class="o">=</span> <span class="n">fitted</span><span class="o">.</span><span class="n">forecast</span><span class="p">(</span><span class="n">steps</span><span class="o">=</span><span class="mi">12</span><span class="p">)</span>  <span class="c1"># 预测未来12步</span>
+</code></pre></div>
+<hr>
+<h2 id="5-prophet">5. Prophet 模型</h2>
+<h3 id="51-prophet">5.1 Prophet 简介</h3>
+<p>Prophet 是 Facebook 开源的时间序列预测工具，特别适合具有以下特征的数据：<br>
+- 强季节性<br>
+- 趋势变化点<br>
+- 缺失值<br>
+- 异常值</p>
+<h3 id="52-prophet">5.2 Prophet 核心思想</h3>
+<pre class="plain"><code>y(t) = g(t) + s(t) + h(t) + ε(t)
+
+g(t): 趋势函数 (线性或逻辑增长)
+s(t): 季节性函数 (傅里叶级数)
+h(t): 节假日效应
+ε(t): 误差项
+</code></pre>
+<h3 id="53-prophet">5.3 使用 Prophet</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">prophet</span> <span class="kn">import</span> <span class="n">Prophet</span>
+<span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+
+<span class="c1"># 准备数据 (必须有 ds 和 y 列)</span>
+<span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span>
+    <span class="s1">&#39;ds&#39;</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">date_range</span><span class="p">(</span><span class="s1">&#39;2026-01-01&#39;</span><span class="p">,</span> <span class="n">periods</span><span class="o">=</span><span class="mi">365</span><span class="p">),</span>
+    <span class="s1">&#39;y&#39;</span><span class="p">:</span> <span class="n">sales_data</span>  <span class="c1"># 销售额</span>
+<span class="p">})</span>
+
+<span class="c1"># 创建并训练模型</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">Prophet</span><span class="p">(</span>
+    <span class="n">yearly_seasonality</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">weekly_seasonality</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">daily_seasonality</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+    <span class="n">changepoint_prior_scale</span><span class="o">=</span><span class="mf">0.05</span>
+<span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">df</span><span class="p">)</span>
+
+<span class="c1"># 创建未来日期</span>
+<span class="n">future</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">make_future_dataframe</span><span class="p">(</span><span class="n">periods</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+
+<span class="c1"># 预测</span>
+<span class="n">forecast</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">future</span><span class="p">)</span>
+
+<span class="c1"># 可视化</span>
+<span class="n">model</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">forecast</span><span class="p">)</span>
+<span class="n">model</span><span class="o">.</span><span class="n">plot_components</span><span class="p">(</span><span class="n">forecast</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="54-prophet-vs-arima">5.4 Prophet vs ARIMA 对比</h3>
+<table>
+<thead>
+<tr>
+<th>对比维度</th>
+<th>ARIMA</th>
+<th>Prophet</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>假设条件</td>
+<td>严格（平稳性）</td>
+<td>宽松</td>
+</tr>
+<tr>
+<td>季节性</td>
+<td>需手动设置</td>
+<td>自动检测</td>
+</tr>
+<tr>
+<td>缺失值</td>
+<td>需预处理</td>
+<td>内置处理</td>
+</tr>
+<tr>
+<td>异常值</td>
+<td>敏感</td>
+<td>鲁棒</td>
+</tr>
+<tr>
+<td>可解释性</td>
+<td>中等</td>
+<td>高</td>
+</tr>
+<tr>
+<td>调参难度</td>
+<td>高</td>
+<td>低</td>
+</tr>
+<tr>
+<td>大规模数据</td>
+<td>适合</td>
+<td>适合</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6">6. 评估指标</h2>
+<h3 id="61">6.1 常用指标</h3>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>公式</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MAE</td>
+<td>Σ|yₜ - ŷₜ| / n</td>
+<td>平均绝对误差</td>
+</tr>
+<tr>
+<td>MSE</td>
+<td>Σ(yₜ - ŷₜ)² / n</td>
+<td>均方误差</td>
+</tr>
+<tr>
+<td>RMSE</td>
+<td>√MSE</td>
+<td>均方根误差</td>
+</tr>
+<tr>
+<td>MAPE</td>
+<td>Σ|yₜ - ŷₜ|/|yₜ| × 100 / n</td>
+<td>平均绝对百分比误差</td>
+</tr>
+<tr>
+<td>SMAPE</td>
+<td>Σ|yₜ - ŷₜ|/|yₜ|+|ŷₜ| × 100 / n</td>
+<td>对称MAPE</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-mape">6.2 MAPE 的陷阱</h3>
+<p>MAPE 在真实值接近0时会爆炸，且对低估和高估的惩罚不对称：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># MAPE 的问题</span>
+<span class="n">真实值</span><span class="p">:</span> <span class="mi">100</span><span class="p">,</span> <span class="n">预测值</span><span class="p">:</span> <span class="mi">80</span>  <span class="err">→</span> <span class="n">MAPE</span> <span class="o">=</span> <span class="mi">20</span><span class="o">%</span>
+<span class="n">真实值</span><span class="p">:</span> <span class="mi">100</span><span class="p">,</span> <span class="n">预测值</span><span class="p">:</span> <span class="mi">120</span> <span class="err">→</span> <span class="n">MAPE</span> <span class="o">=</span> <span class="mi">20</span><span class="o">%</span>
+<span class="n">但</span><span class="p">:</span> <span class="n">真实值</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="n">预测值</span><span class="p">:</span> <span class="mi">101</span> <span class="err">→</span> <span class="n">MAPE</span> <span class="o">=</span> <span class="mi">10000</span><span class="o">%</span><span class="err">!</span>
+</code></pre></div>
+<hr>
+<h2 id="7">7. 特征工程</h2>
+<h3 id="71">7.1 时间特征</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">df</span><span class="p">[</span><span class="s1">&#39;year&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;date&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">year</span>
+<span class="n">df</span><span class="p">[</span><span class="s1">&#39;month&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;date&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">month</span>
+<span class="n">df</span><span class="p">[</span><span class="s1">&#39;day_of_week&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;date&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">dayofweek</span>
+<span class="n">df</span><span class="p">[</span><span class="s1">&#39;quarter&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;date&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">quarter</span>
+<span class="n">df</span><span class="p">[</span><span class="s1">&#39;is_weekend&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;date&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">dt</span><span class="o">.</span><span class="n">dayofweek</span> <span class="o">&gt;=</span> <span class="mi">5</span>
+</code></pre></div>
+<h3 id="72">7.2 滞后特征</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">df</span><span class="p">[</span><span class="s1">&#39;lag_1&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">shift</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>   <span class="c1"># 昨天的值</span>
+<span class="n">df</span><span class="p">[</span><span class="s1">&#39;lag_7&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">shift</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>   <span class="c1"># 上周同天</span>
+<span class="n">df</span><span class="p">[</span><span class="s1">&#39;lag_30&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">shift</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span> <span class="c1"># 上月同天</span>
+</code></pre></div>
+<h3 id="73">7.3 滚动统计</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">df</span><span class="p">[</span><span class="s1">&#39;rolling_mean_7&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>   <span class="c1"># 7天均值</span>
+<span class="n">df</span><span class="p">[</span><span class="s1">&#39;rolling_std_7&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>     <span class="c1"># 7天标准差</span>
+<span class="n">df</span><span class="p">[</span><span class="s1">&#39;rolling_max_30&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">df</span><span class="p">[</span><span class="s1">&#39;y&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">rolling</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>   <span class="c1"># 30天最大值</span>
+</code></pre></div>
+<hr>
+<h2 id="8">8. 实战代码</h2>
+<ul>
+<li><code>01-time-series-decomposition.py</code>：时间序列分解与平稳性检验</li>
+<li><code>02-arima-forecasting.py</code>：ARIMA 模型预测</li>
+<li><code>03-prophet-forecasting.py</code>：Prophet 模型预测</li>
+</ul>
+<hr>
+<h2 id="9">9. 思考题</h2>
+<ol>
+<li>
+<p><strong>什么情况下 ARIMA 比 Prophet 更好？</strong> 从数据特征和假设条件的角度分析。</p>
+</li>
+<li>
+<p><strong>如何判断时间序列是否需要差分？</strong> ADF 检验的 p-value 为 0.06（接近但大于0.05），你会怎么做？</p>
+</li>
+<li>
+<p><strong>时间序列预测中的「数据泄露」是什么？</strong> 如何在训练时避免看到未来数据？</p>
+</li>
+<li>
+<p><strong>如何处理时间序列中的缺失值？</strong> 前向填充、插值、模型预测各有什么优缺点？</p>
+</li>
+<li>
+<p><strong>在电商场景中，如何预测大促（如双11）期间的销量？</strong> 常规时间序列模型可能失效，你会怎么处理？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_1">参考资料</h2>
+<ul>
+<li><a href="https://facebook.github.io/prophet/">Prophet 官方文档</a></li>
+<li><a href="https://www.statsmodels.org/stable/tsa.html">statsmodels 时间序列文档</a></li>
+<li><a href="https://otexts.com/fpp3/">《时间序列分析与预测》- Hyndman</a></li>
+<li><a href="https://www.kaggle.com/learn/time-series">Kaggle 时间序列教程</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-123/index.html">← Day 123 模型部署</a><a class="nav-next" href="../day-125/index.html">Day 125 阶段项目：综合 AI 应用 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

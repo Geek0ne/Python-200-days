@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 93 — 网络编程深入</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 93 — 网络编程深入</h1>
+  <div class="lmeta">
+    <span class="badge">进阶与性能优化</span>
+    <span class="badge">313 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-093-网络编程深入" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 今日目标</a>
+<a class="toc-l2" href="#1-socket">1. Socket 编程深入</a>
+<a class="toc-l3" href="#11-socket">1.1 Socket 是什么？</a>
+<a class="toc-l3" href="#12-tcp-vs-udp">1.2 TCP vs UDP 对比</a>
+<a class="toc-l3" href="#13-tcp">1.3 TCP 三次握手与四次挥手</a>
+<a class="toc-l3" href="#14-socket-api">1.4 Socket 核心 API</a>
+<a class="toc-l2" href="#2">2. 异步网络框架</a>
+<a class="toc-l3" href="#21">2.1 为什么需要异步？</a>
+<a class="toc-l3" href="#22-asyncio">2.2 asyncio 事件循环</a>
+<a class="toc-l3" href="#23-aiohttp">2.3 aiohttp 客户端</a>
+<a class="toc-l3" href="#24-aiohttp">2.4 aiohttp 服务端</a>
+<a class="toc-l2" href="#3-http2-http3">3. HTTP/2 与 HTTP/3</a>
+<a class="toc-l3" href="#31-http">3.1 HTTP 协议演进</a>
+<a class="toc-l3" href="#32-http2">3.2 HTTP/2 核心特性</a>
+<a class="toc-l3" href="#33-http3-quic">3.3 HTTP/3 (QUIC)</a>
+<a class="toc-l3" href="#34-python-http2">3.4 Python 中使用 HTTP/2</a>
+<a class="toc-l2" href="#4">4. 自定义协议服务器</a>
+<a class="toc-l3" href="#41">4.1 协议设计原则</a>
+<a class="toc-l3" href="#42">4.2 消息定界方案对比</a>
+<a class="toc-l2" href="#5">5. 思考题</a>
+<a class="toc-l2" href="#_2">📚 扩展阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-093">Day 093 — 网络编程深入</h1>
+<blockquote>
+<p><strong>socket 编程 | 异步网络框架 | HTTP/2 与 HTTP/3 | 自定义协议服务器</strong></p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 今日目标</h2>
+<ol>
+<li>深入理解 socket 编程底层机制</li>
+<li>掌握异步网络框架（asyncio + aiohttp）</li>
+<li>了解 HTTP/2 与 HTTP/3 协议演进</li>
+<li>实战：构建自定义协议服务器</li>
+</ol>
+<hr>
+<h2 id="1-socket">1. Socket 编程深入</h2>
+<h3 id="11-socket">1.1 Socket 是什么？</h3>
+<p>Socket（套接字）是操作系统提供的网络通信端点。它是应用层与 TCP/IP 协议族通信的中间软件抽象层。</p>
+<pre class="plain"><code>┌─────────────────────────────────────────┐
+│              应用层 (HTTP, FTP...)        │
+├─────────────────────────────────────────┤
+│           Socket API (中间层)             │
+├──────────┬──────────────────────────────┤
+│   TCP    │           UDP                │
+├──────────┴──────────────────────────────┤
+│            IP 协议层                      │
+├─────────────────────────────────────────┤
+│          网络接口层 (网卡)                 │
+└─────────────────────────────────────────┘
+</code></pre>
+<h3 id="12-tcp-vs-udp">1.2 TCP vs UDP 对比</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>TCP</th>
+<th>UDP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>连接方式</td>
+<td>面向连接（三次握手）</td>
+<td>无连接</td>
+</tr>
+<tr>
+<td>可靠性</td>
+<td>可靠传输，有确认机制</td>
+<td>不可靠，可能丢包</td>
+</tr>
+<tr>
+<td>顺序性</td>
+<td>保证顺序</td>
+<td>不保证顺序</td>
+</tr>
+<tr>
+<td>速度</td>
+<td>较慢</td>
+<td>较快</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>HTTP、文件传输、邮件</td>
+<td>视频流、游戏、DNS</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13-tcp">1.3 TCP 三次握手与四次挥手</h3>
+<pre class="plain"><code>三次握手 (建立连接):
+  客户端                    服务端
+    │── SYN (seq=x) ──────&gt;│
+    │&lt;── SYN+ACK (seq=y,  │
+    │     ack=x+1) ────────│
+    │── ACK (ack=y+1) ────&gt;│
+    │     连接已建立          │
+
+四次挥手 (断开连接):
+  客户端                    服务端
+    │── FIN ───────────────&gt;│
+    │&lt;── ACK ───────────────│
+    │&lt;── FIN ───────────────│
+    │── ACK ───────────────&gt;│
+    │     连接已关闭          │
+</code></pre>
+<h3 id="14-socket-api">1.4 Socket 核心 API</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">socket</span>
+
+<span class="c1"># 创建 socket 对象</span>
+<span class="c1"># family: AF_INET(IPv4) 或 AF_INET6(IPv6)</span>
+<span class="c1"># type: SOCK_STREAM(TCP) 或 SOCK_DGRAM(UDP)</span>
+<span class="n">s</span> <span class="o">=</span> <span class="n">socket</span><span class="o">.</span><span class="n">socket</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">AF_INET</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">SOCK_STREAM</span><span class="p">)</span>
+
+<span class="c1"># 设置端口复用（避免 TIME_WAIT 问题）</span>
+<span class="n">s</span><span class="o">.</span><span class="n">setsockopt</span><span class="p">(</span><span class="n">socket</span><span class="o">.</span><span class="n">SOL_SOCKET</span><span class="p">,</span> <span class="n">socket</span><span class="o">.</span><span class="n">SO_REUSEADDR</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># 绑定地址和端口</span>
+<span class="n">s</span><span class="o">.</span><span class="n">bind</span><span class="p">((</span><span class="s1">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="mi">8080</span><span class="p">))</span>
+
+<span class="c1"># 监听（backlog 为等待队列长度）</span>
+<span class="n">s</span><span class="o">.</span><span class="n">listen</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+
+<span class="c1"># 接受连接，返回 (conn, address)</span>
+<span class="n">conn</span><span class="p">,</span> <span class="n">addr</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">accept</span><span class="p">()</span>
+
+<span class="c1"># 发送数据（返回发送字节数）</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">sendall</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;Hello, Client!&#39;</span><span class="p">)</span>
+
+<span class="c1"># 接收数据（bufsize 为最大接收字节数）</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">recv</span><span class="p">(</span><span class="mi">1024</span><span class="p">)</span>
+
+<span class="c1"># 关闭连接</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<span class="n">s</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="2">2. 异步网络框架</h2>
+<h3 id="21">2.1 为什么需要异步？</h3>
+<p>同步 I/O 模型在高并发场景下的瓶颈：</p>
+<pre class="plain"><code>同步模型 (一个线程处理一个连接):
+
+时间线: ──────────────────────────────────&gt;
+线程1: [连接1]---等待I/O---[处理]---[等待I/O]---[处理]
+线程2: [连接2]---等待I/O---[处理]---[等待I/O]---[处理]
+线程3: 空闲...
+
+异步模型 (一个事件循环处理多个连接):
+
+时间线: ──────────────────────────────────&gt;
+事件循环: [连接1就绪]→[处理1]→[连接2就绪]→[处理2]→[连接1就绪]→...
+         ↑ 利用等待时间处理其他连接
+</code></pre>
+<h3 id="22-asyncio">2.2 asyncio 事件循环</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">handle_client</span><span class="p">(</span><span class="n">reader</span><span class="p">,</span> <span class="n">writer</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;异步处理客户端连接&quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">reader</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="mi">1024</span><span class="p">)</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">decode</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;收到: </span><span class="si">{</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    
+    <span class="n">writer</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">b</span><span class="s1">&#39;ACK&#39;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">writer</span><span class="o">.</span><span class="n">drain</span><span class="p">()</span>
+    
+    <span class="n">writer</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="k">await</span> <span class="n">writer</span><span class="o">.</span><span class="n">wait_closed</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># 启动 TCP 服务器</span>
+    <span class="n">server</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">start_server</span><span class="p">(</span>
+        <span class="n">handle_client</span><span class="p">,</span> <span class="s1">&#39;127.0.0.1&#39;</span><span class="p">,</span> <span class="mi">8888</span>
+    <span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;服务器启动: 127.0.0.1:8888&quot;</span><span class="p">)</span>
+    
+    <span class="k">async</span> <span class="k">with</span> <span class="n">server</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">server</span><span class="o">.</span><span class="n">serve_forever</span><span class="p">()</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="23-aiohttp">2.3 aiohttp 客户端</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">aiohttp</span>
+<span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">fetch</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;异步 HTTP 请求&quot;&quot;&quot;</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;状态码: </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">urls</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s1">&#39;http://httpbin.org/get&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;http://httpbin.org/delay/1&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;http://httpbin.org/delay/2&#39;</span><span class="p">,</span>
+    <span class="p">]</span>
+    <span class="c1"># 并发请求所有 URL</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">fetch</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">])</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;完成 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个请求&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="24-aiohttp">2.4 aiohttp 服务端</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">aiohttp</span> <span class="kn">import</span> <span class="n">web</span>
+<span class="kn">import</span> <span class="nn">aiohttp</span>
+
+<span class="c1"># 路由处理</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">hello</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">match_info</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">,</span> <span class="s1">&#39;World&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">web</span><span class="o">.</span><span class="n">Response</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Hello, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">json_handler</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="k">await</span> <span class="n">request</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">web</span><span class="o">.</span><span class="n">json_response</span><span class="p">({</span><span class="s2">&quot;received&quot;</span><span class="p">:</span> <span class="n">data</span><span class="p">})</span>
+
+<span class="c1"># 创建应用</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">web</span><span class="o">.</span><span class="n">Application</span><span class="p">()</span>
+<span class="n">app</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">add_get</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">,</span> <span class="n">hello</span><span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">add_get</span><span class="p">(</span><span class="s1">&#39;/hello/</span><span class="si">{name}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">hello</span><span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">add_post</span><span class="p">(</span><span class="s1">&#39;/api/data&#39;</span><span class="p">,</span> <span class="n">json_handler</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">web</span><span class="o">.</span><span class="n">run_app</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">host</span><span class="o">=</span><span class="s1">&#39;127.0.0.1&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">8080</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="3-http2-http3">3. HTTP/2 与 HTTP/3</h2>
+<h3 id="31-http">3.1 HTTP 协议演进</h3>
+<pre class="plain"><code>HTTP/1.0 (1996)     HTTP/1.1 (1997)     HTTP/2 (2015)      HTTP/3 (2022)
+    │                    │                    │                   │
+    ▼                    ▼                    ▼                   ▼
+ 每次请求          持久连接              多路复用             基于 QUIC
+ 新建 TCP          管线化(有队头阻塞)    头部压缩             UDP 传输
+ 关闭连接          Host 头              服务器推送           0-RTT 连接
+                                      二进制分帧            连接迁移
+</code></pre>
+<h3 id="32-http2">3.2 HTTP/2 核心特性</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>说明</th>
+<th>解决的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>多路复用</td>
+<td>一个连接上并发多个流</td>
+<td>队头阻塞</td>
+</tr>
+<tr>
+<td>头部压缩</td>
+<td>HPACK 算法压缩请求头</td>
+<td>减少带宽占用</td>
+</tr>
+<tr>
+<td>服务器推送</td>
+<td>主动推送资源</td>
+<td>减少请求次数</td>
+</tr>
+<tr>
+<td>二进制分帧</td>
+<td>二进制传输代替文本</td>
+<td>解析效率更高</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-http3-quic">3.3 HTTP/3 (QUIC)</h3>
+<p>HTTP/3 基于 QUIC 协议，解决了 TCP 层面的队头阻塞问题：</p>
+<pre class="plain"><code>TCP + TLS 1.2:           QUIC (HTTP/3):
+  TCP 握手 (1 RTT)         QUIC 握手 (0-1 RTT)
+  + TLS 握手 (1-2 RTT)     (合并在一起)
+  = 2-3 RTT 建立连接       = 0-1 RTT 建立连接
+
+  一个流丢包 →            一个流丢包 →
+  所有流都阻塞            只有该流受影响
+</code></pre>
+<h3 id="34-python-http2">3.4 Python 中使用 HTTP/2</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 需要安装: pip install httpx[http2]</span>
+<span class="kn">import</span> <span class="nn">httpx</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_http2</span><span class="p">():</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">httpx</span><span class="o">.</span><span class="n">AsyncClient</span><span class="p">(</span><span class="n">http2</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="k">as</span> <span class="n">client</span><span class="p">:</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="k">await</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://www.google.com&#39;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;HTTP 版本: </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">http_version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># HTTP/2</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;状态码: </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># 同步方式</span>
+<span class="n">client</span> <span class="o">=</span> <span class="n">httpx</span><span class="o">.</span><span class="n">Client</span><span class="p">(</span><span class="n">http2</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://www.google.com&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;HTTP 版本: </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">http_version</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 自定义协议服务器</h2>
+<h3 id="41">4.1 协议设计原则</h3>
+<p>一个好的应用层协议需要：</p>
+<ol>
+<li><strong>消息定界</strong>：接收方如何知道一条消息的边界</li>
+<li><strong>字节序</strong>：大端/小端的选择</li>
+<li><strong>消息类型</strong>：请求/响应/通知等</li>
+<li><strong>版本兼容</strong>：协议升级机制</li>
+</ol>
+<h3 id="42">4.2 消息定界方案对比</h3>
+<pre class="plain"><code>方案1: 固定长度
+┌──────┬──────┬──────┬──────┐
+│Msg 1 │Msg 2 │Msg 3 │Msg 4 │
+│ 64B  │ 64B  │ 64B  │ 64B  │
+└──────┴──────┴──────┴──────┘
+优点: 简单    缺点: 浪费空间
+
+方案2: 分隔符 (如 \n)
+┌────────┬────────┬────────┐
+│Msg 1\n │Msg 2\n │Msg 3\n │
+└────────┴────────┴────────┘
+优点: 可读    缺点: 需要转义
+
+方案3: 长度前缀 (推荐)
+┌──────┬─────────────┬──────┬──────────────┐
+│ 5 B  │  Hello...   │ 3 B  │  Hi...       │
+└──────┴─────────────┴──────┴──────────────┘
+优点: 高效、无限制    缺点: 需要解析
+</code></pre>
+<hr>
+<h2 id="5">5. 思考题</h2>
+<ol>
+<li><strong>为什么 TCP 需要三次握手而不是两次？</strong> 提示：考虑网络延迟和历史报文</li>
+<li><strong>asyncio 的事件循环和操作系统的 epoll/kqueue 有什么关系？</strong></li>
+<li><strong>HTTP/3 为什么选择 UDP 而不是在 TCP 上改进？</strong></li>
+<li><strong>在自定义协议中，如何处理消息丢失和重传？</strong> 提示：参考 TCP 的 ACK 机制</li>
+<li><strong>如何用 asyncio 实现一个支持广播的聊天室？</strong> 提示：用一个集合管理所有 writer</li>
+</ol>
+<hr>
+<h2 id="_2">📚 扩展阅读</h2>
+<ul>
+<li><a href="https://docs.python.org/3/library/socket.html">Python socket 编程官方文档</a></li>
+<li><a href="https://docs.python.org/3/library/asyncio-stream.html">asyncio 高级用法</a></li>
+<li><a href="https://tools.ietf.org/html/rfc7540">HTTP/2 规范 (RFC 7540)</a></li>
+<li><a href="https://www.chromium.org/developers/design-documents/network-quic/">QUIC 协议概述</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-092/index.html">← Day 92 代码优化技巧</a><a class="nav-next" href="../day-094/index.html">Day 94 安全编程 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

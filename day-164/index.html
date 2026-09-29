@@ -1,0 +1,1729 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 164 — 阶段项目（三）：安全审计工具箱 · 代理中间人 + 流量分析</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 164 — 阶段项目（三）：安全审计工具箱 · 代理中间人 + 流量分析</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">1177 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-164-安全审计工具箱-part3" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 阶段项目要做什么（今天站在哪个位置）</a>
+<a class="toc-l3" href="#22">2.2 中间人代理：什么叫&quot;中间人&quot;，什么叫&quot;代理&quot;</a>
+<a class="toc-l3" href="#23">2.3 为什么&quot;流量面&quot;是观测，而前两面是推断</a>
+<a class="toc-l3" href="#24">2.4 代理协议的细节：两种请求行形式</a>
+<a class="toc-l3" href="#25-connect">2.5 CONNECT：为什么隧道里的东西看不见</a>
+<a class="toc-l3" href="#26">2.6 流模型：一次往返要记哪些字段</a>
+<a class="toc-l3" href="#27">2.7 本课最重要的设计：先脱敏，再检测</a>
+<a class="toc-l3" href="#28">2.8 覆盖率：为什么&quot;看不见&quot;必须独立成一种结果</a>
+<a class="toc-l2" href="#3">3. 原理解释</a>
+<a class="toc-l3" href="#31">3.1 代理的字节级工作流</a>
+<a class="toc-l3" href="#32-hop-by-hop">3.2 逐跳头（hop-by-hop）：为什么必须剔除</a>
+<a class="toc-l3" href="#33-accept-encoding">3.3 分块传输与压缩：代理为什么主动去掉 Accept-Encoding</a>
+<a class="toc-l3" href="#34-14">3.4 14 条规则的判定逻辑总表</a>
+<a class="toc-l3" href="#35">3.5 明文凭据判定：为什么用&quot;字段名 + 指纹&quot;而不是匹配明文</a>
+<a class="toc-l3" href="#36">3.6 优先级 = 严重度 × 置信度</a>
+<a class="toc-l3" href="#37">3.7 语义化退出码</a>
+<a class="toc-l3" href="#38">3.8 覆盖率与&quot;结论可信度&quot;</a>
+<a class="toc-l3" href="#39">3.9 三个由&quot;实测&quot;驱动的修复（真实踩坑记录）</a>
+<a class="toc-l2" href="#4">4. 图解</a>
+<a class="toc-l3" href="#41">4.1 三层观测的关系（为什么流量面补的是结构性缺失）</a>
+<a class="toc-l3" href="#42-connect">4.2 CONNECT 之后：代理能看见什么</a>
+<a class="toc-l2" href="#5-api">5. 定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#51-mitm_corepy">5.1 mitm_core.py 模块速查</a>
+<a class="toc-l3" href="#52">5.2 顶层常量</a>
+<a class="toc-l3" href="#53-flow">5.3 Flow 字段语义（重点字段）</a>
+<a class="toc-l3" href="#54-flowanalyzer">5.4 FlowAnalyzer 用法速查</a>
+<a class="toc-l3" href="#55-cli">5.5 CLI 速查</a>
+<a class="toc-l2" href="#6">6. 实战代码案例</a>
+<a class="toc-l3" href="#61-codemitm_corepy-1906">6.1 code/mitm_core.py — 共享引擎（1906 行）</a>
+<a class="toc-l3" href="#62-code01-flow-capturepy">6.2 code/01-flow-capture.py — 基础用法</a>
+<a class="toc-l3" href="#63-code02-flow-analyzepy">6.3 code/02-flow-analyze.py — 进阶用法与避坑</a>
+<a class="toc-l3" href="#64-code03-traffic-audit-clipy">6.4 code/03-traffic-audit-cli.py — 实战流水线</a>
+<a class="toc-l3" href="#65">6.5 五个由&quot;实测&quot;驱动的修复（真实踩坑汇总）</a>
+<a class="toc-l2" href="#7">7. 自检与验证</a>
+<a class="toc-l2" href="#8">8. 思考题</a>
+<a class="toc-l2" href="#9">9. 边界与合规（每一条都是设计决策，不是场面话）</a>
+<a class="toc-l2" href="#10">10. 今日完成清单</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-164">Day 164 — 阶段项目（三）：安全审计工具箱 · 代理中间人 + 流量分析</h1>
+<blockquote>
+<p><strong>Phase 10 — 网络安全开发（Day 146–165）</strong> · 主题：安全审计工具箱（Day 162–165 四天项目的第 3 天）</p>
+<p><strong>使用边界（重要，读完再动手）</strong>：<br>
+- 只对<strong>你自己拥有、或已获书面授权</strong>的目标做审计。<br>
+- 本课所有实验都跑在 <code>127.0.0.1</code> 上的<strong>自建靶场</strong>（<code>code/mitm_core.py</code> 里的<br>
+<code>LabOrigin</code> 实验网站 + <code>LabOpaqueTCP</code> 假 TLS 服务）。<br>
+- 中间人代理<strong>只监听回环地址</strong>。代码里对 <code>0.0.0.0</code> 是<strong>硬拒绝</strong>：<br>
+  一个"监听全网卡的开放 HTTP 代理"会在几分钟内被扫到并被滥用，<br>
+  那是真实的法律责任，不是一个"配置选项"。<br>
+- <strong>不伪造证书、不降级 TLS、不破解隧道内容</strong>。<code>CONNECT</code> 隧道一律如实记为<br>
+  "不可见"，并计入覆盖缺口。<br>
+- <strong>不改包、不重放、不注入响应</strong>。只做观测与记录。<br>
+- 流量档案<strong>默认脱敏</strong>：口令 / 令牌 / Cookie 的<strong>值</strong>不落盘，<br>
+  只留"字段名 + 值指纹（sha256 前 8 位）+ 长度"。报告能证明"明文传输了"，<br>
+<strong>不能</strong>被当成二次泄密的渠道。<br>
+- 教材中的地址一律为回环或文档网段（RFC 5737 的 <code>192.0.2.0/24</code>）。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>说清阶段项目四天的分工，以及为什么"流量面"补上了前两天<strong>结构性缺失</strong>的那一块</li>
+<li>解释<strong>正向代理</strong>与<strong>反向代理</strong>的区别，以及为什么审计要用正向代理</li>
+<li>说清"绝对 URI 形式"与"源站形式"两种请求行的区别，以及为什么代理两种都要支持</li>
+<li>解释 <code>CONNECT</code> 之后的字节流<strong>为什么看不见</strong>，以及"看不见"和"没问题"的区别</li>
+<li>说清<strong>逐跳头（hop-by-hop）</strong>为什么必须在代理里剔除，不剔除会发生什么</li>
+<li>解释代理<strong>主动去掉 <code>Accept-Encoding</code></strong> 的收益与代价，以及生产环境为什么该换做法</li>
+<li>说清<strong>流模型（flow）</strong>要记哪些字段，以及"记什么"背后的取舍</li>
+<li>解释本课最重要的设计：<strong>先脱敏、再检测</strong>——检测逻辑为什么看不到明文也能工作</li>
+<li>说清 <strong>PII 擦除</strong> 与 <strong>PII 检测</strong> 为什么必须分开，以及"擦掉就检测不到"这个坑怎么补</li>
+<li>用 14 条规则把 flow 变成可读的 <strong>Finding</strong>（含证据 / 原因 / 修复建议）</li>
+<li>说清<strong>覆盖率</strong>为什么必须独立统计，以及它如何把退出码推到 <code>4</code></li>
+<li>说清"优先级 = 严重度 × 置信度"为什么比"只看严重度"更诚实</li>
+<li>明确本工具<strong>不做</strong>什么（解密、改包、重放、利用），以及这些边界为什么是必要的</li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 阶段项目要做什么（今天站在哪个位置）</h3>
+<p>Day 159 做了"审计工具箱 v0"（规则引擎 + 报告 + CLI 门禁），Day 160 做了日志分析。<br>
+Day 162–165 把这几天分散的能力<strong>拼成一个完整的资产审计工具</strong>，四天分工：</p>
+<pre class="plain"><code>Day 162（前天）  资产面：端口扫描 + 目录爆破 + 指纹识别   ← 有哪些&quot;资产&quot;
+Day 163（昨天）  漏洞面：SQLi 检测 + XSS 检测             ← 资产上&quot;哪里可能有问题&quot;
+Day 164（今天）  流量面：代理中间人 + 流量分析            ← 实际&quot;发生了什么&quot;  ★本课
+Day 165（明天）  交付面：报告生成 + Docker 部署           ← 最后&quot;怎么交出去&quot;
+</code></pre>
+<p><strong>为什么"流量面"不是"再补一层锦上添花"，而是补一块结构性缺失？</strong><br>
+因为前两天的结论<strong>全部是推断</strong>，它们各有各的盲区：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>它回答的问题</th>
+<th>它<strong>回答不了</strong>的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Day 162 资产面</td>
+<td>哪个端口开着、哪个路径返回 200</td>
+<td>参数是怎么传的？走 GET 还是 POST？</td>
+</tr>
+<tr>
+<td>Day 163 漏洞面</td>
+<td><code>id</code> 这个参数<strong>疑似</strong>可注入</td>
+<td>真实业务流量里，凭据是明文还是密文？</td>
+</tr>
+<tr>
+<td><strong>Day 164 流量面</strong></td>
+<td><strong>真实请求与响应的每一个字节</strong></td>
+<td>（盲区：TLS 隧道内部）</td>
+</tr>
+</tbody>
+</table>
+<p>一句话概括三者的区别：</p>
+<pre class="plain"><code>资产面：门锁有没有装          → 快照
+漏洞面：这把锁看起来像能撬      → 推断（有假阳性）
+流量面：刚才有人拿钥匙开了门    → 事实（可复核、可留证）
+</code></pre>
+<p><strong>为什么"事实"这件事在审计里值钱？</strong> 因为漏洞扫描器的输出<strong>不可复核</strong>：<br>
+"疑似布尔差分注入"这句话，开发会说"那是你探针的假阳性"。<br>
+而"登录口令 <code>password</code>（指纹 <code>a1b2c3d4</code>，11 字节）以明文出现在请求体里"<br>
+这句话<strong>不需要争论</strong>——它就是发生过的事实，而且开发一眼就知道要改哪一行。</p>
+<p><strong>今天开工前，你手上应该已经有两份东西</strong>（由 Day 162/163 产出）：</p>
+<ol>
+<li><strong>URL + 参数清单</strong> → 代理要用它来决定"该代理哪些流量"；</li>
+<li><strong>一场真实的业务会话</strong>（登录、查询、下单…）→ 代理要用它来做<strong>基线</strong>。</li>
+</ol>
+<h3 id="22">2.2 中间人代理：什么叫"中间人"，什么叫"代理"</h3>
+<p>先用一句话把三个名词钉住：</p>
+<table>
+<thead>
+<tr>
+<th>名词</th>
+<th>一句话定义</th>
+<th>谁在监听</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>正向代理</strong></td>
+<td>代表<strong>客户端</strong>去访问服务端</td>
+<td><strong>客户端侧</strong></td>
+<td>上网代理、审计、抓包</td>
+</tr>
+<tr>
+<td><strong>反向代理</strong></td>
+<td>代表<strong>服务端</strong>来接收客户端</td>
+<td><strong>服务端侧</strong></td>
+<td>Nginx 负载均衡、WAF</td>
+</tr>
+<tr>
+<td><strong>中间人（MITM）</strong></td>
+<td>站在两端之间，<strong>两段连接都是它</strong></td>
+<td>中间任意位置</td>
+<td>审计、调试、劫持（看你有没有授权）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么审计要用正向代理，而不是反向代理？</strong><br>
+因为审计的立场是"<strong>我代表客户端，我要看客户端发了什么</strong>"。<br>
+反向代理给你的是服务端视角——它看到的是"所有客户端"，但你<strong>装不到</strong>它上面，<br>
+除非你本来就拥有那台服务器（那就不叫审计了，叫自测）。<br>
+正向代理的好处是：<strong>你在自己的机器上就能起一个</strong>，然后把客户端的流量指过去。</p>
+<p><strong>"中间人"这个名字为什么让人紧张？</strong> 因为它字面就是攻击手法。<br>
+同样的代码，装在<strong>你自己的</strong>机器上叫"内网审计"，装在<strong>别人的</strong>机器上叫"中间人攻击"。<br>
+区别<strong>不在技术，在授权</strong>。这就是本课把"范围门禁"放在第一个提交、<br>
+把"只监听回环"做成硬断言的原因：<strong>把伦理约束写进代码，而不是写进注释</strong>。</p>
+<h4 id="_1">两段连接，两种角色</h4>
+<pre class="plain"><code>   ┌──────────┐   ①客户端→代理    ┌────────────┐   ②代理→服务端   ┌──────────┐
+   │  客户端   │  GET http://…     │  正向代理   │  GET /path       │  服务端   │
+   │ (审计会话)│ ────────────────▶ │ (本课实现)  │ ───────────────▶ │ (靶场)   │
+   │          │ ◀──────────────── │            │ ◀─────────────── │          │
+   └──────────┘   ④响应回客户端     └────────────┘   ③响应回代理     └──────────┘
+                                         │
+                                         ▼
+                                  flows.jsonl（流量档案）
+</code></pre>
+<p><strong>注意这里的"两次解析"</strong>：代理必须把 ① 的报文<strong>完整收下来</strong>（包括请求体），<br>
+再用 ② 的形式<strong>重新发出</strong>。它不是一根管子，而是一个<strong>会思考的中转站</strong>。<br>
+"管子"（隧道）是 <code>CONNECT</code> 才做的事——那才是它唯一"不思考"的时刻（见 2.5）。</p>
+<h3 id="23">2.3 为什么"流量面"是观测，而前两面是推断</h3>
+<p>用一个具体的例子来看三层的差异。假设目标有个 <code>/login</code>：</p>
+<pre class="plain"><code>Day 162 看：/login 返回 200                        → &quot;这个路径存在&quot;
+Day 163 看：/login?id=1 与 /login?id=1&#x27; 行为不同    → &quot;id 可能可注入&quot;（假阳性风险高）
+Day 164 看：POST /login 明文body里 password=xxx     → &quot;口令以明文传输&quot;（事实）
+         看：响应 Set-Cookie 缺 HttpOnly、Secure    → &quot;会话令牌可被 JS 读取&quot;（事实）
+</code></pre>
+<p><strong>为什么流量面能拿到"事实"？</strong> 因为它不需要<strong>制造</strong>任何输入。<br>
+它只是把<strong>已经发生的</strong>业务对话录下来。<br>
+这一点带来两个重要性质：</p>
+<ol>
+<li><strong>零打扰</strong>：不对业务系统注入任何探针，不增加负载（只增加一次转发）。<br>
+   所以它<strong>可以用在生产环境</strong>——这是漏洞扫描器做不到的。</li>
+<li><strong>可复核</strong>：报告里的每一条都能点回到具体某一条 flow 的<strong>原始字段</strong><br>
+   （值是脱敏的，但结构、长度、指纹都在）。</li>
+</ol>
+<p><strong>代价也很明确</strong>：</p>
+<ul>
+<li><strong>被动</strong>：用户没点过的路径，流量面永远看不到（所以要靠 Day 162 的目录爆破补面）；</li>
+<li><strong>盲区</strong>：TLS 隧道内部的内容它看不见（见 2.5）；</li>
+<li><strong>依赖场景</strong>：需要有人（或脚本）真的去跑一遍业务，否则档案里啥也没有。</li>
+</ul>
+<p><strong>所以三层的正确关系是"互相补盲"，不是"谁替代谁"</strong>：</p>
+<pre class="plain"><code>资产面 给流量面：该盯哪些 URL
+漏洞面 给流量面：哪条推测值得在流量里找证据
+流量面 给漏洞面：这条推测到底是不是真的发生了
+</code></pre>
+<h3 id="24">2.4 代理协议的细节：两种请求行形式</h3>
+<p>这是手写代理<strong>第一个会踩的坑</strong>，必须讲清楚。</p>
+<p>HTTP 请求行的格式是：</p>
+<pre class="plain"><code>METHOD  request-target  HTTP-VERSION
+</code></pre>
+<p>而 <code>request-target</code> 在代理场景下有两种形式：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">http</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="err">① 绝对 URI 形式（绝对形式）—— 正向代理的&quot;标准姿势&quot;</span>
+<span class="nf">GET</span> <span class="nn">http://127.0.0.1:18081/api/user?id=1</span> <span class="kr">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Host</span><span class="o">:</span> <span class="l">127.0.0.1:18081</span>
+
+② 源站形式（origin-form）—— 直接对源站说话时用
+GET /api/user?id=1 HTTP/1.1
+Host: 127.0.0.1:18081
+</code></pre></div>
+<p><strong>为什么会有两种？</strong> 因为"收到报文的人"不同：</p>
+<table>
+<thead>
+<tr>
+<th>收报文的人</th>
+<th>它知道"目标是谁"吗</th>
+<th>所以 request-target 是</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>源站服务器</td>
+<td>知道（就是它自己）</td>
+<td>源站形式（只需要路径）</td>
+</tr>
+<tr>
+<td>正向代理</td>
+<td><strong>不知道</strong></td>
+<td>绝对 URI 形式（必须自带主机名）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么代理两种都得支持？</strong> 因为：</p>
+<ul>
+<li>标准客户端（浏览器、<code>requests</code>、<code>urllib</code>）配了代理后发的是 ①；</li>
+<li>但有些库/工具在"把代理当网关"或用某些 HTTP/1.0 客户端时，会发 ②；</li>
+<li>更麻烦的是：<strong>有些客户端发 ①，却想让你只转 ② 的部分</strong>（比如它对代理说<br>
+  "帮我连到 A"，但 <code>Host</code> 头写的是 B —— 这叫 <strong>Host 头投毒</strong>，<br>
+  是缓存的经典攻击面）。</li>
+</ul>
+<p>本课的 <code>_resolve()</code> 两种都处理，并且在<strong>越界检查</strong>时用的是"request-target 里的主机"，<br>
+而不是 <code>Host</code> 头——<strong>这是一个有意识的安全选择</strong>：</p>
+<blockquote>
+<p>如果门禁信任 <code>Host</code> 头，攻击者就能用 <code>GET http://evil.com/ HTTP/1.1</code> +<br>
+<code>Host: 127.0.0.1</code> 让门禁以为"这是回环"，实际却连去了外部。<br>
+<strong>门禁必须校验"真正会连过去的主机"，而不是"对方声称的主机"。</strong></p>
+</blockquote>
+<h3 id="25-connect">2.5 <code>CONNECT</code>：为什么隧道里的东西看不见</h3>
+<p>HTTPS 流量经过代理时，客户端不会把明文请求给代理（那 HTTPS 就没意义了）。<br>
+它会先让代理<strong>开一条裸字节隧道</strong>：</p>
+<pre class="plain"><code>客户端                   代理                     服务端:443
+  │  CONNECT example.com:443 HTTP/1.1  │                │
+  │ ──────────────────────────────────▶ │                │
+  │                                     │  TCP connect   │
+  │                                     │ ──────────────▶│
+  │  HTTP/1.1 200 Connection Established │                │
+  │ ◀────────────────────────────────── │                │
+  │                                     │                │
+  │ ══════ TLS 握手（代理看不懂）══════════════════════▶  │
+  │ ══════ 加密的 HTTP 请求（代理看不懂）════════════════▶  │
+</code></pre>
+<p><strong>代理在这一刻变成了"哑管子"</strong>：它能看到的有三样（而且只有三样）：</p>
+<ol>
+<li>目标主机名与端口（<code>CONNECT example.com:443</code>）——<strong>这是能看出"去了哪"的</strong>；</li>
+<li>双方各传了多少字节、持续多久；</li>
+<li>什么时候关闭。</li>
+</ol>
+<p><strong>它看不到的</strong>：URL 路径、请求头、请求体、响应体——<strong>全部</strong>。</p>
+<p><strong>为什么不"顺手解密一下"？</strong> 因为 TLS 的信任模型不是"谁转发谁能看"：</p>
+<pre class="plain"><code>证书信任链（简化）
+  浏览器/客户端
+     └─ 信任 ─▶ 一串内置根 CA
+                   └─ 签发 ─▶ example.com 的证书（含公钥）
+                                └─ 只有持有对应私钥的一方，才能完成握手
+</code></pre>
+<p>要解密，只有两条路，<strong>都没有捷径</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>做法</th>
+<th>前提</th>
+<th>性质</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>拿到<strong>目标私钥</strong></td>
+<td>你拥有那个服务器</td>
+<td>合法，但说明你不需要"中间人"</td>
+</tr>
+<tr>
+<td>让客户端<strong>信任你的自签 CA</strong></td>
+<td>你在客户端装了根证书（企业 MDM）</td>
+<td>在<strong>自己拥有</strong>的设备上合法；在别人设备上就是劫持</td>
+</tr>
+</tbody>
+</table>
+<p><strong>所以本课的选择是</strong>：不尝试、也不假装能解密，而是把"看不见"<strong>如实记成一条覆盖缺口</strong>，<br>
+最终把退出码推到 <code>4</code>。这比"报告里啥也没写，看起来一切正常"诚实得多。</p>
+<blockquote>
+<p><strong>这条规则在报告里的措辞极其重要</strong>：<br>
+<code>CONNECT</code> 的 flow 会让报告写"<strong>本段流量未被检查</strong>"，<br>
+而<strong>不会</strong>写"未发现问题"。因为"没看"和"没问题"是两件事——<br>
+把它们混为一谈，是整个安全行业最常见、也最危险的一种自欺。</p>
+</blockquote>
+<h3 id="26">2.6 流模型：一次往返要记哪些字段</h3>
+<p><strong>什么是"流"（flow）？</strong> 一次完整的"请求 → 响应"往返。<br>
+它是流量面的<strong>最小证据单元</strong>：报告里的每一条结论都能点回到某个 <code>fid</code>。</p>
+<p><strong>为什么用"流"而不是"包"？</strong> 因为：</p>
+<table>
+<thead>
+<tr>
+<th>粒度</th>
+<th>得到什么</th>
+<th>适不适合做审计报告</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>包（packet）</td>
+<td>字节级真相，但一条请求可能拆成几十个包</td>
+<td>❌ 太细，规则引擎要自己重组 TCP</td>
+</tr>
+<tr>
+<td><strong>流（我方定义）</strong></td>
+<td>语义级：方法、URL、头、体、状态、耗时</td>
+<td>✅ 一条结论对应一条流</td>
+</tr>
+<tr>
+<td>会话（session）</td>
+<td>一次登录到退出的全过程</td>
+<td>需要额外定义"会话边界"，复杂</td>
+</tr>
+</tbody>
+</table>
+<p>（Day 157 用 <code>pyshark</code> 做的是"包"层；今天做的是"应用层语义"层。两者互补。）</p>
+<p>本课记的字段，以及<strong>为什么记它/为什么脱敏它</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>记它的理由</th>
+<th>处理方式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fid</code></td>
+<td>让每条结论可点回原始证据</td>
+<td>自增编号</td>
+</tr>
+<tr>
+<td><code>ts</code> / <code>duration_ms</code></td>
+<td>时间线、慢响应、性能基线</td>
+<td>原样</td>
+</tr>
+<tr>
+<td><code>method</code> / <code>scheme</code> / <code>host</code> / <code>port</code></td>
+<td>判断"明文还是密文"、"是不是写方法"</td>
+<td>原样</td>
+</tr>
+<tr>
+<td><code>path</code> / <code>url</code></td>
+<td>定位是哪个端点出的问题</td>
+<td><strong>查询串脱敏</strong></td>
+</tr>
+<tr>
+<td><code>query_keys</code></td>
+<td>单独留下"哪些参数名是敏感的"</td>
+<td>只留参数名</td>
+</tr>
+<tr>
+<td><code>request_headers</code></td>
+<td>鉴权方式、内容类型、UA</td>
+<td>凭据类头整条脱敏</td>
+</tr>
+<tr>
+<td><code>request_body</code></td>
+<td>判定"凭据是否明文传输"</td>
+<td><strong>字段值脱敏</strong></td>
+</tr>
+<tr>
+<td><code>response_status</code></td>
+<td>成功/失败/重定向/服务端错误</td>
+<td>原样</td>
+</tr>
+<tr>
+<td><code>response_headers</code></td>
+<td><code>Set-Cookie</code> 标记、安全头、指纹外泄</td>
+<td><code>Set-Cookie</code> 等脱敏</td>
+</tr>
+<tr>
+<td><code>response_body</code></td>
+<td>报错回显、响应体泄密</td>
+<td><strong>字段值脱敏 + PII 擦除 + 截断</strong></td>
+</tr>
+<tr>
+<td><code>inspected</code></td>
+<td><strong>这条流到底看没看见内容</strong></td>
+<td>布尔值（隧道 = <code>false</code>）</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>传输层失败也是事实，不能静默</td>
+<td>异常类型 + 消息</td>
+</tr>
+<tr>
+<td><code>note</code></td>
+<td>记录"命中了哪些敏感字段"</td>
+<td>只写<strong>字段名</strong>，不写值</td>
+</tr>
+</tbody>
+</table>
+<p><strong>两个字段值得单独解释：</strong></p>
+<p><strong>① 为什么 <code>inspected</code> 要显式存成一个字段，而不是靠"body 是空的"推断？</strong><br>
+因为"body 为空"有太多可能：<code>204 No Content</code>、真的返回空、<br>
+被截断、隧道不可见、请求失败——<strong>这一堆完全不同的处境，会塌缩成同一个表象</strong>。<br>
+显式存 <code>inspected</code> 就是拒绝这种塌缩。这是一个通用原则：</p>
+<blockquote>
+<p><strong>当多种原因会导致同一种表象时，必须把"原因"显式存下来，<br>
+否则下游只能在"表象"上做猜测。</strong></p>
+</blockquote>
+<p><strong>② 为什么 <code>note</code> 只写字段名？</strong> 因为报告需要的是<br>
+"这条流里出现了 <code>password</code> 字段"这个<strong>结论</strong>，<br>
+而不是"<code>password</code> 的值是什么"这个<strong>秘密</strong>。少写一个字节都不行的那种克制。</p>
+<h3 id="27">2.7 本课最重要的设计：先脱敏，再检测</h3>
+<p>这是 Day 164 唯一一个"你必须能讲清楚，否则不算学会"的设计。</p>
+<p><strong>先看一个反面设计</strong>（大多数人第一版都会这么写）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 反面写法：先检测明文，再把明文删掉</span>
+<span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;password=([^&amp;]+)&quot;</span><span class="p">,</span> <span class="n">body</span><span class="p">):</span>
+    <span class="n">findings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;明文口令传输&quot;</span><span class="p">)</span>
+    <span class="n">body</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;password=([^&amp;]+)&quot;</span><span class="p">,</span> <span class="s2">&quot;password=&lt;redacted&gt;&quot;</span><span class="p">,</span> <span class="n">body</span><span class="p">)</span>   <span class="c1"># 事后补救</span>
+</code></pre></div>
+<p><strong>它的三个问题</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>检测依赖<strong>明文</strong></td>
+<td>任何加密/编码变形（Base64、URL 编码）都会让检测失效</td>
+</tr>
+<tr>
+<td>明文<strong>先进了内存</strong></td>
+<td>它可能落进临时文件、日志、异常栈、core dump</td>
+</tr>
+<tr>
+<td>"先检测后清理"是<strong>两段逻辑</strong></td>
+<td>一旦漏掉一处（比如 <code>path</code> 里的同一个值），就全线失守</td>
+</tr>
+</tbody>
+</table>
+<p><strong>本课的做法：值在</strong>进入档案对象之前<strong>就已经被换成了指纹。</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ 本课写法：redact 是第一道工序，不是补救措施</span>
+<span class="n">req_body_redacted</span><span class="p">,</span> <span class="n">body_hits</span> <span class="o">=</span> <span class="n">redact_body</span><span class="p">(</span><span class="n">req_body_text</span><span class="p">,</span> <span class="n">ctype</span><span class="p">)</span>   <span class="c1"># 值 → &lt;redacted:hash/NB&gt;</span>
+<span class="n">req_body_redacted</span><span class="p">,</span> <span class="n">req_pii</span>   <span class="o">=</span> <span class="n">mask_pii</span><span class="p">(</span><span class="n">req_body_redacted</span><span class="p">)</span>         <span class="c1"># PII → &lt;pii:类别&gt;</span>
+<span class="n">flow</span> <span class="o">=</span> <span class="n">Flow</span><span class="p">(</span><span class="o">...</span><span class="p">,</span> <span class="n">request_body</span><span class="o">=</span><span class="n">req_body_redacted</span><span class="p">,</span> <span class="n">note</span><span class="o">=</span><span class="n">body_hits</span><span class="p">)</span>
+</code></pre></div>
+<p>于是检测逻辑面对的是这样的文本：</p>
+<pre class="plain"><code>username=ada&amp;password=%3Credacted%3A9f8e7d6c%2F11B%3E
+</code></pre>
+<p><strong>它怎么还能判定"这是明文口令"？</strong> 靠两个<strong>结构信号</strong>：</p>
+<ol>
+<li><strong>字段名</strong>：<code>password</code> 出现在里面 → 说明这个字段承载的是口令；</li>
+<li><strong>值的指纹标记</strong> <code>redacted:</code> → 说明这个值<strong>确实存在且被脱敏了</strong><br>
+   （不是空值、不是占位符）。</li>
+</ol>
+<p>再加上传输层信号（<code>scheme == "http"</code>），结论就成立：<strong>"明文传输了口令"</strong>。</p>
+<p><strong>这个设计的收益是三层叠加的：</strong></p>
+<pre class="plain"><code>①  档案里没有明文         → 审计工具自己不会成为泄密渠道（合规底线）
+②  检测不依赖明文         → 连&quot;我要看一看才知道&quot;这一步都不需要（更安全）
+③  脱敏是单一入口         → 只要 redact 覆盖面完整，就不会有漏网之鱼
+</code></pre>
+<p><strong>代价（必须承认）：</strong></p>
+<ul>
+<li><strong>可读性下降</strong>：看报告时要对照字段名读，不能一眼看到原文；</li>
+<li><strong>指纹可被暴力破解</strong>：如果值很短（比如 4 位 PIN），<br>
+<code>sha256 前 8 位</code> 是可以被离线穷举的。所以指纹的作用是"<strong>比对</strong>"，<br>
+  不是"<strong>保密</strong>"——真正的保密靠"值本身没被记下来"。</li>
+</ul>
+<p><strong>这条"先脱敏再检测"的原则，可以推广到所有日志系统</strong>：</p>
+<blockquote>
+<p>日志/档案的<strong>默认状态</strong>应当是"不含秘密"，<br>
+需要秘密的场景必须<strong>显式申请</strong>（而不是默认记下来、事后删）。</p>
+</blockquote>
+<h3 id="28">2.8 覆盖率：为什么"看不见"必须独立成一种结果</h3>
+<p>上一节的 <code>inspected</code> 字段，最终会汇成一个整体指标：<strong>覆盖率</strong><br>
+= 已检查的 flow 数 ÷ 总 flow 数。</p>
+<p><strong>为什么它必须单独统计、单独汇报、单独进退出码？</strong> 用一个反例说明：</p>
+<pre class="plain"><code>假设一次审计：100 个请求，其中 60 个走 HTTPS（CONNECT 隧道，看不见）
+                只有 40 个走 HTTP（看见了）
+
+如果报告只写&quot;未发现问题&quot;：
+    读者以为：100 个都检查过了，安全 ✅
+    实际是：  只有 40 个检查过，另外 60 个是黑洞 ❌
+</code></pre>
+<p><strong>这是审计报告里最危险的一句话</strong>——它把"我没看"伪装成"没问题"。<br>
+本课的对策是把这件事<strong>结构性地</strong>表达出来：</p>
+<pre class="plain"><code>报告的&quot;发现汇总&quot;一节开头就写：
+  （本规则集未命中任何发现。注意：这不等于『安全』，见覆盖率一节。）
+
+覆盖率一节单独列出：
+  总 flow / 已检查 / 未检查（隧道）/ 传输错误 / 覆盖率%
+
+退出码：
+  有隧道或传输错误 → 4（结论不可信），优先级高于 3（有发现）
+</code></pre>
+<p><strong>为什么退出码 <code>4</code> 的优先级高于 <code>3</code>（有发现）？</strong><br>
+因为"没测完"会<strong>掩盖</strong>发现：如果一半流量是黑洞，<br>
+报告里即使有 P0 也是"不完整的 P0"——先告诉上层"这轮结论不可信"，<br>
+再谈发现了什么，是更诚实的顺序。<br>
+（越界的 <code>2</code> 由异常路径抛出，语义是"根本没开始测"，自然排在 <code>4</code> 之前。）</p>
+<p><strong>最后一点：传输错误（连不上、超时）也算覆盖缺口。</strong><br>
+因为"连不上"和"没问题"在报告里长得一样——都是"没有发现"。<br>
+不显式区分，报告就在撒谎。</p>
+<hr>
+<h2 id="3">3. 原理解释</h2>
+<h3 id="31">3.1 代理的字节级工作流</h3>
+<p>把 <code>_ProxyHandler.handle()</code> 拆成 7 步，每一步都对应一个真实会出问题的地方：</p>
+<pre class="plain"><code>① 读请求行          readline() → &quot;GET http://h:p/pa?q=1 HTTP/1.1&quot;
+                    坑：行太长；用 readline(65537) 限制单行上限
+② 读请求头          loop readline() 直到空行
+                    坑：头可以有重复键（Set-Cookie）；必须存成列表不是 dict
+③ 判断是否 CONNECT  是 → 走隧道分支（记录&quot;不可见&quot;），结束
+④ 解析目标          _resolve()：绝对 URI 形式 / 源站形式，两种都要认
+                    坑：门禁必须校验 request-target 的主机，不是 Host 头
+⑤ 门禁检查          主机 + 端口双重白名单；越界 → 403，不建立任何连接
+⑥ 读请求体          Content-Length 或 chunked
+                    坑：不实现 chunked 会静默截断请求体（表单变空）
+⑦ 转发 + 记录       剔除逐跳头 → http.client 发出去 → 读全响应
+                    → 脱敏 → 落 flow → 回给客户端
+</code></pre>
+<p><strong>为什么"顺序"本身是设计？</strong> 因为第 ⑤ 步必须在第 ⑦ 步<strong>之前</strong>：<br>
+门禁如果放在"已经在转发过程中"再检查，就等于"先连上了再说不该连"，<br>
+那已经构成了对越界目标的实际访问。<strong>门禁是前置条件，不是事后审计。</strong></p>
+<h3 id="32-hop-by-hop">3.2 逐跳头（hop-by-hop）：为什么必须剔除</h3>
+<p>HTTP 头分两类，这个区分是代理正确性的基础：</p>
+<table>
+<thead>
+<tr>
+<th>类别</th>
+<th>含义</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>端到端（end-to-end）</strong></td>
+<td>描述<strong>消息本身</strong>，两端之间不该改动</td>
+<td><code>Content-Type</code>、<code>Authorization</code></td>
+</tr>
+<tr>
+<td><strong>逐跳（hop-by-hop）</strong></td>
+<td>只描述<strong>这一段连接</strong>，不该被转发</td>
+<td><code>Connection</code>、<code>Keep-Alive</code>、<code>Transfer-Encoding</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>不剔除会怎样？</strong> 举三个真实后果：</p>
+<pre class="plain"><code>① 转发 Connection: keep-alive
+   代理告诉客户端&quot;我要保持这条连接&quot;，同时又把它转给服务端。
+   两端各自的连接状态开始互相污染 → 出现&quot;响应错位&quot;
+   （客户端读到的响应其实是上一个请求的）。
+
+② 转发 Transfer-Encoding: chunked，同时又自己加了 Content-Length
+   两条互相矛盾的长度声明 → 客户端按哪个走？
+   这就是 HTTP 请求走私（request smuggling）的经典土壤。
+
+③ 转发 Proxy-Authorization
+   把&quot;客户端给代理的凭据&quot;原样发给源站 →
+   源站日志里出现了一个它根本不该看到的凭据。
+</code></pre>
+<p>本课对请求方向的处理是：剔除 <code>HOP_BY_HOP</code> 集合里的头，然后<strong>自己重算</strong><br>
+<code>Content-Length</code> 并显式加 <code>Connection: close</code>。对响应方向同样处理。</p>
+<p><strong>为什么选 <code>Connection: close</code> 而不是实现 keep-alive？</strong> 见 3.3 末尾的取舍说明。</p>
+<h3 id="33-accept-encoding">3.3 分块传输与压缩：代理为什么主动去掉 <code>Accept-Encoding</code></h3>
+<p>这一节讲两个"看起来是优化、实际是坑"的东西。</p>
+<h4 id="chunked">（一）chunked：长度不写在头里</h4>
+<p><code>Transfer-Encoding: chunked</code> 的意思是"我边生成边发，长度事先不知道"：</p>
+<pre class="plain"><code>1a\r\n
+{&quot;user&quot;:&quot;ada&quot;,&quot;role&quot;:&quot;user&quot;}\r\n
+0\r\n
+\r\n
+</code></pre>
+<p><strong>为什么代理必须实现它？</strong> 因为<strong>不实现就会静默截断</strong>：<br>
+请求体读到 0 字节，但客户端明明发了数据。<br>
+表现为"服务端收到的表单是空的"——一个查一整天也查不出来的 bug。</p>
+<p><strong>但注意一个不对称</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>方向</th>
+<th>本课处理</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>客户端 → 代理</td>
+<td><strong>解析</strong> chunked（<code>_read_chunked</code>）</td>
+<td>不发出去就没法转发</td>
+</tr>
+<tr>
+<td>代理 → 客户端</td>
+<td><strong>不用</strong> chunked，统一用 <code>Content-Length</code></td>
+<td>我们手里已有完整字节，长度是已知的</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么回给客户端时不重新分块？</strong> 因为分块是"流式生成"的产物。<br>
+我们的数据已经完整躺在内存里了，再用分块只是无谓的复杂度。</p>
+<h4 id="_2">（二）压缩：一个必须承认的取舍</h4>
+<p><code>Content-Encoding: gzip</code> 的意思是"响应体是 gzip 压过的"。</p>
+<p><strong>问题</strong>：<code>gzip</code> 压缩后的字节流是<strong>二进制</strong>，<br>
+落到档案里就是一堆乱码——规则引擎看不懂，正则也匹配不到任何东西。</p>
+<p><strong>三种处理方式，各带代价</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>做法</th>
+<th>好处</th>
+<th>代价</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>透传</strong>（不改）</td>
+<td>完全透明，客户端行为不变</td>
+<td>档案里是二进制，规则失效</td>
+<td>纯转发代理</td>
+</tr>
+<tr>
+<td><strong>透传 + 按需解压</strong></td>
+<td>两者兼得</td>
+<td>代码复杂（要处理 gzip/deflate/br 三种）</td>
+<td>生产代理 ✅</td>
+</tr>
+<tr>
+<td><strong>代理主动去掉 <code>Accept-Encoding</code></strong></td>
+<td>最简单，拿到的一定是纯文本</td>
+<td>流量变大；<strong>改变了客户端的观测</strong></td>
+<td>本课 ✅</td>
+</tr>
+</tbody>
+</table>
+<p><strong>本课选第三种，理由与代价都写在这里</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 转发前，从请求头里**删掉** Accept-Encoding</span>
+<span class="k">if</span> <span class="n">low</span> <span class="o">==</span> <span class="s2">&quot;accept-encoding&quot;</span><span class="p">:</span>
+    <span class="k">continue</span>
+</code></pre></div>
+<ul>
+<li><strong>收益</strong>：服务端返回身份编码（identity，即不压缩）→ 档案永远是纯文本 → 规则可靠；</li>
+<li><strong>代价 ①</strong>：响应体体积变大（少则 2–3 倍），代理链路带宽占用上升；</li>
+<li><strong>代价 ②</strong>：<strong>它改变了客户端原本会看到的东西</strong>——原本客户端可能期望压缩。<br>
+  这在"帮你省流量"的角度是负优化。</li>
+</ul>
+<blockquote>
+<p><strong>生产环境该怎么做？</strong> 透传 <code>Accept-Encoding</code>，<br>
+然后在<strong>归档前</strong>对 <code>Content-Encoding</code> 做解压（只解不支持的编码就原样存二进制 + 标记）。<br>
+本课选"简化 + 明说"，而不是"假装没有这个取舍"。<br>
+<strong>教学代码最忌讳的就是把取舍藏起来。</strong></p>
+</blockquote>
+<h4 id="keep-alive">（三）为什么干脆不支持 keep-alive</h4>
+<p>真实代理要处理长连接上的<strong>多个</strong>请求（甚至流水线）。<br>
+本课每个连接<strong>只处理一个请求</strong>，然后回 <code>Connection: close</code>。</p>
+<p>理由很直接：<strong>换来 60 行能读懂的核心逻辑</strong>。<br>
+代价是：每个请求多一次 TCP 三次握手（<code>/slow</code> 那类请求里，握手开销占比很小）。</p>
+<p>这符合 HTTP/1.1 规范——<code>Connection: close</code> 是<strong>明文允许</strong>的行为，<br>
+标准客户端（<code>urllib</code>、<code>requests</code>、浏览器）都会正确降级，不会出错。</p>
+<h3 id="34-14">3.4 14 条规则的判定逻辑总表</h3>
+<p>规则引擎的核心问题是：<strong>"什么样的一个 flow，算是一个发现？"</strong><br>
+每条规则都是对这个问题的一个回答。总表如下：</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>规则</th>
+<th>严重度</th>
+<th>判定条件（看 flow 的哪个字段）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>R1</td>
+<td><code>cleartext-credential</code></td>
+<td>high</td>
+<td><code>scheme==http</code> ∧ 请求体含敏感字段标记</td>
+</tr>
+<tr>
+<td>R2</td>
+<td><code>sensitive-in-url</code></td>
+<td>medium</td>
+<td><code>query_keys</code> 非空（敏感参数名出现在查询串）</td>
+</tr>
+<tr>
+<td>R3</td>
+<td><code>auth-header-cleartext</code></td>
+<td>high</td>
+<td><code>scheme==http</code> ∧ 请求头有 <code>Authorization</code></td>
+</tr>
+<tr>
+<td>R4</td>
+<td><code>cookie-missing-flags</code></td>
+<td>medium</td>
+<td>响应 <code>Set-Cookie</code> 缺 <code>HttpOnly</code> 或 <code>Secure</code></td>
+</tr>
+<tr>
+<td>R5</td>
+<td><code>missing-security-headers</code></td>
+<td>low</td>
+<td>HTML 200 响应缺 <code>nosniff</code>/<code>CSP</code>/<code>HSTS</code></td>
+</tr>
+<tr>
+<td>R6</td>
+<td><code>error-disclosure</code></td>
+<td>high</td>
+<td>响应体命中报错特征（SQL/堆栈/调试页/路径）</td>
+</tr>
+<tr>
+<td>R7</td>
+<td><code>secret-in-response-body</code></td>
+<td>high</td>
+<td>响应体含敏感字段名（值已脱敏）</td>
+</tr>
+<tr>
+<td>R8</td>
+<td><code>server-error</code></td>
+<td>medium</td>
+<td><code>response_status &gt;= 500</code></td>
+</tr>
+<tr>
+<td>R9</td>
+<td><code>redirect-chain</code></td>
+<td>info</td>
+<td 301_302_303_307_308="301,302,303,307,308"><code>response_status</code> ∈</td>
+</tr>
+<tr>
+<td>R10</td>
+<td><code>tls-tunnel-uninspected</code></td>
+<td>medium</td>
+<td><code>inspected == false</code> 或 <code>method == CONNECT</code></td>
+</tr>
+<tr>
+<td>R11</td>
+<td><code>state-changing-method</code></td>
+<td>info</td>
+<td>方法 ∈ {PUT,PATCH,DELETE} 或非豁免的 POST</td>
+</tr>
+<tr>
+<td>R12</td>
+<td><code>slow-response</code></td>
+<td>low</td>
+<td><code>duration_ms &gt;= 300</code></td>
+</tr>
+<tr>
+<td>R13</td>
+<td><code>pii-in-request</code></td>
+<td>medium</td>
+<td><code>pii_labels</code> 非空</td>
+</tr>
+<tr>
+<td>R14</td>
+<td><code>server-banner</code></td>
+<td>info</td>
+<td>响应头有 <code>Server</code>/<code>X-Powered-By</code>/<code>X-AspNet-Version</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>R10 为什么第一个判定、并且直接 <code>return</code>？</strong><br>
+因为它决定"<strong>其他规则的结果是否可信</strong>"。<br>
+一条隧道 flow 没有任何可分析内容，对它跑剩下 13 条规则只会产生无意义的空转——<br>
+更重要的是，它是唯一一条"关于覆盖面"的规则，<br>
+语义上和"关于内容"的规则不在一个层面。</p>
+<p><strong>R11 的"豁免"为什么必须显式写出来？</strong><br>
+因为登录、搜索这类业务本身就是 POST。如果全报成"破坏只读"，<br>
+报告会被噪音淹没，运维会直接忽略整份报告。<br>
+<code>_is_benign_post()</code> 的判定是：请求体里<strong>既没有敏感字段、也没有 PII</strong> → 视为常规业务。<br>
+<strong>代价写在这里</strong>：真实的写操作如果恰好不带敏感字段，会被漏掉。<br>
+这是一个<strong>显式</strong>的取舍，不是一个"没考虑到"。</p>
+<h3 id="35">3.5 明文凭据判定：为什么用"字段名 + 指纹"而不是匹配明文</h3>
+<p><code>_body_has_sensitive_marker()</code> 是整个引擎里原理最需要讲清的一个函数。<br>
+它回答的是：<strong>在值已经被脱敏掉之后，怎么还能判定"这里传了口令"？</strong></p>
+<p>看它在实际数据上面对的东西：</p>
+<pre class="plain"><code>username=ada&amp;password=%3Credacted%3A9f8e7d6c%2F11B%3E
+</code></pre>
+<p>判定分两步：</p>
+<pre class="plain"><code>第 1 步：文本里有没有脱敏标记？
+        &quot;redacted:&quot; 出现  或  &quot;redacted%3a&quot; 出现        ← ⚠️ 见 3.9 的踩坑 ②
+        ├─ 没有 → 返回 False（这个 flow 里没有任何被脱敏的值）
+        └─ 有   ↓
+第 2 步：这些标记是挂在哪个字段名上的？
+        password= / &quot;api_key&quot;: / &#x27;token&#x27;: …  是否命中 SENSITIVE_KEYS / SECRET_BODY_KEYS？
+        ├─ 命中 → True（存在敏感字段，且值确实被脱敏了）
+        └─ 未命中 → False
+</code></pre>
+<p><strong>为什么"存在标记"是必要条件？</strong> 因为它区分了两种情况：</p>
+<table>
+<thead>
+<tr>
+<th>情况</th>
+<th>文本长什么样</th>
+<th>应该判定为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>字段<strong>有值</strong>且被脱敏</td>
+<td><code>password=&lt;redacted:…&gt;</code></td>
+<td>✅ 明文传了口令</td>
+</tr>
+<tr>
+<td>字段<strong>空值</strong>或字段名恰好出现在别处</td>
+<td><code>password=</code> / 文本里提到 "password"</td>
+<td>❌ 不能判定</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么值指纹（<code>sha256 前 8 位</code>）要保留下来，而不是全部删成固定字符串？</strong><br>
+因为它支撑一类<strong>只能在流量层发现的结论</strong>：</p>
+<pre class="plain"><code>同一个口令的指纹 a1b2c3d4 出现在 3 个不同端点的请求里
+        ↓
+结论：这个口令被重复使用（横向移动风险的信号）
+</code></pre>
+<p>这个结论<strong>不需要明文</strong>就能得出。这是"先脱敏"设计的直接收益：<br>
+<strong>脱敏不是把信息扔掉，而是把信息降维到"结构性信号"。</strong></p>
+<h3 id="36">3.6 优先级 = 严重度 × 置信度</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">priority</span> <span class="o">=</span> <span class="n">SEVERITY_SCORE</span><span class="p">[</span><span class="n">severity</span><span class="p">]</span> <span class="o">*</span> <span class="n">confidence</span>
+<span class="n">level</span>    <span class="o">=</span> <span class="n">P0</span><span class="p">(</span><span class="err">≥</span><span class="mf">3.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">P1</span><span class="p">(</span><span class="err">≥</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">P2</span><span class="p">(</span><span class="err">≥</span><span class="mf">1.0</span><span class="p">)</span> <span class="o">/</span> <span class="n">P3</span><span class="p">(</span><span class="o">&lt;</span><span class="mf">1.0</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>为什么不是"只看严重度"？</strong> 看两个例子就明白了：</p>
+<table>
+<thead>
+<tr>
+<th>发现</th>
+<th>严重度</th>
+<th>置信度</th>
+<th>优先级</th>
+<th>该不该马上处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>明文传输口令</td>
+<td>high (3.0)</td>
+<td>0.95</td>
+<td><strong>2.85 → P1</strong></td>
+<td>✅ 马上</td>
+</tr>
+<tr>
+<td>隧道不可见</td>
+<td>medium (2.0)</td>
+<td>1.00</td>
+<td>2.00 → P1</td>
+<td>⚠️ 这是覆盖问题</td>
+</tr>
+<tr>
+<td>缺安全头</td>
+<td>low (1.0)</td>
+<td>0.80</td>
+<td>0.80 → P3</td>
+<td>排期做</td>
+</tr>
+<tr>
+<td><strong>疑似</strong>时间盲注痕迹</td>
+<td>high (3.0)</td>
+<td>0.30</td>
+<td><strong>0.90 → P3</strong></td>
+<td>先复核，别慌</td>
+</tr>
+</tbody>
+</table>
+<p>最后一行是关键：<strong>一个"严重但很可能是假阳性"的发现，<br>
+优先级必须低于"不严重但确定"的发现。</strong><br>
+否则每次扫描都会把运维拉去追一堆幻觉，几轮之后他们就不再读报告了——<br>
+<strong>报告没人读，等于没有报告。</strong></p>
+<p><strong>乘法还能表达"双重打折"</strong>：严重度高、置信度也高 → 相乘后被放大；<br>
+两项都低 → 相乘后被压到几乎看不见。这正是我们想要的排序行为。</p>
+<h3 id="37">3.7 语义化退出码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">exit_code</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">scope_violation</span><span class="p">:</span>      <span class="k">return</span> <span class="mi">2</span>   <span class="c1"># 越界（根本没开始测）</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">coverage_incomplete</span><span class="p">:</span>  <span class="k">return</span> <span class="mi">4</span>   <span class="c1"># 覆盖缺口（结论不可信）</span>
+    <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">level</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;P0&quot;</span><span class="p">,</span><span class="s2">&quot;P1&quot;</span><span class="p">)</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">findings</span><span class="p">):</span> <span class="k">return</span> <span class="mi">3</span>
+    <span class="k">return</span> <span class="mi">0</span>
+</code></pre></div>
+<p><strong>判定顺序就是优先级顺序</strong>，理由各自不同：</p>
+<pre class="plain"><code>2  越界            → 这是**配置/流程**问题，不是安全问题。要人改工单，不是改代码。
+4  覆盖不完整      → 这是**结论可信度**问题。必须先说&quot;这轮结果别信&quot;，再谈发现。
+3  有 P0/P1 发现   → 这是**安全结果**。要人去看、去修。
+0  干净            → 唯一一个&quot;可以自动通过&quot;的信号。
+</code></pre>
+<p><strong>为什么不用 <code>0/1</code>？</strong> 因为 CI 流水线的后续动作完全不同：</p>
+<table>
+<thead>
+<tr>
+<th>退出码</th>
+<th>流水线该做什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>继续，自动合并</td>
+</tr>
+<tr>
+<td>2</td>
+<td>停下来，找<strong>流程负责人</strong>（工单/范围不对）</td>
+</tr>
+<tr>
+<td>3</td>
+<td>停下来，找<strong>开发负责人</strong>（有洞要修）</td>
+</tr>
+<tr>
+<td>4</td>
+<td>停下来，找<strong>运维</strong>（采集方案有盲区，结论不可用）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>注意退出码 <code>3</code> 的判定用的是 <code>level</code>（P0/P1）而不是"有任何发现"。</strong><br>
+因为 <code>info</code> 级发现（重定向、服务端指纹）数量可能上百，<br>
+如果它们能让流水线失败，这条流水线一周内就会被关掉。</p>
+<h3 id="38">3.8 覆盖率与"结论可信度"</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">facts</span><span class="p">[</span><span class="s2">&quot;coverage_percent&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="mf">100.0</span> <span class="o">*</span> <span class="n">inspected</span> <span class="o">/</span> <span class="n">total</span>    <span class="c1"># 只算&quot;内容看得见&quot;的</span>
+<span class="n">coverage_incomplete</span> <span class="o">=</span> <span class="p">(</span><span class="n">uninspected</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">transport_errors</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>为什么 <code>transport_errors</code>（连不上/超时）也算不完整？</strong><br>
+因为一次超时意味着"<strong>我们对这个端点一无所知</strong>"。<br>
+它不是"没问题"，是"没有结论"。把两者分开是报告诚实性的基准线。</p>
+<p><strong>覆盖率低到什么程度就不能出结论了？</strong> 本课不设硬阈值——<br>
+因为"低"的容忍度取决于审计目的（合规取证 vs 内部自检完全不同）。<br>
+本课的做法是：<strong>把数字和事实摆出来，让决策者自己判断</strong>，<br>
+并保证"报告不会在覆盖率低的时候假装通过"（退出码 <code>4</code>）。</p>
+<h3 id="39">3.9 三个由"实测"驱动的修复（真实踩坑记录）</h3>
+<p><strong>这一节是本课最有价值的部分。</strong> 下面三条不是"设计时的考虑"，<br>
+而是本模块<strong>第一版真的写错了、跑起来才发现</strong>的问题。<br>
+它们都已经变成 <code>mitm_core.py --self-test</code> 里的断言。</p>
+<h4 id="1build_opener">踩坑 ①：<code>build_opener()</code> 会"偷偷"装上重定向处理器</h4>
+<p><strong>症状</strong>：<code>/redirect?to=/login</code> 这条 flow，报告里记的状态码是 <code>404</code> 而不是 <code>302</code>。<br>
+<code>redirect-chain</code> 规则永远沉默。</p>
+<p><strong>根因</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 看起来像&quot;我没装重定向处理器，所以不会跟随&quot;</span>
+<span class="n">opener</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">build_opener</span><span class="p">(</span><span class="n">ProxyHandler</span><span class="p">(</span><span class="o">...</span><span class="p">),</span> <span class="n">HTTPHandler</span><span class="p">())</span>
+</code></pre></div>
+<p>但 <code>build_opener()</code> 的语义是"<strong>在默认处理器的基础上</strong>加上你给的"：<br>
+你没提供 <code>HTTPRedirectHandler</code>，它就<strong>自动补上默认实现</strong> →<br>
+302 被悄悄跟随到 <code>/login</code> → 最终记录的是 404。</p>
+<p><strong>修复</strong>：提供子类并让 <code>redirect_request()</code> 返回 <code>None</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">_NoRedirect</span><span class="p">(</span><span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">HTTPRedirectHandler</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">redirect_request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">req</span><span class="p">,</span> <span class="n">fp</span><span class="p">,</span> <span class="n">code</span><span class="p">,</span> <span class="n">msg</span><span class="p">,</span> <span class="n">headers</span><span class="p">,</span> <span class="n">newurl</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">None</span>          <span class="c1"># 返回 None → urllib 把 3xx 当 HTTPError 抛出来</span>
+
+<span class="n">opener</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">build_opener</span><span class="p">(</span><span class="n">ProxyHandler</span><span class="p">(</span><span class="o">...</span><span class="p">),</span> <span class="n">_NoRedirect</span><span class="p">(),</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>教训</strong>：</p>
+<blockquote>
+<p><strong>"我没有做某件事"和"某件事不会发生"是两回事。</strong><br>
+遇到"框架替你做了默认选择"的场景，必须验证<strong>默认值</strong>，<br>
+而不是推理"我传了什么"。</p>
+</blockquote>
+<h4 id="2-urlencode">踩坑 ②：脱敏标记在 <code>urlencode</code> 之后变形了</h4>
+<p><strong>症状</strong>：<code>cleartext-credential</code> 规则对<strong>所有 form 表单</strong>都不命中。</p>
+<p><strong>根因</strong>：请求体是 <code>application/x-www-form-urlencoded</code>，<br>
+脱敏后值变成 <code>&lt;redacted:9f8e7d6c/11B&gt;</code>，<br>
+但 <code>urlencode()</code> 会把 <code>:</code> 转义成 <code>%3A</code>：</p>
+<pre class="plain"><code>password=&lt;redacted:9f8e7d6c/11B&gt;      ← 脱敏时
+password=%3Credacted%3A9f8e7d6c%2F11B%3E   ← 落进档案时
+</code></pre>
+<p>而检测代码里写的是 <code>if "redacted:" in body</code> → <strong>永远不匹配</strong>。</p>
+<p><strong>修复</strong>：两个写法都认。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">if</span> <span class="s2">&quot;redacted:&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">lowered</span> <span class="ow">and</span> <span class="s2">&quot;redacted</span><span class="si">%3a</span><span class="s2">&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">lowered</span><span class="p">:</span>
+    <span class="k">return</span> <span class="kc">False</span>
+</code></pre></div>
+<p><strong>教训</strong>：</p>
+<blockquote>
+<p><strong>序列化会改变字面量。</strong> 任何"写入 → 编码 → 再读出比对"的链路，<br>
+都要在<strong>真实编码之后</strong>的字面量上做匹配，而不是在"我构造时的样子"上做。</p>
+</blockquote>
+<h4 id="3-url-path">踩坑 ③：只脱敏了 URL，忘了 <code>path</code> 里也带着查询串</h4>
+<p><strong>症状</strong>：自检里的"档案不得包含明文 token"断言失败：</p>
+<pre class="plain"><code>AssertionError: 明文 token 泄漏进了档案！   # tk_live_164_fake
+</code></pre>
+<p><strong>根因</strong>：<code>_forward()</code> 里做了两件事：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">raw_url</span><span class="p">,</span> <span class="n">query_keys</span> <span class="o">=</span> <span class="n">redact_url</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>     <span class="c1"># ✅ url 脱敏了</span>
+<span class="n">flow</span> <span class="o">=</span> <span class="n">Flow</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">path</span><span class="p">,</span> <span class="n">url</span><span class="o">=</span><span class="n">raw_url</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>  <span class="c1"># ❌ path 还是**原始**的（带查询串）</span>
+</code></pre></div>
+<p><code>path</code> 是 <code>/search?q=python&amp;token=tk_live_164_fake</code>，<br>
+<strong>同一个秘密在两处出现，只脱敏了一处。</strong></p>
+<p><strong>修复</strong>：脱敏 <code>path</code> 里同一份查询串。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">safe_path</span> <span class="o">=</span> <span class="n">_redact_query_in_path</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>   <span class="c1"># 值 → 指纹</span>
+<span class="n">flow</span> <span class="o">=</span> <span class="n">Flow</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">safe_path</span><span class="p">,</span> <span class="n">url</span><span class="o">=</span><span class="n">raw_url</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>教训</strong>：</p>
+<blockquote>
+<p><strong>脱敏必须"穷尽同源数据"。</strong><br>
+同一个秘密可能同时出现在 URL、path、Referer、日志字段、异常栈里。<br>
+只处理你知道的那一处，等于没处理。<br>
+<strong>写一条断言去扫整个档案文件</strong>（本课自检就是干这个的），<br>
+是唯一可靠的兜底手段。</p>
+</blockquote>
+<h4 id="_3">这三个坑的共同结构</h4>
+<pre class="plain"><code>①  假设了框架的默认行为（其实是别的）
+②  假设了字面量在编码后不变（其实会变）
+③  假设了&quot;处理了一处 = 处理了全部&quot;（其实不是）
+        ↓
+共同点：**都是关于&quot;我以为&quot;的假设，而不是关于&quot;实际数据&quot;的观测。**
+        ↓
+对策：把假设变成**断言**，让它在 CI 里替你记住。
+</code></pre>
+<hr>
+<h2 id="4">4. 图解</h2>
+<blockquote>
+<p>完整的字符画与 Mermaid 图在 <strong><a href="diagrams/README.md"><code>diagrams/README.md</code></a></strong>（7 张）。<br>
+这里只贴最核心的两张。</p>
+</blockquote>
+<h3 id="41">4.1 三层观测的关系（为什么流量面补的是结构性缺失）</h3>
+<pre class="plain"><code>资产面（Day 162）  门锁有没有装              → 快照
+漏洞面（Day 163）  这把锁看起来像能撬         → 推断（有假阳性）
+流量面（Day 164）  刚才有人拿钥匙开了门       → 事实（可复核、可留证）
+                        ↑
+                  它不需要**制造**任何输入，只是把已发生的对话录下来
+                  → 所以它能用在生产环境（漏洞扫描器做不到）
+</code></pre>
+<h3 id="42-connect">4.2 <code>CONNECT</code> 之后：代理能看见什么</h3>
+<pre class="plain"><code>   客户端                  AuditProxy                 服务端 :443
+      │  CONNECT host:443     │                          │
+      │ ─────────────────────▶│  TCP connect             │
+      │ ◀─────────────────────│                          │
+      │ ═══ TLS 握手（看不懂）══▶│ ═══ 原样转发 ═══════════▶│
+      │ ═══ 加密 HTTP（看不懂）═▶│ ═══ 原样转发 ═══════════▶│
+                              │                          │
+                     能记录：host:port ✅ 字节数 ✅ 时间 ✅
+                     看不到：路径 ❌ 头 ❌ 体 ❌
+                              │
+                              ▼
+                    Flow(inspected=False) → 覆盖缺口 +1 → 退出码 4
+</code></pre>
+<hr>
+<h2 id="5-api">5. 定义与使用方法（API 速查表）</h2>
+<h3 id="51-mitm_corepy">5.1 <code>mitm_core.py</code> 模块速查</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>类型</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Scope</code></td>
+<td>dataclass</td>
+<td>授权范围：<code>hosts</code> / <code>ports</code> / <code>ticket</code>；<code>check_url()</code> 越界抛异常</td>
+</tr>
+<tr>
+<td><code>AuthorizationError</code></td>
+<td>异常</td>
+<td>越界（映射退出码 2）；<code>AuditProxy</code> 监听非回环也抛这个</td>
+</tr>
+<tr>
+<td><code>Flow</code></td>
+<td>dataclass</td>
+<td>一条 flow 的完整档案（23 个字段，见 5.3）</td>
+</tr>
+<tr>
+<td><code>FlowStore</code></td>
+<td>类</td>
+<td>JSONL 档案馆：<code>append()</code> / <code>load()</code> / <code>next_id()</code></td>
+</tr>
+<tr>
+<td><code>LabOrigin</code></td>
+<td>上下文管理器</td>
+<td>自建实验网站，只绑 <code>127.0.0.1</code>，含 9 个演示端点</td>
+</tr>
+<tr>
+<td><code>LabOpaqueTCP</code></td>
+<td>上下文管理器</td>
+<td>假 TLS 服务（纯文本回声），演示"隧道不可见"</td>
+</tr>
+<tr>
+<td><code>AuditProxy</code></td>
+<td>上下文管理器</td>
+<td>正向代理；<code>url</code> 属性给客户端用；<strong>拒绝绑定非回环</strong></td>
+</tr>
+<tr>
+<td><code>LabSession</code></td>
+<td>类</td>
+<td>脚本化客户端：走代理发请求，默认<strong>不跟随重定向</strong></td>
+</tr>
+<tr>
+<td><code>FlowAnalyzer</code></td>
+<td>类</td>
+<td>14 条规则 → <code>Finding</code>；<code>facts</code> / <code>exit_code()</code></td>
+</tr>
+<tr>
+<td><code>Finding</code></td>
+<td>dataclass</td>
+<td><code>rule</code> / <code>severity</code> / <code>confidence</code> / <code>priority</code> / <code>level</code> / <code>evidence</code> / <code>why</code> / <code>fix</code></td>
+</tr>
+<tr>
+<td><code>render_json()</code> / <code>render_markdown()</code></td>
+<td>函数</td>
+<td>两种报告渲染</td>
+</tr>
+<tr>
+<td><code>EXIT_*</code> / <code>EXIT_MEANING</code></td>
+<td>常量</td>
+<td>语义化退出码与其含义</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52">5.2 顶层常量</h3>
+<table>
+<thead>
+<tr>
+<th>常量</th>
+<th>值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SEVERITY_SCORE</code></td>
+<td>critical 4.0 / high 3.0 / medium 2.0 / low 1.0 / info 0.5</td>
+<td>优先级的乘数</td>
+</tr>
+<tr>
+<td><code>SENSITIVE_KEYS</code></td>
+<td>30 个字段名</td>
+<td>命中则<strong>值</strong>换指纹</td>
+</tr>
+<tr>
+<td><code>REDACT_HEADERS</code></td>
+<td>7 个头名</td>
+<td>命中则整个值换指纹</td>
+</tr>
+<tr>
+<td><code>HOP_BY_HOP</code></td>
+<td>9 个头名</td>
+<td>转发前必须剔除</td>
+</tr>
+<tr>
+<td><code>ERROR_SIGNATURES</code></td>
+<td>4 类正则</td>
+<td>报错回显特征（SQL / 堆栈 / 调试页 / 路径）</td>
+</tr>
+<tr>
+<td><code>PII_PATTERNS</code></td>
+<td>3 类正则</td>
+<td>邮箱 / 手机号(CN) / 身份证(CN)</td>
+</tr>
+<tr>
+<td><code>MAX_BODY_BYTES</code></td>
+<td>65536</td>
+<td>档案里正文的截断上限</td>
+</tr>
+<tr>
+<td><code>SLOW_MS</code></td>
+<td>300.0</td>
+<td>慢响应阈值（毫秒）</td>
+</tr>
+<tr>
+<td><code>TUNNEL_SECONDS</code></td>
+<td>1.5</td>
+<td>隧道盲转发的时长上限（教学用，生产应无限）</td>
+</tr>
+<tr>
+<td><code>DOC_NET</code> / <code>LOOPBACK_HOSTS</code></td>
+<td><code>192.0.2.</code> / 回环三种写法</td>
+<td>允许的目标范围</td>
+</tr>
+</tbody>
+</table>
+<h3 id="53-flow">5.3 <code>Flow</code> 字段语义（重点字段）</h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>类型</th>
+<th>语义</th>
+<th>是否脱敏</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fid</code></td>
+<td>str</td>
+<td>流编号，报告的证据锚点</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>scheme</code></td>
+<td>str</td>
+<td><code>http</code> / <code>https</code>（判定"是否明文"的第一依据）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>method</code> / <code>host</code> / <code>port</code> / <code>path</code></td>
+<td>str/int</td>
+<td>定位</td>
+<td><code>path</code> 的查询串<strong>脱敏</strong></td>
+</tr>
+<tr>
+<td><code>url</code></td>
+<td>str</td>
+<td>完整 URL</td>
+<td>查询串<strong>脱敏</strong></td>
+</tr>
+<tr>
+<td><code>query_keys</code></td>
+<td>list</td>
+<td>命中的敏感参数<strong>名</strong>列表</td>
+<td>只有名字</td>
+</tr>
+<tr>
+<td><code>request_headers</code></td>
+<td>dict</td>
+<td>请求头</td>
+<td>凭据类<strong>整条</strong>脱敏</td>
+</tr>
+<tr>
+<td><code>request_body</code></td>
+<td>str</td>
+<td>请求体</td>
+<td>值<strong>脱敏</strong> + PII <strong>擦除</strong></td>
+</tr>
+<tr>
+<td><code>response_headers</code></td>
+<td>list[list]</td>
+<td>响应头（<strong>保序保重复</strong>，因为 <code>Set-Cookie</code> 可重复）</td>
+<td><code>Set-Cookie</code> 等脱敏</td>
+</tr>
+<tr>
+<td><code>response_body</code></td>
+<td>str</td>
+<td>响应体</td>
+<td>值脱敏 + PII 擦除 + 截断</td>
+</tr>
+<tr>
+<td><code>response_body_truncated</code></td>
+<td>bool</td>
+<td>是否被截断（<strong>影响结论完整性</strong>）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>inspected</code></td>
+<td>bool</td>
+<td><strong>这条流的内容到底看没看见</strong></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>str</td>
+<td>传输层异常（"没结论"≠"没问题"）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>note</code></td>
+<td>str</td>
+<td>"命中过哪些敏感字段"（只写<strong>字段名</strong>）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>pii_labels</code></td>
+<td>list</td>
+<td>出现过的 PII <strong>类别</strong>（擦除时必须当场记）</td>
+<td>只有类别</td>
+</tr>
+</tbody>
+</table>
+<h3 id="54-flowanalyzer">5.4 <code>FlowAnalyzer</code> 用法速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">scope</span>    <span class="o">=</span> <span class="n">Scope</span><span class="p">(</span><span class="n">ticket</span><span class="o">=</span><span class="s2">&quot;TICKET-164&quot;</span><span class="p">)</span>
+<span class="n">analyzer</span> <span class="o">=</span> <span class="n">FlowAnalyzer</span><span class="p">(</span><span class="n">scope</span><span class="o">=</span><span class="n">scope</span><span class="p">)</span>
+
+<span class="n">findings</span> <span class="o">=</span> <span class="n">analyzer</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">FlowStore</span><span class="p">(</span><span class="s2">&quot;flows.jsonl&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">load</span><span class="p">())</span>
+
+<span class="n">analyzer</span><span class="o">.</span><span class="n">facts</span>          <span class="c1"># {&#39;flows&#39;:14,&#39;inspected&#39;:13,&#39;uninspected&#39;:1,</span>
+                        <span class="c1">#  &#39;coverage_percent&#39;:92.9,&#39;rules_hit&#39;:{...},...}</span>
+<span class="n">analyzer</span><span class="o">.</span><span class="n">findings_by_severity</span>   <span class="c1"># 按 critical→info 排好序的 Finding 列表</span>
+<span class="n">analyzer</span><span class="o">.</span><span class="n">findings</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">priority</span>   <span class="c1"># 3.0 * 0.95 = 2.85</span>
+<span class="n">analyzer</span><span class="o">.</span><span class="n">findings</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">level</span>      <span class="c1"># &#39;P0&#39; / &#39;P1&#39; / &#39;P2&#39; / &#39;P3&#39;</span>
+<span class="n">analyzer</span><span class="o">.</span><span class="n">coverage_incomplete</span>    <span class="c1"># True  → 有隧道或传输错误</span>
+<span class="n">analyzer</span><span class="o">.</span><span class="n">exit_code</span><span class="p">()</span>            <span class="c1"># 2 / 4 / 3 / 0</span>
+</code></pre></div>
+<h3 id="55-cli">5.5 CLI 速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 全自动：起靶场(18081) + 代理(18080) → 抓会话 → 分析 → 出报告</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py
+
+<span class="c1"># 只分析已有档案（CI 友好，不起任何服务）</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--capture<span class="w"> </span>out/day164-capture-x.jsonl
+
+<span class="c1"># 指定标签与输出目录</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--out<span class="w"> </span>out<span class="w"> </span>--tag<span class="w"> </span>nightly-2026-09-23
+
+<span class="c1"># 只打印两个报告路径（给脚本用）</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--capture<span class="w"> </span>x.jsonl<span class="w"> </span>--quiet
+
+<span class="c1"># 端口被占用时的告警演示</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--origin-port<span class="w"> </span><span class="m">1</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>退出码</th>
+<th>含义</th>
+<th>流水线该做什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>干净通过（在已检查流量里无 P0/P1）</td>
+<td>继续</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>被范围门禁拒绝（根本没开始测）</td>
+<td>找<strong>流程负责人</strong>（工单/范围）</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>有 P0/P1 发现</td>
+<td>找<strong>开发</strong>修</td>
+</tr>
+<tr>
+<td><code>4</code></td>
+<td>覆盖不完整（隧道 / 传输错误 / 清单端点未出现）</td>
+<td>找<strong>运维</strong>补采集</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6">6. 实战代码案例</h2>
+<h3 id="61-codemitm_corepy-1906">6.1 <code>code/mitm_core.py</code> — 共享引擎（1906 行）</h3>
+<p>六个可独立使用的部件，全部纯标准库：</p>
+<pre class="plain"><code>Scope          范围门禁（主机 + 端口，独立成文件的快照式设计）
+FlowStore      JSONL 档案馆（追加即安全，坏一行只丢一行）
+LabOrigin      实验网站（9 个端点，故意做出&quot;会泄密的流量&quot;）
+LabOpaqueTCP   假 TLS 服务（演示&quot;隧道不可见&quot;）
+AuditProxy     正向代理（socket 级，含 CONNECT、chunked、脱敏、落档）
+FlowAnalyzer   14 条规则 + 覆盖率 + 语义化退出码
+</code></pre>
+<p>自检（<strong>强烈建议先跑这个</strong>）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>mitm_core.py<span class="w"> </span>--self-test<span class="w">      </span><span class="c1"># 期望输出：SELF-TEST OK</span>
+</code></pre></div>
+<p>自检里 7 组断言覆盖了"我以为它会怎样"和"它必须怎样"的差距：</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>断言</th>
+<th>抓的是什么问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>①</td>
+<td>11 条必要规则全部命中</td>
+<td>规则被改坏 / 靶场端点被改坏</td>
+</tr>
+<tr>
+<td>②</td>
+<td>档案里<strong>不含</strong>任何明文口令/token/密钥/PII</td>
+<td>脱敏失效（踩坑 ②③④ 的兜底）</td>
+</tr>
+<tr>
+<td>③</td>
+<td>隧道被记为 <code>inspected=False</code>，覆盖率 &lt; 100%</td>
+<td>覆盖缺口被"算没了"</td>
+</tr>
+<tr>
+<td>④</td>
+<td>退出码必须是 <code>4</code>（不是 3、不是 0）</td>
+<td>优先级顺序被写反</td>
+</tr>
+<tr>
+<td>⑤</td>
+<td><code>AuditProxy(host="0.0.0.0")</code> 必须抛异常</td>
+<td>开放代理这种法律风险被放开</td>
+</tr>
+<tr>
+<td>⑥</td>
+<td><code>8.8.8.8</code> 必须被门禁拦住</td>
+<td>门禁失效</td>
+</tr>
+<tr>
+<td>⑦</td>
+<td>报告含关键小节且 JSON 可解析</td>
+<td>报告渲染被改坏</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-code01-flow-capturepy">6.2 <code>code/01-flow-capture.py</code> — 基础用法</h3>
+<p>最小可运行闭环。<strong>为什么第一个例子就要三方齐备？</strong><br>
+因为代理是三方系统，缺一方你就无法判断"是我写错了，还是源站本来就这么回"。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-flow-capture.py<span class="w">                       </span><span class="c1"># 完整闭环</span>
+python3<span class="w"> </span><span class="m">01</span>-flow-capture.py<span class="w"> </span>--no-tunnel<span class="w">           </span><span class="c1"># 覆盖率会变成 100%</span>
+python3<span class="w"> </span><span class="m">01</span>-flow-capture.py<span class="w"> </span>--hold<span class="w">                </span><span class="c1"># 只起服务，手工 curl</span>
+</code></pre></div>
+<p>实测输出（节选）：</p>
+<pre class="plain"><code>📊 捕获汇总
+总 flow        : 14
+已检查         : 13
+未检查（隧道）  : 1
+传输错误       : 0
+覆盖率         : 92.9%
+
+状态码分布：
+  2xx 成功        9
+  4xx 客户端错     3
+  3xx 重定向      1
+  5xx 服务端错     1
+</code></pre>
+<p>它还会把<strong>登录那条 flow 的档案原文</strong>完整打出来，让你亲眼看到三件事：<br>
+口令值变成了指纹、<code>note</code> 里保住了"命中过 password"的结论、<br>
+<code>Set-Cookie</code> 的值也被换成了指纹。</p>
+<h3 id="63-code02-flow-analyzepy">6.3 <code>code/02-flow-analyze.py</code> — 进阶用法与避坑</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-flow-analyze.py<span class="w">                  </span><span class="c1"># 分析 + 四个踩坑现场复现</span>
+python3<span class="w"> </span><span class="m">02</span>-flow-analyze.py<span class="w"> </span>--no-pitfalls<span class="w">    </span><span class="c1"># 只看分析结果</span>
+</code></pre></div>
+<p>实测输出（节选）：</p>
+<pre class="plain"><code>🔎 规则引擎输出
+分析 flow  : 14 条
+覆盖率     : 92.9%（已检查 13 / 未检查 1 / 传输错误 0）
+命中规则   : {&#x27;server-banner&#x27;: 15, &#x27;missing-security-headers&#x27;: 3,
+              &#x27;pii-in-request&#x27;: 2, &#x27;state-changing-method&#x27;: 2,
+              &#x27;cleartext-credential&#x27;: 2, &#x27;cookie-missing-flags&#x27;: 2,
+              &#x27;server-error&#x27;: 1, &#x27;error-disclosure&#x27;: 1, ...}
+严重度分布 : {&#x27;info&#x27;: 19, &#x27;medium&#x27;: 7, &#x27;low&#x27;: 4, &#x27;high&#x27;: 4}
+
+🟧 1. [P1 · high] cleartext-credential
+    flow     : f-000005  http://127.0.0.1:18081/login
+    证据     : POST /login 的请求体含敏感字段（值已脱敏为指纹）
+    优先级   : 2.85
+</code></pre>
+<p>四个踩坑演示的实测结果：</p>
+<pre class="plain"><code>坑 ①  默认 opener     : 404（❌ 已被跟随：/login 是 404）
+      显式 _NoRedirect: 302（✅ 停在第一跳，可被 R9 记录）
+坑 ②  朴素检测 if &#x27;redacted:&#x27; in body   → False    ← 规则全线沉默
+      正确检测 &#x27;redacted:&#x27; 或 &#x27;redacted%3a&#x27; → True
+坑 ③  只脱敏 URL、忘了 path → 档案里还有明文 token → True
+坑 ④  擦除后重扫正文 → []（空！PII 已经不在了）
+      正确做法：擦除时当场记进 flow.pii_labels
+</code></pre>
+<h3 id="64-code03-traffic-audit-clipy">6.4 <code>code/03-traffic-audit-cli.py</code> — 实战流水线</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ① 全自动：正常路径 → 退出码 4（覆盖率 92.9%，因为它诚实地承认有隧道）</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--tag<span class="w"> </span>demo
+<span class="c1">#   覆盖率（流量层）  : 92.9%（已检查 13 / 未检查 1 / 传输错误 0）</span>
+<span class="c1">#   覆盖率（业务层）  : 100.0%（清单 9 个端点，命中 9，未见 0）</span>
+<span class="c1">#   🚦 退出码 = 4</span>
+
+<span class="c1"># ② 只分析样例档案（CI 友好）</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--capture<span class="w"> </span>flows.example.jsonl<span class="w"> </span>--tag<span class="w"> </span>fixture
+<span class="c1">#   覆盖率（流量层）  : 100.0%   ← 样例档案里没有隧道</span>
+<span class="c1">#   🚦 退出码 = 4   ← 但业务层有 9 个端点从未出现 → 仍判为不完整</span>
+
+<span class="c1"># ③ 手工构造的越界档案 → 退出码 2（拒绝出结论）</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--capture<span class="w"> </span>out/day164-scope-violation.jsonl
+<span class="c1">#   ❌ 档案中出现越界主机：evil.example.com（拒绝出结论）</span>
+<span class="c1">#   🚦 退出码 = 2 → 被范围门禁拒绝（根本没开始测）</span>
+</code></pre></div>
+<p><strong>第 ② 条特别值得体会</strong>：流量层 100%、没有任何问题——<br>
+但它仍然是 <code>4</code>，因为<strong>业务层的 9 个端点从来没被访问过</strong>。<br>
+如果只看第一层，这里就会得出"100% 覆盖、干净通过"的假象。</p>
+<h3 id="65">6.5 五个由"实测"驱动的修复（真实踩坑汇总）</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>现象</th>
+<th>根因</th>
+<th>修复</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>①</td>
+<td>302 在档案里记成 404，R9 永不命中</td>
+<td><code>build_opener()</code> 自动补默认重定向处理器</td>
+<td>显式传 <code>redirect_request()</code> 返回 <code>None</code> 的子类</td>
+</tr>
+<tr>
+<td>②</td>
+<td>所有 form 表单的明文凭据都不命中</td>
+<td><code>urlencode</code> 把 <code>:</code> 变成 <code>%3A</code></td>
+<td>两种写法都认</td>
+</tr>
+<tr>
+<td>③</td>
+<td>自检报"明文 token 泄漏进档案"</td>
+<td>只脱敏了 <code>url</code>，忘了 <code>path</code> 带同一份查询串</td>
+<td><code>_redact_query_in_path()</code></td>
+</tr>
+<tr>
+<td>④</td>
+<td>响应体里的密钥原样落进档案</td>
+<td>只对<strong>请求</strong>体做了脱敏</td>
+<td>响应体也跑 <code>redact_body</code></td>
+</tr>
+<tr>
+<td>⑤</td>
+<td>业务层覆盖率恒为 0%</td>
+<td>靶站端口随机，与清单里的 <code>:18081</code> 对不上</td>
+<td>固定端口 + 占用时退回并<strong>明确告警</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>这五条的共性</strong>：它们都不是"写错了逻辑"，而是"<strong>假设错了事实</strong>"。<br>
+对策只有一个：把假设变成断言（第 ①②③④ 条现在都在 <code>--self-test</code> 里）。</p>
+<hr>
+<h2 id="7">7. 自检与验证</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-164-安全审计工具箱-part3/code
+
+<span class="c1"># ① 引擎自检（7 组断言，含&quot;档案不得含明文&quot;这条硬线）</span>
+python3<span class="w"> </span>mitm_core.py<span class="w"> </span>--self-test
+<span class="c1">#    期望：SELF-TEST OK</span>
+
+<span class="c1"># ② 基础闭环</span>
+python3<span class="w"> </span><span class="m">01</span>-flow-capture.py<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-20
+
+<span class="c1"># ③ 规则引擎 + 踩坑复现</span>
+python3<span class="w"> </span><span class="m">02</span>-flow-analyze.py<span class="w"> </span>--no-pitfalls<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-20
+
+<span class="c1"># ④ 完整 CLI（三种模式）</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--tag<span class="w"> </span>verify<span class="w"> </span><span class="p">;</span><span class="w">          </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$?</span><span class="s2">&quot;</span><span class="w">   </span><span class="c1"># → 4</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--capture<span class="w"> </span>flows.example.jsonl<span class="w"> </span>--quiet<span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$?</span><span class="s2">&quot;</span><span class="w">  </span><span class="c1"># → 4</span>
+python3<span class="w"> </span><span class="m">03</span>-traffic-audit-cli.py<span class="w"> </span>--capture<span class="w"> </span>out/day164-scope-violation.jsonl<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$?</span><span class="s2">&quot;</span><span class="w">  </span><span class="c1"># → 2</span>
+</code></pre></div>
+<p><strong>额外的"防泄密"验证</strong>（推荐每次改完脱敏逻辑都跑一遍）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 用一组明文样本扫描整份档案，任何一个出现都说明脱敏漏了</span>
+python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">import json, pathlib</span>
+<span class="s">BAD = [&quot;Sup3rSecret!&quot;, &quot;tk_live_164_fake&quot;, &quot;sk_live_164_FAKE_NOT_REAL&quot;, &quot;13800138000&quot;]</span>
+<span class="s">for p in pathlib.Path(&quot;out&quot;).glob(&quot;*.jsonl&quot;):</span>
+<span class="s">    blob = p.read_text(encoding=&quot;utf-8&quot;)</span>
+<span class="s">    hits = [b for b in BAD if b in blob]</span>
+<span class="s">    print(f&quot;{p.name}: {&#39;❌ &#39; + str(hits) if hits else &#39;✅ 无明文&#39;}&quot;)</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<hr>
+<h2 id="8">8. 思考题</h2>
+<ol>
+<li>
+<p><strong>框架默认值</strong>：踩坑 ① 里 <code>build_opener()</code> 替你装了重定向处理器。<br>
+   请举出另外两个"框架默认行为与直觉相反"的例子（不限 Python），<br>
+   并说明"怎么才能在写代码时<strong>发现</strong>它"。<br>
+<em>提示：<code>dict.get</code> 的默认值、<code>re.match</code> vs <code>re.search</code>、<br>
+<code>float</code> 的相等判断、<code>argparse</code> 的 <code>required</code>…</em></p>
+</li>
+<li>
+<p><strong>只脱敏一处 vs 穷尽同源</strong>：踩坑 ③ 里同一个 token 同时出现在 <code>url</code> 与 <code>path</code>。<br>
+   请设计一个<strong>机制</strong>（不是"更仔细地检查"）来保证"同一个秘密的所有落点都被处理"。<br>
+<em>思考方向：是先归一化成一个结构、所有落点都从它派生？<br>
+   还是在出口做一次全文扫描断言？两种各有什么代价？</em></p>
+</li>
+<li>
+<p><strong>覆盖率的"两层"还不够</strong>：本课算了流量层与业务层。还有第三层吗？<br>
+<em>提示：如果目标是 HTTPS，隧道 flow 会让"流量层"下降；<br>
+   但如果目标机器上</em><em>同时</em><em>跑着一个你完全不知道的高危端点，哪一层能发现它？<br>
+   这一层应该由谁负责（Day 162 的哪一步）？</em></p>
+</li>
+<li>
+<p><strong><code>pii_labels</code> 的取舍</strong>：本课选择只记 PII <strong>类别</strong>，不记值。<br>
+   但假设真实需求是"审计发现某员工把客户数据外传"——需要<strong>值</strong>才能举证。<br>
+   请写出一个既满足举证、又不让档案变成泄密源的方案，并列出它的<strong>残余风险</strong>。<br>
+<em>思考方向：加密存储 + 访问审计 + 保留期；残余风险 = 密钥持有者本人。</em></p>
+</li>
+<li>
+<p><strong>退出码的语义</strong>：为什么本课把"覆盖不完整"（4）排在"有发现"（3）前面？<br>
+   请构造一个反例：<strong>什么时候应该反过来</strong>（先报发现、再报覆盖）？<br>
+<em>提示：如果目的是"立刻止血"而不是"出具报告"，顺序可能反过来——<br>
+   这说明退出码的优先级其实取决于</em><em>谁在消费这个信号</em><em>。</em></p>
+</li>
+<li>
+<p><strong>规则的假阳性</strong>：R11 <code>state-changing-method</code> 把"非豁免 POST"报成 info。<br>
+<code>_is_benign_post()</code> 的豁免条件是"请求体里既没有敏感字段、也没有 PII"。<br>
+   请构造一个<strong>漏报</strong>场景（真实写操作被豁免掉了），<br>
+   并说明为什么本课<strong>宁可漏报</strong>也不加更激进的规则。<br>
+<em>提示：报告的可信度 &gt; 报告的完备性。</em></p>
+</li>
+</ol>
+<hr>
+<h2 id="9">9. 边界与合规（每一条都是设计决策，不是场面话）</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>边界</th>
+<th>为什么它必须是硬约束</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>只监听回环</strong>（<code>0.0.0.0</code> 直接抛异常）</td>
+<td>开放 HTTP 代理会在几分钟内被扫到并滥用，这是<strong>实际法律责任</strong>，不是"配置选项"</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>门禁校验 request-target 的主机</strong>，不是 <code>Host</code> 头</td>
+<td>信任 <code>Host</code> 头 = 允许 Host 头投毒绕过门禁</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>只发幂等方法</strong></td>
+<td>写操作会让"审计"变成"操作"，两者授权等级不同</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>不伪造证书、不降级 TLS、不破解隧道</strong></td>
+<td>客户端装自签 CA 在<strong>自己设备</strong>上合法，在<strong>别人设备</strong>上就是劫持</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>不改包、不重放、不注入响应</strong></td>
+<td>观测与利用的分界线。跨过去，同一份代码性质就变了</td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong>档案默认不含明文凭据</strong></td>
+<td>审计工具若是泄密渠道，比不审计更糟（它把秘密集中并长期保存了）</td>
+</tr>
+<tr>
+<td>7</td>
+<td><strong>PII 当场擦除，只留类别</strong></td>
+<td>最小必要原则；审计记录应证明"发生过"，而不是复制"内容"</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong>隧道如实记账，计入覆盖缺口</strong></td>
+<td>"没看"≠"没问题"。这是整份报告诚实性的基准线</td>
+</tr>
+<tr>
+<td>9</td>
+<td><strong>传输错误也算覆盖缺口</strong></td>
+<td>"连不上"和"没问题"在报告里长得一样，不区分就是撒谎</td>
+</tr>
+<tr>
+<td>10</td>
+<td><strong>报告先讲覆盖率，再讲发现</strong></td>
+<td>覆盖率低时，所有结论都要打折——顺序本身就是信息</td>
+</tr>
+</tbody>
+</table>
+<p><strong>一句话总结</strong>：本工具的全部价值，建立在"<strong>它说的话都能被复核</strong>"之上。<br>
+任何一条边界被放开，这个前提就没了。</p>
+<hr>
+<h2 id="10">10. 今日完成清单</h2>
+<ul>
+<li>[x] <code>mitm_core.py</code> 共享引擎（<code>Scope</code> / <code>FlowStore</code> / <code>LabOrigin</code> /<br>
+<code>LabOpaqueTCP</code> / <code>AuditProxy</code> / <code>FlowAnalyzer</code> / 报告渲染 / <code>--self-test</code>）</li>
+<li>[x] 正向代理：绝对 URI 与源站形式、逐跳头处理、chunked、<code>CONNECT</code> 隧道</li>
+<li>[x] 脱敏流水线：URL / path / 头 / 体 / PII，<strong>先脱敏再检测</strong></li>
+<li>[x] 14 条规则 + 优先级（严重度 × 置信度）+ 语义化退出码</li>
+<li>[x] 两层覆盖率（流量层 + 业务层）与"清单端点从未出现"报警</li>
+<li>[x] <code>01-flow-capture.py</code> 基础用法（三方闭环 + 档案原文展示）</li>
+<li>[x] <code>02-flow-analyze.py</code> 进阶用法（规则引擎 + 四个真实踩坑现场复现）</li>
+<li>[x] <code>03-traffic-audit-cli.py</code> 实战 CLI（两种模式 + 三种退出码实测）</li>
+<li>[x] <code>targets.example.txt</code> 目标清单 · <code>flows.example.jsonl</code> 样例档案</li>
+<li>[x] <code>diagrams/README.md</code> 七张图（含两层覆盖率与退出码决策树）</li>
+<li>[x] <code>exercises/checklist.md</code> 完成清单 + 基础练习 + 进阶挑战</li>
+</ul>
+<p><strong>明天（Day 165）</strong>：交付面 —— 报告生成（把 Day 162/163/164 的产出汇总成一份<br>
+可交付的资产审计报告）+ Docker 部署（一键复现整条流水线）。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-163/index.html">← Day 163 阶段项目（二）：安全审计工具箱 · SQLi 检测 + XSS 检测</a><a class="nav-next" href="../day-165/index.html">Day 165 阶段项目（四）：安全审计工具箱 · 报告生成 + Docker 部署 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 33 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 33 正文</a>
+  <h1>Day 33 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-033">Day 033 — 继承：图解</h1>
+<blockquote>
+<p>继承关系图、MRO 解析、C3 算法、菱形继承、Mixin 组合、形状层次结构</p>
+</blockquote>
+<hr>
+<h2 id="1">1️⃣ 基本继承关系</h2>
+<pre class="plain"><code>     ┌──────────┐
+     │  Animal  │  ← 父类 / 基类 / superclass
+     ├──────────┤
+     │ name     │
+     │ age      │
+     ├──────────┤
+     │ speak()  │
+     │ move()   │
+     └────┬─────┘
+          │
+    ┌─────┴──────┐
+    │            │
+┌───┴────┐  ┌───┴────┐
+│  Dog   │  │  Cat   │  ← 子类 / 派生类 / subclass
+├────────┤  ├────────┤
+│(继承)   │  │(继承)   │
+├────────┤  ├────────┤
+│ speak()│  │ speak()│  ← 重写 (override)
+│ wag()  │  │ purr() │  ← 新增方法
+└────────┘  └────────┘
+
+Dog is an Animal    ✓
+Cat is an Animal    ✓
+Animal is a Dog     ✗  （猫不是狗）
+</code></pre>
+<h2 id="2-mro">2️⃣ MRO (方法解析顺序)</h2>
+<h3 id="_1">简单继承</h3>
+<pre class="plain"><code>class B(A): pass
+
+B.__mro__ = [B, A, object]
+
+方法查找: B.method()
+  B.__dict__ → 找到? → 返回
+    没找到   → A.__dict__ → 找到? → 返回
+                没找到   → object.__dict__
+</code></pre>
+<h3 id="_2">多重继承</h3>
+<pre class="plain"><code>class D(B, C): pass
+
+MRO: D → B → C → A → object
+     ↑___声明顺序___↓
+
+D.__mro__:
+  [D, B, C, A, object]
+</code></pre>
+<h3 id="_3">菱形继承</h3>
+<pre class="plain"><code>         A
+       /   \
+      B     C
+       \   /
+         D
+
+MRO: D → B → C → A → object
+
+调用 D().method()
+  D.method: &quot;D&quot;
+    → super() → B.method: &quot;B → &quot;
+        → super() → C.method: &quot;C → &quot;    ← 不是 A!
+            → super() → A.method: &quot;A&quot;
+                → super() → object
+
+输出: &quot;D → B → C → A&quot;
+</code></pre>
+<h2 id="3-c3">3️⃣ C3 线性化算法</h2>
+<pre class="plain"><code>L[Class(Base1, Base2)] = Class + merge(L[Base1], L[Base2], [Base1, Base2])
+
+merge 规则:
+  取第一个列表 head，如果不在任何其它列表的 tail 中，取出它
+  否则尝试下一个列表的 head
+
+示例: L[D(B, C)] where B(A), C(A):
+
+L[A]   = A, O
+L[B]   = B, A, O
+L[C]   = C, A, O
+
+L[D]   = D + merge(L[B], L[C], [B, C])
+       = D + merge([B, A, O], [C, A, O], [B, C])
+       
+       head=B, B 在 [C] 尾部? 没有 → 取出 B
+       = D, B + merge([A, O], [C, A, O], [C])
+       
+       head=A, A 在 [C, A, O] 尾部? YES (在尾部) → 跳过
+       head=C, C 在 [] 尾部? 没有 → 取出 C
+       = D, B, C + merge([A, O], [A, O])
+       
+       head=A, A 在 [A, O] 尾部? NO (在头部) → 取出 A
+       = D, B, C, A + merge([O], [O])
+       
+       head=O, O 在 [O] 尾部? NO → 取出 O
+       = D, B, C, A, O
+
+验证: D.__mro__ = [D, B, C, A, object] ✓
+</code></pre>
+<h2 id="4-super">4️⃣ super() 调用链</h2>
+<pre class="plain"><code>class Base:
+    def method(self): return &quot;Base&quot;
+
+class A(Base):
+    def method(self): return f&quot;A → {super().method()}&quot;
+
+class B(Base):
+    def method(self): return f&quot;B → {super().method()}&quot;
+
+class C(A, B):
+    def method(self): return f&quot;C → {super().method()}&quot;
+
+C.__mro__ = [C, A, B, Base, object]
+
+C().method() 执行链:
+
+  C.method()
+    ↓
+  &quot;C → &quot; + A.method()
+              ↓
+            &quot;A → &quot; + super().method()
+                      ↓
+                    在 A 的上下文中，super() 看 C.__mro__ 中 A 之后的类
+                    → B.method()    ← 不是 Base!
+                      ↓
+                    &quot;B → &quot; + super().method()
+                              ↓
+                            Base.method()
+                              ↓
+                            &quot;Base&quot;
+
+结果: &quot;C → A → B → Base&quot;
+
+关键理解:
+  super() 不总是调用字面父类!
+  super() 使用 self.__class__.__mro__ 来决定调用链
+</code></pre>
+<h2 id="5-mixin">5️⃣ Mixin 组合模式</h2>
+<pre class="plain"><code>SerializableMixin    ValidateMixin     LogMixin     TimestampMixin
+  │                     │                │              │
+  │  to_json()          │  validate()    │  log()       │  created_at
+  │  to_dict()          │  add_valid..   │              │  updated_at
+  └─────────┬───────────┴───────┬────────┴──────────────┘
+            │                   │
+            └───────────────────┘
+                     │
+                     ▼
+                Product
+             ┌──────────────┐
+             │ name         │
+             │ price        │
+             │ stock        │
+             ├──────────────┤
+             │ to_json()    │  ← 来自 SerializableMixin
+             │ validate()   │  ← 来自 ValidateMixin
+             │ log()        │  ← 来自 LogMixin
+             │ created_at   │  ← 来自 TimestampMixin
+             └──────────────┘
+</code></pre>
+<h2 id="6">6️⃣ 形状层次结构</h2>
+<pre class="plain"><code>                    Shape (ABC)
+                    ──────────
+                    + area()
+                    + perimeter()
+                    + describe()
+                    + scale()
+                    + __eq__/__lt__
+                    │
+          ┌─────────┼──────────┐
+          │         │          │
+        Circle  Rectangle   Triangle   SolidShape (ABC)
+          │         │          │         ────────────
+          │     Square         │         + volume()
+          │                    │         + surface_area()
+          │                    │         │
+          │                    │    ┌────┼────┐
+          │                    │    │    │    │
+          │                    │  Sphere Box Cylinder
+
+形状继承:
+  Shape ← 抽象基类，定义接口
+  ├── Circle      → is-a Shape ✓
+  ├── Rectangle   → is-a Shape ✓
+  │   └── Square  → is-a Rectangle ✓, is-a Shape ✓
+  ├── Triangle    → is-a Shape ✓
+  └── SolidShape  → is-a Shape ✓
+      ├── Sphere  → is-a SolidShape ✓, is-a Shape ✓
+      ├── Box     → is-a SolidShape ✓, is-a Shape ✓
+      └── Cylinder→ is-a SolidShape ✓, is-a Shape ✓
+
+多态:
+  shapes = [Circle(5), Square(4), Sphere(3)]
+  for s in shapes:
+      print(s.area())    ← 每个类各自实现
+      print(s.describe())← 每个类可能重写
+</code></pre>
+<h2 id="7-isinstance-vs-type">7️⃣ isinstance vs type</h2>
+<pre class="plain"><code>              Animal
+              │
+          ┌───┴────┐
+        Dog       Cat
+          │
+        Puppy
+
+p = Puppy()
+
+type(p)                 = &lt;class &#x27;Puppy&#x27;&gt;
+type(p) is Puppy        = True
+type(p) is Dog          = False  ← type 不检查继承!
+type(p) is Animal       = False
+
+isinstance(p, Puppy)    = True
+isinstance(p, Dog)      = True   ← Puppy is a Dog
+isinstance(p, Animal)   = True   ← Puppy is an Animal
+isinstance(p, Cat)      = False
+isinstance(p, (Dog, Cat))= True  ← 可以是多种类型
+
+issubclass(Puppy, Dog)  = True
+issubclass(Dog, Puppy)  = False
+issubclass(Puppy, (Dog, Cat)) = True
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 154 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 154 正文</a>
+  <h1>Day 154 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-154">Day 154 图解 — 目录扫描与指纹识别原理</h1>
+<blockquote>
+<p>本文件只使用 <strong>Mermaid 代码块</strong> 与 <strong>ASCII 字符画</strong>，不生成任何图片文件。</p>
+</blockquote>
+<hr>
+<h2 id="1http-ascii">图 1：HTTP 请求在多层中间件中的流转（ASCII）</h2>
+<pre class="plain"><code>                    ┌─────────────────────────────────────────┐
+   GET /admin/      │ 1. CDN / WAF（Cloudflare、阿里云盾）      │
+   ────────────────►│    · IP 信誉、请求速率、正则规则           │
+                    │    · 命中 → 403 / 自定义拦截页 / JS 挑战   │
+                    └───────────────┬─────────────────────────┘
+                                    │ 放行
+                    ┌───────────────▼─────────────────────────┐
+                    │ 2. 反向代理 / Web 服务器 (nginx)          │
+                    │    · location 匹配                        │
+                    │    · try_files $uri $uri/ /index.html     │  ◄── 软404 制造者
+                    │    · 目录无斜杠 → 301                      │
+                    └───────────────┬─────────────────────────┘
+                                    │ proxy_pass
+                    ┌───────────────▼─────────────────────────┐
+                    │ 3. 应用服务器 (gunicorn / uvicorn / php)  │
+                    │    · 进程池满 → 502                       │
+                    │    · 超时    → 504                       │
+                    └───────────────┬─────────────────────────┘
+                                    │ WSGI/ASGI
+                    ┌───────────────▼─────────────────────────┐
+                    │ 4. 框架路由 (Django / Flask / FastAPI)     │
+                    │    · 鉴权中间件: 未登录 → 302 /login       │
+                    │    · catch-all 路由 → 200 自定义页         │
+                    │    · 无匹配 → 404                          │
+                    └──────────────────────────────────────────┘
+
+结论：同一次请求可能被 4 层任意一层&quot;改写&quot;响应，
+      这就是为什么&quot;状态码&quot;不能单独作为存在性判据。
+</code></pre>
+<hr>
+<h2 id="2-404-mermaid">图 2：软 404 检测算法（Mermaid 流程图）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 基线阶段
+        A1[&quot;随机路径 ×3&lt;br/&gt;/a9f3-notexist&quot;] --&gt; A2[&quot;记录 (status, sha256, len, title)&quot;]
+        A2 --&gt; A3{三份基线&lt;br/&gt;完全一致?}
+        A3 --&gt;|是| A4[&quot;⚠️ 检测到通配响应&lt;br/&gt;启用哈希差异模式&quot;]
+        A3 --&gt;|否| A5[&quot;✅ 正常站点&lt;br/&gt;启用基线比对模式&quot;]
+    end
+
+    subgraph 扫描阶段
+        B1[&quot;字典路径 GET&quot;] --&gt; B2{&quot;与基线哈希相同的条目&lt;br/&gt;是否存在?&quot;}
+        B2 --&gt;|&quot;是（完全匹配）&quot;| B3[&quot;丢弃 ❌ 软404&quot;]
+        B2 --&gt;|&quot;否&quot;| B4{&quot;长度差 &lt; 容差 5%?&quot;}
+        B4 --&gt;|是| B3
+        B4 --&gt;|否| B5{&quot;状态码 ∈ {401,403,500}&quot;}
+        B5 --&gt;|是| B6[&quot;🔑 存在但受限 → 记录&quot;]
+        B5 --&gt;|否| B7[&quot;✅ 命中 → 记录&quot;]
+    end
+
+    A4 --&gt; B1
+    A5 --&gt; B1
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 基线阶段
+        A1[&quot;随机路径 ×3&lt;br/&gt;/a9f3-notexist&quot;] --&gt; A2[&quot;记录 (status, sha256, len, title)&quot;]
+        A2 --&gt; A3{三份基线&lt;br/&gt;完全一致?}
+        A3 --&gt;|是| A4[&quot;⚠️ 检测到通配响应&lt;br/&gt;启用哈希差异模式&quot;]
+        A3 --&gt;|否| A5[&quot;✅ 正常站点&lt;br/&gt;启用基线比对模式&quot;]
+    end
+
+    subgraph 扫描阶段
+        B1[&quot;字典路径 GET&quot;] --&gt; B2{&quot;与基线哈希相同的条目&lt;br/&gt;是否存在?&quot;}
+        B2 --&gt;|&quot;是（完全匹配）&quot;| B3[&quot;丢弃 ❌ 软404&quot;]
+        B2 --&gt;|&quot;否&quot;| B4{&quot;长度差 &lt; 容差 5%?&quot;}
+        B4 --&gt;|是| B3
+        B4 --&gt;|否| B5{&quot;状态码 ∈ {401,403,500}&quot;}
+        B5 --&gt;|是| B6[&quot;🔑 存在但受限 → 记录&quot;]
+        B5 --&gt;|否| B7[&quot;✅ 命中 → 记录&quot;]
+    end
+
+    A4 --&gt; B1
+    A5 --&gt; B1
+</code></pre></div>
+<p><strong>容差为什么取 5%？</strong> 经验值：动态页面（时间戳、访问计数）通常让长度抖动
+在 1%~3%；超过 5% 的差异往往意味着"结构不同"，即不同页面。这个值应该<strong>可配置</strong>，
+因为不同站点差异极大。</p>
+<hr>
+<h2 id="3ascii">图 3：目录扫描的三种"命中"类型（ASCII）</h2>
+<pre class="plain"><code>字典里的 10000 个路径
+        │
+        ├──────────────► 200 + 内容独特        →  ✅ 真实文件
+        ├──────────────► 200 + 与基线一致      →  ❌ 软404（丢弃）
+        ├──────────────► 301 /admin → /admin/  →  🔁 目录（存在！）
+        ├──────────────► 302 → /login          →  🔑 受保护资源（存在！）
+        ├──────────────► 401 / 403             →  🔑 存在但受限
+        ├──────────────► 404                   →  ❌ 不存在
+        ├──────────────► 429 / 503             →  ⚠️ 限流：立刻降速
+        └──────────────► 500                   →  🟡 参数/环境问题，人工复核
+
+最容易漏掉的：
+  · 302 → 登录页   （90% 的扫描器用 allow_redirects=True，跟随跳转后拿到
+                    登录页的 200，长度全都一样，反而被当成&quot;软404&quot;丢弃！）
+  · 403            （被默认配置忽略）
+  · 200 + 空 body  （有些 API 只要路由存在就返回 200 + {}）
+</code></pre>
+<blockquote>
+<p><strong>重要细节</strong>：<code>allow_redirects=True</code> 是很多扫描器误报/漏报的根源。
+必须 <code>allow_redirects=False</code>，自己判断 <code>Location</code>。</p>
+</blockquote>
+<hr>
+<h2 id="4ascii">图 4：线程池扫描的时间线（ASCII）</h2>
+<pre class="plain"><code>单线程（1 worker）：
+t=0    ├─ req1 ├─ req2 ├─ req3 ├─ req4 ─┤   总耗时 = 4RTT
+        RTT     RTT     RTT     RTT
+
+4 线程：
+t=0    ├─ req1 ─┤
+       ├─ req2 ─┤                            总耗时 ≈ 1RTT（理想）
+       ├─ req3 ─┤
+       └─ req4 ─┘
+       │◄───── RTT ─────►│
+
+50 线程 + keep-alive：
+  ┌── worker-1  ── req1 ─ req53 ─ req105 ... ─┐
+  ├── worker-2  ── req2 ─ req54 ─ req106 ... ─┤
+  │   ...                                      │   瓶颈从「RTT × N」
+  └── worker-50 ── req50 ─ req102 ─ ...      ─┘   转移到「服务端处理能力」
+                                                  和「WAF 速率阈值」
+
+⚠️ 并发不是越大越好：超过服务端 MaxClients 后，
+   你自己的请求开始排队 → 超时 → 误报为 &quot;不存在&quot;。
+</code></pre>
+<hr>
+<h2 id="5mermaid">图 5：指纹识别证据加权（Mermaid）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    R[&quot;目标响应&quot;] --&gt; H[&quot;解析响应头&quot;]
+    R --&gt; C[&quot;解析 Cookie 名&quot;]
+    R --&gt; B[&quot;解析 HTML body&quot;]
+    R --&gt; P[&quot;主动探针路径&quot;]
+
+    H --&gt; H1[&quot;Server: nginx/1.24.0&quot;]
+    H --&gt; H2[&quot;X-Powered-By: PHP/8.1&quot;]
+    C --&gt; C1[&quot;PHPSESSID → PHP&quot;]
+    C --&gt; C2[&quot;csrftoken → Django&quot;]
+    B --&gt; B1[&quot;meta generator → WordPress&quot;]
+    B --&gt; B2[&quot;/_next/static → Next.js&quot;]
+    P --&gt; P1[&quot;/wp-login.php 200 → WordPress&quot;]
+    P --&gt; P2[&quot;/actuator/health 200 → Spring Boot ⚠️&quot;]
+
+    H1 --&gt; S[&quot;加权评分&quot;]
+    H2 --&gt; S
+    C1 --&gt; S
+    C2 --&gt; S
+    B1 --&gt; S
+    B2 --&gt; S
+    P1 --&gt; S
+    P2 --&gt; S
+
+    S --&gt; O1[&quot;技术栈: WordPress 6.4 (PHP 8.1)&quot;]
+    S --&gt; O2[&quot;Web 服务器: nginx 1.24.0&quot;]
+    S --&gt; O2B[&quot;⚠️ 暴露 /actuator → 高危&quot;]
+    S --&gt; O3[&quot;安全头缺失: CSP / HSTS / X-Frame-Options&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    R[&quot;目标响应&quot;] --&gt; H[&quot;解析响应头&quot;]
+    R --&gt; C[&quot;解析 Cookie 名&quot;]
+    R --&gt; B[&quot;解析 HTML body&quot;]
+    R --&gt; P[&quot;主动探针路径&quot;]
+
+    H --&gt; H1[&quot;Server: nginx/1.24.0&quot;]
+    H --&gt; H2[&quot;X-Powered-By: PHP/8.1&quot;]
+    C --&gt; C1[&quot;PHPSESSID → PHP&quot;]
+    C --&gt; C2[&quot;csrftoken → Django&quot;]
+    B --&gt; B1[&quot;meta generator → WordPress&quot;]
+    B --&gt; B2[&quot;/_next/static → Next.js&quot;]
+    P --&gt; P1[&quot;/wp-login.php 200 → WordPress&quot;]
+    P --&gt; P2[&quot;/actuator/health 200 → Spring Boot ⚠️&quot;]
+
+    H1 --&gt; S[&quot;加权评分&quot;]
+    H2 --&gt; S
+    C1 --&gt; S
+    C2 --&gt; S
+    B1 --&gt; S
+    B2 --&gt; S
+    P1 --&gt; S
+    P2 --&gt; S
+
+    S --&gt; O1[&quot;技术栈: WordPress 6.4 (PHP 8.1)&quot;]
+    S --&gt; O2[&quot;Web 服务器: nginx 1.24.0&quot;]
+    S --&gt; O2B[&quot;⚠️ 暴露 /actuator → 高危&quot;]
+    S --&gt; O3[&quot;安全头缺失: CSP / HSTS / X-Frame-Options&quot;]
+</code></pre></div>
+<p><strong>加权建议：</strong></p>
+<table>
+<thead>
+<tr>
+<th>证据类型</th>
+<th>权重</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主动探针命中已知路径</td>
+<td>3</td>
+<td>路径存在是硬证据</td>
+</tr>
+<tr>
+<td><code>Set-Cookie</code> 名</td>
+<td>2</td>
+<td>框架默认值，改动成本高</td>
+</tr>
+<tr>
+<td>响应头</td>
+<td>2</td>
+<td>可伪造/可关闭</td>
+</tr>
+<tr>
+<td>HTML 特征字符串</td>
+<td>2</td>
+<td>可能来自模板复制</td>
+</tr>
+<tr>
+<td>favicon 哈希</td>
+<td>1</td>
+<td>有误报（同一公司多个产品复用）</td>
+</tr>
+<tr>
+<td>默认错误页样式</td>
+<td>1</td>
+<td>最不可靠</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6ascii">图 6：授权边界检查（ASCII，代码护栏逻辑）</h2>
+<pre class="plain"><code>                     ┌────────────────────────────┐
+   用户传入 --url ──►│ 解析 host                   │
+                     └──────────────┬─────────────┘
+                                    │
+                    ┌───────────────▼──────────────┐
+                    │ host ∈ {127.0.0.1, localhost, │
+                    │         ::1, 0.0.0.0} ?       │
+                    └───────┬──────────────┬───────┘
+                            │ 是           │ 否
+                            │              ▼
+                            │     ┌──────────────────────────┐
+                            │     │ 是否带 --i-have-authorization? │
+                            │     └────┬────────────────┬────┘
+                            │          │ 是             │ 否
+                            │          │                ▼
+                            │          │        ┌────────────────┐
+                            │          │        │ 打印合规提示    │
+                            │          │        │ sys.exit(2)    │
+                            │          │        └────────────────┘
+                            ▼          ▼
+                    ┌──────────────────────────────┐
+                    │ 打印目标 + 并发 + 预计请求数    │
+                    │ 强制 sleep(0.1) 起步限速       │
+                    │ 开始扫描                       │
+                    └──────────────────────────────┘
+</code></pre>
+<blockquote>
+<p><strong>把边界写进代码而不是写进 README</strong>，是因为人总有"就试一次"的冲动。
+让程序在跑之前先替你踩一次刹车。</p>
+</blockquote></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

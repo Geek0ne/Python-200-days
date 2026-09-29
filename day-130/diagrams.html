@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 130 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 130 正文</a>
+  <h1>Day 130 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-130-playwright">Day 130 - Playwright 现代爬虫 图解</h1>
+<h2 id="1-selenium-vs-playwright">1. Selenium vs Playwright 架构</h2>
+<pre class="plain"><code>Selenium:                          Playwright:
+Python                             Python
+  │ W3C HTTP 协议                    │ 驱动进程（pip 自带，一条 install 命令）
+  ▼                                  ▼
+ChromeDriver（每个浏览器一个）        CDP / 内部协议直连
+  ▼                                  ▼
+Chrome                              Chromium / Firefox / WebKit
+                                    （内核由 playwright install 统一管理，无版本地狱）
+</code></pre>
+<h2 id="2-actionability">2. 自动等待（actionability）流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[locator.click] --&gt; B{元素存在?}
+    B -- 否 --&gt; W[等待 0.1s 重试]
+    W --&gt; B
+    B -- 是 --&gt; C{可见?}
+    C -- 否 --&gt; W
+    C -- 是 --&gt; D{尺寸稳定&lt;br/&gt;动画结束?}
+    D -- 否 --&gt; W
+    D -- 是 --&gt; E{未被遮挡?}
+    E -- 是 --&gt; F[执行点击 ✅]
+    E -- 否 --&gt; W
+    W -.超时(默认30s).-&gt; X[抛 TimeoutException]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[locator.click] --&gt; B{元素存在?}
+    B -- 否 --&gt; W[等待 0.1s 重试]
+    W --&gt; B
+    B -- 是 --&gt; C{可见?}
+    C -- 否 --&gt; W
+    C -- 是 --&gt; D{尺寸稳定&lt;br/&gt;动画结束?}
+    D -- 否 --&gt; W
+    D -- 是 --&gt; E{未被遮挡?}
+    E -- 是 --&gt; F[执行点击 ✅]
+    E -- 否 --&gt; W
+    W -.超时(默认30s).-&gt; X[抛 TimeoutException]
+</code></pre></div>
+<h2 id="3-browsercontext">3. BrowserContext 并发模型</h2>
+<pre class="plain"><code>             1 个浏览器进程（重，慢启动）
+                    │
+     ┌──────────────┼──────────────┐
+     ▼              ▼              ▼
+ Context A      Context B      Context C     （秒级创建，≈无痕窗口）
+  UA/UA-A        UA-B           UA-C          各自 Cookie/存储隔离
+     │              │              │
+   page          page           page          模拟 N 个独立用户并发
+</code></pre>
+<h2 id="4-locator-vs-webelement">4. Locator（惰性+重试） vs WebElement（快照）</h2>
+<pre class="plain"><code>Selenium WebElement:  find_element 拿到&quot;引用快照&quot; ──页面刷新──► StaleElementReferenceException 💥
+
+Playwright Locator:   locator() 只是&quot;描述&quot;（CSS/XPath 字符串）
+                      ──每次操作时实时查找 + 自动重试──► 永远指向当前 DOM ✅
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

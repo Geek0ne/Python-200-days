@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 65 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 65 正文</a>
+  <h1>Day 65 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-065-web">Day 065 — 图解：Web 框架原理</h1>
+<blockquote>
+<p>本目录包含 Flask Web 框架核心概念的图解说明。</p>
+</blockquote>
+<hr>
+<h2 id="1-flask">1. Flask 请求处理流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Client as 浏览器/客户端
+    participant WSGI as WSGI Server&lt;br/&gt;(Werkzeug)
+    participant Flask as Flask 应用
+    participant Router as 路由系统
+    participant View as 视图函数
+    participant Template as 模板引擎 (Jinja2)
+
+    Client-&gt;&gt;WSGI: HTTP 请求&lt;br/&gt;GET /post/123
+    WSGI-&gt;&gt;Flask: 调用 app.__call__()
+    Flask-&gt;&gt;Flask: before_request 钩子
+    Flask-&gt;&gt;Router: 匹配 URL 路径
+    Router--&gt;&gt;Flask: 找到视图函数 show_post
+    Flask-&gt;&gt;View: 调用 show_post(id=123)
+    View-&gt;&gt;Template: render_template()
+    Template--&gt;&gt;View: 渲染好的 HTML
+    View--&gt;&gt;Flask: 返回响应字符串
+    Flask-&gt;&gt;Flask: after_request 钩子
+    Flask--&gt;&gt;WSGI: HTTP 响应&lt;br/&gt;200 OK + HTML
+    WSGI--&gt;&gt;Client: 发送响应
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Client as 浏览器/客户端
+    participant WSGI as WSGI Server&lt;br/&gt;(Werkzeug)
+    participant Flask as Flask 应用
+    participant Router as 路由系统
+    participant View as 视图函数
+    participant Template as 模板引擎 (Jinja2)
+
+    Client-&gt;&gt;WSGI: HTTP 请求&lt;br/&gt;GET /post/123
+    WSGI-&gt;&gt;Flask: 调用 app.__call__()
+    Flask-&gt;&gt;Flask: before_request 钩子
+    Flask-&gt;&gt;Router: 匹配 URL 路径
+    Router--&gt;&gt;Flask: 找到视图函数 show_post
+    Flask-&gt;&gt;View: 调用 show_post(id=123)
+    View-&gt;&gt;Template: render_template()
+    Template--&gt;&gt;View: 渲染好的 HTML
+    View--&gt;&gt;Flask: 返回响应字符串
+    Flask-&gt;&gt;Flask: after_request 钩子
+    Flask--&gt;&gt;WSGI: HTTP 响应&lt;br/&gt;200 OK + HTML
+    WSGI--&gt;&gt;Client: 发送响应
+</code></pre></div>
+<hr>
+<h2 id="2-mvc-vs-flask">2. MVC 模式 vs Flask 的实际模式</h2>
+<p>传统的 MVC（Model-View-Controller）模式在 Flask 中的对应关系：</p>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph &quot;传统 MVC&quot;
+        M1[Model&lt;br/&gt;数据层]
+        V1[View&lt;br/&gt;视图层]
+        C1[Controller&lt;br/&gt;控制器]
+    end
+
+    subgraph &quot;Flask 实现&quot;
+        M2[Model&lt;br/&gt;自定义数据/DB]
+        V2[View&lt;br/&gt;Jinja2 模板]
+        C2[Controller&lt;br/&gt;路由 + 视图函数]
+    end
+
+    M1 -.-&gt; M2
+    V1 -.-&gt; V2
+    C1 -.-&gt; C2
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph &quot;传统 MVC&quot;
+        M1[Model&lt;br/&gt;数据层]
+        V1[View&lt;br/&gt;视图层]
+        C1[Controller&lt;br/&gt;控制器]
+    end
+
+    subgraph &quot;Flask 实现&quot;
+        M2[Model&lt;br/&gt;自定义数据/DB]
+        V2[View&lt;br/&gt;Jinja2 模板]
+        C2[Controller&lt;br/&gt;路由 + 视图函数]
+    end
+
+    M1 -.-&gt; M2
+    V1 -.-&gt; V2
+    C1 -.-&gt; C2
+</code></pre></div>
+<p>Flask 没有强制 MVC 结构，但通常开发者会按以下模式组织：</p>
+<pre class="plain"><code>Flask 请求处理模式（类似 Controller → View）
+
+用户请求
+    │
+    ▼
+routes.py (路由定义) ← 类似 Controller
+    │  @app.route(&#x27;/post/&lt;id&gt;&#x27;)
+    │  def show_post(id):
+    │      post = get_post(id)  ← 类似 Model
+    │      return render_template(
+    │          &#x27;post.html&#x27;,      ← 类似 View
+    │          post=post
+    │      )
+    │
+    ▼
+templates/post.html (Jinja2 模板)
+</code></pre>
+<hr>
+<h2 id="3">3. 路由匹配机制详解</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    Start[用户请求: /user/张三] --&gt; Match{URL 匹配}
+    
+    Match --&gt;|精确匹配 /| R1[&quot;路由: /&lt;br/&gt;→ index()&quot;]
+    Match --&gt;|精确匹配 /about| R2[&quot;路由: /about&lt;br/&gt;→ about()&quot;]
+    Match --&gt;|变量匹配 /user/张三| R3[&quot;路由: /user/&amp;lt;username&amp;gt;&lt;br/&gt;→ show_user(username=&#x27;张三&#x27;)&quot;]
+    Match --&gt;|变量匹配 /post/42| R4[&quot;路由: /post/&amp;lt;int:id&amp;gt;&lt;br/&gt;→ show_post(id=42)&quot;]
+    Match --&gt;|无匹配| R5[&quot;→ 404&quot;]
+    
+    R3 --&gt; Execute1[&quot;show_user(&#x27;张三&#x27;)&quot;]
+    R4 --&gt; Execute2[&quot;show_post(42)&quot;]
+    R5 --&gt; Error[&quot;404 Not Found&quot;]
+    
+    style Error fill:#ff9999
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    Start[用户请求: /user/张三] --&gt; Match{URL 匹配}
+    
+    Match --&gt;|精确匹配 /| R1[&quot;路由: /&lt;br/&gt;→ index()&quot;]
+    Match --&gt;|精确匹配 /about| R2[&quot;路由: /about&lt;br/&gt;→ about()&quot;]
+    Match --&gt;|变量匹配 /user/张三| R3[&quot;路由: /user/&amp;lt;username&amp;gt;&lt;br/&gt;→ show_user(username=&#x27;张三&#x27;)&quot;]
+    Match --&gt;|变量匹配 /post/42| R4[&quot;路由: /post/&amp;lt;int:id&amp;gt;&lt;br/&gt;→ show_post(id=42)&quot;]
+    Match --&gt;|无匹配| R5[&quot;→ 404&quot;]
+    
+    R3 --&gt; Execute1[&quot;show_user(&#x27;张三&#x27;)&quot;]
+    R4 --&gt; Execute2[&quot;show_post(42)&quot;]
+    R5 --&gt; Error[&quot;404 Not Found&quot;]
+    
+    style Error fill:#ff9999
+</code></pre></div>
+<p><strong>匹配顺序</strong>：Flask 按照路由定义的<strong>顺序</strong>进行匹配。先定义的路由优先级更高。</p>
+<hr>
+<h2 id="4-jinja2">4. Jinja2 模板渲染流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph &quot;模板解析阶段&quot;
+        A[加载模板文件] --&gt; B[解析模板语法]
+        B --&gt; C[构建 AST&lt;br/&gt;抽象语法树]
+        C --&gt; D[编译为 Python 字节码]
+    end
+    
+    subgraph &quot;模板渲染阶段&quot;
+        E[传入上下文变量] --&gt; F[执行编译后的代码]
+        F --&gt; G[替换 {{变量}}]
+        G --&gt; H[执行 {% 语句 %}]
+        H --&gt; I[生成最终 HTML]
+    end
+    
+    D -.-&gt; E
+    
+    style I fill:#90EE90
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph &quot;模板解析阶段&quot;
+        A[加载模板文件] --&gt; B[解析模板语法]
+        B --&gt; C[构建 AST&lt;br/&gt;抽象语法树]
+        C --&gt; D[编译为 Python 字节码]
+    end
+    
+    subgraph &quot;模板渲染阶段&quot;
+        E[传入上下文变量] --&gt; F[执行编译后的代码]
+        F --&gt; G[替换 {{变量}}]
+        G --&gt; H[执行 {% 语句 %}]
+        H --&gt; I[生成最终 HTML]
+    end
+    
+    D -.-&gt; E
+    
+    style I fill:#90EE90
+</code></pre></div>
+<hr>
+<h2 id="5-http-">5. HTTP 请求-响应生命周期</h2>
+<pre class="plain"><code>                    ┌─────────────────────────────┐
+                    │         Flask 应用            │
+                    │                              │
+请求进入               │  ┌───────────────────┐     │
+──────┐               │  │   before_request   │     │
+      │               │  │  (请求前处理)      │     │
+      ▼               │  └────────┬──────────┘     │
+┌──────────┐          │           ▼                │
+│  WSGI    │──────────│──┌───────────────────┐     │
+│ Server   │  environ │  │   路由解析         │     │
+│(Werkzeug)│          │  │   匹配 URL → 函数  │     │
+└──────────┘          │  └────────┬──────────┘     │
+      ▲               │           ▼                │
+      │               │  ┌───────────────────┐     │
+      │               │  │   视图函数执行     │     │
+      │               │  │   处理请求、渲染   │     │
+      │               │  └────────┬──────────┘     │
+      │               │           ▼                │
+      │               │  ┌───────────────────┐     │
+      │               │  │   after_request    │     │
+  响应返回             │  │  (响应后处理)     │     │
+←─────                │  └───────────────────┘     │
+                      └─────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="6-flask">6. Flask 核心组件关系</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph &quot;Flask 核心&quot;
+        Flask[Flask 应用] --&gt; Router[路由系统&lt;br/&gt;@app.route]
+        Flask --&gt; Config[配置系统&lt;br/&gt;app.config]
+        Flask --&gt; Extension[扩展机制&lt;br/&gt;app.extensions]
+    end
+    
+    subgraph &quot;Werkzeug（WSGI 工具包）&quot;
+        WSGI[WSGI 服务器] --&gt; Request[请求对象&lt;br/&gt;request]
+        WSGI --&gt; Response[响应对象&lt;br/&gt;response]
+        WSGI --&gt; RouterEngine[路由引擎&lt;br/&gt;Map/Rule]
+    end
+    
+    subgraph &quot;Jinja2（模板引擎）&quot;
+        Template[模板加载] --&gt; Env[环境&lt;br/&gt;Environment]
+        Env --&gt; Compiler[编译&lt;br/&gt;Compiler]
+        Env --&gt; Sandbox[沙箱&lt;br/&gt;SandboxedEnvironment]
+    end
+    
+    Flask --- WSGI
+    Flask --- Template
+    
+    subgraph &quot;开发者&quot;
+        Views[视图函数] --&gt; Flask
+        Templates[Jinja2 模板] --&gt; Template
+        Static[静态文件&lt;br/&gt;CSS/JS/图片] --&gt; User[用户浏览器]
+    end
+    
+    Views --&gt; Templates
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph &quot;Flask 核心&quot;
+        Flask[Flask 应用] --&gt; Router[路由系统&lt;br/&gt;@app.route]
+        Flask --&gt; Config[配置系统&lt;br/&gt;app.config]
+        Flask --&gt; Extension[扩展机制&lt;br/&gt;app.extensions]
+    end
+    
+    subgraph &quot;Werkzeug（WSGI 工具包）&quot;
+        WSGI[WSGI 服务器] --&gt; Request[请求对象&lt;br/&gt;request]
+        WSGI --&gt; Response[响应对象&lt;br/&gt;response]
+        WSGI --&gt; RouterEngine[路由引擎&lt;br/&gt;Map/Rule]
+    end
+    
+    subgraph &quot;Jinja2（模板引擎）&quot;
+        Template[模板加载] --&gt; Env[环境&lt;br/&gt;Environment]
+        Env --&gt; Compiler[编译&lt;br/&gt;Compiler]
+        Env --&gt; Sandbox[沙箱&lt;br/&gt;SandboxedEnvironment]
+    end
+    
+    Flask --- WSGI
+    Flask --- Template
+    
+    subgraph &quot;开发者&quot;
+        Views[视图函数] --&gt; Flask
+        Templates[Jinja2 模板] --&gt; Template
+        Static[静态文件&lt;br/&gt;CSS/JS/图片] --&gt; User[用户浏览器]
+    end
+    
+    Views --&gt; Templates
+</code></pre></div>
+<hr>
+<h2 id="7-url-html">7. 渲染流程图：从 URL 到 HTML 的完整路径</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    URL[&quot;GET /post/1&quot;] --&gt; Parse[&quot;解析 URL&lt;br/&gt;提取路径&quot;]
+    Parse --&gt; MatchRoute[&quot;匹配路由表&lt;br/&gt;/post/&amp;lt;int:id&amp;gt;&quot;]
+    MatchRoute --&gt; CallView[&quot;调用视图函数&lt;br/&gt;show_post(id=1)&quot;]
+    CallView --&gt; QueryData[&quot;获取数据&lt;br/&gt;post = POSTS[0]&quot;]
+    QueryData --&gt; RenderTemplate[&quot;渲染模板&lt;br/&gt;render_template()&quot;]
+    RenderTemplate --&gt; Html[&quot;生成 HTML&lt;br/&gt;响应字符串&quot;]
+    Html --&gt; Send[&quot;发送到客户端&quot;]
+    
+    style Send fill:#90EE90
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    URL[&quot;GET /post/1&quot;] --&gt; Parse[&quot;解析 URL&lt;br/&gt;提取路径&quot;]
+    Parse --&gt; MatchRoute[&quot;匹配路由表&lt;br/&gt;/post/&amp;lt;int:id&amp;gt;&quot;]
+    MatchRoute --&gt; CallView[&quot;调用视图函数&lt;br/&gt;show_post(id=1)&quot;]
+    CallView --&gt; QueryData[&quot;获取数据&lt;br/&gt;post = POSTS[0]&quot;]
+    QueryData --&gt; RenderTemplate[&quot;渲染模板&lt;br/&gt;render_template()&quot;]
+    RenderTemplate --&gt; Html[&quot;生成 HTML&lt;br/&gt;响应字符串&quot;]
+    Html --&gt; Send[&quot;发送到客户端&quot;]
+    
+    style Send fill:#90EE90
+</code></pre></div>
+<hr>
+<h2 id="8-blueprint">8. 蓝图（Blueprint）—— 模块化组织</h2>
+<p>大型 Flask 项目通过蓝图（Blueprint）来组织模块：</p>
+<pre class="plain"><code>项目根目录/
+│
+├── app.py                  ← 创建 Flask 应用，注册蓝图
+│
+├── blog/                   ← 博客模块（蓝图）
+│   ├── __init__.py         ← 创建蓝图对象
+│   ├── routes.py           ← blog 的路由
+│   └── templates/
+│       └── blog/
+│           ├── index.html
+│           └── post.html
+│
+├── auth/                   ← 认证模块（蓝图）
+│   ├── __init__.py
+│   ├── routes.py           ← auth 的路由
+│   └── templates/
+│       └── auth/
+│           ├── login.html
+│           └── register.html
+│
+└── static/                 ← 全局静态文件
+    ├── css/
+    ├── js/
+    └── images/
+</code></pre>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># blog/routes.py</span>
+<span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Blueprint</span><span class="p">,</span> <span class="n">render_template</span>
+
+<span class="n">blog_bp</span> <span class="o">=</span> <span class="n">Blueprint</span><span class="p">(</span><span class="s1">&#39;blog&#39;</span><span class="p">,</span> <span class="vm">__name__</span><span class="p">,</span> <span class="n">url_prefix</span><span class="o">=</span><span class="s1">&#39;/blog&#39;</span><span class="p">)</span>
+
+<span class="nd">@blog_bp</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">index</span><span class="p">():</span>
+    <span class="k">return</span> <span class="n">render_template</span><span class="p">(</span><span class="s1">&#39;blog/index.html&#39;</span><span class="p">)</span>
+
+<span class="c1"># app.py</span>
+<span class="kn">from</span> <span class="nn">blog.routes</span> <span class="kn">import</span> <span class="n">blog_bp</span>
+<span class="n">app</span><span class="o">.</span><span class="n">register_blueprint</span><span class="p">(</span><span class="n">blog_bp</span><span class="p">)</span>
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

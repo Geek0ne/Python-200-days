@@ -1,0 +1,1239 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 66 — Flask 进阶：数据库、认证与 RESTful API</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 66 — Flask 进阶：数据库、认证与 RESTful API</h1>
+  <div class="lmeta">
+    <span class="badge">标准库与生态系统</span>
+    <span class="badge">969 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-066-flask-advanced" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#1-sqlalchemy">1. 数据库集成（SQLAlchemy）</a>
+<a class="toc-l3" href="#11-orm">1.1 为什么需要 ORM？</a>
+<a class="toc-l3" href="#12-sqlalchemy">1.2 SQLAlchemy 概览</a>
+<a class="toc-l3" href="#13-flask-sqlalchemy">1.3 Flask-SQLAlchemy 集成</a>
+<a class="toc-l3" href="#14-model">1.4 定义模型（Model）</a>
+<a class="toc-l3" href="#15-relationship">1.5 关系（Relationship）</a>
+<a class="toc-l3" href="#16-crud">1.6 CRUD 操作速查</a>
+<a class="toc-l3" href="#17">1.7 数据库迁移</a>
+<a class="toc-l2" href="#2">2. 用户认证</a>
+<a class="toc-l3" href="#21-vs">2.1 认证 vs 授权</a>
+<a class="toc-l3" href="#22">2.2 密码安全：永远不要存明文密码</a>
+<a class="toc-l3" href="#23-flask-login">2.3 Flask-Login：会话管理</a>
+<a class="toc-l3" href="#24-jwtjson-web-token">2.4 JWT（JSON Web Token）认证</a>
+<a class="toc-l2" href="#3-restful-api">3. RESTful API 设计</a>
+<a class="toc-l3" href="#31-rest">3.1 什么是 REST？</a>
+<a class="toc-l3" href="#32-restful">3.2 RESTful 资源命名与操作</a>
+<a class="toc-l3" href="#33-api">3.3 API 响应规范</a>
+<a class="toc-l3" href="#34">3.4 状态码速查</a>
+<a class="toc-l2" href="#4-todo-api">4. 实战：TODO API 完整应用</a>
+<a class="toc-l3" href="#41">4.1 项目结构</a>
+<a class="toc-l3" href="#42-apppy">4.2 完整代码（app.py）</a>
+<a class="toc-l3" href="#43-api">4.3 API 测试示例</a>
+<a class="toc-l2" href="#5">5. 请求处理流程总览</a>
+<a class="toc-l2" href="#_2">思考题 🤔</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-066-flask-restful-api">Day 066 — Flask 进阶：数据库、认证与 RESTful API</h1>
+<h2 id="_1">概述</h2>
+<p>Day 065 我们学会了 Flask 的<strong>基础</strong>——路由、模板、请求/响应。今天进入<strong>进阶</strong>领域，将 Flask 与真实世界的 Web 开发需求结合起来：</p>
+<ol>
+<li><strong>数据库集成（SQLAlchemy）</strong> —— 如何把数据持久化到关系型数据库</li>
+<li><strong>用户认证</strong> —— 注册、登录、会话管理、密码安全</li>
+<li><strong>RESTful API</strong> —— 构建以 JSON 为核心的 Web 服务</li>
+<li><strong>实战：TODO API</strong> —— 用所学知识构建一个完整的任务管理 API</li>
+</ol>
+<p>这些是<strong>几乎每个生产级 Web 应用都会用到</strong>的核心能力。</p>
+<hr>
+<h2 id="1-sqlalchemy">1. 数据库集成（SQLAlchemy）</h2>
+<h3 id="11-orm">1.1 为什么需要 ORM？</h3>
+<p>在没有 ORM（Object-Relational Mapping）之前，Python 操作数据库直接写 SQL：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">sqlite3</span>
+
+<span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s1">&#39;app.db&#39;</span><span class="p">)</span>
+<span class="n">cursor</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+
+<span class="c1"># 手动拼接 SQL——危险！</span>
+<span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM users WHERE username = &#39;</span><span class="si">%s</span><span class="s2">&#39;&quot;</span> <span class="o">%</span> <span class="n">username</span><span class="p">)</span>
+
+<span class="c1"># 即使使用参数化查询，代码依然繁琐</span>
+<span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+    <span class="s2">&quot;INSERT INTO todo (title, done, user_id) VALUES (?, ?, ?)&quot;</span><span class="p">,</span>
+    <span class="p">(</span><span class="n">title</span><span class="p">,</span> <span class="n">done</span><span class="p">,</span> <span class="n">user_id</span><span class="p">)</span>
+<span class="p">)</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>问题</strong>：<br>
+- <strong>SQL 注入风险</strong>：手动拼接字符串是安全漏洞<br>
+- <strong>重复样板代码</strong>：每个表都要重复写 CRUD 的 SQL<br>
+- <strong>类型不安全</strong>：Python 类型和数据库类型需要手动转换<br>
+- <strong>对象关系阻抗不匹配</strong>：Python 对象 ←→ 数据库行 的转换很繁琐</p>
+<blockquote>
+<p>💡 <strong>ORM 的核心思想</strong>：把关系型数据库的"表"映射成 Python 的"类"，把"行"映射成 Python 的"对象"，用 Python 的思维操作数据库。</p>
+</blockquote>
+<h3 id="12-sqlalchemy">1.2 SQLAlchemy 概览</h3>
+<p>SQLAlchemy 是 Python 最流行的 ORM 框架，它包含两层架构：</p>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph &quot;应用层&quot;
+        ORM[ORM API&lt;br/&gt;面向对象接口]
+    end
+    
+    subgraph &quot;核心层&quot;
+        Core[Core API&lt;br/&gt;SQL 表达式语言]
+    end
+    
+    subgraph &quot;数据库层&quot;
+        SQLite[SQLite]
+        PG[PostgreSQL]
+        MySQL[MySQL]
+    end
+    
+    ORM --&gt; Core
+    Core --&gt; SQLite
+    Core --&gt; PG
+    Core --&gt; MySQL
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph &quot;应用层&quot;
+        ORM[ORM API&lt;br/&gt;面向对象接口]
+    end
+    
+    subgraph &quot;核心层&quot;
+        Core[Core API&lt;br/&gt;SQL 表达式语言]
+    end
+    
+    subgraph &quot;数据库层&quot;
+        SQLite[SQLite]
+        PG[PostgreSQL]
+        MySQL[MySQL]
+    end
+    
+    ORM --&gt; Core
+    Core --&gt; SQLite
+    Core --&gt; PG
+    Core --&gt; MySQL
+</code></pre></div>
+<p><strong>分层设计的好处</strong>：<br>
+- <strong>上层（ORM）</strong>：用 Python 类和对象操作数据库，适合大多数场景<br>
+- <strong>下层（Core）</strong>：用 Python 表达式写 SQL，需要复杂查询时更灵活<br>
+- <strong>最底层</strong>：通过 Dialect（方言）适配不同数据库，切换数据库时只需要改连接字符串</p>
+<h3 id="13-flask-sqlalchemy">1.3 Flask-SQLAlchemy 集成</h3>
+<p>Flask-SQLAlchemy 是 Flask 的 SQLAlchemy 扩展，做了一些便捷封装：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span>
+<span class="kn">from</span> <span class="nn">flask_sqlalchemy</span> <span class="kn">import</span> <span class="n">SQLAlchemy</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timezone</span>
+
+<span class="c1"># 创建 Flask 应用</span>
+<span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1"># 🔑 配置数据库连接</span>
+<span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SQLALCHEMY_DATABASE_URI&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;sqlite:///app.db&#39;</span>  <span class="c1"># 数据库位置</span>
+<span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SQLALCHEMY_TRACK_MODIFICATIONS&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>         <span class="c1"># 关闭事件跟踪（节省内存）</span>
+
+<span class="c1"># 创建数据库实例</span>
+<span class="n">db</span> <span class="o">=</span> <span class="n">SQLAlchemy</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+</code></pre></div>
+<blockquote>
+<p>💡 <strong><code>sqlite:///app.db</code> 的含义</strong>：这是数据库 URI（统一资源标识符）。<code>sqlite:///</code> 表示 SQLite 数据库，后面的路径是数据库文件位置。三个斜杠表示相对于应用根目录的路径。</p>
+</blockquote>
+<h3 id="14-model">1.4 定义模型（Model）</h3>
+<p>模型 = 数据库表在 Python 中的表示：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Model</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用户模型——对应数据库中的 user 表&quot;&quot;&quot;</span>
+    <span class="n">__tablename__</span> <span class="o">=</span> <span class="s1">&#39;user&#39;</span>  <span class="c1"># 表名（不指定则默认类名小写）</span>
+    
+    <span class="c1"># 定义列（字段）</span>
+    <span class="nb">id</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Integer</span><span class="p">,</span> <span class="n">primary_key</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>       <span class="c1"># 主键，自增</span>
+    <span class="n">username</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">80</span><span class="p">),</span> <span class="n">unique</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># 唯一，非空</span>
+    <span class="n">email</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">120</span><span class="p">),</span> <span class="n">unique</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">password_hash</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">256</span><span class="p">),</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">created_at</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">DateTime</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">))</span>
+    
+    <span class="c1"># 关系（一对多）</span>
+    <span class="n">todos</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">relationship</span><span class="p">(</span><span class="s1">&#39;Todo&#39;</span><span class="p">,</span> <span class="n">backref</span><span class="o">=</span><span class="s1">&#39;user&#39;</span><span class="p">,</span> <span class="n">lazy</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;&lt;User </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">username</span><span class="si">}</span><span class="s1">&gt;&#39;</span>
+</code></pre></div>
+<p><strong>各列类型详解</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>Python 类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>db.Integer</code></td>
+<td><code>int</code></td>
+<td>整数</td>
+</tr>
+<tr>
+<td><code>db.String(n)</code></td>
+<td><code>str</code></td>
+<td>变长字符串，n 为最大长度</td>
+</tr>
+<tr>
+<td><code>db.Text</code></td>
+<td><code>str</code></td>
+<td>无长度限制的文本</td>
+</tr>
+<tr>
+<td><code>db.Float</code></td>
+<td><code>float</code></td>
+<td>浮点数</td>
+</tr>
+<tr>
+<td><code>db.Boolean</code></td>
+<td><code>bool</code></td>
+<td>布尔值</td>
+</tr>
+<tr>
+<td><code>db.DateTime</code></td>
+<td><code>datetime</code></td>
+<td>日期时间</td>
+</tr>
+<tr>
+<td><code>db.Date</code></td>
+<td><code>date</code></td>
+<td>日期</td>
+</tr>
+<tr>
+<td><code>db.JSON</code></td>
+<td><code>dict/list</code></td>
+<td>JSON 数据</td>
+</tr>
+<tr>
+<td><code>db.PickleType</code></td>
+<td>任意</td>
+<td>Python 对象（用 pickle 序列化）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>列约束选项</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>primary_key=True</code></td>
+<td>主键</td>
+</tr>
+<tr>
+<td><code>unique=True</code></td>
+<td>唯一约束</td>
+</tr>
+<tr>
+<td><code>nullable=False</code></td>
+<td>不可为空</td>
+</tr>
+<tr>
+<td><code>default=value</code></td>
+<td>默认值</td>
+</tr>
+<tr>
+<td><code>index=True</code></td>
+<td>创建索引</td>
+</tr>
+<tr>
+<td><code>db.ForeignKey('user.id')</code></td>
+<td>外键</td>
+</tr>
+</tbody>
+</table>
+<h3 id="15-relationship">1.5 关系（Relationship）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Todo</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Model</span><span class="p">):</span>
+    <span class="n">__tablename__</span> <span class="o">=</span> <span class="s1">&#39;todo&#39;</span>
+    
+    <span class="nb">id</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Integer</span><span class="p">,</span> <span class="n">primary_key</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">title</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">200</span><span class="p">),</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">done</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Boolean</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">user_id</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Integer</span><span class="p">,</span> <span class="n">db</span><span class="o">.</span><span class="n">ForeignKey</span><span class="p">(</span><span class="s1">&#39;user.id&#39;</span><span class="p">),</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">created_at</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">DateTime</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">))</span>
+    <span class="c1"># user_id 是外键，指向 user 表的 id</span>
+    
+    <span class="k">def</span> <span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s1">&#39;id&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
+            <span class="s1">&#39;title&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">title</span><span class="p">,</span>
+            <span class="s1">&#39;done&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">done</span><span class="p">,</span>
+            <span class="s1">&#39;user_id&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">user_id</span><span class="p">,</span>
+            <span class="s1">&#39;created_at&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">created_at</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">created_at</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">}</span>
+</code></pre></div>
+<p><strong><code>db.relationship()</code> 的作用</strong>：在 User 类中定义了 <code>todos = db.relationship('Todo', backref='user', lazy=True)</code>，这样：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 正向访问：通过用户获取他的所有 todo</span>
+<span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">user</span><span class="o">.</span><span class="n">todos</span>  <span class="c1"># ➜ [Todo, Todo, ...]</span>
+
+<span class="c1"># 反向访问：通过 todo 获取它的所有者</span>
+<span class="n">todo</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">todo</span><span class="o">.</span><span class="n">user</span>   <span class="c1"># ➜ &lt;User xxx&gt;</span>
+<span class="c1"># ^ 这就是 backref=&#39;user&#39; 的作用——给 Todo 类添加了 .user 属性</span>
+</code></pre></div>
+<p><strong>lazy 加载模式</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lazy=True</code> / <code>lazy='select'</code></td>
+<td>首次访问时惰性查询（默认）</td>
+</tr>
+<tr>
+<td><code>lazy='joined'</code></td>
+<td>用 JOIN 一次性加载</td>
+</tr>
+<tr>
+<td><code>lazy='subquery'</code></td>
+<td>用子查询加载</td>
+</tr>
+<tr>
+<td><code>lazy='dynamic'</code></td>
+<td>返回 Query 对象，支持链式过滤</td>
+</tr>
+</tbody>
+</table>
+<h3 id="16-crud">1.6 CRUD 操作速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ──────────────── 创建 ────────────────</span>
+
+<span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="n">username</span><span class="o">=</span><span class="s1">&#39;alice&#39;</span><span class="p">,</span> <span class="n">email</span><span class="o">=</span><span class="s1">&#39;alice@example.com&#39;</span><span class="p">)</span>
+<span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>      <span class="c1"># 添加到会话</span>
+<span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>       <span class="c1"># 提交事务（写入数据库）</span>
+
+<span class="c1"># 批量创建</span>
+<span class="n">todo1</span> <span class="o">=</span> <span class="n">Todo</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s1">&#39;学 Flask&#39;</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="n">user</span><span class="p">)</span>
+<span class="n">todo2</span> <span class="o">=</span> <span class="n">Todo</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s1">&#39;学 SQLAlchemy&#39;</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="n">user</span><span class="p">)</span>
+<span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">add_all</span><span class="p">([</span><span class="n">todo1</span><span class="p">,</span> <span class="n">todo2</span><span class="p">])</span>
+<span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+
+<span class="c1"># ──────────────── 读取 ────────────────</span>
+
+<span class="c1"># 获取全部</span>
+<span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>
+
+<span class="c1"># 按主键获取</span>
+<span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># 按条件过滤</span>
+<span class="n">users</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">username</span><span class="o">=</span><span class="s1">&#39;alice&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>      <span class="c1"># 精确匹配</span>
+<span class="n">users</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">User</span><span class="o">.</span><span class="n">email</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s1">&#39;@gmail.com&#39;</span><span class="p">))</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>  <span class="c1"># 模糊匹配</span>
+<span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">username</span><span class="o">=</span><span class="s1">&#39;alice&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>     <span class="c1"># 取第一个</span>
+
+<span class="c1"># 排序</span>
+<span class="n">todos</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">order_by</span><span class="p">(</span><span class="n">Todo</span><span class="o">.</span><span class="n">created_at</span><span class="o">.</span><span class="n">desc</span><span class="p">())</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>  <span class="c1"># 倒序</span>
+
+<span class="c1"># 分页</span>
+<span class="n">todos</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">paginate</span><span class="p">(</span><span class="n">page</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">per_page</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">error_out</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="c1"># 复杂查询</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">User</span><span class="p">)</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">User</span><span class="o">.</span><span class="n">username</span><span class="o">.</span><span class="n">in_</span><span class="p">([</span><span class="s1">&#39;alice&#39;</span><span class="p">,</span> <span class="s1">&#39;bob&#39;</span><span class="p">]))</span>
+<span class="p">)</span><span class="o">.</span><span class="n">scalars</span><span class="p">()</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>
+
+<span class="c1"># ──────────────── 更新 ────────────────</span>
+
+<span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">user</span><span class="o">.</span><span class="n">email</span> <span class="o">=</span> <span class="s1">&#39;newemail@example.com&#39;</span>  <span class="c1"># 直接修改属性</span>
+<span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>                   <span class="c1"># 提交更新</span>
+
+<span class="c1"># ──────────────── 删除 ────────────────</span>
+
+<span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
+<span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="17">1.7 数据库迁移</h3>
+<p>随着应用迭代，数据库表结构也会变化（新增字段、修改类型等）。Flask-Migrate 解决了这个问题：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>Flask-Migrate
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">flask_migrate</span> <span class="kn">import</span> <span class="n">Migrate</span>
+
+<span class="n">migrate</span> <span class="o">=</span> <span class="n">Migrate</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">db</span><span class="p">)</span>
+
+<span class="c1"># 终端操作</span>
+<span class="c1"># flask db init        # 初始化迁移仓库</span>
+<span class="c1"># flask db migrate     # 自动检测模型变化，生成迁移脚本</span>
+<span class="c1"># flask db upgrade     # 应用迁移到数据库</span>
+<span class="c1"># flask db downgrade   # 回滚迁移</span>
+</code></pre></div>
+<blockquote>
+<p>💡 <strong>为什么需要迁移而不是手动改表？</strong> 在生产环境中，数据库里有真实数据。手动 ALTER TABLE 容易出错、难以回滚。迁移脚本可以像 Git 一样版本化管理，确保团队和部署环境的数据结构一致。</p>
+</blockquote>
+<hr>
+<h2 id="2">2. 用户认证</h2>
+<h3 id="21-vs">2.1 认证 vs 授权</h3>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>英文</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>认证</strong></td>
+<td>Authentication</td>
+<td><strong>你是谁？</strong> — 验证身份（登录）</td>
+</tr>
+<tr>
+<td><strong>授权</strong></td>
+<td>Authorization</td>
+<td><strong>你能做什么？</strong> — 判断权限（管理员/普通用户）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<blockquote>
+<p>Day 066 聚焦<strong>认证</strong>，授权会在后续内容中涉及。</p>
+</blockquote>
+</blockquote>
+<h3 id="22">2.2 密码安全：永远不要存明文密码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">werkzeug.security</span> <span class="kn">import</span> <span class="n">generate_password_hash</span><span class="p">,</span> <span class="n">check_password_hash</span>
+
+<span class="c1"># 注册：存储哈希值</span>
+<span class="n">password_hash</span> <span class="o">=</span> <span class="n">generate_password_hash</span><span class="p">(</span><span class="s1">&#39;my_password123&#39;</span><span class="p">)</span>
+<span class="c1"># ➜ &#39;pbkdf2:sha256:600000$...&#39;  （自动加盐，默认 600000 次迭代）</span>
+
+<span class="c1"># 登录：验证密码</span>
+<span class="n">is_valid</span> <span class="o">=</span> <span class="n">check_password_hash</span><span class="p">(</span><span class="n">password_hash</span><span class="p">,</span> <span class="s1">&#39;my_password123&#39;</span><span class="p">)</span>  <span class="c1"># ➜ True</span>
+<span class="n">is_valid</span> <span class="o">=</span> <span class="n">check_password_hash</span><span class="p">(</span><span class="n">password_hash</span><span class="p">,</span> <span class="s1">&#39;wrong_password&#39;</span><span class="p">)</span>  <span class="c1"># ➜ False</span>
+</code></pre></div>
+<p><strong>为什么不是加密而是哈希？</strong></p>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph &quot;❌ 加密（可逆）&quot;
+        P1[&quot;明文密码&quot;] --&gt; Enc[&quot;加密&lt;br/&gt;AES/RSA&quot;] --&gt; Cipher[&quot;密文&quot;]
+        Cipher --&gt; Dec[&quot;解密&quot;] --&gt; P1
+    end
+    
+    subgraph &quot;✅ 哈希（不可逆）&quot;
+        P2[&quot;明文密码&quot;] --&gt; Hash[&quot;加盐哈希&lt;br/&gt;pbkdf2/bcrypt&quot;] --&gt; Digest[&quot;哈希值&lt;br/&gt;不可逆向&quot;]
+        P2 --&gt; Salt[&quot;随机盐值&quot;]
+        Salt --&gt; Hash
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph &quot;❌ 加密（可逆）&quot;
+        P1[&quot;明文密码&quot;] --&gt; Enc[&quot;加密&lt;br/&gt;AES/RSA&quot;] --&gt; Cipher[&quot;密文&quot;]
+        Cipher --&gt; Dec[&quot;解密&quot;] --&gt; P1
+    end
+    
+    subgraph &quot;✅ 哈希（不可逆）&quot;
+        P2[&quot;明文密码&quot;] --&gt; Hash[&quot;加盐哈希&lt;br/&gt;pbkdf2/bcrypt&quot;] --&gt; Digest[&quot;哈希值&lt;br/&gt;不可逆向&quot;]
+        P2 --&gt; Salt[&quot;随机盐值&quot;]
+        Salt --&gt; Hash
+    end
+</code></pre></div>
+<p><strong>核心技术</strong>：<br>
+- <strong>加盐（Salt）</strong>：每个密码附加一个随机字符串再哈希，防止彩虹表攻击<br>
+- <strong>慢哈希</strong>：PBKDF2、bcrypt 等算法故意计算很慢（多次迭代），让暴力破解的成本剧增<br>
+- <strong>不可逆</strong>：从哈希值无法还原出原始密码，即使数据库泄露攻击者也拿不到密码</p>
+<h3 id="23-flask-login">2.3 Flask-Login：会话管理</h3>
+<p>Flask-Login 管理用户的登录状态——它在用户的浏览器（session cookie）和服务器之间维护一个"登录了"的标记。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">flask_login</span> <span class="kn">import</span> <span class="n">LoginManager</span><span class="p">,</span> <span class="n">UserMixin</span><span class="p">,</span> <span class="n">login_user</span><span class="p">,</span> <span class="n">logout_user</span><span class="p">,</span> <span class="n">login_required</span><span class="p">,</span> <span class="n">current_user</span>
+
+<span class="c1"># ──────────────── 初始化 ────────────────</span>
+<span class="n">login_manager</span> <span class="o">=</span> <span class="n">LoginManager</span><span class="p">()</span>
+<span class="n">login_manager</span><span class="o">.</span><span class="n">init_app</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+<span class="n">login_manager</span><span class="o">.</span><span class="n">login_view</span> <span class="o">=</span> <span class="s1">&#39;login&#39;</span>  <span class="c1"># 未登录时重定向到登录页面</span>
+
+<span class="c1"># ──────────────── 用户加载回调 ────────────────</span>
+<span class="nd">@login_manager</span><span class="o">.</span><span class="n">user_loader</span>
+<span class="k">def</span> <span class="nf">load_user</span><span class="p">(</span><span class="n">user_id</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Flask-Login 需要这个函数来从 session 中恢复用户&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">user_id</span><span class="p">))</span>
+
+<span class="c1"># ──────────────── 用户模型 ────────────────</span>
+<span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">UserMixin</span><span class="p">,</span> <span class="n">db</span><span class="o">.</span><span class="n">Model</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;UserMixin 提供了 Flask-Login 需要的 is_authenticated/is_active/is_anonymous/get_id 方法&quot;&quot;&quot;</span>
+    <span class="nb">id</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Integer</span><span class="p">,</span> <span class="n">primary_key</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">username</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">80</span><span class="p">),</span> <span class="n">unique</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">password_hash</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">256</span><span class="p">),</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="c1"># ──────────────── 登录路由 ────────────────</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/login&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">login</span><span class="p">():</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">username</span><span class="o">=</span><span class="n">data</span><span class="p">[</span><span class="s1">&#39;username&#39;</span><span class="p">])</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+    
+    <span class="k">if</span> <span class="n">user</span> <span class="ow">and</span> <span class="n">check_password_hash</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">password_hash</span><span class="p">,</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;password&#39;</span><span class="p">]):</span>
+        <span class="n">login_user</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>               <span class="c1"># 🔑 在 session 中标记用户已登录</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="s1">&#39;登录成功&#39;</span><span class="p">})</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;用户名或密码错误&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+
+<span class="c1"># ──────────────── 登出路由 ────────────────</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/logout&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="nd">@login_required</span>  <span class="c1"># 需要登录才能访问</span>
+<span class="k">def</span> <span class="nf">logout</span><span class="p">():</span>
+    <span class="n">logout_user</span><span class="p">()</span>  <span class="c1"># 🔓 清除 session 中的登录标记</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="s1">&#39;已登出&#39;</span><span class="p">})</span>
+
+<span class="c1"># ──────────────── 保护路由 ────────────────</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/profile&#39;</span><span class="p">)</span>
+<span class="nd">@login_required</span>  <span class="c1"># 未登录用户会被重定向到 login_manager.login_view</span>
+<span class="k">def</span> <span class="nf">profile</span><span class="p">():</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+        <span class="s1">&#39;username&#39;</span><span class="p">:</span> <span class="n">current_user</span><span class="o">.</span><span class="n">username</span>  <span class="c1"># current_user 是当前登录用户</span>
+    <span class="p">})</span>
+</code></pre></div>
+<p><strong>Flask-Login 的工作机制</strong>：</p>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Client as 浏览器
+    participant Server as Flask
+    participant Session as Session
+    participant LM as LoginManager
+    
+    Client-&gt;&gt;Server: POST /login&lt;br/&gt;{username, password}
+    Server-&gt;&gt;Server: 验证密码
+    Server-&gt;&gt;Session: 存储 user_id
+    Server--&gt;&gt;Client: Set-Cookie: session=xxx
+    
+    Note over Client,Server: 后续请求
+    
+    Client-&gt;&gt;Server: GET /profile&lt;br/&gt;Cookie: session=xxx
+    Server-&gt;&gt;Session: 读取 user_id
+    Session-&gt;&gt;LM: load_user(user_id)
+    LM--&gt;&gt;Server: current_user = User对象
+    Server--&gt;&gt;Client: {&quot;username&quot;: &quot;alice&quot;}
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Client as 浏览器
+    participant Server as Flask
+    participant Session as Session
+    participant LM as LoginManager
+    
+    Client-&gt;&gt;Server: POST /login&lt;br/&gt;{username, password}
+    Server-&gt;&gt;Server: 验证密码
+    Server-&gt;&gt;Session: 存储 user_id
+    Server--&gt;&gt;Client: Set-Cookie: session=xxx
+    
+    Note over Client,Server: 后续请求
+    
+    Client-&gt;&gt;Server: GET /profile&lt;br/&gt;Cookie: session=xxx
+    Server-&gt;&gt;Session: 读取 user_id
+    Session-&gt;&gt;LM: load_user(user_id)
+    LM--&gt;&gt;Server: current_user = User对象
+    Server--&gt;&gt;Client: {&quot;username&quot;: &quot;alice&quot;}
+</code></pre></div>
+<h3 id="24-jwtjson-web-token">2.4 JWT（JSON Web Token）认证</h3>
+<p>对于 API 来说，Flask-Login 基于 cookie 的 session 方案不一定是最佳选择。JWT 是一种<strong>无状态</strong>的认证方案：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">jwt</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span><span class="p">,</span> <span class="n">timezone</span>
+
+<span class="c1"># ──────────────── 生成 Token ────────────────</span>
+<span class="k">def</span> <span class="nf">create_token</span><span class="p">(</span><span class="n">user_id</span><span class="p">):</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s1">&#39;user_id&#39;</span><span class="p">:</span> <span class="n">user_id</span><span class="p">,</span>
+        <span class="s1">&#39;exp&#39;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span> <span class="o">+</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="mi">24</span><span class="p">),</span>  <span class="c1"># 过期时间</span>
+        <span class="s1">&#39;iat&#39;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span>                         <span class="c1"># 签发时间</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">jwt</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SECRET_KEY&#39;</span><span class="p">],</span> <span class="n">algorithm</span><span class="o">=</span><span class="s1">&#39;HS256&#39;</span><span class="p">)</span>
+
+<span class="c1"># ──────────────── 验证 Token（装饰器） ────────────────</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">wraps</span>
+
+<span class="k">def</span> <span class="nf">token_required</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+    <span class="nd">@wraps</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">decorated</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="n">token</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;Authorization&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;Bearer &#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">token</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;缺少 Token&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">payload</span> <span class="o">=</span> <span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SECRET_KEY&#39;</span><span class="p">],</span> <span class="n">algorithms</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;HS256&#39;</span><span class="p">])</span>
+            <span class="n">current_user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="s1">&#39;user_id&#39;</span><span class="p">])</span>
+        <span class="k">except</span> <span class="n">jwt</span><span class="o">.</span><span class="n">ExpiredSignatureError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;Token 已过期&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+        <span class="k">except</span> <span class="n">jwt</span><span class="o">.</span><span class="n">InvalidTokenError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;无效的 Token&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+        <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="n">current_user</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">decorated</span>
+
+<span class="c1"># ──────────────── 使用 ────────────────</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/todos&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;GET&#39;</span><span class="p">])</span>
+<span class="nd">@token_required</span>
+<span class="k">def</span> <span class="nf">get_todos</span><span class="p">(</span><span class="n">current_user</span><span class="p">):</span>
+    <span class="n">todos</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="n">current_user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">([</span><span class="n">t</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">todos</span><span class="p">])</span>
+</code></pre></div>
+<p><strong>JWT vs Session 认证</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>Session（Flask-Login）</th>
+<th>JWT</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>存储位置</strong></td>
+<td>服务器内存/Redis 存储 session</td>
+<td>Token 本身包含全部信息</td>
+</tr>
+<tr>
+<td><strong>有状态/无状态</strong></td>
+<td>有状态（服务器存 session）</td>
+<td>无状态（不占服务器存储）</td>
+</tr>
+<tr>
+<td><strong>扩展性</strong></td>
+<td>需要共享 session 存储</td>
+<td>天然支持分布式</td>
+</tr>
+<tr>
+<td><strong>撤销能力</strong></td>
+<td>可以立即删除 session</td>
+<td>通常只能等过期（或维护黑名单）</td>
+</tr>
+<tr>
+<td><strong>适合场景</strong></td>
+<td>传统 Web 应用（模板渲染）</td>
+<td>RESTful API / 移动端</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>💡 <strong>最佳实践</strong>：传统 Web 页面用 Flask-Login + Session，API 服务用 JWT。</p>
+</blockquote>
+<hr>
+<h2 id="3-restful-api">3. RESTful API 设计</h2>
+<h3 id="31-rest">3.1 什么是 REST？</h3>
+<p>REST（Representational State Transfer，表述性状态传递）是一种 <strong>API 设计风格</strong>，而不是协议或标准。它的核心思想：</p>
+<ol>
+<li><strong>资源（Resource）</strong>：一切皆资源，URL 表示资源（如 <code>/todos</code>）</li>
+<li><strong>HTTP 方法（Verb）</strong>：用 HTTP 方法表示对资源的操作</li>
+<li><strong>无状态（Stateless）</strong>：每个请求包含所有必要信息</li>
+<li><strong>统一接口</strong>：用标准化的方式操作资源</li>
+</ol>
+<h3 id="32-restful">3.2 RESTful 资源命名与操作</h3>
+<table>
+<thead>
+<tr>
+<th>HTTP 方法</th>
+<th>URL</th>
+<th>操作</th>
+<th>SQL 对应</th>
+<th>状态码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td><code>/todos</code></td>
+<td>获取列表</td>
+<td><code>SELECT</code></td>
+<td>200</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/todos/1</code></td>
+<td>获取单个</td>
+<td><code>SELECT WHERE</code></td>
+<td>200</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/todos</code></td>
+<td>创建</td>
+<td><code>INSERT</code></td>
+<td>201</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td><code>/todos/1</code></td>
+<td>全量更新</td>
+<td><code>UPDATE</code></td>
+<td>200</td>
+</tr>
+<tr>
+<td><code>PATCH</code></td>
+<td><code>/todos/1</code></td>
+<td>部分更新</td>
+<td><code>UPDATE</code></td>
+<td>200</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td><code>/todos/1</code></td>
+<td>删除</td>
+<td><code>DELETE</code></td>
+<td>204</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-api">3.3 API 响应规范</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ 成功响应</span>
+<span class="p">{</span>
+    <span class="s2">&quot;data&quot;</span><span class="p">:</span> <span class="p">[</span><span class="o">...</span><span class="p">],</span>           <span class="c1"># 主体数据</span>
+    <span class="s2">&quot;meta&quot;</span><span class="p">:</span> <span class="p">{</span>                <span class="c1"># 元信息（分页等）</span>
+        <span class="s2">&quot;page&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="s2">&quot;per_page&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+        <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="mi">42</span>
+    <span class="p">},</span>
+    <span class="s2">&quot;message&quot;</span><span class="p">:</span> <span class="s2">&quot;获取成功&quot;</span>    <span class="c1"># 可选的提示信息</span>
+<span class="p">}</span>
+
+<span class="c1"># ❌ 错误响应</span>
+<span class="p">{</span>
+    <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;资源不存在&quot;</span><span class="p">,</span>             <span class="c1"># 人类可读的错误描述</span>
+    <span class="s2">&quot;code&quot;</span><span class="p">:</span> <span class="s2">&quot;NOT_FOUND&quot;</span><span class="p">,</span>              <span class="c1"># 机器可读的错误码</span>
+    <span class="s2">&quot;details&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="s2">&quot;用户 ID 无效&quot;</span><span class="p">}</span>  <span class="c1"># 详细的字段级错误</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="34">3.4 状态码速查</h3>
+<table>
+<thead>
+<tr>
+<th>范围</th>
+<th>含义</th>
+<th>常用状态码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2xx</td>
+<td>成功</td>
+<td>200 OK, 201 Created, 204 No Content</td>
+</tr>
+<tr>
+<td>3xx</td>
+<td>重定向</td>
+<td>301 Moved, 302 Found, 304 Not Modified</td>
+</tr>
+<tr>
+<td>4xx</td>
+<td>客户端错误</td>
+<td>400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 422 Unprocessable</td>
+</tr>
+<tr>
+<td>5xx</td>
+<td>服务器错误</td>
+<td>500 Internal Server Error, 502 Bad Gateway</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">jsonify</span>
+
+<span class="c1"># 200 — 获取成功</span>
+<span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="n">todos</span><span class="p">}),</span> <span class="mi">200</span>
+
+<span class="c1"># 201 — 创建成功</span>
+<span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="n">todo</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span> <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="s1">&#39;创建成功&#39;</span><span class="p">}),</span> <span class="mi">201</span>
+
+<span class="c1"># 204 — 删除成功（无内容）</span>
+<span class="k">return</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="mi">204</span>
+
+<span class="c1"># 400 — 请求参数错误</span>
+<span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;title 字段是必填的&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+
+<span class="c1"># 404 — 资源不存在</span>
+<span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;任务不存在&#39;</span><span class="p">}),</span> <span class="mi">404</span>
+
+<span class="c1"># 409 — 资源冲突（如用户名已存在）</span>
+<span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;用户名已被注册&#39;</span><span class="p">}),</span> <span class="mi">409</span>
+</code></pre></div>
+<hr>
+<h2 id="4-todo-api">4. 实战：TODO API 完整应用</h2>
+<p>现在我们将以上所有知识整合，构建一个完整的 TODO API。</p>
+<h3 id="41">4.1 项目结构</h3>
+<pre class="plain"><code>todo-api/
+├── app.py              # 应用入口
+├── models.py           # 数据库模型
+├── auth.py             # JWT 认证
+├── routes/
+│   ├── __init__.py
+│   ├── auth_routes.py  # 认证路由
+│   └── todo_routes.py  # TODO CRUD 路由
+└── requirements.txt    # 依赖
+</code></pre>
+<h3 id="42-apppy">4.2 完整代码（app.py）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="ch">#!/usr/bin/env python3</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">TODO API 完整应用</span>
+<span class="sd">集成了 SQLAlchemy 数据库 + JWT 认证 + RESTful 接口</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">jsonify</span><span class="p">,</span> <span class="n">request</span>
+<span class="kn">from</span> <span class="nn">flask_sqlalchemy</span> <span class="kn">import</span> <span class="n">SQLAlchemy</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span><span class="p">,</span> <span class="n">timezone</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">wraps</span>
+<span class="kn">import</span> <span class="nn">jwt</span>
+
+<span class="c1"># ──────────────── 应用初始化 ────────────────</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SECRET_KEY&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;your-secret-key-change-in-production&#39;</span>
+<span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SQLALCHEMY_DATABASE_URI&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;sqlite:///todo.db&#39;</span>
+<span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SQLALCHEMY_TRACK_MODIFICATIONS&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>
+
+<span class="n">db</span> <span class="o">=</span> <span class="n">SQLAlchemy</span><span class="p">(</span><span class="n">app</span><span class="p">)</span>
+
+
+<span class="c1"># ──────────────── 数据库模型 ────────────────</span>
+
+<span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Model</span><span class="p">):</span>
+    <span class="n">__tablename__</span> <span class="o">=</span> <span class="s1">&#39;user&#39;</span>
+    
+    <span class="nb">id</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Integer</span><span class="p">,</span> <span class="n">primary_key</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">username</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">80</span><span class="p">),</span> <span class="n">unique</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">index</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">password_hash</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">256</span><span class="p">),</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">created_at</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">DateTime</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">))</span>
+    
+    <span class="c1"># 关系</span>
+    <span class="n">todos</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">relationship</span><span class="p">(</span><span class="s1">&#39;Todo&#39;</span><span class="p">,</span> <span class="n">backref</span><span class="o">=</span><span class="s1">&#39;user&#39;</span><span class="p">,</span> <span class="n">lazy</span><span class="o">=</span><span class="s1">&#39;dynamic&#39;</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s1">&#39;id&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
+            <span class="s1">&#39;username&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">username</span><span class="p">,</span>
+            <span class="s1">&#39;created_at&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">created_at</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">created_at</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="s1">&#39;todo_count&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">todos</span><span class="o">.</span><span class="n">count</span><span class="p">()</span>
+        <span class="p">}</span>
+
+
+<span class="k">class</span> <span class="nc">Todo</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Model</span><span class="p">):</span>
+    <span class="n">__tablename__</span> <span class="o">=</span> <span class="s1">&#39;todo&#39;</span>
+    
+    <span class="nb">id</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Integer</span><span class="p">,</span> <span class="n">primary_key</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">title</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">200</span><span class="p">),</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">description</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Text</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="s1">&#39;&#39;</span><span class="p">)</span>
+    <span class="n">done</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Boolean</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    <span class="n">user_id</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">Integer</span><span class="p">,</span> <span class="n">db</span><span class="o">.</span><span class="n">ForeignKey</span><span class="p">(</span><span class="s1">&#39;user.id&#39;</span><span class="p">),</span> <span class="n">nullable</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">index</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">created_at</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">DateTime</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">))</span>
+    <span class="n">updated_at</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">db</span><span class="o">.</span><span class="n">DateTime</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">),</span>
+                           <span class="n">onupdate</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">))</span>
+    
+    <span class="k">def</span> <span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s1">&#39;id&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">id</span><span class="p">,</span>
+            <span class="s1">&#39;title&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">title</span><span class="p">,</span>
+            <span class="s1">&#39;description&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">description</span><span class="p">,</span>
+            <span class="s1">&#39;done&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">done</span><span class="p">,</span>
+            <span class="s1">&#39;user_id&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">user_id</span><span class="p">,</span>
+            <span class="s1">&#39;created_at&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">created_at</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">created_at</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="s1">&#39;updated_at&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">updated_at</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">updated_at</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="p">}</span>
+
+
+<span class="c1"># ──────────────── JWT 认证 ────────────────</span>
+
+<span class="kn">from</span> <span class="nn">werkzeug.security</span> <span class="kn">import</span> <span class="n">generate_password_hash</span><span class="p">,</span> <span class="n">check_password_hash</span>
+
+
+<span class="k">def</span> <span class="nf">create_token</span><span class="p">(</span><span class="n">user_id</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;生成 JWT Token&quot;&quot;&quot;</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s1">&#39;user_id&#39;</span><span class="p">:</span> <span class="n">user_id</span><span class="p">,</span>
+        <span class="s1">&#39;exp&#39;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">)</span> <span class="o">+</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="mi">24</span><span class="p">),</span>
+        <span class="s1">&#39;iat&#39;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(</span><span class="n">timezone</span><span class="o">.</span><span class="n">utc</span><span class="p">),</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">jwt</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SECRET_KEY&#39;</span><span class="p">],</span> <span class="n">algorithm</span><span class="o">=</span><span class="s1">&#39;HS256&#39;</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">token_required</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;JWT 验证装饰器&quot;&quot;&quot;</span>
+    <span class="nd">@wraps</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">decorated</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="n">auth_header</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;Authorization&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+        
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">auth_header</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;Bearer &#39;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;缺少或无效的 Authorization 头&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+        
+        <span class="n">token</span> <span class="o">=</span> <span class="n">auth_header</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39; &#39;</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span>
+        
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">payload</span> <span class="o">=</span> <span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">app</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s1">&#39;SECRET_KEY&#39;</span><span class="p">],</span> <span class="n">algorithms</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;HS256&#39;</span><span class="p">])</span>
+            <span class="n">current_user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="s1">&#39;user_id&#39;</span><span class="p">])</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">current_user</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;用户不存在&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+        <span class="k">except</span> <span class="n">jwt</span><span class="o">.</span><span class="n">ExpiredSignatureError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;Token 已过期，请重新登录&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+        <span class="k">except</span> <span class="n">jwt</span><span class="o">.</span><span class="n">InvalidTokenError</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;无效的 Token&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+        
+        <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="n">current_user</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">decorated</span>
+
+
+<span class="c1"># ──────────────── 认证路由 ────────────────</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/auth/register&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">register</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用户注册&quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
+    
+    <span class="c1"># 参数验证</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;username&#39;</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;password&#39;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;用户名和密码是必填的&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+    
+    <span class="n">username</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;username&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">password</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;password&#39;</span><span class="p">]</span>
+    
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">username</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">3</span> <span class="ow">or</span> <span class="nb">len</span><span class="p">(</span><span class="n">username</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">20</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;用户名长度必须在 3-20 个字符之间&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+    
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">password</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">6</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;密码长度不能少于 6 个字符&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+    
+    <span class="c1"># 检查用户名是否已存在</span>
+    <span class="k">if</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">username</span><span class="o">=</span><span class="n">username</span><span class="p">)</span><span class="o">.</span><span class="n">first</span><span class="p">():</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;用户名已被注册&#39;</span><span class="p">}),</span> <span class="mi">409</span>
+    
+    <span class="c1"># 创建用户</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span>
+        <span class="n">username</span><span class="o">=</span><span class="n">username</span><span class="p">,</span>
+        <span class="n">password_hash</span><span class="o">=</span><span class="n">generate_password_hash</span><span class="p">(</span><span class="n">password</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">user</span><span class="p">)</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+    
+    <span class="c1"># 生成 Token</span>
+    <span class="n">token</span> <span class="o">=</span> <span class="n">create_token</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+        <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="s1">&#39;注册成功&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s1">&#39;user&#39;</span><span class="p">:</span> <span class="n">user</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span>
+            <span class="s1">&#39;token&#39;</span><span class="p">:</span> <span class="n">token</span>
+        <span class="p">}</span>
+    <span class="p">}),</span> <span class="mi">201</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/auth/login&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">login</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用户登录&quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
+    
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;username&#39;</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;password&#39;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;用户名和密码是必填的&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+    
+    <span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">username</span><span class="o">=</span><span class="n">data</span><span class="p">[</span><span class="s1">&#39;username&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+    
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">user</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">check_password_hash</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">password_hash</span><span class="p">,</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;password&#39;</span><span class="p">]):</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;用户名或密码错误&#39;</span><span class="p">}),</span> <span class="mi">401</span>
+    
+    <span class="n">token</span> <span class="o">=</span> <span class="n">create_token</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+        <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="s1">&#39;登录成功&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s1">&#39;user&#39;</span><span class="p">:</span> <span class="n">user</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span>
+            <span class="s1">&#39;token&#39;</span><span class="p">:</span> <span class="n">token</span>
+        <span class="p">}</span>
+    <span class="p">})</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/auth/profile&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;GET&#39;</span><span class="p">])</span>
+<span class="nd">@token_required</span>
+<span class="k">def</span> <span class="nf">get_profile</span><span class="p">(</span><span class="n">current_user</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;获取当前用户信息&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="n">current_user</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()})</span>
+
+
+<span class="c1"># ──────────────── TODO CRUD 路由 ────────────────</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/todos&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;GET&#39;</span><span class="p">])</span>
+<span class="nd">@token_required</span>
+<span class="k">def</span> <span class="nf">get_todos</span><span class="p">(</span><span class="n">current_user</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;获取当前用户的所有 TODO&quot;&quot;&quot;</span>
+    <span class="c1"># 支持过滤</span>
+    <span class="n">status</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;status&#39;</span><span class="p">)</span>  <span class="c1"># &#39;done&#39; 或 &#39;active&#39;</span>
+    <span class="n">page</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;page&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">)</span>
+    <span class="n">per_page</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;per_page&#39;</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">)</span>
+    
+    <span class="n">query</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">user_id</span><span class="o">=</span><span class="n">current_user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+    
+    <span class="k">if</span> <span class="n">status</span> <span class="o">==</span> <span class="s1">&#39;done&#39;</span><span class="p">:</span>
+        <span class="n">query</span> <span class="o">=</span> <span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">done</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">status</span> <span class="o">==</span> <span class="s1">&#39;active&#39;</span><span class="p">:</span>
+        <span class="n">query</span> <span class="o">=</span> <span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="n">done</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+    
+    <span class="c1"># 分页</span>
+    <span class="n">pagination</span> <span class="o">=</span> <span class="n">query</span><span class="o">.</span><span class="n">order_by</span><span class="p">(</span><span class="n">Todo</span><span class="o">.</span><span class="n">created_at</span><span class="o">.</span><span class="n">desc</span><span class="p">())</span><span class="o">.</span><span class="n">paginate</span><span class="p">(</span>
+        <span class="n">page</span><span class="o">=</span><span class="n">page</span><span class="p">,</span> <span class="n">per_page</span><span class="o">=</span><span class="n">per_page</span><span class="p">,</span> <span class="n">error_out</span><span class="o">=</span><span class="kc">False</span>
+    <span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+        <span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="p">[</span><span class="n">todo</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span> <span class="k">for</span> <span class="n">todo</span> <span class="ow">in</span> <span class="n">pagination</span><span class="o">.</span><span class="n">items</span><span class="p">],</span>
+        <span class="s1">&#39;meta&#39;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s1">&#39;page&#39;</span><span class="p">:</span> <span class="n">pagination</span><span class="o">.</span><span class="n">page</span><span class="p">,</span>
+            <span class="s1">&#39;per_page&#39;</span><span class="p">:</span> <span class="n">pagination</span><span class="o">.</span><span class="n">per_page</span><span class="p">,</span>
+            <span class="s1">&#39;total&#39;</span><span class="p">:</span> <span class="n">pagination</span><span class="o">.</span><span class="n">total</span><span class="p">,</span>
+            <span class="s1">&#39;pages&#39;</span><span class="p">:</span> <span class="n">pagination</span><span class="o">.</span><span class="n">pages</span>
+        <span class="p">}</span>
+    <span class="p">})</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/todos/&lt;int:todo_id&gt;&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;GET&#39;</span><span class="p">])</span>
+<span class="nd">@token_required</span>
+<span class="k">def</span> <span class="nf">get_todo</span><span class="p">(</span><span class="n">current_user</span><span class="p">,</span> <span class="n">todo_id</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;获取单个 TODO&quot;&quot;&quot;</span>
+    <span class="n">todo</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">todo_id</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="n">current_user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">todo</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;任务不存在&#39;</span><span class="p">}),</span> <span class="mi">404</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="n">todo</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()})</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/todos&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="nd">@token_required</span>
+<span class="k">def</span> <span class="nf">create_todo</span><span class="p">(</span><span class="n">current_user</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;创建 TODO&quot;&quot;&quot;</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
+    
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;title&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">():</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;标题是必填的&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+    
+    <span class="n">title</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;title&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">title</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">200</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;标题长度不能超过 200 个字符&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+    
+    <span class="n">todo</span> <span class="o">=</span> <span class="n">Todo</span><span class="p">(</span>
+        <span class="n">title</span><span class="o">=</span><span class="n">title</span><span class="p">,</span>
+        <span class="n">description</span><span class="o">=</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;description&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">),</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="n">current_user</span><span class="o">.</span><span class="n">id</span>
+    <span class="p">)</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">todo</span><span class="p">)</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+    
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+        <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="s1">&#39;创建成功&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="n">todo</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+    <span class="p">}),</span> <span class="mi">201</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/todos/&lt;int:todo_id&gt;&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;PUT&#39;</span><span class="p">])</span>
+<span class="nd">@token_required</span>
+<span class="k">def</span> <span class="nf">update_todo</span><span class="p">(</span><span class="n">current_user</span><span class="p">,</span> <span class="n">todo_id</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;更新 TODO（全量更新）&quot;&quot;&quot;</span>
+    <span class="n">todo</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">todo_id</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="n">current_user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">todo</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;任务不存在&#39;</span><span class="p">}),</span> <span class="mi">404</span>
+    
+    <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;请求体为空&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+    
+    <span class="n">todo</span><span class="o">.</span><span class="n">title</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;title&#39;</span><span class="p">,</span> <span class="n">todo</span><span class="o">.</span><span class="n">title</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="n">todo</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;description&#39;</span><span class="p">,</span> <span class="n">todo</span><span class="o">.</span><span class="n">description</span><span class="p">)</span>
+    <span class="n">todo</span><span class="o">.</span><span class="n">done</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;done&#39;</span><span class="p">,</span> <span class="n">todo</span><span class="o">.</span><span class="n">done</span><span class="p">)</span>
+    
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+    
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+        <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="s1">&#39;更新成功&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="n">todo</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+    <span class="p">})</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/todos/&lt;int:todo_id&gt;&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;PATCH&#39;</span><span class="p">])</span>
+<span class="nd">@token_required</span>
+<span class="k">def</span> <span class="nf">patch_todo</span><span class="p">(</span><span class="n">current_user</span><span class="p">,</span> <span class="n">todo_id</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;部分更新 TODO&quot;&quot;&quot;</span>
+    <span class="n">todo</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">todo_id</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="n">current_user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">todo</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;任务不存在&#39;</span><span class="p">}),</span> <span class="mi">404</span>
+    
+    <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;请求体为空&#39;</span><span class="p">}),</span> <span class="mi">400</span>
+    
+    <span class="c1"># 只更新提供的字段</span>
+    <span class="k">if</span> <span class="s1">&#39;title&#39;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+        <span class="n">todo</span><span class="o">.</span><span class="n">title</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;title&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+    <span class="k">if</span> <span class="s1">&#39;description&#39;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+        <span class="n">todo</span><span class="o">.</span><span class="n">description</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;description&#39;</span><span class="p">]</span>
+    <span class="k">if</span> <span class="s1">&#39;done&#39;</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+        <span class="n">todo</span><span class="o">.</span><span class="n">done</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s1">&#39;done&#39;</span><span class="p">]</span>
+    
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+    
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+        <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="s1">&#39;更新成功&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;data&#39;</span><span class="p">:</span> <span class="n">todo</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+    <span class="p">})</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/api/todos/&lt;int:todo_id&gt;&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;DELETE&#39;</span><span class="p">])</span>
+<span class="nd">@token_required</span>
+<span class="k">def</span> <span class="nf">delete_todo</span><span class="p">(</span><span class="n">current_user</span><span class="p">,</span> <span class="n">todo_id</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;删除 TODO&quot;&quot;&quot;</span>
+    <span class="n">todo</span> <span class="o">=</span> <span class="n">Todo</span><span class="o">.</span><span class="n">query</span><span class="o">.</span><span class="n">filter_by</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="n">todo_id</span><span class="p">,</span> <span class="n">user_id</span><span class="o">=</span><span class="n">current_user</span><span class="o">.</span><span class="n">id</span><span class="p">)</span><span class="o">.</span><span class="n">first</span><span class="p">()</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">todo</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;任务不存在&#39;</span><span class="p">}),</span> <span class="mi">404</span>
+    
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="n">todo</span><span class="p">)</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+    
+    <span class="k">return</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="mi">204</span>
+
+
+<span class="c1"># ──────────────── 错误处理 ────────────────</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">errorhandler</span><span class="p">(</span><span class="mi">404</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">not_found</span><span class="p">(</span><span class="n">error</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;接口不存在&#39;</span><span class="p">}),</span> <span class="mi">404</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">errorhandler</span><span class="p">(</span><span class="mi">405</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">method_not_allowed</span><span class="p">(</span><span class="n">error</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;不支持该请求方法&#39;</span><span class="p">}),</span> <span class="mi">405</span>
+
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">errorhandler</span><span class="p">(</span><span class="mi">500</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">internal_error</span><span class="p">(</span><span class="n">error</span><span class="p">):</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">session</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>  <span class="c1"># 回滚事务</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;error&#39;</span><span class="p">:</span> <span class="s1">&#39;服务器内部错误&#39;</span><span class="p">}),</span> <span class="mi">500</span>
+
+
+<span class="c1"># ──────────────── 启动 ────────────────</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">app</span><span class="o">.</span><span class="n">app_context</span><span class="p">():</span>
+        <span class="n">db</span><span class="o">.</span><span class="n">create_all</span><span class="p">()</span>  <span class="c1"># 创建所有表</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">debug</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">host</span><span class="o">=</span><span class="s1">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="43-api">4.3 API 测试示例</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1. 注册用户</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/auth/register<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;username&quot;:&quot;alice&quot;,&quot;password&quot;:&quot;secret123&quot;}&#39;</span>
+
+<span class="c1"># 2. 登录（获取 Token）</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/auth/login<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;username&quot;:&quot;alice&quot;,&quot;password&quot;:&quot;secret123&quot;}&#39;</span>
+<span class="c1"># 保存返回的 token</span>
+
+<span class="c1"># 3. 创建 TODO</span>
+<span class="nv">TOKEN</span><span class="o">=</span><span class="s2">&quot;&lt;上面的 token&gt;&quot;</span>
+curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:5000/api/todos<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;title&quot;:&quot;学习 Flask 进阶&quot;,&quot;description&quot;:&quot;完成 Day 066 所有内容&quot;}&#39;</span>
+
+<span class="c1"># 4. 获取 TODO 列表</span>
+curl<span class="w"> </span>http://localhost:5000/api/todos<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+
+<span class="c1"># 5. 更新 TODO</span>
+curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>http://localhost:5000/api/todos/1<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;done&quot;:true}&#39;</span>
+
+<span class="c1"># 6. 删除 TODO</span>
+curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>http://localhost:5000/api/todos/1<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">&quot;</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 请求处理流程总览</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Client as 浏览器/API客户端
+    participant Flask as Flask 应用
+    participant Auth as JWT认证
+    participant DB as SQLAlchemy
+    
+    Client-&gt;&gt;Flask: POST /api/auth/login&lt;br/&gt;{username, password}
+    Flask-&gt;&gt;Flask: 验证用户名密码
+    Flask-&gt;&gt;Flask: 生成 JWT Token
+    Flask--&gt;&gt;Client: {token: &quot;xxx&quot;, user: {...}}
+    
+    Note over Client,Flask: 后续请求携带 Token
+    
+    Client-&gt;&gt;Flask: GET /api/todos&lt;br/&gt;Authorization: Bearer xxx
+    Flask-&gt;&gt;Auth: token_required 装饰器
+    Auth-&gt;&gt;Auth: 解码 JWT
+    Auth-&gt;&gt;Auth: 查找用户
+    Auth--&gt;&gt;Flask: current_user
+    Flask-&gt;&gt;DB: Todo.query.filter_by(user_id=1)
+    DB--&gt;&gt;Flask: [Todo, Todo]
+    Flask--&gt;&gt;Client: {data: [...], meta: {...}}
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Client as 浏览器/API客户端
+    participant Flask as Flask 应用
+    participant Auth as JWT认证
+    participant DB as SQLAlchemy
+    
+    Client-&gt;&gt;Flask: POST /api/auth/login&lt;br/&gt;{username, password}
+    Flask-&gt;&gt;Flask: 验证用户名密码
+    Flask-&gt;&gt;Flask: 生成 JWT Token
+    Flask--&gt;&gt;Client: {token: &quot;xxx&quot;, user: {...}}
+    
+    Note over Client,Flask: 后续请求携带 Token
+    
+    Client-&gt;&gt;Flask: GET /api/todos&lt;br/&gt;Authorization: Bearer xxx
+    Flask-&gt;&gt;Auth: token_required 装饰器
+    Auth-&gt;&gt;Auth: 解码 JWT
+    Auth-&gt;&gt;Auth: 查找用户
+    Auth--&gt;&gt;Flask: current_user
+    Flask-&gt;&gt;DB: Todo.query.filter_by(user_id=1)
+    DB--&gt;&gt;Flask: [Todo, Todo]
+    Flask--&gt;&gt;Client: {data: [...], meta: {...}}
+</code></pre></div>
+<hr>
+<h2 id="_2">思考题 🤔</h2>
+<ol>
+<li>
+<p><strong>ORM vs 裸 SQL</strong>：ORM 提高了开发效率，但有时性能不如手写 SQL。什么场景下你该绕过 ORM 直接执行原生 SQL？如何平衡开发效率和执行效率？</p>
+</li>
+<li>
+<p><strong>JWT 过期策略</strong>：JWT 签发后无法在过期前撤销。如果用户的账号被盗，你怎么让 JWT 立即失效？（提示：Token 黑名单、短有效期 + 刷新 Token）</p>
+</li>
+<li>
+<p><strong>密码哈希迭代次数</strong>：<code>generate_password_hash</code> 默认 600000 次迭代。这个数字越大越安全，但速度也越慢。你怎么决定用多大的迭代次数？（提示：要考虑服务器的计算能力和用户的等待体验）</p>
+</li>
+<li>
+<p><strong>N+1 查询问题</strong>：获取 TODO 列表时，如果用 <code>lazy='select'</code> 访问每个 TODO 的 user 属性，会产生 N+1 次查询。如何诊断和解决这个问题？（提示：<code>joined</code> 加载、<code>subqueryload</code>、SQLAlchemy 的调试工具）</p>
+</li>
+<li>
+<p><strong>API 版本管理</strong>：当你的 TODO API 上线后，用户已经在使用 v1 接口。如果你要大规模调整数据结构，如何平滑升级到 v2 而不影响现有用户？（提示：URL 版本号 <code>/api/v2/</code>、请求头版本、兼容层）</p>
+</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-065/index.html">← Day 65 Web 框架入门</a><a class="nav-next" href="../day-067/index.html">Day 67 FastAPI 入门：现代 Python Web API 框架 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

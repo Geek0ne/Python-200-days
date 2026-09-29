@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 34 — 多态与鸭子类型</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 34 — 多态与鸭子类型</h1>
+  <div class="lmeta">
+    <span class="badge">面向对象编程</span>
+    <span class="badge">618 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-034-polymorphism" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📖 本章概览</a>
+<a class="toc-l2" href="#polymorphism">一、多态（Polymorphism）</a>
+<a class="toc-l3" href="#11">1.1 多态的概念</a>
+<a class="toc-l3" href="#12-vs">1.2 静态多态 vs 动态多态</a>
+<a class="toc-l3" href="#13-python">1.3 Python 中的多态</a>
+<a class="toc-l2" href="#duck-typing">二、鸭子类型（Duck Typing）</a>
+<a class="toc-l3" href="#21">2.1 原理：「鸭子测试」</a>
+<a class="toc-l3" href="#22">2.2 鸭子类型的优缺点</a>
+<a class="toc-l3" href="#23-vs">2.3 鸭子类型 vs 静态类型</a>
+<a class="toc-l2" href="#eafp">三、EAFP 风格</a>
+<a class="toc-l3" href="#31-eafp">3.1 什么是 EAFP</a>
+<a class="toc-l3" href="#32-lbyl-vs-eafp">3.2 LBYL vs EAFP</a>
+<a class="toc-l3" href="#33-python-eafp">3.3 Python 中的 EAFP 场景</a>
+<a class="toc-l2" href="#abc">四、抽象基类（ABC）</a>
+<a class="toc-l3" href="#41-abc">4.1 为什么需要 ABC</a>
+<a class="toc-l3" href="#42-abc">4.2 ABC 基本用法</a>
+<a class="toc-l3" href="#43-abc">4.3 ABC 的注册机制</a>
+<a class="toc-l3" href="#44-python-abc">4.4 Python 内置的 ABC</a>
+<a class="toc-l3" href="#45-abccontainer">4.5 实现自己的 ABC：Container 示例</a>
+<a class="toc-l2" href="#_2">五、实战：插件系统</a>
+<a class="toc-l3" href="#51">5.1 系统架构</a>
+<a class="toc-l3" href="#52">5.2 核心实现</a>
+<a class="toc-l2" href="#_3">六、思考题</a>
+<a class="toc-l2" href="#_4">📝 本章小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-034">Day 034 — 多态与鸭子类型</h1>
+<blockquote>
+<p>深入理解 Python 多态机制、鸭子类型哲学与抽象基类，实战插件系统</p>
+</blockquote>
+<hr>
+<h2 id="_1">📖 本章概览</h2>
+<table>
+<thead>
+<tr>
+<th>主题</th>
+<th>难度</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>多态概念</td>
+<td>⭐⭐</td>
+<td>多态的定义、优势、Python 中的实现方式</td>
+</tr>
+<tr>
+<td>鸭子类型</td>
+<td>⭐⭐⭐</td>
+<td>「如果它走起来像鸭子…」动态类型的核心哲学</td>
+</tr>
+<tr>
+<td>EAFP 风格</td>
+<td>⭐⭐</td>
+<td>「请求原谅比请求许可更容易」编程范式</td>
+</tr>
+<tr>
+<td>抽象基类 (ABC)</td>
+<td>⭐⭐⭐</td>
+<td>虚拟子类、注册机制、<code>@abstractmethod</code></td>
+</tr>
+<tr>
+<td>实战：插件系统</td>
+<td>⭐⭐⭐⭐</td>
+<td>动态加载、插件注册、热插拔架构</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="polymorphism">一、多态（Polymorphism）</h2>
+<h3 id="11">1.1 多态的概念</h3>
+<p><strong>多态</strong> 是面向对象编程的三大特征之一（封装、继承、多态），指 <strong>同一操作作用于不同的对象上，可以产生不同的行为</strong>。</p>
+<blockquote>
+<p>一句话概括：<strong>同一个接口，不同的实现</strong></p>
+</blockquote>
+<pre class="plain"><code>      ┌─────────────────┐
+      │    Animal       │  ← 基类（抽象接口）
+      │  speak()        │
+      └────────┬────────┘
+               │
+      ┌────────┼────────┐
+      ▼        ▼        ▼
+  ┌────────┐┌──────┐┌──────┐
+  │  Dog   ││ Cat  ││ Duck │  ← 子类（不同实现）
+  │ bark() ││ meow()││quack │
+  └────────┘└──────┘└──────┘
+
+  统一调用: animal.speak()
+  Dog   → &quot;汪汪!&quot;
+  Cat   → &quot;喵喵~&quot;
+  Duck  → &quot;嘎嘎!&quot;
+</code></pre>
+<h3 id="12-vs">1.2 静态多态 vs 动态多态</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>静态多态（编译时）</th>
+<th>动态多态（运行时）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>实现方式</td>
+<td>函数重载、模板</td>
+<td>方法重写、虚函数</td>
+</tr>
+<tr>
+<td>绑定时机</td>
+<td>编译期</td>
+<td>运行期</td>
+</tr>
+<tr>
+<td>Python 支持</td>
+<td>❌（没有重载）</td>
+<td>✅（动态绑定）</td>
+</tr>
+<tr>
+<td>代表语言</td>
+<td>C++/Java</td>
+<td>Python/Ruby</td>
+</tr>
+</tbody>
+</table>
+<p>Python 中的多态都是 <strong>动态多态</strong>——方法调用在运行时才确定具体调用哪个类的版本。</p>
+<h3 id="13-python">1.3 Python 中的多态</h3>
+<p><strong>方式一：继承 + 方法重写（传统多态）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Animal</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">speak</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+<span class="k">class</span> <span class="nc">Dog</span><span class="p">(</span><span class="n">Animal</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">speak</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;汪汪!&quot;</span>
+
+<span class="k">class</span> <span class="nc">Cat</span><span class="p">(</span><span class="n">Animal</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">speak</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;喵喵~&quot;</span>
+
+<span class="c1"># 多态调用</span>
+<span class="n">animals</span> <span class="o">=</span> <span class="p">[</span><span class="n">Dog</span><span class="p">(),</span> <span class="n">Cat</span><span class="p">()]</span>
+<span class="k">for</span> <span class="n">animal</span> <span class="ow">in</span> <span class="n">animals</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">animal</span><span class="o">.</span><span class="n">speak</span><span class="p">())</span>  <span class="c1"># 同一接口，不同行为</span>
+</code></pre></div>
+<p><strong>方式二：鸭子类型（Python 式多态）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Dog</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">speak</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="s2">&quot;汪汪!&quot;</span>
+
+<span class="k">class</span> <span class="nc">Cat</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">speak</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="s2">&quot;喵喵~&quot;</span>
+
+<span class="k">class</span> <span class="nc">Car</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">speak</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="s2">&quot;滴滴!&quot;</span>  <span class="c1"># 没有继承关系也一样工作</span>
+
+<span class="k">def</span> <span class="nf">make_it_speak</span><span class="p">(</span><span class="n">thing</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">thing</span><span class="o">.</span><span class="n">speak</span><span class="p">())</span>  <span class="c1"># 不关心类型，只关心有没有 speak 方法</span>
+
+<span class="n">make_it_speak</span><span class="p">(</span><span class="n">Dog</span><span class="p">())</span>  <span class="c1"># 汪汪!</span>
+<span class="n">make_it_speak</span><span class="p">(</span><span class="n">Car</span><span class="p">())</span>  <span class="c1"># 滴滴!  —— 没有继承也能用</span>
+</code></pre></div>
+<hr>
+<h2 id="duck-typing">二、鸭子类型（Duck Typing）</h2>
+<h3 id="21">2.1 原理：「鸭子测试」</h3>
+<blockquote>
+<p>「当看到一只鸟，它走起来像鸭子、游泳像鸭子、叫起来像鸭子，那么这只鸟就可以被称为鸭子。」</p>
+</blockquote>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">process</span><span class="p">(</span><span class="n">iterable</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;这个函数只要求 iterable 支持迭代，不关心它的具体类型&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">iterable</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+
+<span class="n">process</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>          <span class="c1"># list</span>
+<span class="n">process</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">)</span>            <span class="c1"># str</span>
+<span class="n">process</span><span class="p">({</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">})</span>          <span class="c1"># set</span>
+<span class="n">process</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">))</span>           <span class="c1"># range</span>
+<span class="c1"># 只要是可迭代的，都能工作 —— 这就是鸭子类型</span>
+</code></pre></div>
+<h3 id="22">2.2 鸭子类型的优缺点</h3>
+<table>
+<thead>
+<tr>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>代码更灵活、复用性更高</td>
+<td>错误发现较晚（运行时才暴露）</td>
+</tr>
+<tr>
+<td>不需要复杂的继承体系</td>
+<td>文档/类型提示更重要</td>
+</tr>
+<tr>
+<td>更符合 Python 的动态哲学</td>
+<td>调试时可能难以追踪</td>
+</tr>
+<tr>
+<td>减少样板代码</td>
+<td>IDE 自动补全支持较差</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23-vs">2.3 鸭子类型 vs 静态类型</h3>
+<pre class="plain"><code>鸭子类型:
+  function quack(duck):
+      duck.quack()      # 🦆 只要会叫，就是鸭子
+
+静态类型 (Java):
+  void quack(Duck duck):
+      duck.quack()      # 🦆 必须是 Duck 类型
+
+Go 接口:
+  type Quacker interface {
+      Quack()
+  }
+  func quack(q Quacker) {
+      q.Quack()         # 🦆 只要实现了 Quacker 接口
+  }
+</code></pre>
+<hr>
+<h2 id="eafp">三、EAFP 风格</h2>
+<h3 id="31-eafp">3.1 什么是 EAFP</h3>
+<p><strong>EAFP</strong>（Easier to Ask for Forgiveness than Permission）是 Python 社区的惯用风格：</p>
+<blockquote>
+<p><strong>请求原谅比请求许可更容易</strong></p>
+</blockquote>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ LBYL (Look Before You Leap) — 先检查再操作</span>
+<span class="k">def</span> <span class="nf">safe_divide_lbyl</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">)):</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">)):</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">b</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">/</span> <span class="n">b</span>
+
+<span class="c1"># ✅ EAFP — 尝试做，出错再处理</span>
+<span class="k">def</span> <span class="nf">safe_divide_eafp</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">a</span> <span class="o">/</span> <span class="n">b</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ZeroDivisionError</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">None</span>
+</code></pre></div>
+<h3 id="32-lbyl-vs-eafp">3.2 LBYL vs EAFP</h3>
+<pre class="plain"><code>LBYL (Look Before You Leap)
+═════════════════════════════
+      ┌─────────┐
+      │  检查    │ ← 先判断「能不能做」
+      └────┬────┘
+           ▼
+      ┌─────────┐
+      │  操作    │ ← 安全了再操作
+      └─────────┘
+    问题：条件判断可能过时
+    （检查完到执行之间，状态可能改变）
+
+EAFP (Easier to Ask for Forgiveness)
+════════════════════════════════════
+      ┌─────────┐
+      │  操作    │ ← 直接做
+      └────┬────┘
+           ▼
+       成功？     ← 成功了就结束
+      ┌──┴──┐
+      │  是  │ 否
+      │     ▼
+      │  ┌─────────┐
+      │  │  处理异常 │ ← 出错了再处理
+      │  └─────────┘
+      ▼
+     结束
+</code></pre>
+<h3 id="33-python-eafp">3.3 Python 中的 EAFP 场景</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 🔑 字典访问</span>
+<span class="c1"># LBYL</span>
+<span class="k">if</span> <span class="s1">&#39;key&#39;</span> <span class="ow">in</span> <span class="n">d</span><span class="p">:</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="n">d</span><span class="p">[</span><span class="s1">&#39;key&#39;</span><span class="p">]</span>
+
+<span class="c1"># EAFP</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="n">d</span><span class="p">[</span><span class="s1">&#39;key&#39;</span><span class="p">]</span>
+<span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+    <span class="n">value</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="c1"># 更 Pythonic: d.get(&#39;key&#39;, None)</span>
+
+
+<span class="c1"># 📁 文件操作</span>
+<span class="c1"># LBYL</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="s1">&#39;data.txt&#39;</span><span class="p">):</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;data.txt&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+<span class="c1"># EAFP</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;data.txt&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+<span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+
+
+<span class="c1"># 🏷️ 属性访问</span>
+<span class="c1"># LBYL</span>
+<span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="s1">&#39;name&#39;</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">obj</span><span class="o">.</span><span class="n">name</span>
+
+<span class="c1"># EAFP</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">obj</span><span class="o">.</span><span class="n">name</span>
+<span class="k">except</span> <span class="ne">AttributeError</span><span class="p">:</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="c1"># 更 Pythonic: getattr(obj, &#39;name&#39;, None)</span>
+</code></pre></div>
+<hr>
+<h2 id="abc">四、抽象基类（ABC）</h2>
+<h3 id="41-abc">4.1 为什么需要 ABC</h3>
+<p>鸭子类型虽然灵活，但有时我们需要 <strong>确保某个类一定实现了特定的方法</strong>。抽象基类（Abstract Base Class）提供了这种保障。</p>
+<pre class="plain"><code>           ┌─────────────────────────┐
+           │    abc.ABC (元类)        │ ← Python 的抽象基类机制
+           │  @abstractmethod         │
+           └────────────┬─────────────┘
+                        │ 继承
+           ┌────────────┴─────────────┐
+           │    Shape (抽象基类)        │ ← 定义接口契约
+           │    @abstractmethod        │
+           │    area()                  │
+           │    perimeter()             │
+           └────────────┬─────────────┘
+                        │
+              ┌─────────┼─────────┐
+              ▼         ▼         ▼
+        ┌─────────┐ ┌───────┐ ┌───────┐
+        │  Circle  │ │Square │ │Triangle│ ← 具体实现
+        │ area()   │ │area() │ │area()  │
+        │peri()    │ │peri() │ │peri()  │
+        └─────────┘ └───────┘ └───────┘
+</code></pre>
+<h3 id="42-abc">4.2 ABC 基本用法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+
+<span class="k">class</span> <span class="nc">Shape</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;形状抽象基类&quot;&quot;&quot;</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">area</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;计算面积（子类必须实现）&quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">perimeter</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;计算周长（子类必须实现）&quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+
+<span class="c1"># ❌ 不能直接实例化抽象类</span>
+<span class="c1"># s = Shape()  # TypeError: Can&#39;t instantiate abstract class Shape</span>
+
+<span class="c1"># ✅ 子类必须实现所有抽象方法</span>
+<span class="k">class</span> <span class="nc">Circle</span><span class="p">(</span><span class="n">Shape</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">radius</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">=</span> <span class="n">radius</span>
+
+    <span class="k">def</span> <span class="nf">area</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">3.14159</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span> <span class="o">**</span> <span class="mi">2</span>
+
+    <span class="k">def</span> <span class="nf">perimeter</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">2</span> <span class="o">*</span> <span class="mf">3.14159</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">radius</span>
+
+<span class="c1"># ❌ 缺少实现</span>
+<span class="c1"># class Incomplete(Shape):   # TypeError: Can&#39;t instantiate</span>
+<span class="c1">#     def area(self): return 0</span>
+</code></pre></div>
+<h3 id="43-abc">4.3 ABC 的注册机制</h3>
+<p>ABC 支持 <strong>虚拟子类</strong>——一个类不需要显式继承 ABC，可以通过注册「假装」自己是子类：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+
+<span class="k">class</span> <span class="nc">Sized</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;自定义的尺寸接口&quot;&quot;&quot;</span>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">size</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+<span class="c1"># 虚拟注册 —— dict 没有继承 Sized，但可以注册为「虚拟子类」</span>
+<span class="n">Sized</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="nb">dict</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">({},</span> <span class="n">Sized</span><span class="p">))</span>    <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">issubclass</span><span class="p">(</span><span class="nb">dict</span><span class="p">,</span> <span class="n">Sized</span><span class="p">))</span>  <span class="c1"># True</span>
+
+<span class="c1"># 自定义类注册</span>
+<span class="nd">@Sized</span><span class="o">.</span><span class="n">register</span>
+<span class="k">class</span> <span class="nc">MyDict</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">size</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">MyDict</span><span class="p">(),</span> <span class="n">Sized</span><span class="p">))</span>  <span class="c1"># True</span>
+</code></pre></div>
+<h3 id="44-python-abc">4.4 Python 内置的 ABC</h3>
+<p>Python 标准库提供了大量内置 ABC：</p>
+<table>
+<thead>
+<tr>
+<th>ABC</th>
+<th>所在模块</th>
+<th>需要实现的方法</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Iterable</code></td>
+<td><code>collections.abc</code></td>
+<td><code>__iter__()</code></td>
+<td>可迭代对象</td>
+</tr>
+<tr>
+<td><code>Iterator</code></td>
+<td><code>collections.abc</code></td>
+<td><code>__next__()</code> + <code>__iter__()</code></td>
+<td>迭代器</td>
+</tr>
+<tr>
+<td><code>Sequence</code></td>
+<td><code>collections.abc</code></td>
+<td><code>__getitem__()</code> + <code>__len__()</code></td>
+<td>序列类型</td>
+</tr>
+<tr>
+<td><code>MutableSequence</code></td>
+<td><code>collections.abc</code></td>
+<td>Sequence + <code>__setitem__()</code> + <code>__delitem__()</code></td>
+<td>可变序列</td>
+</tr>
+<tr>
+<td><code>Mapping</code></td>
+<td><code>collections.abc</code></td>
+<td><code>__getitem__()</code> + <code>__len__()</code> + <code>__iter__()</code></td>
+<td>映射类型</td>
+</tr>
+<tr>
+<td><code>Set</code></td>
+<td><code>collections.abc</code></td>
+<td><code>__contains__()</code> + <code>__iter__()</code> + <code>__len__()</code></td>
+<td>集合类型</td>
+</tr>
+<tr>
+<td><code>Callable</code></td>
+<td><code>collections.abc</code></td>
+<td><code>__call__()</code></td>
+<td>可调用对象</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">collections.abc</span> <span class="kn">import</span> <span class="n">Sequence</span><span class="p">,</span> <span class="n">MutableSequence</span><span class="p">,</span> <span class="n">Mapping</span>
+
+<span class="c1"># isinstance 检查不再是类型名比较，而是行为检查</span>
+<span class="k">def</span> <span class="nf">process</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">Sequence</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;序列类型，长度: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;映射类型，键数: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">process</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>   <span class="c1"># 序列类型，长度: 3</span>
+<span class="n">process</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">)</span>     <span class="c1"># 序列类型，长度: 5 (字符串也是序列!)</span>
+<span class="n">process</span><span class="p">({</span><span class="s2">&quot;a&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>    <span class="c1"># 映射类型，键数: 1</span>
+</code></pre></div>
+<h3 id="45-abccontainer">4.5 实现自己的 ABC：Container 示例</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+<span class="kn">from</span> <span class="nn">collections.abc</span> <span class="kn">import</span> <span class="n">Container</span>
+
+<span class="k">class</span> <span class="nc">MyContainer</span><span class="p">(</span><span class="n">Container</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;自定义容器&quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">items</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_items</span> <span class="o">=</span> <span class="n">items</span>
+
+    <span class="k">def</span> <span class="fm">__contains__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">item</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_items</span>
+
+    <span class="k">def</span> <span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">iter</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_items</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_items</span><span class="p">)</span>
+
+<span class="c1"># 自动获得 isinstance 支持</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">MyContainer</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">Container</span><span class="p">))</span>  <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="mi">2</span> <span class="ow">in</span> <span class="n">c</span><span class="p">)</span>                    <span class="c1"># True</span>
+</code></pre></div>
+<hr>
+<h2 id="_2">五、实战：插件系统</h2>
+<h3 id="51">5.1 系统架构</h3>
+<pre class="plain"><code>                    ┌──────────────────┐
+                    │    PluginBase    │ ← 插件抽象基类
+                    │  initialize()    │
+                    │  execute()       │
+                    │  cleanup()       │
+                    └────────┬─────────┘
+                             │ 继承
+           ┌─────────────────┼──────────────────┐
+           ▼                 ▼                  ▼
+    ┌─────────────┐  ┌──────────────┐  ┌──────────────┐
+    │ TextPlugin   │  │ ImagePlugin  │  │ AudioPlugin  │
+    │ 文本处理      │  │ 图片处理      │  │ 音频处理      │
+    └─────────────┘  └──────────────┘  └──────────────┘
+           │                 │                  │
+           └─────────────────┼──────────────────┘
+                             ▼
+                    ┌──────────────────┐
+                    │   PluginManager  │ ← 插件管理器
+                    │  register()      │
+                    │  load_plugin()   │
+                    │  execute_all()   │
+                    └──────────────────┘
+</code></pre>
+<h3 id="52">5.2 核心实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+<span class="kn">import</span> <span class="nn">importlib</span>
+<span class="kn">import</span> <span class="nn">pkgutil</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+
+<span class="k">class</span> <span class="nc">PluginBase</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;插件抽象基类&quot;&quot;&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;插件名称&quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;插件初始化&quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;插件核心功能&quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;插件清理&quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+
+
+<span class="k">class</span> <span class="nc">PluginManager</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;插件管理器&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">PluginBase</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span> <span class="nf">register</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">plugin</span><span class="p">:</span> <span class="n">PluginBase</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;注册插件&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">plugin</span><span class="p">,</span> <span class="n">PluginBase</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">plugin</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> 不是有效的插件&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="p">[</span><span class="n">plugin</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">plugin</span>
+        <span class="n">plugin</span><span class="o">.</span><span class="n">initialize</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">unregister</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;卸载插件&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">cleanup</span><span class="p">()</span>
+            <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="p">[</span><span class="n">name</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">get_plugin</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">PluginBase</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;获取插件&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">execute_all</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;执行所有插件&quot;&quot;&quot;</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">plugin</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">results</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">plugin</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">results</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;错误: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="n">results</span>
+
+    <span class="k">def</span> <span class="nf">list_plugins</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;列出所有已注册插件&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+    <span class="k">def</span> <span class="nf">get_plugin_count</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_plugins</span><span class="p">)</span>
+
+
+<span class="c1"># 具体插件实现</span>
+<span class="k">class</span> <span class="nc">UpperCasePlugin</span><span class="p">(</span><span class="n">PluginBase</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;大写转换插件&quot;&quot;&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;uppercase&quot;</span>
+
+    <span class="k">def</span> <span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] 插件已加载&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] 插件已卸载&quot;</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">ReversePlugin</span><span class="p">(</span><span class="n">PluginBase</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;反转字符串插件&quot;&quot;&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;reverse&quot;</span>
+
+    <span class="k">def</span> <span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] 插件已加载&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">data</span><span class="p">[::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] 插件已卸载&quot;</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">WordCountPlugin</span><span class="p">(</span><span class="n">PluginBase</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;词频统计插件&quot;&quot;&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">&quot;wordcount&quot;</span>
+
+    <span class="k">def</span> <span class="nf">initialize</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] 插件已加载&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">execute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">words</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_count</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">words</span><span class="p">)</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;总词数: </span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="mi">1</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">data</span><span class="o">.</span><span class="n">split</span><span class="p">())</span><span class="si">}</span><span class="s2">，累计: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_count</span><span class="si">}</span><span class="s2">&quot;</span>
+
+    <span class="k">def</span> <span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] 插件已卸载，累计处理词数: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_count</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="c1"># 使用示例</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">manager</span> <span class="o">=</span> <span class="n">PluginManager</span><span class="p">()</span>
+
+    <span class="n">manager</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">UpperCasePlugin</span><span class="p">())</span>
+    <span class="n">manager</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">ReversePlugin</span><span class="p">())</span>
+    <span class="n">manager</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">WordCountPlugin</span><span class="p">())</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;已注册插件:&quot;</span><span class="p">,</span> <span class="n">manager</span><span class="o">.</span><span class="n">list_plugins</span><span class="p">())</span>
+
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;Hello Python World&quot;</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="n">manager</span><span class="o">.</span><span class="n">execute_all</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">result</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  [</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">]: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">manager</span><span class="o">.</span><span class="n">unregister</span><span class="p">(</span><span class="s2">&quot;reverse&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">卸载 reverse 后:&quot;</span><span class="p">,</span> <span class="n">manager</span><span class="o">.</span><span class="n">list_plugins</span><span class="p">())</span>
+
+    <span class="n">manager</span><span class="o">.</span><span class="n">execute_all</span><span class="p">(</span><span class="s2">&quot;Another test&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">六、思考题</h2>
+<ol>
+<li>
+<p><strong>鸭子类型 vs 接口</strong>：Python 的鸭子类型和 Java 的 Interface 有什么区别？各自有何优劣？</p>
+</li>
+<li>
+<p><strong>EAFP vs LBYL</strong>：在什么场景下 LBYL 比 EAFP 更合适？写出一个 LBYL 更好的例子。</p>
+</li>
+<li>
+<p><strong>ABC 设计</strong>：假设你要设计一个「缓存系统」，要求所有缓存实现（内存、Redis、文件）都提供 <code>get(key)</code>、<code>set(key, value, ttl)</code>、<code>delete(key)</code> 方法。请用 ABC 设计这个接口。</p>
+</li>
+<li>
+<p><strong>虚拟子类</strong>：Python 的 <code>register()</code> 机制有什么用？在什么场景下会用到虚拟子类？</p>
+</li>
+<li>
+<p><strong>插件系统设计</strong>：如何设计一个支持「优先级」的插件系统（高优先级插件先执行）？如果插件之间有依赖关系（插件 B 需要插件 A 先执行），该如何处理？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_4">📝 本章小结</h2>
+<pre class="plain"><code>✅ 多态 —— 同一接口，多种实现
+✅ 鸭子类型 —— 不关心类型，只关心行为
+✅ EAFP 风格 —— 先做再说，错了再处理
+✅ ABC —— 定义接口契约，约束子类行为
+✅ 插件系统 —— 扩展性设计的经典模式
+</code></pre>
+<ul>
+<li>动态绑定机制</li>
+<li>鸭子类型与静态类型对比</li>
+<li>多态的演进：从 Java 接口到 Python 鸭子类型<br>
+  "高级用法": "通过 Protocol 实现结构化类型检查",<br>
+  "最佳实践": "优先使用鸭子类型，需要契约时用 ABC",<br>
+  "常见陷阱": "过度使用 type() 检查会破坏多态"<br>
+}</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-033/index.html">← Day 33 继承</a><a class="nav-next" href="../day-035/index.html">Day 35 特殊方法（Magic Methods） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

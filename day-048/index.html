@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 48 — 混入（Mixin）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 48 — 混入（Mixin）</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">590 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-048-mixin" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📚 概念解释</a>
+<a class="toc-l3" href="#mixin">什么是 Mixin？</a>
+<a class="toc-l3" href="#mixin_1">为什么需要 Mixin？</a>
+<a class="toc-l2" href="#_2">🔬 原理深入</a>
+<a class="toc-l3" href="#mixin-mro">Mixin 的 MRO（方法解析顺序）</a>
+<a class="toc-l3" href="#mixin-vs">Mixin vs 普通继承的区别</a>
+<a class="toc-l3" href="#python">Python 的混入协议</a>
+<a class="toc-l3" href="#cooperative-multiple-inheritance">Cooperative Multiple Inheritance（协作式多重继承）</a>
+<a class="toc-l2" href="#api">📖 API 速查表</a>
+<a class="toc-l3" href="#mixin_2">常用 Mixin 模式</a>
+<a class="toc-l2" href="#_3">📊 图解</a>
+<a class="toc-l3" href="#mixin_3">Mixin 组合模式</a>
+<a class="toc-l3" href="#mro">MRO 查找顺序</a>
+<a class="toc-l2" href="#_4">💻 实战代码案例</a>
+<a class="toc-l3" href="#1-mixin">案例1：序列化 Mixin</a>
+<a class="toc-l3" href="#2-mixin-mixin">案例2：日志 Mixin + 属性验证 Mixin</a>
+<a class="toc-l3" href="#3-mixin">案例3：实战 — 可配置的数据管道 Mixin</a>
+<a class="toc-l2" href="#_5">🧠 思考题</a>
+<a class="toc-l2" href="#_6">📋 今日小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-048-mixin">Day 048 — 混入（Mixin）</h1>
+<h2 id="_1">📚 概念解释</h2>
+<h3 id="mixin">什么是 Mixin？</h3>
+<p><strong>Mixin（混入）</strong> 是一种设计模式，用于向类添加可复用的功能，而不需要使用传统的继承链。Mixin 本质上是一个<strong>多重继承中的辅助类</strong>，它只提供特定的功能增强，不负责完整的对象构建。</p>
+<pre class="plain"><code>┌─────────────────────────────────────────────────┐
+│                   主类（User）                    │
+├─────────────────────────────────────────────────┤
+│  name, email, ...                               │
+├─────────────────────────────────────────────────┤
+│         + 序列化Mixin（可选能力）                   │
+│         + 日志Mixin（可选能力）                    │
+│         + 缓存Mixin（可选能力）                    │
+└─────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="mixin_1">为什么需要 Mixin？</h3>
+<p>传统继承的问题：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 继承链过深，职责不清</span>
+<span class="k">class</span> <span class="nc">Animal</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="k">class</span> <span class="nc">FlyingAnimal</span><span class="p">(</span><span class="n">Animal</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">fly</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+
+<span class="k">class</span> <span class="nc">SwimmingAnimal</span><span class="p">(</span><span class="n">Animal</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">swim</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+
+<span class="k">class</span> <span class="nc">FlyingSwimmingAnimal</span><span class="p">(</span><span class="n">FlyingAnimal</span><span class="p">,</span> <span class="n">SwimmingAnimal</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">fly</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span> <span class="nf">swim</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+    <span class="c1"># 只是为了组合能力，却产生了复杂的继承关系</span>
+</code></pre></div>
+<p>Mixin 的解决方案：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ Mixin 按需组合能力</span>
+<span class="k">class</span> <span class="nc">FlyMixin</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">fly</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+
+<span class="k">class</span> <span class="nc">SwimMixin</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">swim</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+
+<span class="k">class</span> <span class="nc">Duck</span><span class="p">(</span><span class="n">FlyMixin</span><span class="p">,</span> <span class="n">SwimMixin</span><span class="p">):</span>
+    <span class="k">pass</span>  <span class="c1"># 鸭子能飞也能游，但没有深层继承</span>
+</code></pre></div>
+<hr>
+<h2 id="_2">🔬 原理深入</h2>
+<h3 id="mixin-mro">Mixin 的 MRO（方法解析顺序）</h3>
+<p>Python 通过 C3 线性化算法处理多重继承的 MRO：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">A</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">greet</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="s2">&quot;Hello from A&quot;</span>
+
+<span class="k">class</span> <span class="nc">B</span><span class="p">(</span><span class="n">A</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">greet</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="s2">&quot;Hello from B&quot;</span>
+
+<span class="k">class</span> <span class="nc">C</span><span class="p">(</span><span class="n">A</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">greet</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="s2">&quot;Hello from C&quot;</span>
+
+<span class="k">class</span> <span class="nc">D</span><span class="p">(</span><span class="n">B</span><span class="p">,</span> <span class="n">C</span><span class="p">):</span>  <span class="c1"># D 继承 B 和 C</span>
+    <span class="k">pass</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">D</span><span class="o">.</span><span class="vm">__mro__</span><span class="p">)</span>
+<span class="c1"># (&lt;class &#39;D&#39;&gt;, &lt;class &#39;B&#39;&gt;, &lt;class &#39;C&#39;&gt;, &lt;class &#39;A&#39;&gt;, &lt;class &#39;object&#39;&gt;)</span>
+</code></pre></div>
+<pre class="plain"><code>MRO 查找顺序（深度优先，但有调整）：
+
+D → B → C → A → object
+
+   D
+  / \
+ B   C
+  \ /
+   A
+   |
+ object
+</code></pre>
+<h3 id="mixin-vs">Mixin vs 普通继承的区别</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>普通继承</th>
+<th>Mixin</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>目的</strong></td>
+<td>"是一种"关系（is-a）</td>
+<td>"能做某事"关系（has-capability）</td>
+</tr>
+<tr>
+<td><strong>耦合度</strong></td>
+<td>父类与子类紧密耦合</td>
+<td>Mixin 独立于主类</td>
+</tr>
+<tr>
+<td><strong>职责</strong></td>
+<td>完整的功能封装</td>
+<td>单一能力增强</td>
+</tr>
+<tr>
+<td><strong>可复用性</strong></td>
+<td>通常绑定特定类层次</td>
+<td>可跨多个不相关类复用</td>
+</tr>
+<tr>
+<td><strong>命名惯例</strong></td>
+<td>无特殊要求</td>
+<td>通常以 <code>Mixin</code> 结尾</td>
+</tr>
+</tbody>
+</table>
+<h3 id="python">Python 的混入协议</h3>
+<p>Python 没有语法层面的 Mixin 支持，但有约定俗成的规则：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ Mixin 的设计原则</span>
+<span class="k">class</span> <span class="nc">MyMixin</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    1. 不定义 __init__（或定义但调用 super().__init__()）</span>
+<span class="sd">    2. 不存储实例状态（或只存储 Mixin 自己的状态）</span>
+<span class="sd">    3. 提供可独立使用的方法</span>
+<span class="sd">    4. 通常不被直接实例化</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="nf">my_feature</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;提供特定功能&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="s2">&quot;I can do this!&quot;</span>
+</code></pre></div>
+<h3 id="cooperative-multiple-inheritance">Cooperative Multiple Inheritance（协作式多重继承）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Base</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>  <span class="c1"># 继续传递给下一个 MRO 类</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Base.__init__ called&quot;</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">MixinA</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;MixinA.__init__ called&quot;</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">MixinB</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;MixinB.__init__ called&quot;</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">(</span><span class="n">MixinA</span><span class="p">,</span> <span class="n">MixinB</span><span class="p">,</span> <span class="n">Base</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;MyClass.__init__ called&quot;</span><span class="p">)</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="c1"># 调用顺序：MyClass → MixinA → MixinB → Base</span>
+</code></pre></div>
+<hr>
+<h2 id="api">📖 API 速查表</h2>
+<h3 id="mixin_2">常用 Mixin 模式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1. 序列化 Mixin（转为字典/JSON）</span>
+<span class="k">class</span> <span class="nc">SerializationMixin</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">k</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;_&#39;</span><span class="p">)}</span>
+
+    <span class="k">def</span> <span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="kn">import</span> <span class="nn">json</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+
+<span class="c1"># 2. 日志 Mixin</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="k">class</span> <span class="nc">LoggingMixin</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">):</span>
+        <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">level</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>
+
+<span class="c1"># 3. 比较 Mixin</span>
+<span class="k">class</span> <span class="nc">ComparableMixin</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span> <span class="o">==</span> <span class="n">other</span><span class="o">.</span><span class="vm">__dict__</span>
+
+    <span class="k">def</span> <span class="fm">__lt__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">&lt;</span> <span class="nb">str</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+<span class="c1"># 4. 缓存 Mixin</span>
+<span class="k">class</span> <span class="nc">CacheMixin</span><span class="p">:</span>
+    <span class="n">_cache</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span> <span class="nf">cached_call</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">method_name</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="nb">id</span><span class="p">(</span><span class="bp">self</span><span class="p">),</span> <span class="n">method_name</span><span class="p">,</span> <span class="n">args</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">method_name</span><span class="p">)(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">📊 图解</h2>
+<h3 id="mixin_3">Mixin 组合模式</h3>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class SerializationMixin {
+        +to_dict() dict
+        +to_json() str
+        +from_dict(cls, data) object
+    }
+    class LoggingMixin {
+        +log(message, level)
+        +log_operation(op)
+    }
+    class CacheMixin {
+        +cached_call(method, *args)
+        +clear_cache()
+    }
+    class User {
+        +name: str
+        +email: str
+    }
+    class Article {
+        +title: str
+        +content: str
+    }
+
+    User --|&gt; SerializationMixin
+    User --|&gt; LoggingMixin
+    User --|&gt; CacheMixin
+    Article --|&gt; SerializationMixin
+    Article --|&gt; LoggingMixin
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class SerializationMixin {
+        +to_dict() dict
+        +to_json() str
+        +from_dict(cls, data) object
+    }
+    class LoggingMixin {
+        +log(message, level)
+        +log_operation(op)
+    }
+    class CacheMixin {
+        +cached_call(method, *args)
+        +clear_cache()
+    }
+    class User {
+        +name: str
+        +email: str
+    }
+    class Article {
+        +title: str
+        +content: str
+    }
+
+    User --|&gt; SerializationMixin
+    User --|&gt; LoggingMixin
+    User --|&gt; CacheMixin
+    Article --|&gt; SerializationMixin
+    Article --|&gt; LoggingMixin
+</code></pre></div>
+<h3 id="mro">MRO 查找顺序</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[object] --&gt; B[Base]
+    B --&gt; C[MixinA]
+    C --&gt; D[MixinB]
+    D --&gt; E[MyClass]
+    
+    style A fill:#f9f,stroke:#333
+    style B fill:#bbf,stroke:#333
+    style C fill:#bfb,stroke:#333
+    style D fill:#fbf,stroke:#333
+    style E fill:#ff9,stroke:#333
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[object] --&gt; B[Base]
+    B --&gt; C[MixinA]
+    C --&gt; D[MixinB]
+    D --&gt; E[MyClass]
+    
+    style A fill:#f9f,stroke:#333
+    style B fill:#bbf,stroke:#333
+    style C fill:#bfb,stroke:#333
+    style D fill:#fbf,stroke:#333
+    style E fill:#ff9,stroke:#333
+</code></pre></div>
+<hr>
+<h2 id="_4">💻 实战代码案例</h2>
+<h3 id="1-mixin">案例1：序列化 Mixin</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+
+<span class="k">class</span> <span class="nc">SerializationMixin</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;序列化混入 — 将对象转为字典和JSON&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">to_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;将对象转为字典（排除私有属性）&quot;&quot;&quot;</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">key</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;_&#39;</span><span class="p">):</span>
+                <span class="k">continue</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">datetime</span><span class="p">):</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="n">value</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+            <span class="k">elif</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="s1">&#39;to_dict&#39;</span><span class="p">):</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="n">value</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="p">[</span>
+                    <span class="n">item</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span> <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="s1">&#39;to_dict&#39;</span><span class="p">)</span> <span class="k">else</span> <span class="n">item</span>
+                    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">value</span>
+                <span class="p">]</span>
+            <span class="n">result</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+    <span class="k">def</span> <span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;将对象转为JSON字符串&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span>
+            <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+            <span class="n">indent</span><span class="o">=</span><span class="n">indent</span><span class="p">,</span>
+            <span class="n">default</span><span class="o">=</span><span class="nb">str</span>
+        <span class="p">)</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">from_dict</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;从字典创建对象（需子类实现 _parse_data）&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="s1">&#39;_parse_data&#39;</span><span class="p">):</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_parse_data</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="o">**</span><span class="n">data</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">Address</span><span class="p">(</span><span class="n">SerializationMixin</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">city</span><span class="p">,</span> <span class="n">street</span><span class="p">,</span> <span class="n">zipcode</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">city</span> <span class="o">=</span> <span class="n">city</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">street</span> <span class="o">=</span> <span class="n">street</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">zipcode</span> <span class="o">=</span> <span class="n">zipcode</span>
+
+
+<span class="k">class</span> <span class="nc">User</span><span class="p">(</span><span class="n">SerializationMixin</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">email</span><span class="p">,</span> <span class="n">address</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">tags</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">email</span> <span class="o">=</span> <span class="n">email</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">address</span> <span class="o">=</span> <span class="n">address</span>  <span class="c1"># 可以是另一个 SerializationMixin 对象</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tags</span> <span class="o">=</span> <span class="n">tags</span> <span class="ow">or</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">created_at</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+
+
+<span class="c1"># 使用</span>
+<span class="n">address</span> <span class="o">=</span> <span class="n">Address</span><span class="p">(</span><span class="s2">&quot;北京&quot;</span><span class="p">,</span> <span class="s2">&quot;朝阳区建国路88号&quot;</span><span class="p">,</span> <span class="s2">&quot;100022&quot;</span><span class="p">)</span>
+<span class="n">user</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="s2">&quot;张三&quot;</span><span class="p">,</span> <span class="s2">&quot;zhangsan@example.com&quot;</span><span class="p">,</span> <span class="n">address</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;admin&quot;</span><span class="p">,</span> <span class="s2">&quot;vip&quot;</span><span class="p">])</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=== 字典格式 ===&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== JSON 格式 ===&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">to_json</span><span class="p">())</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== 类型判断 ===&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;是 SerializationMixin 吗？ </span><span class="si">{</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">user</span><span class="p">,</span><span class="w"> </span><span class="n">SerializationMixin</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="2-mixin-mixin">案例2：日志 Mixin + 属性验证 Mixin</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">wraps</span>
+
+
+<span class="k">class</span> <span class="nc">LoggingMixin</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;日志混入 — 为任何类添加日志能力&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">setup_logger</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;_logger&#39;</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_logger</span><span class="o">.</span><span class="n">handlers</span><span class="p">:</span>
+                <span class="n">handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">()</span>
+                <span class="n">handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span>
+                    <span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span>
+                        <span class="s1">&#39;</span><span class="si">%(asctime)s</span><span class="s1"> - </span><span class="si">%(name)s</span><span class="s1"> - </span><span class="si">%(levelname)s</span><span class="s1"> - </span><span class="si">%(message)s</span><span class="s1">&#39;</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">handler</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_logger</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_logger</span>
+
+    <span class="k">def</span> <span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">):</span>
+        <span class="n">logger</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">setup_logger</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">level</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">log_operation</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">operation_name</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;记录操作执行时间的装饰器&quot;&quot;&quot;</span>
+        <span class="k">def</span> <span class="nf">decorator</span><span class="p">(</span><span class="n">func</span><span class="p">):</span>
+            <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+            <span class="k">def</span> <span class="nf">wrapper</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;开始执行: </span><span class="si">{</span><span class="n">operation_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">result</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+                    <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;完成: </span><span class="si">{</span><span class="n">operation_name</span><span class="si">}</span><span class="s2"> (耗时 </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s)&quot;</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="n">result</span>
+                <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;失败: </span><span class="si">{</span><span class="n">operation_name</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">logging</span><span class="o">.</span><span class="n">ERROR</span><span class="p">)</span>
+                    <span class="k">raise</span>
+            <span class="k">return</span> <span class="n">wrapper</span>
+        <span class="k">return</span> <span class="n">decorator</span>
+
+
+<span class="k">class</span> <span class="nc">ValidationMixin</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;属性验证混入 — 为类添加字段验证能力&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">_validate_field</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">field_name</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">rules</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;通用字段验证&quot;&quot;&quot;</span>
+        <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">if</span> <span class="s1">&#39;type&#39;</span> <span class="ow">in</span> <span class="n">rules</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="n">rules</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]):</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">field_name</span><span class="si">}</span><span class="s2">: 期望 </span><span class="si">{</span><span class="n">rules</span><span class="p">[</span><span class="s1">&#39;type&#39;</span><span class="p">]</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">, &quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;实际 </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="s1">&#39;min_length&#39;</span> <span class="ow">in</span> <span class="n">rules</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">))</span> <span class="o">&lt;</span> <span class="n">rules</span><span class="p">[</span><span class="s1">&#39;min_length&#39;</span><span class="p">]:</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">field_name</span><span class="si">}</span><span class="s2">: 长度不能少于 </span><span class="si">{</span><span class="n">rules</span><span class="p">[</span><span class="s1">&#39;min_length&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="s1">&#39;max_length&#39;</span> <span class="ow">in</span> <span class="n">rules</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">))</span> <span class="o">&gt;</span> <span class="n">rules</span><span class="p">[</span><span class="s1">&#39;max_length&#39;</span><span class="p">]:</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">field_name</span><span class="si">}</span><span class="s2">: 长度不能超过 </span><span class="si">{</span><span class="n">rules</span><span class="p">[</span><span class="s1">&#39;max_length&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="s1">&#39;not_empty&#39;</span> <span class="ow">in</span> <span class="n">rules</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">value</span><span class="p">:</span>
+            <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">field_name</span><span class="si">}</span><span class="s2">: 不能为空&quot;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">errors</span>
+
+
+<span class="k">class</span> <span class="nc">UserService</span><span class="p">(</span><span class="n">LoggingMixin</span><span class="p">,</span> <span class="n">ValidationMixin</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用户服务 — 组合日志和验证能力&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">users</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span> <span class="nf">add_user</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">email</span><span class="p">):</span>
+        <span class="c1"># 验证</span>
+        <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_validate_field</span><span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s1">&#39;type&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="s1">&#39;min_length&#39;</span><span class="p">:</span> <span class="mi">2</span><span class="p">,</span> <span class="s1">&#39;not_empty&#39;</span><span class="p">:</span> <span class="kc">True</span>
+        <span class="p">}))</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_validate_field</span><span class="p">(</span><span class="s1">&#39;email&#39;</span><span class="p">,</span> <span class="n">email</span><span class="p">,</span> <span class="p">{</span>
+            <span class="s1">&#39;type&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="s1">&#39;not_empty&#39;</span><span class="p">:</span> <span class="kc">True</span>
+        <span class="p">}))</span>
+
+        <span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;添加用户失败: </span><span class="si">{</span><span class="n">errors</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">errors</span><span class="p">))</span>
+
+        <span class="c1"># 添加用户</span>
+        <span class="n">user_id</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">users</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">users</span><span class="p">[</span><span class="n">user_id</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="n">name</span><span class="p">,</span> <span class="s1">&#39;email&#39;</span><span class="p">:</span> <span class="n">email</span><span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;添加用户成功: </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> (ID=</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">user_id</span>
+
+    <span class="k">def</span> <span class="nf">find_user</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">user_id</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">user_id</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">users</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;用户不存在: ID=</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">users</span><span class="p">[</span><span class="n">user_id</span><span class="p">]</span>
+
+
+<span class="c1"># 使用</span>
+<span class="n">service</span> <span class="o">=</span> <span class="n">UserService</span><span class="p">()</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">service</span><span class="o">.</span><span class="n">add_user</span><span class="p">(</span><span class="s2">&quot;张三&quot;</span><span class="p">,</span> <span class="s2">&quot;zhangsan@example.com&quot;</span><span class="p">)</span>
+    <span class="n">service</span><span class="o">.</span><span class="n">add_user</span><span class="p">(</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;lisi@example.com&quot;</span><span class="p">)</span>  <span class="c1"># 会验证失败</span>
+<span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;错误: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">user</span> <span class="o">=</span> <span class="n">service</span><span class="o">.</span><span class="n">find_user</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;查找结果: </span><span class="si">{</span><span class="n">user</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="3-mixin">案例3：实战 — 可配置的数据管道 Mixin</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+
+<span class="k">class</span> <span class="nc">TransformMixin</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;数据转换混入 — 提供数据管道能力&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_transforms</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">add_transform</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;添加转换函数&quot;&quot;&quot;</span>
+        <span class="n">transform</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;func&#39;</span><span class="p">:</span> <span class="n">func</span><span class="p">,</span>
+            <span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="n">name</span> <span class="ow">or</span> <span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
+        <span class="p">}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_transforms</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">transform</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="nf">transform</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;依次应用所有转换&quot;&quot;&quot;</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">data</span>
+        <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_transforms</span><span class="p">:</span>
+            <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">t</span><span class="p">[</span><span class="s1">&#39;func&#39;</span><span class="p">](</span><span class="n">result</span><span class="p">)</span>
+            <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  [</span><span class="si">{</span><span class="n">t</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">] 完成 (</span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2">s)&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+
+<span class="k">class</span> <span class="nc">ValidationPipeline</span><span class="p">(</span><span class="n">TransformMixin</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;带验证的数据管道&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_validators</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Callable</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">add_validator</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_validators</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+            <span class="s1">&#39;func&#39;</span><span class="p">:</span> <span class="n">func</span><span class="p">,</span>
+            <span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="n">name</span> <span class="ow">or</span> <span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
+        <span class="p">})</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="nf">validate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;验证数据，返回错误列表&quot;&quot;&quot;</span>
+        <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_validators</span><span class="p">:</span>
+            <span class="n">error</span> <span class="o">=</span> <span class="n">v</span><span class="p">[</span><span class="s1">&#39;func&#39;</span><span class="p">](</span><span class="n">data</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">error</span><span class="p">:</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">v</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">error</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">errors</span>
+
+    <span class="k">def</span> <span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;处理数据：先验证，再转换&quot;&quot;&quot;</span>
+        <span class="n">errors</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">validate</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;验证失败:</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">errors</span><span class="p">))</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+
+<span class="c1"># === 定义管道 ===</span>
+
+<span class="c1"># 数值管道</span>
+<span class="n">number_pipeline</span> <span class="o">=</span> <span class="n">ValidationPipeline</span><span class="p">()</span>
+
+<span class="n">number_pipeline</span><span class="o">.</span><span class="n">add_validator</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="kc">None</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">))</span> <span class="k">else</span> <span class="s2">&quot;必须是数字&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;类型检查&quot;</span>
+<span class="p">)</span>
+<span class="n">number_pipeline</span><span class="o">.</span><span class="n">add_validator</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="kc">None</span> <span class="k">if</span> <span class="n">x</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">&quot;必须为正数&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;正数检查&quot;</span>
+<span class="p">)</span>
+
+<span class="n">number_pipeline</span><span class="o">.</span><span class="n">add_transform</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;翻倍&quot;</span>
+<span class="p">)</span>
+<span class="n">number_pipeline</span><span class="o">.</span><span class="n">add_transform</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="nb">round</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;保留两位小数&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># 字符串管道</span>
+<span class="n">text_pipeline</span> <span class="o">=</span> <span class="n">ValidationPipeline</span><span class="p">()</span>
+<span class="n">text_pipeline</span><span class="o">.</span><span class="n">add_validator</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="kc">None</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">&quot;不能为空&quot;</span><span class="p">,</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;非空检查&quot;</span>
+<span class="p">)</span>
+<span class="n">text_pipeline</span><span class="o">.</span><span class="n">add_transform</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">(),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;去空格转小写&quot;</span>
+<span class="p">)</span>
+<span class="n">text_pipeline</span><span class="o">.</span><span class="n">add_transform</span><span class="p">(</span>
+    <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39; &#39;</span><span class="p">,</span> <span class="s1">&#39;_&#39;</span><span class="p">),</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;空格转下划线&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># 使用</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=== 数值管道 ===&quot;</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">number_pipeline</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="mi">21</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;结果: 21 → </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== 文符串管道 ===&quot;</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">text_pipeline</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="s2">&quot;  Hello World  &quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;结果: &#39;  Hello World  &#39; → &#39;</span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&#39;&quot;</span><span class="p">)</span>
+
+<span class="c1"># 错误处理</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">=== 错误处理 ===&quot;</span><span class="p">)</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">number_pipeline</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="o">-</span><span class="mi">5</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">🧠 思考题</h2>
+<ol>
+<li>
+<p><strong>Mixin 的 <code>__init__</code> 应该怎么写？</strong> 为什么 Mixin 通常不定义自己的 <code>__init__</code>？如果定义了，需要注意什么？</p>
+</li>
+<li>
+<p><strong>Mixin 与组合（Composition）的区别是什么？</strong> 什么情况下应该用 Mixin，什么情况下应该用组合？</p>
+</li>
+<li>
+<p><strong>如何避免 Mixin 之间的命名冲突？</strong> 如果两个 Mixin 都定义了同名方法，会发生什么？如何避免？</p>
+</li>
+<li>
+<p><strong>协作式多重继承中的 <code>super()</code> 为什么重要？</strong> 如果 Mixin 的 <code>__init__</code> 不调用 <code>super().__init__()</code>，会发生什么？</p>
+</li>
+<li>
+<p><strong>Python 标准库中有哪些 Mixin 的例子？</strong> 查看 <code>collections.abc</code> 模块，找出使用 Mixin 模式的类。</p>
+</li>
+</ol>
+<hr>
+<h2 id="_6">📋 今日小结</h2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Mixin</strong></td>
+<td>通过多重继承为类添加可复用能力的辅助类</td>
+</tr>
+<tr>
+<td><strong>MRO</strong></td>
+<td>C3 线性化算法决定多重继承的方法查找顺序</td>
+</tr>
+<tr>
+<td><strong>协作式继承</strong></td>
+<td><code>super().__init__(**kwargs)</code> 确保所有类都被初始化</td>
+</tr>
+<tr>
+<td><strong>Mixin 命名</strong></td>
+<td>通常以 <code>Mixin</code> 结尾，表明是辅助类</td>
+</tr>
+<tr>
+<td><strong>Mixin vs 组合</strong></td>
+<td>Mixin 是"能做某事"（has-capability），组合是"有一个"（has-a）</td>
+</tr>
+</tbody>
+</table>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-047/index.html">← Day 47 描述符（Descriptor）</a><a class="nav-next" href="../day-049/index.html">Day 49 抽象基类（ABC） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 64 — 网络请求</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 64 — 网络请求</h1>
+  <div class="lmeta">
+    <span class="badge">标准库与生态系统</span>
+    <span class="badge">441 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-064-network-requests" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#1-http">1. HTTP 协议基础</a>
+<a class="toc-l3" href="#11-http">1.1 什么是 HTTP？</a>
+<a class="toc-l3" href="#12-http">1.2 HTTP 请求方法</a>
+<a class="toc-l3" href="#13-http">1.3 HTTP 状态码</a>
+<a class="toc-l3" href="#14-http-headers">1.4 HTTP 请求头（Headers）</a>
+<a class="toc-l2" href="#2-urllib-python">2. urllib — Python 标准库</a>
+<a class="toc-l3" href="#21">2.1 概念</a>
+<a class="toc-l3" href="#22-api">2.2 核心 API</a>
+<a class="toc-l3" href="#23-urllib">2.3 urllib 的缺点</a>
+<a class="toc-l2" href="#3-requests-http">3. requests — 现代 HTTP 库</a>
+<a class="toc-l3" href="#31">3.1 概念</a>
+<a class="toc-l3" href="#32-api">3.2 核心 API</a>
+<a class="toc-l3" href="#33-urllib-vs-requests">3.3 urllib vs requests 对比</a>
+<a class="toc-l2" href="#4-session-cookie">4. Session / Cookie 管理</a>
+<a class="toc-l3" href="#41">4.1 概念</a>
+<a class="toc-l3" href="#42-requestssession">4.2 requests.Session 使用</a>
+<a class="toc-l3" href="#43-cookie">4.3 Cookie 手动管理</a>
+<a class="toc-l2" href="#5-cli">5. 实战：天气预报 CLI</a>
+<a class="toc-l2" href="#6">6. 思考题</a>
+<a class="toc-l2" href="#7">7. 最佳实践总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-064">Day 064 — 网络请求</h1>
+<h2 id="_1">概述</h2>
+<p>网络请求是 Python 与外部世界通信的基础。无论是调用 API、爬取网页、还是与云服务交互，都离不开 HTTP 请求。Python 提供了标准库 <code>urllib</code> 和更强大的第三方库 <code>requests</code>，本日将全面掌握这两者。</p>
+<hr>
+<h2 id="1-http">1. HTTP 协议基础</h2>
+<h3 id="11-http">1.1 什么是 HTTP？</h3>
+<p>HTTP（HyperText Transfer Protocol，超文本传输协议）是客户端和服务器之间通信的协议。它的核心设计理念是 <strong>请求-响应模型</strong>：</p>
+<pre class="plain"><code>客户端 (Client)                    服务器 (Server)
+    │                                  │
+    │─────── HTTP 请求 ──────────────→ │
+    │  GET /api/users HTTP/1.1         │
+    │  Host: example.com              │
+    │  Authorization: Bearer xxx      │
+    │                                  │
+    │←────── HTTP 响应 ──────────────│
+    │  HTTP/1.1 200 OK                │
+    │  Content-Type: application/json │
+    │  {&quot;users&quot;: [...]}               │
+    │                                  │
+</code></pre>
+<h3 id="12-http">1.2 HTTP 请求方法</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>用途</th>
+<th>幂等</th>
+<th>安全</th>
+<th>请求体</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET</code></td>
+<td>获取资源</td>
+<td>✅</td>
+<td>✅</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td>创建资源</td>
+<td>❌</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>PUT</code></td>
+<td>完整更新资源</td>
+<td>✅</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>PATCH</code></td>
+<td>部分更新资源</td>
+<td>❌</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>DELETE</code></td>
+<td>删除资源</td>
+<td>✅</td>
+<td>❌</td>
+<td>可选</td>
+</tr>
+<tr>
+<td><code>HEAD</code></td>
+<td>获取响应头（无响应体）</td>
+<td>✅</td>
+<td>✅</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><code>OPTIONS</code></td>
+<td>获取服务器支持的选项</td>
+<td>✅</td>
+<td>✅</td>
+<td>❌</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>幂等</strong>：多次执行结果相同。<strong>安全</strong>：不会改变服务器状态。</p>
+</blockquote>
+<h3 id="13-http">1.3 HTTP 状态码</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph &quot;1xx 信息&quot;
+        A1[&quot;100 Continue&quot;]
+        A2[&quot;101 Switching Protocols&quot;]
+    end
+    subgraph &quot;2xx 成功&quot;
+        B1[&quot;200 OK&quot;]
+        B2[&quot;201 Created&quot;]
+        B3[&quot;204 No Content&quot;]
+    end
+    subgraph &quot;3xx 重定向&quot;
+        C1[&quot;301 Moved Permanently&quot;]
+        C2[&quot;302 Found&quot;]
+        C3[&quot;304 Not Modified&quot;]
+    end
+    subgraph &quot;4xx 客户端错误&quot;
+        D1[&quot;400 Bad Request&quot;]
+        D2[&quot;401 Unauthorized&quot;]
+        D3[&quot;403 Forbidden&quot;]
+        D4[&quot;404 Not Found&quot;]
+        D5[&quot;429 Too Many Requests&quot;]
+    end
+    subgraph &quot;5xx 服务器错误&quot;
+        E1[&quot;500 Internal Server Error&quot;]
+        E2[&quot;502 Bad Gateway&quot;]
+        E3[&quot;503 Service Unavailable&quot;]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph &quot;1xx 信息&quot;
+        A1[&quot;100 Continue&quot;]
+        A2[&quot;101 Switching Protocols&quot;]
+    end
+    subgraph &quot;2xx 成功&quot;
+        B1[&quot;200 OK&quot;]
+        B2[&quot;201 Created&quot;]
+        B3[&quot;204 No Content&quot;]
+    end
+    subgraph &quot;3xx 重定向&quot;
+        C1[&quot;301 Moved Permanently&quot;]
+        C2[&quot;302 Found&quot;]
+        C3[&quot;304 Not Modified&quot;]
+    end
+    subgraph &quot;4xx 客户端错误&quot;
+        D1[&quot;400 Bad Request&quot;]
+        D2[&quot;401 Unauthorized&quot;]
+        D3[&quot;403 Forbidden&quot;]
+        D4[&quot;404 Not Found&quot;]
+        D5[&quot;429 Too Many Requests&quot;]
+    end
+    subgraph &quot;5xx 服务器错误&quot;
+        E1[&quot;500 Internal Server Error&quot;]
+        E2[&quot;502 Bad Gateway&quot;]
+        E3[&quot;503 Service Unavailable&quot;]
+    end
+</code></pre></div>
+<p><strong>常见状态码速记：</strong></p>
+<table>
+<thead>
+<tr>
+<th>状态码</th>
+<th>含义</th>
+<th>场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>200</code></td>
+<td>✅ OK</td>
+<td>请求成功</td>
+</tr>
+<tr>
+<td><code>201</code></td>
+<td>✅ Created</td>
+<td>POST 创建成功</td>
+</tr>
+<tr>
+<td><code>204</code></td>
+<td>✅ No Content</td>
+<td>删除成功</td>
+</tr>
+<tr>
+<td><code>301</code></td>
+<td>🔀 永久重定向</td>
+<td>网站更换域名</td>
+</tr>
+<tr>
+<td><code>302</code></td>
+<td>🔀 临时重定向</td>
+<td>登录后跳转</td>
+</tr>
+<tr>
+<td><code>400</code></td>
+<td>❌ Bad Request</td>
+<td>参数错误</td>
+</tr>
+<tr>
+<td><code>401</code></td>
+<td>❌ Unauthorized</td>
+<td>未登录</td>
+</tr>
+<tr>
+<td><code>403</code></td>
+<td>❌ Forbidden</td>
+<td>无权限</td>
+</tr>
+<tr>
+<td><code>404</code></td>
+<td>❌ Not Found</td>
+<td>资源不存在</td>
+</tr>
+<tr>
+<td><code>429</code></td>
+<td>❌ Too Many Requests</td>
+<td>请求频率限制</td>
+</tr>
+<tr>
+<td><code>500</code></td>
+<td>💥 服务器错误</td>
+<td>后端异常</td>
+</tr>
+<tr>
+<td><code>502</code></td>
+<td>💥 Bad Gateway</td>
+<td>网关/代理错误</td>
+</tr>
+<tr>
+<td><code>503</code></td>
+<td>💥 服务不可用</td>
+<td>服务器过载/维护</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14-http-headers">1.4 HTTP 请求头（Headers）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">http</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="err"># ─── 通用请求头 ───</span>
+<span class="err">Host: api.example.com           # 目标主机（HTTP/1.1 必需）</span>
+<span class="err">User-Agent: Mozilla/5.0 ...     # 客户端标识</span>
+<span class="err">Accept: application/json        # 期望的响应格式</span>
+<span class="err">Accept-Language: zh-CN,en       # 接受的语言</span>
+<span class="err">Connection: keep-alive          # 连接复用</span>
+
+<span class="err"># ─── 认证相关 ───</span>
+<span class="err">Authorization: Bearer eyJ...    # Bearer Token</span>
+<span class="err">Authorization: Basic base64...  # Basic Auth</span>
+<span class="err">Cookie: session_id=abc123       # Cookie</span>
+
+<span class="err"># ─── 内容相关 ───</span>
+<span class="err">Content-Type: application/json  # 请求体格式</span>
+<span class="err">Content-Length: 123             # 请求体长度</span>
+
+<span class="err"># ─── 缓存与控制 ───</span>
+<span class="err">Cache-Control: no-cache         # 缓存策略</span>
+<span class="err">If-Modified-Since: Mon, ...     # 条件请求</span>
+</code></pre></div>
+<hr>
+<h2 id="2-urllib-python">2. urllib — Python 标准库</h2>
+<h3 id="21">2.1 概念</h3>
+<p><code>urllib</code> 是 Python 内置的 HTTP 请求库，无需安装。但它 API 设计较为底层，用法不如 <code>requests</code> 直观。</p>
+<blockquote>
+<p>⚠️ urllib.request 的 <code>urlopen()</code> 返回的是类文件对象（http.client.HTTPResponse），需要手动处理编码、异常等。</p>
+</blockquote>
+<h3 id="22-api">2.2 核心 API</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">urllib.request</span> <span class="kn">import</span> <span class="n">urlopen</span><span class="p">,</span> <span class="n">Request</span>
+<span class="kn">from</span> <span class="nn">urllib.parse</span> <span class="kn">import</span> <span class="n">urlencode</span><span class="p">,</span> <span class="n">quote</span><span class="p">,</span> <span class="n">urlparse</span>
+<span class="kn">from</span> <span class="nn">urllib.error</span> <span class="kn">import</span> <span class="n">HTTPError</span><span class="p">,</span> <span class="n">URLError</span>
+
+<span class="c1"># ─── GET 请求 ───</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">urlopen</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/users&#39;</span><span class="p">)</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)</span>   <span class="c1"># bytes → str</span>
+<span class="n">status</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">status</span>                  <span class="c1"># 状态码</span>
+<span class="n">headers</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">headers</span>                <span class="c1"># 响应头</span>
+
+<span class="c1"># ─── POST 请求 ───</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">urlencode</span><span class="p">({</span><span class="s1">&#39;key&#39;</span><span class="p">:</span> <span class="s1">&#39;value&#39;</span><span class="p">})</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+<span class="n">req</span> <span class="o">=</span> <span class="n">Request</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/post&#39;</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span>
+              <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;Content-Type&#39;</span><span class="p">:</span> <span class="s1">&#39;application/x-www-form-urlencoded&#39;</span><span class="p">})</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">urlopen</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+
+<span class="c1"># ─── 自定义请求头 ───</span>
+<span class="n">req</span> <span class="o">=</span> <span class="n">Request</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/users&#39;</span><span class="p">,</span>
+              <span class="n">headers</span><span class="o">=</span><span class="p">{</span>
+                  <span class="s1">&#39;User-Agent&#39;</span><span class="p">:</span> <span class="s1">&#39;Mozilla/5.0&#39;</span><span class="p">,</span>
+                  <span class="s1">&#39;Authorization&#39;</span><span class="p">:</span> <span class="s1">&#39;Bearer token123&#39;</span>
+              <span class="p">})</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">urlopen</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+
+<span class="c1"># ─── URL 编码 ───</span>
+<span class="c1"># 中文/特殊字符在 URL 中需要编码</span>
+<span class="n">encoded</span> <span class="o">=</span> <span class="n">quote</span><span class="p">(</span><span class="s1">&#39;你好世界&#39;</span><span class="p">)</span>  <span class="c1"># %E4%BD%A0%E5%A5%BD...</span>
+<span class="n">params</span> <span class="o">=</span> <span class="n">urlencode</span><span class="p">({</span><span class="s1">&#39;q&#39;</span><span class="p">:</span> <span class="s1">&#39;Python教程&#39;</span><span class="p">,</span> <span class="s1">&#39;page&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
+<span class="c1"># &#39;q=Python%E6%95%99%E7%A8%8B&amp;page=1&#39;</span>
+
+<span class="c1"># ─── URL 解析 ───</span>
+<span class="n">parsed</span> <span class="o">=</span> <span class="n">urlparse</span><span class="p">(</span><span class="s1">&#39;https://user:pass@api.com:8080/path?a=1#frag&#39;</span><span class="p">)</span>
+<span class="c1"># parsed.scheme → &#39;https&#39;</span>
+<span class="c1"># parsed.netloc → &#39;user:pass@api.com:8080&#39;</span>
+<span class="c1"># parsed.path → &#39;/path&#39;</span>
+<span class="c1"># parsed.query → &#39;a=1&#39;</span>
+
+<span class="c1"># ─── 异常处理 ───</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">response</span> <span class="o">=</span> <span class="n">urlopen</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/nonexistent&#39;</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">HTTPError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;HTTP 错误: </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">code</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">reason</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">URLError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;URL 错误: </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">reason</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="23-urllib">2.3 urllib 的缺点</h3>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>API 过于底层</strong></td>
+<td>需要手动 encode/decode，处理响应体</td>
+</tr>
+<tr>
+<td><strong>缺少 Session</strong></td>
+<td>每次请求独立，Cookie 需手动管理</td>
+</tr>
+<tr>
+<td><strong>异常处理繁琐</strong></td>
+<td>HTTPError / URLError 需要逐级捕获</td>
+</tr>
+<tr>
+<td><strong>JSON 支持差</strong></td>
+<td>需要 json.loads(response.read().decode())</td>
+</tr>
+<tr>
+<td><strong>上传文件复杂</strong></td>
+<td>需要自己构造 multipart/form-data</td>
+</tr>
+<tr>
+<td><strong>超时设置</strong></td>
+<td>默认无超时，需手动设置 timeout 参数</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># urllib 实现一个&quot;简单&quot;的 POST JSON 请求</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">urllib.request</span> <span class="kn">import</span> <span class="n">Request</span><span class="p">,</span> <span class="n">urlopen</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">})</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+<span class="n">req</span> <span class="o">=</span> <span class="n">Request</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/users&#39;</span><span class="p">,</span>
+              <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span>
+              <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;Content-Type&#39;</span><span class="p">:</span> <span class="s1">&#39;application/json&#39;</span><span class="p">})</span>
+<span class="n">resp</span> <span class="o">=</span> <span class="n">urlopen</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">())</span>
+</code></pre></div>
+<hr>
+<h2 id="3-requests-http">3. requests — 现代 HTTP 库</h2>
+<h3 id="31">3.1 概念</h3>
+<p><code>requests</code> 是 Python 生态中最流行的 HTTP 库，以 <code>HTTP for Humans</code> 为设计理念，API 简洁优雅。</p>
+<p><strong>安装：</strong> <code>pip install requests</code></p>
+<h3 id="32-api">3.2 核心 API</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="c1"># ─── GET 请求 ───</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/users&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span><span class="p">)</span>     <span class="c1"># 200</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">())</span>           <span class="c1"># 自动解析 JSON</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>             <span class="c1"># 文本响应体</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>          <span class="c1"># 二进制响应体</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">headers</span><span class="p">)</span>          <span class="c1"># 响应头</span>
+
+<span class="c1"># 带参数</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/search&#39;</span><span class="p">,</span>
+                        <span class="n">params</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;q&#39;</span><span class="p">:</span> <span class="s1">&#39;python&#39;</span><span class="p">,</span> <span class="s1">&#39;page&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
+
+<span class="c1"># ─── POST 请求 ───</span>
+<span class="c1"># JSON 数据</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/users&#39;</span><span class="p">,</span>
+                         <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="s1">&#39;Alice&#39;</span><span class="p">,</span> <span class="s1">&#39;age&#39;</span><span class="p">:</span> <span class="mi">30</span><span class="p">})</span>
+
+<span class="c1"># 表单数据</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/login&#39;</span><span class="p">,</span>
+                         <span class="n">data</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;username&#39;</span><span class="p">:</span> <span class="s1">&#39;admin&#39;</span><span class="p">,</span> <span class="s1">&#39;password&#39;</span><span class="p">:</span> <span class="s1">&#39;123456&#39;</span><span class="p">})</span>
+
+<span class="c1"># 文件上传</span>
+<span class="n">files</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;file&#39;</span><span class="p">:</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;report.pdf&#39;</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)}</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/upload&#39;</span><span class="p">,</span> <span class="n">files</span><span class="o">=</span><span class="n">files</span><span class="p">)</span>
+
+<span class="c1"># 多个文件</span>
+<span class="n">files</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="s1">&#39;file1&#39;</span><span class="p">,</span> <span class="p">(</span><span class="s1">&#39;report1.pdf&#39;</span><span class="p">,</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;report1.pdf&#39;</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">),</span> <span class="s1">&#39;application/pdf&#39;</span><span class="p">)),</span>
+    <span class="p">(</span><span class="s1">&#39;file2&#39;</span><span class="p">,</span> <span class="p">(</span><span class="s1">&#39;report2.pdf&#39;</span><span class="p">,</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;report2.pdf&#39;</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">),</span> <span class="s1">&#39;application/pdf&#39;</span><span class="p">)),</span>
+<span class="p">]</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/upload&#39;</span><span class="p">,</span> <span class="n">files</span><span class="o">=</span><span class="n">files</span><span class="p">)</span>
+
+<span class="c1"># ─── 请求头 ───</span>
+<span class="n">headers</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;User-Agent&#39;</span><span class="p">:</span> <span class="s1">&#39;Mozilla/5.0 (Windows NT 10.0)&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Authorization&#39;</span><span class="p">:</span> <span class="s1">&#39;Bearer token123&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;Accept-Language&#39;</span><span class="p">:</span> <span class="s1">&#39;zh-CN&#39;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/data&#39;</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="n">headers</span><span class="p">)</span>
+
+<span class="c1"># ─── 超时设置 ───</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com&#39;</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>  <span class="c1"># 5秒超时</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com&#39;</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">10</span><span class="p">))</span>  <span class="c1"># (连接超时, 读取超时)</span>
+
+<span class="c1"># ─── 代理 ───</span>
+<span class="n">proxies</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;http&#39;</span><span class="p">:</span> <span class="s1">&#39;http://proxy.example.com:8080&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;https&#39;</span><span class="p">:</span> <span class="s1">&#39;https://proxy.example.com:8080&#39;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com&#39;</span><span class="p">,</span> <span class="n">proxies</span><span class="o">=</span><span class="n">proxies</span><span class="p">)</span>
+
+<span class="c1"># ─── SSL 验证 ───</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com&#39;</span><span class="p">,</span> <span class="n">verify</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>     <span class="c1"># 默认验证</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com&#39;</span><span class="p">,</span> <span class="n">verify</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>    <span class="c1"># ⚠️ 跳过验证</span>
+
+<span class="c1"># ─── 重定向 ───</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com&#39;</span><span class="p">,</span> <span class="n">allow_redirects</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># 默认自动跟随</span>
+
+<span class="c1"># ─── 流式响应 ───</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/large-file&#39;</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">iter_content</span><span class="p">(</span><span class="n">chunk_size</span><span class="o">=</span><span class="mi">8192</span><span class="p">):</span>
+    <span class="n">process</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="33-urllib-vs-requests">3.3 urllib vs requests 对比</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ─── urllib ───</span>
+<span class="kn">from</span> <span class="nn">urllib.request</span> <span class="kn">import</span> <span class="n">Request</span><span class="p">,</span> <span class="n">urlopen</span>
+<span class="kn">import</span> <span class="nn">json</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">})</span><span class="o">.</span><span class="n">encode</span><span class="p">()</span>
+<span class="n">req</span> <span class="o">=</span> <span class="n">Request</span><span class="p">(</span><span class="s2">&quot;http://api.example.com/data&quot;</span><span class="p">,</span>
+              <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span>
+              <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Content-Type&quot;</span><span class="p">:</span> <span class="s2">&quot;application/json&quot;</span><span class="p">})</span>
+<span class="n">resp</span> <span class="o">=</span> <span class="n">urlopen</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">resp</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">())</span>
+
+<span class="c1"># ─── requests ───</span>
+<span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;http://api.example.com/data&quot;</span><span class="p">,</span>
+                        <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;key&quot;</span><span class="p">:</span> <span class="s2">&quot;value&quot;</span><span class="p">},</span>
+                        <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>urllib</th>
+<th>requests</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>安装</strong></td>
+<td>内置</td>
+<td>需安装</td>
+</tr>
+<tr>
+<td><strong>API 简洁度</strong></td>
+<td>⭐⭐</td>
+<td>⭐⭐⭐⭐⭐</td>
+</tr>
+<tr>
+<td><strong>JSON 支持</strong></td>
+<td>需手动转换</td>
+<td>自动 <code>.json()</code></td>
+</tr>
+<tr>
+<td><strong>Session</strong></td>
+<td>无</td>
+<td>✅ <code>requests.Session()</code></td>
+</tr>
+<tr>
+<td><strong>Cookie</strong></td>
+<td>手动</td>
+<td>自动管理</td>
+</tr>
+<tr>
+<td><strong>连接池</strong></td>
+<td>无</td>
+<td>✅ urllib3 支持</td>
+</tr>
+<tr>
+<td><strong>重试机制</strong></td>
+<td>无</td>
+<td>配合 <code>requests.adapters</code></td>
+</tr>
+<tr>
+<td><strong>文件上传</strong></td>
+<td>复杂</td>
+<td>一行代码</td>
+</tr>
+<tr>
+<td><strong>流式响应</strong></td>
+<td>支持</td>
+<td>支持</td>
+</tr>
+<tr>
+<td><strong>SSL 验证</strong></td>
+<td>需额外配置</td>
+<td>默认配置好</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="4-session-cookie">4. Session / Cookie 管理</h2>
+<h3 id="41">4.1 概念</h3>
+<p>HTTP 是无状态的，每次请求都是独立的。Session 和 Cookie 用于维护客户端和服务器之间的状态。</p>
+<ul>
+<li><strong>Cookie</strong>：存储在客户端的小数据片段，由服务器通过 <code>Set-Cookie</code> 响应头设置</li>
+<li><strong>Session</strong>：存储在服务器端的会话数据，通过 Session ID（通常存在 Cookie 中）关联</li>
+</ul>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as Client
+    participant S as Server
+    
+    C-&gt;&gt;S: POST /login (username, password)
+    S-&gt;&gt;S: 验证身份
+    S-&gt;&gt;S: 创建 Session（session_id=abc123）
+    S-&gt;&gt;C: Set-Cookie: session_id=abc123
+    
+    C-&gt;&gt;S: GET /profile
+    Note over C: Cookie: session_id=abc123
+    S-&gt;&gt;S: 查找 session_id=abc123
+    S-&gt;&gt;C: 200 OK (用户信息)
+    
+    C-&gt;&gt;S: GET /logout
+    S-&gt;&gt;S: 销毁 session_id=abc123
+    S-&gt;&gt;C: Set-Cookie: session_id=; Max-Age=0
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as Client
+    participant S as Server
+    
+    C-&gt;&gt;S: POST /login (username, password)
+    S-&gt;&gt;S: 验证身份
+    S-&gt;&gt;S: 创建 Session（session_id=abc123）
+    S-&gt;&gt;C: Set-Cookie: session_id=abc123
+    
+    C-&gt;&gt;S: GET /profile
+    Note over C: Cookie: session_id=abc123
+    S-&gt;&gt;S: 查找 session_id=abc123
+    S-&gt;&gt;C: 200 OK (用户信息)
+    
+    C-&gt;&gt;S: GET /logout
+    S-&gt;&gt;S: 销毁 session_id=abc123
+    S-&gt;&gt;C: Set-Cookie: session_id=; Max-Age=0
+</code></pre></div>
+<h3 id="42-requestssession">4.2 requests.Session 使用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="c1"># 创建 Session 对象</span>
+<span class="n">session</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+
+<span class="c1"># Session 会自动保存 Cookie</span>
+<span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://httpbin.org/cookies/set?name=alice&#39;</span><span class="p">)</span>
+
+<span class="c1"># 后续请求自动携带 Cookie</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://httpbin.org/cookies&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">())</span>  <span class="c1"># {&#39;cookies&#39;: {&#39;name&#39;: &#39;alice&#39;}}</span>
+
+<span class="c1"># Session 级别的配置（所有请求共享）</span>
+<span class="n">session</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s1">&#39;User-Agent&#39;</span><span class="p">:</span> <span class="s1">&#39;MyApp/1.0&#39;</span><span class="p">})</span>
+<span class="n">session</span><span class="o">.</span><span class="n">verify</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># 所有请求跳过 SSL 验证</span>
+<span class="n">session</span><span class="o">.</span><span class="n">timeout</span> <span class="o">=</span> <span class="mi">10</span>    <span class="c1"># 所有请求默认超时</span>
+
+<span class="c1"># 挂载适配器（配置重试）</span>
+<span class="kn">from</span> <span class="nn">requests.adapters</span> <span class="kn">import</span> <span class="n">HTTPAdapter</span>
+<span class="kn">from</span> <span class="nn">urllib3.util.retry</span> <span class="kn">import</span> <span class="n">Retry</span>
+
+<span class="n">retry_strategy</span> <span class="o">=</span> <span class="n">Retry</span><span class="p">(</span>
+    <span class="n">total</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>                      <span class="c1"># 总重试次数</span>
+    <span class="n">backoff_factor</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>             <span class="c1"># 退避因子（等待 1, 2, 4 秒）</span>
+    <span class="n">status_forcelist</span><span class="o">=</span><span class="p">[</span><span class="mi">429</span><span class="p">,</span> <span class="mi">500</span><span class="p">,</span> <span class="mi">502</span><span class="p">,</span> <span class="mi">503</span><span class="p">,</span> <span class="mi">504</span><span class="p">],</span>  <span class="c1"># 重试的状态码</span>
+<span class="p">)</span>
+<span class="n">adapter</span> <span class="o">=</span> <span class="n">HTTPAdapter</span><span class="p">(</span><span class="n">max_retries</span><span class="o">=</span><span class="n">retry_strategy</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">mount</span><span class="p">(</span><span class="s1">&#39;http://&#39;</span><span class="p">,</span> <span class="n">adapter</span><span class="p">)</span>
+<span class="n">session</span><span class="o">.</span><span class="n">mount</span><span class="p">(</span><span class="s1">&#39;https://&#39;</span><span class="p">,</span> <span class="n">adapter</span><span class="p">)</span>
+
+<span class="c1"># 使用底层连接池（性能提升）</span>
+<span class="c1"># requests.Session 底层使用 urllib3 的连接池</span>
+<span class="c1"># 默认连接池大小 10，可通过适配器调整</span>
+</code></pre></div>
+<h3 id="43-cookie">4.3 Cookie 手动管理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="c1"># 查看响应中的 Cookie</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://httpbin.org/cookies/set?name=alice&#39;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">cookie</span> <span class="ow">in</span> <span class="n">response</span><span class="o">.</span><span class="n">cookies</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">cookie</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">cookie</span><span class="o">.</span><span class="n">value</span><span class="si">}</span><span class="s2"> (domain=</span><span class="si">{</span><span class="n">cookie</span><span class="o">.</span><span class="n">domain</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+
+<span class="c1"># 手动设置 Cookie</span>
+<span class="n">cookies</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;session_id&#39;</span><span class="p">:</span> <span class="s1">&#39;abc123&#39;</span><span class="p">,</span> <span class="s1">&#39;user_pref&#39;</span><span class="p">:</span> <span class="s1">&#39;theme=dark&#39;</span><span class="p">}</span>
+<span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;https://api.example.com/user&#39;</span><span class="p">,</span>
+                        <span class="n">cookies</span><span class="o">=</span><span class="n">cookies</span><span class="p">)</span>
+
+<span class="c1"># CookieJar 对象</span>
+<span class="kn">from</span> <span class="nn">http.cookiejar</span> <span class="kn">import</span> <span class="n">CookieJar</span>
+
+<span class="n">jar</span> <span class="o">=</span> <span class="n">CookieJar</span><span class="p">()</span>
+<span class="n">session</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+<span class="n">session</span><span class="o">.</span><span class="n">cookies</span> <span class="o">=</span> <span class="n">jar</span>
+</code></pre></div>
+<hr>
+<h2 id="5-cli">5. 实战：天气预报 CLI</h2>
+<p>详见 <code>code/03-weather-cli.py</code></p>
+<p>实现一个命令行天气查询工具，支持：<br>
+- 通过城市名称查询实时天气<br>
+- 天气缓存<br>
+- 友好的 CLI 输出<br>
+- 错误处理和重试</p>
+<hr>
+<h2 id="6">6. 思考题</h2>
+<ol>
+<li><strong>为什么 POST 请求不是幂等的？</strong> 同样的 POST 请求重复提交一次和两次会有什么不同的后果？</li>
+<li><strong>301 和 302 重定向的区别是什么？</strong> 为什么浏览器对 301 和 302 的缓存行为不同？</li>
+<li><strong>HTTP/2 和 HTTP/3 主要解决了 HTTP/1.1 的哪些问题？</strong> 头压缩、多路复用、队头阻塞分别是什么？</li>
+<li><strong>为什么 requests 库能成为最流行的 Python 库之一？</strong> 它的 API 设计具体做了哪些让开发者"爽"的事情？</li>
+<li><strong>Session 和 Token（JWT）两种认证方式的优缺点是什么？</strong> 为什么现在越来越多的项目选择 JWT？</li>
+</ol>
+<hr>
+<h2 id="7">7. 最佳实践总结</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐方案</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>简单 GET 请求</td>
+<td>requests</td>
+<td>一行代码搞定</td>
+</tr>
+<tr>
+<td>复杂 API 调用</td>
+<td>requests.Session</td>
+<td>Cookie 自动管理 + 连接池</td>
+</tr>
+<tr>
+<td>需要重试</td>
+<td>HTTPAdapter + Retry</td>
+<td>优雅处理网络波动</td>
+</tr>
+<tr>
+<td>文件下载</td>
+<td>stream=True + iter_content</td>
+<td>避免内存溢出</td>
+</tr>
+<tr>
+<td>批量请求</td>
+<td>requests.Session + 连接池</td>
+<td>性能提升 10x+</td>
+</tr>
+<tr>
+<td>爬虫</td>
+<td>requests + Session + Headers</td>
+<td>模拟浏览器</td>
+</tr>
+<tr>
+<td>系统内置/无依赖</td>
+<td>urllib</td>
+<td>无需 pip install</td>
+</tr>
+</tbody>
+</table>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-063/index.html">← Day 63 CSV 与 Excel</a><a class="nav-next" href="../day-065/index.html">Day 65 Web 框架入门 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

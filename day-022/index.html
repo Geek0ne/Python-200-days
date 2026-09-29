@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 22 — 生成器 (Generator) ⚡</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 22 — 生成器 (Generator) ⚡</h1>
+  <div class="lmeta">
+    <span class="badge">核心编程概念</span>
+    <span class="badge">366 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-022-generator" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#vs">📚 生成器函数 vs 生成器表达式</a>
+<a class="toc-l3" href="#_2">生成器函数</a>
+<a class="toc-l3" href="#_3">生成器表达式</a>
+<a class="toc-l3" href="#_4">对比速查</a>
+<a class="toc-l2" href="#yield">⚙️ yield 关键字原理（状态机模型）</a>
+<a class="toc-l3" href="#yield_1">yield 的底层机制</a>
+<a class="toc-l3" href="#_5">状态机模型</a>
+<a class="toc-l3" href="#_6">执行流程图</a>
+<a class="toc-l3" href="#vs_1">函数 vs 生成器的栈帧对比</a>
+<a class="toc-l2" href="#sendthrowclose">🔧 生成器状态与 send()/throw()/close()</a>
+<a class="toc-l3" href="#_7">生成器生命周期</a>
+<a class="toc-l3" href="#send">send() 的两种设计模式</a>
+<a class="toc-l3" href="#throw-close">throw() 和 close()</a>
+<a class="toc-l2" href="#vs_2">🔄 生成器 vs 迭代器对比</a>
+<a class="toc-l2" href="#yield-from">💡 yield from 语法</a>
+<a class="toc-l3" href="#_8">基本用法</a>
+<a class="toc-l3" href="#flatten">flatten 嵌套列表</a>
+<a class="toc-l3" href="#yield-from_1">yield from 的双向通信</a>
+<a class="toc-l2" href="#mermaid">🎨 Mermaid 图解</a>
+<a class="toc-l3" href="#_9">生成器执行流程</a>
+<a class="toc-l3" href="#yield-from_2">yield from 双向通道</a>
+<a class="toc-l2" href="#_10">📝 思考题</a>
+<a class="toc-l2" href="#_11">🔗 延伸阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-022-generator">Day 022 — 生成器 (Generator) ⚡</h1>
+<!-- Updated 2026-06-15: Added yield from code examples and bidirectional communication explanation -->
+
+<h2 id="_1">概述</h2>
+<p><strong>生成器（Generator）</strong> 是 Python 中最优雅的惰性求值工具。它结合了迭代器的所有优点（惰性、节省内存），同时用 <code>yield</code> 关键字提供了极其简洁的语法。</p>
+<blockquote>
+<p><strong>一句话理解</strong>：生成器是"可以暂停执行的函数"，每次 yield 都会保存当前状态，下次调用时从暂停处继续执行。</p>
+</blockquote>
+<h2 id="vs">📚 生成器函数 vs 生成器表达式</h2>
+<h3 id="_2">生成器函数</h3>
+<p>用 <code>def</code> 定义，用 <code>yield</code> 返回值：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">count_up_to</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;生成 0 到 n-1&quot;&quot;&quot;</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">:</span>
+        <span class="k">yield</span> <span class="n">i</span>
+        <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+</code></pre></div>
+<p>调用生成器函数返回一个<strong>生成器对象</strong>（Generator Object），不会立即执行函数体。</p>
+<h3 id="_3">生成器表达式</h3>
+<p>用圆括号的推导式语法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 生成器表达式（惰性）</span>
+<span class="n">squares</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="o">**</span><span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
+
+<span class="c1"># 对比：列表推导式（立即求值）</span>
+<span class="n">squares_list</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span><span class="o">**</span><span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">)]</span>
+</code></pre></div>
+<h3 id="_4">对比速查</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>生成器函数</th>
+<th>生成器表达式</th>
+<th>列表推导式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>语法</strong></td>
+<td><code>def f(): yield x</code></td>
+<td><code>(x for x in it)</code></td>
+<td><code>[x for x in it]</code></td>
+</tr>
+<tr>
+<td><strong>求值时机</strong></td>
+<td>惰性（调用时）</td>
+<td>惰性（迭代时）</td>
+<td>立即</td>
+</tr>
+<tr>
+<td><strong>内存</strong></td>
+<td>O(1)</td>
+<td>O(1)</td>
+<td>O(n)</td>
+</tr>
+<tr>
+<td><strong>可重用</strong></td>
+<td>每次调用创建新的</td>
+<td>每次求值创建新的</td>
+<td>可重复使用</td>
+</tr>
+<tr>
+<td><strong>复杂逻辑</strong></td>
+<td>✅ 支持</td>
+<td>❌ 仅简单表达式</td>
+<td>❌ 仅简单表达式</td>
+</tr>
+<tr>
+<td><strong>多次 yield</strong></td>
+<td>✅ 支持</td>
+<td>❌ 仅一次</td>
+<td>❌ 仅一次</td>
+</tr>
+</tbody>
+</table>
+<h2 id="yield">⚙️ yield 关键字原理（状态机模型）</h2>
+<h3 id="yield_1">yield 的底层机制</h3>
+<p>Python 的生成器实际上是<strong>编译为状态机的函数</strong>。当 Python 编译器遇到 <code>yield</code> 关键字时，它会：</p>
+<ol>
+<li>将函数编译为 <strong>生成器代码对象</strong></li>
+<li>生成器对象包含：<br>
+   - <strong><code>gi_frame</code></strong> — 当前栈帧（冻结的执行状态）<br>
+   - <strong><code>gi_running</code></strong> — 是否正在执行<br>
+   - <strong><code>gi_code</code></strong> — 代码对象<br>
+   - <strong><code>gi_yieldfrom</code></strong> — 如果使用了 <code>yield from</code></li>
+</ol>
+<h3 id="_5">状态机模型</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">demo</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;开始&quot;</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="mi">1</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;继续&quot;</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="mi">2</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;结束&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>编译后的逻辑等价于：</p>
+<pre class="plain"><code>状态机：
+  ┌─────────┐
+  │ 状态 0  │ → print(&quot;开始&quot;), yield 1, 切换到 状态 1
+  ├─────────┤
+  │ 状态 1  │ → print(&quot;继续&quot;), yield 2, 切换到 状态 2
+  ├─────────┤
+  │ 状态 2  │ → print(&quot;结束&quot;), 返回/StopIteration
+  └─────────┘
+</code></pre>
+<h3 id="_6">执行流程图</h3>
+<pre class="plain"><code>调用 gen = demo()      → 创建生成器对象，不执行任何代码
+next(gen)              → 执行到第一个 yield：
+                            print(&quot;开始&quot;)
+                            yield 1 → 返回值 1，暂停
+next(gen)              → 从暂停处继续：
+                            print(&quot;继续&quot;)
+                            yield 2 → 返回值 2，暂停
+next(gen)              → 从暂停处继续：
+                            print(&quot;结束&quot;)
+                            → 函数返回 → StopIteration
+</code></pre>
+<h3 id="vs_1">函数 vs 生成器的栈帧对比</h3>
+<pre class="plain"><code>普通函数调用：
+┌────────────────────────────┐
+│  栈帧创建                   │
+│  执行全部代码                │
+│  栈帧销毁                   │
+└────────────────────────────┘
+
+生成器调用：
+┌────────────────────────────┐
+│  栈帧创建（冻结）            │
+│  ...                        │
+│  ┌──────────────────────┐  │
+│  │ yield → 返回值       │  │  ← 暂停，栈帧保持在堆上
+│  │ ...                  │  │
+│  │ 从上次暂停处继续     │  │  ← 恢复执行
+│  │ yield → 返回值       │  │  ← 再次暂停
+│  └──────────────────────┘  │
+│  函数返回 → StopIteration  │
+│  栈帧销毁                   │
+└────────────────────────────┘
+</code></pre>
+<h2 id="sendthrowclose">🔧 生成器状态与 send()/throw()/close()</h2>
+<h3 id="_7">生成器生命周期</h3>
+<pre class="plain"><code>    gen = func()          next(gen)        next(gen)      StopIteration
+    ┌────────┐          ┌────────┐       ┌────────┐       ┌────────┐
+    │创建    │─────────→│ 挂起   │──────→│ 挂起   │──────→│ 结束   │
+    │(GEN_CREATED)│      │(SUSPENDED)│   │(SUSPENDED)│    │(CLOSED)│
+    └────────┘          └────────┘       └────────┘       └────────┘
+                              ↑               ↑
+                         send(value)     send(value)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>作用</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>next(gen)</code></td>
+<td>推进到下一个 yield</td>
+<td>等价于 <code>gen.send(None)</code></td>
+</tr>
+<tr>
+<td><code>gen.send(value)</code></td>
+<td>推进到下一个 yield并传入值</td>
+<td><code>value</code> 作为当前 yield 表达式的返回值</td>
+</tr>
+<tr>
+<td><code>gen.throw(exc)</code></td>
+<td>在暂停处抛出异常</td>
+<td>异常由 yield 处的 try/except 捕获</td>
+</tr>
+<tr>
+<td><code>gen.close()</code></td>
+<td>停止生成器</td>
+<td>在暂停处抛出 <code>GeneratorExit</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="send">send() 的两种设计模式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 模式 1: 协程 — 两次 yield 之间传递值</span>
+<span class="k">def</span> <span class="nf">echo</span><span class="p">():</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">received</span> <span class="o">=</span> <span class="k">yield</span>  <span class="c1"># 只接收，不发送</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;收到: </span><span class="si">{</span><span class="n">received</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">gen</span> <span class="o">=</span> <span class="n">echo</span><span class="p">()</span>
+<span class="nb">next</span><span class="p">(</span><span class="n">gen</span><span class="p">)</span>           <span class="c1"># 启动到第一个 yield</span>
+<span class="n">gen</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">)</span>   <span class="c1"># 发送值</span>
+<span class="n">gen</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s2">&quot;World&quot;</span><span class="p">)</span>
+
+<span class="c1"># 模式 2: 累加器 — 每次发送值，yield 返回累计结果</span>
+<span class="k">def</span> <span class="nf">accumulator</span><span class="p">():</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="k">yield</span> <span class="n">total</span>  <span class="c1"># 发送累计值，接收新值</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">value</span>
+
+<span class="n">gen</span> <span class="o">=</span> <span class="n">accumulator</span><span class="p">()</span>
+<span class="nb">next</span><span class="p">(</span><span class="n">gen</span><span class="p">)</span>                <span class="c1"># 启动，返回 total=0</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">gen</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>      <span class="c1"># total=10 → yield 10</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">gen</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="mi">20</span><span class="p">))</span>      <span class="c1"># total=30 → yield 30</span>
+</code></pre></div>
+<h3 id="throw-close">throw() 和 close()</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">safe_generator</span><span class="p">():</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="mi">1</span>
+    <span class="k">except</span> <span class="ne">GeneratorExit</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;正在关闭...&quot;</span><span class="p">)</span>
+        <span class="c1"># 可以执行清理操作</span>
+    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;收到 ValueError&quot;</span><span class="p">)</span>
+
+<span class="n">gen</span> <span class="o">=</span> <span class="n">safe_generator</span><span class="p">()</span>
+<span class="nb">next</span><span class="p">(</span><span class="n">gen</span><span class="p">)</span>          <span class="c1"># 1</span>
+<span class="n">gen</span><span class="o">.</span><span class="n">throw</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">)</span>  <span class="c1"># &quot;收到 ValueError&quot;，然后继续 yield 1</span>
+<span class="n">gen</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>        <span class="c1"># &quot;正在关闭...&quot;，然后停止</span>
+</code></pre></div>
+<h2 id="vs_2">🔄 生成器 vs 迭代器对比</h2>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>迭代器</th>
+<th>生成器</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>实现方式</strong></td>
+<td>手动定义类，实现 <code>__iter__</code> 和 <code>__next__</code></td>
+<td>使用 <code>yield</code> 关键字的函数或表达式</td>
+</tr>
+<tr>
+<td><strong>代码量</strong></td>
+<td>较多（完整类定义）</td>
+<td>极少（一个函数）</td>
+</tr>
+<tr>
+<td><strong>状态管理</strong></td>
+<td>手动维护（self.index 等）</td>
+<td>自动维护（栈帧冻结）</td>
+</tr>
+<tr>
+<td><strong>send/throw/close</strong></td>
+<td>不支持</td>
+<td>支持</td>
+</tr>
+<tr>
+<td><strong>yield from</strong></td>
+<td>不支持</td>
+<td>支持</td>
+</tr>
+<tr>
+<td><strong>可读性</strong></td>
+<td>一般</td>
+<td>优秀</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 迭代器方式（手动管理状态）</span>
+<span class="k">class</span> <span class="nc">CountUp</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">n</span> <span class="o">=</span> <span class="n">n</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">def</span> <span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span>
+    <span class="k">def</span> <span class="fm">__next__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">i</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">StopIteration</span>
+        <span class="n">val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">i</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">val</span>
+
+<span class="c1"># 生成器方式（自动管理状态）</span>
+<span class="k">def</span> <span class="nf">count_up</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">n</span><span class="p">:</span>
+        <span class="k">yield</span> <span class="n">i</span>
+        <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+</code></pre></div>
+<h2 id="yield-from">💡 yield from 语法</h2>
+<h3 id="_8">基本用法</h3>
+<p><code>yield from</code> 将迭代/生成的操作委托给子生成器，简化生成器的嵌套使用。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">chain</span><span class="p">(</span><span class="o">*</span><span class="n">iterables</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;chain 的生成器实现&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">it</span> <span class="ow">in</span> <span class="n">iterables</span><span class="p">:</span>
+        <span class="k">yield from</span> <span class="n">it</span>  <span class="c1"># 委托给子迭代器</span>
+
+<span class="c1"># 对比原始写法</span>
+<span class="k">def</span> <span class="nf">chain_manual</span><span class="p">(</span><span class="o">*</span><span class="n">iterables</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">it</span> <span class="ow">in</span> <span class="n">iterables</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">it</span><span class="p">:</span>  <span class="c1"># 需要手动嵌套循环</span>
+            <span class="k">yield</span> <span class="n">item</span>
+</code></pre></div>
+<h3 id="flatten">flatten 嵌套列表</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">flatten</span><span class="p">(</span><span class="n">items</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;递归展开嵌套列表&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="p">(</span><span class="nb">list</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)):</span>
+            <span class="k">yield from</span> <span class="n">flatten</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>  <span class="c1"># 递归委托</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">item</span>
+
+<span class="c1"># 测试</span>
+<span class="n">nested</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]],</span> <span class="mi">5</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">flatten</span><span class="p">(</span><span class="n">nested</span><span class="p">)))</span>  <span class="c1"># [1, 2, 3, 4, 5]</span>
+</code></pre></div>
+<h3 id="yield-from_1">yield from 的双向通信</h3>
+<p><code>yield from</code> 的独特之处在于，它会在调用者和子生成器之间建立<strong>双向通道</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">sub_gen</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;子生成器&quot;&quot;&quot;</span>
+    <span class="n">received</span> <span class="o">=</span> <span class="k">yield</span> <span class="s2">&quot;子-准备就绪&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;子: 收到 </span><span class="si">{</span><span class="n">received</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">yield</span> <span class="s2">&quot;子-处理完成&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;子: 收到 </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;子-最终结果&quot;</span>
+
+<span class="k">def</span> <span class="nf">main_gen</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;主生成器，通过 yield from 委托给子生成器&quot;&quot;&quot;</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">yield from</span> <span class="n">sub_gen</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;主: 子返回了 </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">gen</span> <span class="o">=</span> <span class="n">main_gen</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">next</span><span class="p">(</span><span class="n">gen</span><span class="p">))</span>         <span class="c1"># 启动 → 进入 sub_gen → &quot;子-准备就绪&quot;</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">gen</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s2">&quot;数据1&quot;</span><span class="p">))</span>  <span class="c1"># 发送 → sub_gen → &quot;子-处理完成&quot;</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">gen</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="s2">&quot;数据2&quot;</span><span class="p">)</span>     <span class="c1"># 发送 → sub_gen 返回 → 主生成器结束</span>
+<span class="k">except</span> <span class="ne">StopIteration</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;完成&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="mermaid">🎨 Mermaid 图解</h2>
+<h3 id="_9">生成器执行流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Caller as 调用者
+    participant Gen as 生成器对象
+    participant Func as 函数体
+
+    Caller-&gt;&gt;Gen: gen = my_generator()
+    Note over Gen: 创建生成器&lt;br/&gt;不执行函数体
+
+    Caller-&gt;&gt;Gen: next(gen)
+    Gen-&gt;&gt;Func: 激活函数体
+    Note over Func: 执行到 yield
+    Func--&gt;&gt;Gen: yield value
+    Gen--&gt;&gt;Caller: 返回值，暂停
+
+    Caller-&gt;&gt;Gen: next(gen)
+    Gen-&gt;&gt;Func: 从暂停处继续
+    Note over Func: 执行到下一个 yield
+    Func--&gt;&gt;Gen: yield value
+    Gen--&gt;&gt;Caller: 返回值，暂停
+
+    Caller-&gt;&gt;Gen: next(gen)
+    Gen-&gt;&gt;Func: 从暂停处继续
+    Note over Func: 函数返回
+    Func--&gt;&gt;Gen: StopIteration
+    Gen--&gt;&gt;Caller: StopIteration
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Caller as 调用者
+    participant Gen as 生成器对象
+    participant Func as 函数体
+
+    Caller-&gt;&gt;Gen: gen = my_generator()
+    Note over Gen: 创建生成器&lt;br/&gt;不执行函数体
+
+    Caller-&gt;&gt;Gen: next(gen)
+    Gen-&gt;&gt;Func: 激活函数体
+    Note over Func: 执行到 yield
+    Func--&gt;&gt;Gen: yield value
+    Gen--&gt;&gt;Caller: 返回值，暂停
+
+    Caller-&gt;&gt;Gen: next(gen)
+    Gen-&gt;&gt;Func: 从暂停处继续
+    Note over Func: 执行到下一个 yield
+    Func--&gt;&gt;Gen: yield value
+    Gen--&gt;&gt;Caller: 返回值，暂停
+
+    Caller-&gt;&gt;Gen: next(gen)
+    Gen-&gt;&gt;Func: 从暂停处继续
+    Note over Func: 函数返回
+    Func--&gt;&gt;Gen: StopIteration
+    Gen--&gt;&gt;Caller: StopIteration
+</code></pre></div>
+<h3 id="yield-from_2">yield from 双向通道</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    subgraph 调用者
+        C[&quot;gen.send(value)&quot;]
+    end
+
+    subgraph 主生成器
+        M[&quot;yield from sub_gen()&quot;]
+    end
+
+    subgraph 子生成器
+        S[&quot;y = yield x&quot;]
+    end
+
+    C --&gt;|value| M
+    M --&gt;|value| S
+    S --&gt;|x| M
+    M --&gt;|x| C
+
+    style C fill:#e1f5fe
+    style M fill:#f3e5f5
+    style S fill:#fff3e0
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    subgraph 调用者
+        C[&quot;gen.send(value)&quot;]
+    end
+
+    subgraph 主生成器
+        M[&quot;yield from sub_gen()&quot;]
+    end
+
+    subgraph 子生成器
+        S[&quot;y = yield x&quot;]
+    end
+
+    C --&gt;|value| M
+    M --&gt;|value| S
+    S --&gt;|x| M
+    M --&gt;|x| C
+
+    style C fill:#e1f5fe
+    style M fill:#f3e5f5
+    style S fill:#fff3e0
+</code></pre></div>
+<h2 id="_10">📝 思考题</h2>
+<ol>
+<li>生成器函数和普通函数在字节码层面有什么区别？</li>
+<li>什么时候应该用生成器表达式而不是列表推导式？</li>
+<li><code>yield</code> 和 <code>return</code> 在生成器函数中同时出现会发生什么？</li>
+<li>生成器在执行 <code>close()</code> 后还能继续使用吗？</li>
+<li><code>yield from</code> 和 <code>for item in sub:</code> 相比有什么优势？</li>
+<li>如何实现一个可重复使用的生成器？</li>
+<li>协程和生成器是什么关系？Python 中的 <code>async def</code> 和 <code>def</code> + <code>yield</code> 有什么联系？</li>
+<li>如果生成器函数中有多个 <code>yield</code> 语句，状态机会如何处理？</li>
+</ol>
+<h2 id="_11">🔗 延伸阅读</h2>
+<ul>
+<li><a href="https://peps.python.org/pep-0255/">PEP 255 — Simple Generators</a></li>
+<li><a href="https://peps.python.org/pep-0342/">PEP 342 — Coroutines via Enhanced Generators</a></li>
+<li><a href="https://peps.python.org/pep-0380/">PEP 380 — Syntax for Delegating to a Subgenerator</a></li>
+<li><a href="https://docs.python.org/3/library/stdtypes.html#generator-types">Python docs: Generator Types</a></li>
+<li><a href="https://docs.python.org/3/reference/expressions.html#yield-expressions">Python docs: yield expression</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-021/index.html">← Day 21 迭代器与可迭代对象 (Iterator &amp; Iterable) 🔄</a><a class="nav-next" href="../day-023/index.html">Day 23 装饰器入门 🎨 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

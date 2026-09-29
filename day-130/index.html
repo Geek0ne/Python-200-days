@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 130 — Playwright 现代爬虫</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 130 — Playwright 现代爬虫</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">230 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-130-playwright-现代爬虫" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 概念总览</a>
+<a class="toc-l3" href="#playwright">Playwright 是什么？</a>
+<a class="toc-l3" href="#selenium-vs-playwright">Selenium vs Playwright 全面对比</a>
+<a class="toc-l2" href="#_2">🏗️ 一、安装与启动</a>
+<a class="toc-l2" href="#_3">⏳ 二、自动等待（最大的进步）</a>
+<a class="toc-l2" href="#locator">🔍 三、定位器（Locator）</a>
+<a class="toc-l2" href="#browsercontext">🎭 四、多浏览器与 BrowserContext</a>
+<a class="toc-l3" href="#41">4.1 三种内核</a>
+<a class="toc-l3" href="#42-browsercontext">4.2 BrowserContext（会话隔离）</a>
+<a class="toc-l2" href="#_4">📸 五、截图与录屏</a>
+<a class="toc-l2" href="#_5">🥷 六、反爬突破实战</a>
+<a class="toc-l3" href="#61">6.1 隐身/反检测</a>
+<a class="toc-l3" href="#62-pageroute">6.2 网络拦截（page.route）</a>
+<a class="toc-l3" href="#63-dom">6.3 提取&quot;接口数据&quot;（比解析 DOM 更稳）</a>
+<a class="toc-l3" href="#64">6.4 常见反爬手段与应对</a>
+<a class="toc-l2" href="#_6">💻 七、实战</a>
+<a class="toc-l2" href="#_7">❓ 思考题</a>
+<a class="toc-l2" href="#_8">📚 延伸阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-130-playwright">Day 130 - Playwright 现代爬虫</h1>
+<blockquote>
+<p>🎯 <strong>今日目标</strong>：掌握微软出品的 Playwright 浏览器自动化框架，理解它相比 Selenium 的优势（自动等待、多浏览器、API 更现代），并学会用它突破反爬网站。</p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 概念总览</h2>
+<h3 id="playwright">Playwright 是什么？</h3>
+<p>微软 2020 年开源的浏览器自动化框架（由 Puppeteer 原班人马打造），设计目标就是解决 Selenium 的历史包袱。</p>
+<h3 id="selenium-vs-playwright">Selenium vs Playwright 全面对比</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>Selenium</th>
+<th>Playwright</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>协议</td>
+<td>每浏览器一个 Driver（ChromeDriver/GeckoDriver）</td>
+<td><strong>直接说 CDP/协议</strong>，内置驱动，<code>playwright install</code> 一条命令装齐</td>
+</tr>
+<tr>
+<td>自动等待</td>
+<td>❌ 手写 WebDriverWait</td>
+<td>✅ <strong>默认所有操作自动等待</strong>元素可用</td>
+</tr>
+<tr>
+<td>浏览器</td>
+<td>Chrome/Firefox/Safari/Edge（驱动版本易踩坑）</td>
+<td>Chromium / Firefox / WebKit（Safari 内核）</td>
+</tr>
+<tr>
+<td>多浏览器上下文</td>
+<td>一个浏览器一个"用户"</td>
+<td>✅ BrowserContext：秒开无痕隔离会话，Cookie/存储互不干扰</td>
+</tr>
+<tr>
+<td>并发</td>
+<td>多线程/多进程（重）</td>
+<td>✅ 原生 async，一个进程开 N 个 context 并发</td>
+</tr>
+<tr>
+<td>网络拦截</td>
+<td>需要 CDP 硬核操作</td>
+<td>✅ <code>page.route()</code> 几行代码拦截/改写/mock 请求</td>
+</tr>
+<tr>
+<td>API 风格</td>
+<td>find_element + click 分离式</td>
+<td>✅ 链式 <code>page.locator().click()</code>，自动重试</td>
+</tr>
+<tr>
+<td>录制</td>
+<td>需插件</td>
+<td>✅ <code>playwright codegen</code> 录制生成代码</td>
+</tr>
+<tr>
+<td>Trace</td>
+<td>弱</td>
+<td>✅ Trace Viewer：失败现场回放（截图+DOM快照+网络）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：新项目首选 Playwright；维护老项目、生态兼容（如配合 BrowserStack 云测）仍常见 Selenium。</p>
+<hr>
+<h2 id="_2">🏗️ 一、安装与启动</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>playwright
+playwright<span class="w"> </span>install<span class="w"> </span>chromium<span class="w">   </span><span class="c1"># 下载浏览器内核（Firefox/WebKit 可选装）</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">playwright.sync_api</span> <span class="kn">import</span> <span class="n">sync_playwright</span>
+
+<span class="k">with</span> <span class="n">sync_playwright</span><span class="p">()</span> <span class="k">as</span> <span class="n">p</span><span class="p">:</span>
+    <span class="n">browser</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">chromium</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span><span class="n">headless</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">page</span> <span class="o">=</span> <span class="n">browser</span><span class="o">.</span><span class="n">new_page</span><span class="p">()</span>
+    <span class="n">page</span><span class="o">.</span><span class="n">goto</span><span class="p">(</span><span class="s2">&quot;http://quotes.toscrape.com/js/&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">page</span><span class="o">.</span><span class="n">title</span><span class="p">())</span>
+    <span class="n">browser</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>同步 API vs 异步 API</strong>：<br>
+- <code>sync_api</code>：写法直观，爬虫脚本够用（本文主线）。<br>
+- <code>async_api</code>：高并发场景（多页面同时爬），配合 <code>asyncio.gather</code> 性能拉满。</p>
+<hr>
+<h2 id="_3">⏳ 二、自动等待（最大的进步）</h2>
+<p>Selenium 里 80% 的代码在写等待；Playwright 里几乎不用写：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># Playwright：click() 自动等待元素【可见+启用+稳定（不抖动）】</span>
+<span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;a.next&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">click</span><span class="p">()</span>
+
+<span class="c1"># 等价于 Selenium 的三行：</span>
+<span class="c1"># wait.until(EC.element_to_be_clickable(...)); elem.click()</span>
+</code></pre></div>
+<p><strong>自动等待在等什么（actionability 检查）</strong>：</p>
+<pre class="plain"><code>操作执行前，Playwright 反复检查：
+  1. Visible      元素可见
+  2. Stable       元素尺寸稳定（动画结束）
+  3. Receives events   没被遮挡
+  4. Enabled      没被 disabled
+  全部满足才执行，默认 30s 超时（可通过 timeout= 改）
+</code></pre>
+<p>需要手动等待时（比如等 Ajax 数据）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">page</span><span class="o">.</span><span class="n">wait_for_selector</span><span class="p">(</span><span class="s2">&quot;li.product&quot;</span><span class="p">)</span>                 <span class="c1"># 等选择器出现</span>
+<span class="n">page</span><span class="o">.</span><span class="n">wait_for_url</span><span class="p">(</span><span class="s2">&quot;**/detail/**&quot;</span><span class="p">)</span>                    <span class="c1"># 等 URL 变化</span>
+<span class="n">page</span><span class="o">.</span><span class="n">wait_for_load_state</span><span class="p">(</span><span class="s2">&quot;networkidle&quot;</span><span class="p">)</span>              <span class="c1"># 等网络空闲（SPA 加载完）</span>
+<span class="n">page</span><span class="o">.</span><span class="n">wait_for_function</span><span class="p">(</span><span class="s2">&quot;document.querySelectorAll(&#39;.item&#39;).length &gt; 20&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>⚠️ 坑</strong>：<code>networkidle</code> 在长轮询页面（一直有心跳请求）永远不会空闲，会超时--这种情况改用具体元素等待。</p>
+<hr>
+<h2 id="locator">🔍 三、定位器（Locator）</h2>
+<p>Playwright 的定位器是<strong>惰性 + 自动重试</strong>的（Selenium 的 WebElement 是即时快照，页面一变就 Stale）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;#username&quot;</span><span class="p">)</span>                        <span class="c1"># CSS</span>
+<span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;text=登录&quot;</span><span class="p">)</span>                         <span class="c1"># 按文本（超好用！）</span>
+<span class="n">page</span><span class="o">.</span><span class="n">get_by_role</span><span class="p">(</span><span class="s2">&quot;button&quot;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;搜索&quot;</span><span class="p">)</span>           <span class="c1"># 语义化（推荐！）</span>
+<span class="n">page</span><span class="o">.</span><span class="n">get_by_placeholder</span><span class="p">(</span><span class="s2">&quot;请输入关键词&quot;</span><span class="p">)</span>
+<span class="n">page</span><span class="o">.</span><span class="n">get_by_text</span><span class="p">(</span><span class="s2">&quot;下一页&quot;</span><span class="p">)</span>
+<span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;li.item&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">nth</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>                   <span class="c1"># 第 N 个</span>
+<span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;li.item&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">has_text</span><span class="o">=</span><span class="s2">&quot;Python&quot;</span><span class="p">)</span> <span class="c1"># 过滤</span>
+</code></pre></div>
+<p><strong>取数据</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;h1&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">text_content</span><span class="p">()</span>        <span class="c1"># 文本（含隐藏）</span>
+<span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;h1&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">inner_text</span><span class="p">()</span>          <span class="c1"># 可见文本</span>
+<span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">get_attribute</span><span class="p">(</span><span class="s2">&quot;href&quot;</span><span class="p">)</span>  <span class="c1"># 属性</span>
+<span class="n">page</span><span class="o">.</span><span class="n">locator</span><span class="p">(</span><span class="s2">&quot;li.item&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">all_text_contents</span><span class="p">()</span>  <span class="c1"># 批量取文本列表</span>
+</code></pre></div>
+<hr>
+<h2 id="browsercontext">🎭 四、多浏览器与 BrowserContext</h2>
+<h3 id="41">4.1 三种内核</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">browser</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">chromium</span><span class="o">.</span><span class="n">launch</span><span class="p">()</span>   <span class="c1"># Chrome/Edge 内核</span>
+<span class="n">browser</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">firefox</span><span class="o">.</span><span class="n">launch</span><span class="p">()</span>    <span class="c1"># 火狐</span>
+<span class="n">browser</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">webkit</span><span class="o">.</span><span class="n">launch</span><span class="p">()</span>     <span class="c1"># Safari 内核（测 iOS 兼容性神器）</span>
+</code></pre></div>
+<h3 id="42-browsercontext">4.2 BrowserContext（会话隔离）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">context</span> <span class="o">=</span> <span class="n">browser</span><span class="o">.</span><span class="n">new_context</span><span class="p">(</span>
+    <span class="n">user_agent</span><span class="o">=</span><span class="s2">&quot;Mozilla/5.0 ...&quot;</span><span class="p">,</span>
+    <span class="n">viewport</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;width&quot;</span><span class="p">:</span> <span class="mi">1920</span><span class="p">,</span> <span class="s2">&quot;height&quot;</span><span class="p">:</span> <span class="mi">1080</span><span class="p">},</span>
+    <span class="n">locale</span><span class="o">=</span><span class="s2">&quot;zh-CN&quot;</span><span class="p">,</span>
+    <span class="n">storage_state</span><span class="o">=</span><span class="s2">&quot;login.json&quot;</span><span class="p">,</span>   <span class="c1"># 恢复登录态（保存的 Cookie）</span>
+<span class="p">)</span>
+<span class="n">page</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">new_page</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>为什么 Context 是大杀器？</strong><br>
+- 开一个 context ≈ 开一个无痕窗口，<strong>比启动浏览器进程快一个数量级</strong>。<br>
+- 并发爬虫 = 1 个浏览器 + N 个 context，各自 Cookie/缓存互不污染（模拟 N 个独立用户）。</p>
+<hr>
+<h2 id="_4">📸 五、截图与录屏</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">page</span><span class="o">.</span><span class="n">screenshot</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;page.png&quot;</span><span class="p">)</span>               <span class="c1"># 视口截图</span>
+<span class="n">page</span><span class="o">.</span><span class="n">screenshot</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;full.png&quot;</span><span class="p">,</span> <span class="n">full_page</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>  <span class="c1"># 整页长截图（懒加载自动滚）</span>
+<span class="n">context</span><span class="o">.</span><span class="n">tracing</span><span class="o">.</span><span class="n">start</span><span class="p">(</span><span class="n">screenshots</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">snapshots</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="c1"># ... 操作 ...</span>
+<span class="n">context</span><span class="o">.</span><span class="n">tracing</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;trace.zip&quot;</span><span class="p">)</span>         <span class="c1"># 失败现场，playwright show-trace trace.zip 回放</span>
+</code></pre></div>
+<p>调试三板斧：<code>page.pause()</code>（打开 Inspector）、<code>playwright codegen</code>（录制）、Trace（回放）。</p>
+<hr>
+<h2 id="_5">🥷 六、反爬突破实战</h2>
+<h3 id="61">6.1 隐身/反检测</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">browser</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">chromium</span><span class="o">.</span><span class="n">launch</span><span class="p">(</span>
+    <span class="n">headless</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;--disable-blink-features=AutomationControlled&quot;</span><span class="p">],</span>
+<span class="p">)</span>
+<span class="n">context</span> <span class="o">=</span> <span class="n">browser</span><span class="o">.</span><span class="n">new_context</span><span class="p">(</span>
+    <span class="n">user_agent</span><span class="o">=...</span><span class="p">,</span>                    <span class="c1"># 换真实 UA</span>
+    <span class="n">viewport</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;width&quot;</span><span class="p">:</span> <span class="mi">1920</span><span class="p">,</span> <span class="s2">&quot;height&quot;</span><span class="p">:</span> <span class="mi">1080</span><span class="p">},</span>
+    <span class="n">java_script_enabled</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="c1"># 修补 navigator.webdriver（Playwright 的 chromium 默认已处理大部分指纹，</span>
+<span class="c1"># 比普通 Selenium 裸奔更难被识别；对抗严格站点可用 playwright-stealth 补丁）</span>
+</code></pre></div>
+<h3 id="62-pageroute">6.2 网络拦截（page.route）</h3>
+<p>可以<strong>拦截/mock 请求</strong>，让反爬脚本"打空"：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 拦截掉指纹检测脚本，直接返回空 JS</span>
+<span class="k">def</span> <span class="nf">block</span><span class="p">(</span><span class="n">route</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+    <span class="k">if</span> <span class="s2">&quot;fingerprint.js&quot;</span> <span class="ow">in</span> <span class="n">request</span><span class="o">.</span><span class="n">url</span><span class="p">:</span>
+        <span class="n">route</span><span class="o">.</span><span class="n">abort</span><span class="p">()</span>          <span class="c1"># 或者 route.fulfill(body=&quot;&quot;) 假装成功</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">route</span><span class="o">.</span><span class="n">continue_</span><span class="p">()</span>
+
+<span class="n">page</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;**/*&quot;</span><span class="p">,</span> <span class="n">block</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="63-dom">6.3 提取"接口数据"（比解析 DOM 更稳）</h3>
+<p>很多 SPA 数据在 <code>window.__INITIAL_STATE__</code> 里，直接取 JS 变量比爬 DOM 快而稳：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">data</span> <span class="o">=</span> <span class="n">page</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="s2">&quot;() =&gt; window.__INITIAL_STATE__&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="64">6.4 常见反爬手段与应对</h3>
+<table>
+<thead>
+<tr>
+<th>反爬手段</th>
+<th>应对</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UA/指纹检测</td>
+<td>真实 UA + stealth 补丁 + 固定 viewport</td>
+</tr>
+<tr>
+<td>webdriver 标记</td>
+<td>launch args 关闭 AutomationControlled</td>
+</tr>
+<tr>
+<td>行为检测（轨迹）</td>
+<td><code>page.mouse.move()</code> 模拟人手滑动（拖动验证码）</td>
+</tr>
+<tr>
+<td>IP 频率限制</td>
+<td>代理池（Day 132 详讲）</td>
+</tr>
+<tr>
+<td>验证码</td>
+<td>打码平台 / 换 Playwright 无头检测概率更低</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_6">💻 七、实战</h2>
+<p>完整代码见 <code>code/03-practical-playwright.py</code>：Playwright 版全站爬虫（quotes.toscrape.com/js/），含自动翻页、上下文复用、反检测、接口数据提取。</p>
+<hr>
+<h2 id="_7">❓ 思考题</h2>
+<ol>
+<li>Playwright 的 Locator 和 Selenium 的 WebElement 有什么本质区别？为什么 Playwright 没有 StaleElementReferenceException？</li>
+<li>"自动等待"在 click 前检查了哪些条件？什么情况下自动等待救不了你（仍需手动 wait_for）？</li>
+<li>BrowserContext 相比"多开浏览器进程"的优势是什么？什么场景下体现最明显？</li>
+<li><code>page.route()</code> 除了反爬还能做什么？（提示：mock 测试环境接口）</li>
+<li>对一个数据在 <code>window.__APP_DATA__</code> 里的页面，用 <code>page.evaluate</code> 取数据和解析 DOM 各有什么优缺点？</li>
+</ol>
+<hr>
+<h2 id="_8">📚 延伸阅读</h2>
+<ul>
+<li>官方文档：https://playwright.dev/python/</li>
+<li>明天预告：Day 131 爬虫策略 -- 去重、断点续爬、限速，把"能爬"变成"爬得稳、爬得久"。</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-129/index.html">← Day 129 动态渲染（Selenium）</a><a class="nav-next" href="../day-131/index.html">Day 131 爬虫策略 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

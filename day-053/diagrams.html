@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 53 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 53 正文</a>
+  <h1>Day 53 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-053">Day 053 — 内存管理与垃圾回收图解</h1>
+<h2 id="1-python">1. Python 内存管理架构</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[Python 应用程序] --&gt; B[内存分配器]
+    B --&gt; C[pymalloc]
+    B --&gt; D[操作系统]
+
+    C --&gt; E[对象分配]
+    C --&gt; F[内存池]
+
+    E --&gt; G[引用计数]
+    E --&gt; H[垃圾回收器]
+
+    G --&gt; I[自动回收]
+    H --&gt; J[标记-清除]
+    H --&gt; K[分代回收]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[Python 应用程序] --&gt; B[内存分配器]
+    B --&gt; C[pymalloc]
+    B --&gt; D[操作系统]
+
+    C --&gt; E[对象分配]
+    C --&gt; F[内存池]
+
+    E --&gt; G[引用计数]
+    E --&gt; H[垃圾回收器]
+
+    G --&gt; I[自动回收]
+    H --&gt; J[标记-清除]
+    H --&gt; K[分代回收]
+</code></pre></div>
+<h2 id="2">2. 引用计数机制</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Var as 变量
+    participant Obj as 对象
+
+    Var-&gt;&gt;Obj: 创建对象 (refcount=1)
+    Var-&gt;&gt;Obj: 赋值给另一个变量 (refcount=2)
+    Var-&gt;&gt;Obj: 放入列表 (refcount=3)
+
+    Note over Obj: 对象仍然存活
+
+    Var-&gt;&gt;Obj: del 变量 (refcount=2)
+    Var-&gt;&gt;Obj: 从列表移除 (refcount=1)
+    Var-&gt;&gt;Obj: del 最后一个引用 (refcount=0)
+
+    Note over Obj: 对象被立即回收
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Var as 变量
+    participant Obj as 对象
+
+    Var-&gt;&gt;Obj: 创建对象 (refcount=1)
+    Var-&gt;&gt;Obj: 赋值给另一个变量 (refcount=2)
+    Var-&gt;&gt;Obj: 放入列表 (refcount=3)
+
+    Note over Obj: 对象仍然存活
+
+    Var-&gt;&gt;Obj: del 变量 (refcount=2)
+    Var-&gt;&gt;Obj: 从列表移除 (refcount=1)
+    Var-&gt;&gt;Obj: del 最后一个引用 (refcount=0)
+
+    Note over Obj: 对象被立即回收
+</code></pre></div>
+<h2 id="3">3. 循环引用问题</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[对象A] --&gt;|强引用| B[对象B]
+    B --&gt;|强引用| A
+
+    style A fill:#ff6b6b,color:#fff
+    style B fill:#ff6b6b,color:#fff
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[对象A] --&gt;|强引用| B[对象B]
+    B --&gt;|强引用| A
+
+    style A fill:#ff6b6b,color:#fff
+    style B fill:#ff6b6b,color:#fff
+</code></pre></div>
+<h2 id="4">4. 分代回收原理</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph 第 0 代
+        A0[新对象] --&gt; B0[存活对象]
+    end
+
+    subgraph 第 1 代
+        A1[从 0 代存活] --&gt; B1[存活对象]
+    end
+
+    subgraph 第 2 代
+        A2[从 1 代存活] --&gt; B2[长期存活]
+    end
+
+    B0 --&gt;|存活| A1
+    B1 --&gt;|存活| A2
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph 第 0 代
+        A0[新对象] --&gt; B0[存活对象]
+    end
+
+    subgraph 第 1 代
+        A1[从 0 代存活] --&gt; B1[存活对象]
+    end
+
+    subgraph 第 2 代
+        A2[从 1 代存活] --&gt; B2[长期存活]
+    end
+
+    B0 --&gt;|存活| A1
+    B1 --&gt;|存活| A2
+</code></pre></div>
+<h2 id="5-">5. 标记-清除算法</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[开始 GC] --&gt; B[标记阶段]
+    B --&gt; C[从根对象遍历]
+    C --&gt; D[标记可达对象]
+    D --&gt; E[清除阶段]
+    E --&gt; F[回收未标记对象]
+    E --&gt; G[保留标记对象]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[开始 GC] --&gt; B[标记阶段]
+    B --&gt; C[从根对象遍历]
+    C --&gt; D[标记可达对象]
+    D --&gt; E[清除阶段]
+    E --&gt; F[回收未标记对象]
+    E --&gt; G[保留标记对象]
+</code></pre></div>
+<h2 id="6-gc-api">6. gc 模块 API</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph gc 模块
+        A[gc.collect] --&gt; B[手动触发回收]
+        C[gc.get_objects] --&gt; D[获取所有对象]
+        E[gc.get_referrers] --&gt; F[获取引用者]
+        G[gc.get_referents] --&gt; H[获取被引用对象]
+        I[gc.get_threshold] --&gt; J[获取回收阈值]
+        K[gc.get_count] --&gt; L[获取各代对象数]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph gc 模块
+        A[gc.collect] --&gt; B[手动触发回收]
+        C[gc.get_objects] --&gt; D[获取所有对象]
+        E[gc.get_referrers] --&gt; F[获取引用者]
+        G[gc.get_referents] --&gt; H[获取被引用对象]
+        I[gc.get_threshold] --&gt; J[获取回收阈值]
+        K[gc.get_count] --&gt; L[获取各代对象数]
+    end
+</code></pre></div>
+<h2 id="7">7. 内存泄漏检测流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[开始检测] --&gt; B[获取内存快照]
+    B --&gt; C[执行操作]
+    C --&gt; D[再次获取快照]
+    D --&gt; E[对比快照]
+    E --&gt; F{内存增长?}
+    F --&gt;|是| G[可能存在泄漏]
+    F --&gt;|否| H[内存正常]
+
+    G --&gt; I[使用 gc.get_referrers 追踪]
+    I --&gt; J[找出引用链]
+    J --&gt; K[修复泄漏]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[开始检测] --&gt; B[获取内存快照]
+    B --&gt; C[执行操作]
+    C --&gt; D[再次获取快照]
+    D --&gt; E[对比快照]
+    E --&gt; F{内存增长?}
+    F --&gt;|是| G[可能存在泄漏]
+    F --&gt;|否| H[内存正常]
+
+    G --&gt; I[使用 gc.get_referrers 追踪]
+    I --&gt; J[找出引用链]
+    J --&gt; K[修复泄漏]
+</code></pre></div>
+<h2 id="8">8. 内存优化策略</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[内存优化] --&gt; B{对象类型?}
+
+    B --&gt;|小对象| C[使用 __slots__]
+    B --&gt;|大数据| D[使用生成器]
+    B --&gt;|字符串| E[使用 sys.intern]
+    B --&gt;|循环引用| F[使用 weakref]
+
+    C --&gt; G[减少内存开销]
+    D --&gt; H[避免一次性加载]
+    E --&gt; I[复用字符串对象]
+    F --&gt; J[避免内存泄漏]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[内存优化] --&gt; B{对象类型?}
+
+    B --&gt;|小对象| C[使用 __slots__]
+    B --&gt;|大数据| D[使用生成器]
+    B --&gt;|字符串| E[使用 sys.intern]
+    B --&gt;|循环引用| F[使用 weakref]
+
+    C --&gt; G[减少内存开销]
+    D --&gt; H[避免一次性加载]
+    E --&gt; I[复用字符串对象]
+    F --&gt; J[避免内存泄漏]
+</code></pre></div>
+<h2 id="9">9. 内存使用可视化</h2>
+<pre class="plain"><code>内存使用示意图:
+┌─────────────────────────────────────────────────────────┐
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │ 对象堆                                           │   │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐           │   │
+│  │  │ 对象 1   │ │ 对象 2   │ │ 对象 3   │  ...     │   │
+│  │  └─────────┘ └─────────┘ └─────────┘           │   │
+│  │                                                 │   │
+│  │  第 0 代: 700 个对象                             │   │
+│  │  第 1 代: 10 个对象                              │   │
+│  │  第 2 代: 10 个对象                              │   │
+│  └─────────────────────────────────────────────────┘   │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐   │
+│  │ gc.garbage                                       │   │
+│  │  ┌─────────┐ ┌─────────┐                        │   │
+│  │  │ 无法回收 │ │ 无法回收 │  ...                    │   │
+│  │  └─────────┘ └─────────┘                        │   │
+│  └─────────────────────────────────────────────────┘   │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

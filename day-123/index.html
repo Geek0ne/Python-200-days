@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 123 — 模型部署</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 123 — 模型部署</h1>
+  <div class="lmeta">
+    <span class="badge">数据分析与AI/ML</span>
+    <span class="badge">511 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-123-model-deployment" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 模型部署概述</a>
+<a class="toc-l3" href="#11">1.1 为什么需要部署</a>
+<a class="toc-l3" href="#12">1.2 部署方式对比</a>
+<a class="toc-l2" href="#2-flask">2. Flask 模型服务</a>
+<a class="toc-l3" href="#21">2.1 基本结构</a>
+<a class="toc-l3" href="#22-flask">2.2 Flask 优缺点</a>
+<a class="toc-l2" href="#3-fastapi">3. FastAPI 模型服务（推荐）</a>
+<a class="toc-l3" href="#31-fastapi">3.1 FastAPI 优势</a>
+<a class="toc-l3" href="#32">3.2 完整示例</a>
+<a class="toc-l3" href="#33">3.3 运行方式</a>
+<a class="toc-l2" href="#4-onnx">4. ONNX 模型导出</a>
+<a class="toc-l3" href="#41-onnx">4.1 什么是 ONNX</a>
+<a class="toc-l3" href="#42-scikit-learn-onnx">4.2 从 Scikit-learn 导出 ONNX</a>
+<a class="toc-l3" href="#43-pytorch-onnx">4.3 从 PyTorch 导出 ONNX</a>
+<a class="toc-l3" href="#44-onnx-runtime">4.4 ONNX Runtime 推理</a>
+<a class="toc-l3" href="#45-onnx-vs-pickle">4.5 ONNX vs Pickle 对比</a>
+<a class="toc-l2" href="#5-docker">5. Docker 容器化</a>
+<a class="toc-l3" href="#51-dockerfile">5.1 Dockerfile 示例</a>
+<a class="toc-l3" href="#52-docker-composeyml">5.2 docker-compose.yml</a>
+<a class="toc-l3" href="#53">5.3 常用命令</a>
+<a class="toc-l2" href="#6">6. 模型版本管理</a>
+<a class="toc-l3" href="#61">6.1 版本化策略</a>
+<a class="toc-l3" href="#62">6.2 元数据记录</a>
+<a class="toc-l2" href="#7-api">7. API 网关与负载均衡</a>
+<a class="toc-l3" href="#71-nginx">7.1 Nginx 反向代理</a>
+<a class="toc-l3" href="#72">7.2 负载均衡策略</a>
+<a class="toc-l2" href="#8">8. 性能优化</a>
+<a class="toc-l3" href="#81">8.1 模型优化技巧</a>
+<a class="toc-l3" href="#82">8.2 服务优化</a>
+<a class="toc-l3" href="#83">8.3 监控指标</a>
+<a class="toc-l2" href="#9">9. 实战代码</a>
+<a class="toc-l2" href="#10">10. 思考题</a>
+<a class="toc-l2" href="#_1">参考资料</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-123">Day 123 — 模型部署</h1>
+<blockquote>
+<p>训练好的模型只有部署到生产环境才能产生价值。本章介绍 ML 模型从训练到上线的完整流程。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 模型部署概述</h2>
+<h3 id="11">1.1 为什么需要部署</h3>
+<pre class="plain"><code>训练环境                        生产环境
+┌─────────────┐                ┌─────────────┐
+│  Jupyter    │    模型文件     │  API 服务   │
+│  Notebook   │───────────────▶│  (Flask/    │
+│  训练代码   │    (.pkl/onnx) │   FastAPI)  │
+└─────────────┘                └──────┬──────┘
+                                      │
+                                      ▼
+                               ┌─────────────┐
+                               │  客户端应用  │
+                               │  (Web/App)  │
+                               └─────────────┘
+</code></pre>
+<h3 id="12">1.2 部署方式对比</h3>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>适用场景</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Flask/FastAPI</td>
+<td>轻量级 API</td>
+<td>简单快速</td>
+<td>不支持GPU</td>
+</tr>
+<tr>
+<td>ONNX Runtime</td>
+<td>跨平台推理</td>
+<td>高性能、多语言</td>
+<td>模型转换成本</td>
+</tr>
+<tr>
+<td>Docker</td>
+<td>容器化部署</td>
+<td>环境一致、可移植</td>
+<td>需要容器管理</td>
+</tr>
+<tr>
+<td>Kubernetes</td>
+<td>大规模集群</td>
+<td>自动扩缩容</td>
+<td>架构复杂</td>
+</tr>
+<tr>
+<td>Serverless</td>
+<td>低频调用</td>
+<td>按需计费</td>
+<td>冷启动延迟</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2-flask">2. Flask 模型服务</h2>
+<h3 id="21">2.1 基本结构</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">flask</span> <span class="kn">import</span> <span class="n">Flask</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">jsonify</span>
+<span class="kn">import</span> <span class="nn">pickle</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">Flask</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1"># 加载模型</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;model.pkl&#39;</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">model</span> <span class="o">=</span> <span class="n">pickle</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/predict&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;POST&#39;</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">predict</span><span class="p">():</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">request</span><span class="o">.</span><span class="n">get_json</span><span class="p">()</span>
+    <span class="n">features</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="s1">&#39;features&#39;</span><span class="p">])</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+    <span class="n">prediction</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">features</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span>
+        <span class="s1">&#39;prediction&#39;</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">prediction</span><span class="p">),</span>
+        <span class="s1">&#39;status&#39;</span><span class="p">:</span> <span class="s1">&#39;success&#39;</span>
+    <span class="p">})</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s1">&#39;/health&#39;</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;GET&#39;</span><span class="p">])</span>
+<span class="k">def</span> <span class="nf">health</span><span class="p">():</span>
+    <span class="k">return</span> <span class="n">jsonify</span><span class="p">({</span><span class="s1">&#39;status&#39;</span><span class="p">:</span> <span class="s1">&#39;healthy&#39;</span><span class="p">})</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">app</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s1">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5000</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="22-flask">2.2 Flask 优缺点</h3>
+<p><strong>优点：</strong><br>
+- 学习曲线低<br>
+- 生态成熟，文档丰富<br>
+- 适合原型验证</p>
+<p><strong>缺点：</strong><br>
+- 同步处理，高并发性能差<br>
+- 不支持异步<br>
+- 缺少自动 API 文档</p>
+<hr>
+<h2 id="3-fastapi">3. FastAPI 模型服务（推荐）</h2>
+<h3 id="31-fastapi">3.1 FastAPI 优势</h3>
+<ul>
+<li><strong>高性能</strong>：基于 Starlette，性能接近 Node.js/Go</li>
+<li><strong>自动文档</strong>：Swagger UI / ReDoc 自动生成</li>
+<li><strong>类型安全</strong>：Pydantic 模型校验</li>
+<li><strong>异步支持</strong>：原生 async/await</li>
+</ul>
+<h3 id="32">3.2 完整示例</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fastapi</span> <span class="kn">import</span> <span class="n">FastAPI</span><span class="p">,</span> <span class="n">HTTPException</span>
+<span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span>
+<span class="kn">import</span> <span class="nn">pickle</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+
+<span class="c1"># 配置日志</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="n">app</span> <span class="o">=</span> <span class="n">FastAPI</span><span class="p">(</span>
+    <span class="n">title</span><span class="o">=</span><span class="s2">&quot;ML 模型服务&quot;</span><span class="p">,</span>
+    <span class="n">description</span><span class="o">=</span><span class="s2">&quot;机器学习模型预测 API&quot;</span><span class="p">,</span>
+    <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0.0&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># 全局模型变量</span>
+<span class="n">model</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="c1"># Pydantic 数据模型</span>
+<span class="k">class</span> <span class="nc">PredictionRequest</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">features</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span>
+    
+    <span class="k">class</span> <span class="nc">Config</span><span class="p">:</span>
+        <span class="n">json_schema_extra</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;example&quot;</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">&quot;features&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mf">5.1</span><span class="p">,</span> <span class="mf">3.5</span><span class="p">,</span> <span class="mf">1.4</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">]</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+
+<span class="k">class</span> <span class="nc">PredictionResponse</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">prediction</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">probability</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">model_version</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;1.0&quot;</span>
+
+<span class="k">class</span> <span class="nc">HealthResponse</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">model_loaded</span><span class="p">:</span> <span class="nb">bool</span>
+    <span class="n">version</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="c1"># 生命周期事件</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">on_event</span><span class="p">(</span><span class="s2">&quot;startup&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">load_model</span><span class="p">():</span>
+    <span class="k">global</span> <span class="n">model</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;model.pkl&#39;</span><span class="p">,</span> <span class="s1">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">model</span> <span class="o">=</span> <span class="n">pickle</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;✅ 模型加载成功&quot;</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;❌ 模型加载失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;/health&quot;</span><span class="p">,</span> <span class="n">response_model</span><span class="o">=</span><span class="n">HealthResponse</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">health_check</span><span class="p">():</span>
+    <span class="k">return</span> <span class="n">HealthResponse</span><span class="p">(</span>
+        <span class="n">status</span><span class="o">=</span><span class="s2">&quot;healthy&quot;</span><span class="p">,</span>
+        <span class="n">model_loaded</span><span class="o">=</span><span class="n">model</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">version</span><span class="o">=</span><span class="s2">&quot;1.0&quot;</span>
+    <span class="p">)</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/predict&quot;</span><span class="p">,</span> <span class="n">response_model</span><span class="o">=</span><span class="n">PredictionResponse</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">predict</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">PredictionRequest</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">model</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">HTTPException</span><span class="p">(</span><span class="n">status_code</span><span class="o">=</span><span class="mi">503</span><span class="p">,</span> <span class="n">detail</span><span class="o">=</span><span class="s2">&quot;模型未加载&quot;</span><span class="p">)</span>
+    
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">features</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">features</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">prediction</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">features</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+        
+        <span class="c1"># 如果模型支持概率预测</span>
+        <span class="n">probability</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="s1">&#39;predict_proba&#39;</span><span class="p">):</span>
+            <span class="n">proba</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict_proba</span><span class="p">(</span><span class="n">features</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">probability</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="nb">max</span><span class="p">(</span><span class="n">proba</span><span class="p">))</span>
+        
+        <span class="k">return</span> <span class="n">PredictionResponse</span><span class="p">(</span>
+            <span class="n">prediction</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="n">prediction</span><span class="p">),</span>
+            <span class="n">probability</span><span class="o">=</span><span class="n">probability</span>
+        <span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;预测失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="n">HTTPException</span><span class="p">(</span><span class="n">status_code</span><span class="o">=</span><span class="mi">500</span><span class="p">,</span> <span class="n">detail</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">))</span>
+
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/batch_predict&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">batch_predict</span><span class="p">(</span><span class="n">requests</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">PredictionRequest</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;批量预测&quot;&quot;&quot;</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">req</span> <span class="ow">in</span> <span class="n">requests</span><span class="p">:</span>
+        <span class="n">features</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">req</span><span class="o">.</span><span class="n">features</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">pred</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">features</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;prediction&quot;</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">pred</span><span class="p">)})</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;predictions&quot;</span><span class="p">:</span> <span class="n">results</span><span class="p">}</span>
+</code></pre></div>
+<h3 id="33">3.3 运行方式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 开发模式</span>
+uvicorn<span class="w"> </span>main:app<span class="w"> </span>--reload<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+
+<span class="c1"># 生产模式</span>
+uvicorn<span class="w"> </span>main:app<span class="w"> </span>--host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span><span class="w"> </span>--workers<span class="w"> </span><span class="m">4</span>
+
+<span class="c1"># 访问自动文档</span>
+<span class="c1"># http://localhost:8000/docs      (Swagger UI)</span>
+<span class="c1"># http://localhost:8000/redoc     (ReDoc)</span>
+</code></pre></div>
+<hr>
+<h2 id="4-onnx">4. ONNX 模型导出</h2>
+<h3 id="41-onnx">4.1 什么是 ONNX</h3>
+<p>ONNX (Open Neural Network Exchange) 是一个开放的模型格式，支持在不同框架间转换和部署。</p>
+<pre class="plain"><code>PyTorch 模型  ──→  ONNX 格式  ──→  ONNX Runtime 推理
+TensorFlow 模型 ──→  ONNX 格式  ──→  多语言部署 (C++/Java/Python)
+Scikit-learn 模型 ──→  ONNX 格式  ──→  高性能推理
+</code></pre>
+<h3 id="42-scikit-learn-onnx">4.2 从 Scikit-learn 导出 ONNX</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">skl2onnx</span> <span class="kn">import</span> <span class="n">convert_sklearn</span>
+<span class="kn">from</span> <span class="nn">skl2onnx.common.data_types</span> <span class="kn">import</span> <span class="n">FloatTensorType</span>
+<span class="kn">import</span> <span class="nn">pickle</span>
+
+<span class="c1"># 训练模型</span>
+<span class="c1"># model = ... (已训练的sklearn模型)</span>
+
+<span class="c1"># 定义输入类型</span>
+<span class="n">initial_type</span> <span class="o">=</span> <span class="p">[(</span><span class="s1">&#39;float_input&#39;</span><span class="p">,</span> <span class="n">FloatTensorType</span><span class="p">([</span><span class="kc">None</span><span class="p">,</span> <span class="mi">4</span><span class="p">]))]</span>
+
+<span class="c1"># 转换为 ONNX</span>
+<span class="n">onnx_model</span> <span class="o">=</span> <span class="n">convert_sklearn</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">initial_types</span><span class="o">=</span><span class="n">initial_type</span><span class="p">)</span>
+
+<span class="c1"># 保存</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;model.onnx&quot;</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">onnx_model</span><span class="o">.</span><span class="n">SerializeToString</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="43-pytorch-onnx">4.3 从 PyTorch 导出 ONNX</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">torch</span>
+
+<span class="c1"># 定义模型</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">MyModel</span><span class="p">()</span>
+<span class="n">model</span><span class="o">.</span><span class="n">load_state_dict</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">&#39;model.pth&#39;</span><span class="p">))</span>
+<span class="n">model</span><span class="o">.</span><span class="n">eval</span><span class="p">()</span>
+
+<span class="c1"># 导出</span>
+<span class="n">dummy_input</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">224</span><span class="p">,</span> <span class="mi">224</span><span class="p">)</span>
+<span class="n">torch</span><span class="o">.</span><span class="n">onnx</span><span class="o">.</span><span class="n">export</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">,</span> 
+    <span class="n">dummy_input</span><span class="p">,</span> 
+    <span class="s2">&quot;model.onnx&quot;</span><span class="p">,</span>
+    <span class="n">input_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;input&#39;</span><span class="p">],</span>
+    <span class="n">output_names</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;output&#39;</span><span class="p">],</span>
+    <span class="n">dynamic_axes</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;input&#39;</span><span class="p">:</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s1">&#39;batch_size&#39;</span><span class="p">},</span> <span class="s1">&#39;output&#39;</span><span class="p">:</span> <span class="p">{</span><span class="mi">0</span><span class="p">:</span> <span class="s1">&#39;batch_size&#39;</span><span class="p">}}</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="44-onnx-runtime">4.4 ONNX Runtime 推理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">onnxruntime</span> <span class="k">as</span> <span class="nn">ort</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+
+<span class="c1"># 加载模型</span>
+<span class="n">session</span> <span class="o">=</span> <span class="n">ort</span><span class="o">.</span><span class="n">InferenceSession</span><span class="p">(</span><span class="s2">&quot;model.onnx&quot;</span><span class="p">)</span>
+
+<span class="c1"># 获取输入输出名</span>
+<span class="n">input_name</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_inputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
+<span class="n">output_name</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">get_outputs</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span>
+
+<span class="c1"># 推理</span>
+<span class="n">input_data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randn</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">4</span><span class="p">)</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="n">output_name</span><span class="p">],</span> <span class="p">{</span><span class="n">input_name</span><span class="p">:</span> <span class="n">input_data</span><span class="p">})</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;预测结果: </span><span class="si">{</span><span class="n">result</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="45-onnx-vs-pickle">4.5 ONNX vs Pickle 对比</h3>
+<table>
+<thead>
+<tr>
+<th>对比维度</th>
+<th>Pickle</th>
+<th>ONNX</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>跨语言</td>
+<td>Python only</td>
+<td>多语言 (C++/Java/Go)</td>
+</tr>
+<tr>
+<td>推理速度</td>
+<td>较慢</td>
+<td>快 (C++实现)</td>
+</tr>
+<tr>
+<td>模型大小</td>
+<td>较大</td>
+<td>较小 (优化后)</td>
+</tr>
+<tr>
+<td>安全性</td>
+<td>低 (反序列化漏洞)</td>
+<td>高</td>
+</tr>
+<tr>
+<td>框架兼容</td>
+<td>sklearn only</td>
+<td>多框架</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="5-docker">5. Docker 容器化</h2>
+<h3 id="51-dockerfile">5.1 Dockerfile 示例</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">dockerfile</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">FROM</span><span class="w"> </span><span class="s">python:3.11-slim</span>
+
+<span class="k">WORKDIR</span><span class="w"> </span><span class="s">/app</span>
+
+<span class="c"># 安装依赖</span>
+<span class="k">COPY</span><span class="w"> </span>requirements.txt<span class="w"> </span>.
+<span class="k">RUN</span><span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--no-cache-dir<span class="w"> </span>-r<span class="w"> </span>requirements.txt
+
+<span class="c"># 复制代码和模型</span>
+<span class="k">COPY</span><span class="w"> </span>app/<span class="w"> </span>.
+<span class="k">COPY</span><span class="w"> </span>models/<span class="w"> </span>./models/
+
+<span class="c"># 暴露端口</span>
+<span class="k">EXPOSE</span><span class="w"> </span><span class="s">8000</span>
+
+<span class="c"># 健康检查</span>
+<span class="k">HEALTHCHECK</span><span class="w"> </span>--interval<span class="o">=</span>30s<span class="w"> </span>--timeout<span class="o">=</span>10s<span class="w"> </span>--retries<span class="o">=</span><span class="m">3</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span><span class="k">CMD</span><span class="w"> </span>curl<span class="w"> </span>-f<span class="w"> </span>http://localhost:8000/health<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+
+<span class="c"># 启动</span>
+<span class="k">CMD</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;uvicorn&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;main:app&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--host&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;0.0.0.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--port&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;8000&quot;</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="52-docker-composeyml">5.2 docker-compose.yml</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">version</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;3.8&#39;</span>
+
+<span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">ml-api</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">build</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">.</span>
+<span class="w">    </span><span class="nt">ports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;8000:8000&quot;</span>
+<span class="w">    </span><span class="nt">volumes</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">./models:/app/models</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MODEL_PATH=/app/models/model.onnx</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">LOG_LEVEL=info</span>
+<span class="w">    </span><span class="nt">deploy</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">resources</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">limits</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">cpus</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;2&#39;</span>
+<span class="w">          </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2G</span>
+<span class="w">    </span><span class="nt">restart</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">unless-stopped</span>
+</code></pre></div>
+<h3 id="53">5.3 常用命令</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 构建镜像</span>
+docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>ml-api:v1<span class="w"> </span>.
+
+<span class="c1"># 运行容器</span>
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>-p<span class="w"> </span><span class="m">8000</span>:8000<span class="w"> </span>--name<span class="w"> </span>ml-api<span class="w"> </span>ml-api:v1
+
+<span class="c1"># 查看日志</span>
+docker<span class="w"> </span>logs<span class="w"> </span>-f<span class="w"> </span>ml-api
+
+<span class="c1"># 进入容器调试</span>
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-it<span class="w"> </span>ml-api<span class="w"> </span>/bin/bash
+</code></pre></div>
+<hr>
+<h2 id="6">6. 模型版本管理</h2>
+<h3 id="61">6.1 版本化策略</h3>
+<pre class="plain"><code>models/
+├── v1/
+│   ├── model.onnx
+│   ├── metadata.json
+│   └── metrics.json
+├── v2/
+│   ├── model.onnx
+│   ├── metadata.json
+│   └── metrics.json
+└── current -&gt; v2/  (符号链接指向当前版本)
+</code></pre>
+<h3 id="62">6.2 元数据记录</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;model_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2.0&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;algorithm&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;RandomForest&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;training_date&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-08-22&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;features&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;feature_1&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;feature_2&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;feature_3&quot;</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;accuracy&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.95</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;f1_score&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.93</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;rmse&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.12</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;training_data_size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10000</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;hyperparameters&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;n_estimators&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;max_depth&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<hr>
+<h2 id="7-api">7. API 网关与负载均衡</h2>
+<h3 id="71-nginx">7.1 Nginx 反向代理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">nginx</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">upstream</span><span class="w"> </span><span class="s">ml_api</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">server</span><span class="w"> </span><span class="n">ml-api-1</span><span class="p">:</span><span class="mi">8000</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">server</span><span class="w"> </span><span class="n">ml-api-2</span><span class="p">:</span><span class="mi">8000</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">server</span><span class="w"> </span><span class="n">ml-api-3</span><span class="p">:</span><span class="mi">8000</span><span class="p">;</span>
+<span class="p">}</span>
+
+<span class="k">server</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">listen</span><span class="w"> </span><span class="mi">80</span><span class="p">;</span>
+<span class="w">    </span>
+<span class="w">    </span><span class="kn">location</span><span class="w"> </span><span class="s">/</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kn">proxy_pass</span><span class="w"> </span><span class="s">http://ml_api</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">Host</span><span class="w"> </span><span class="nv">$host</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Real-IP</span><span class="w"> </span><span class="nv">$remote_addr</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">    </span>
+<span class="w">    </span><span class="kn">location</span><span class="w"> </span><span class="s">/health</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kn">proxy_pass</span><span class="w"> </span><span class="s">http://ml_api</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="72">7.2 负载均衡策略</h3>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>说明</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>轮询</td>
+<td>依次分配</td>
+<td>服务器性能一致</td>
+</tr>
+<tr>
+<td>加权轮询</td>
+<td>按权重分配</td>
+<td>服务器性能不同</td>
+</tr>
+<tr>
+<td>IP Hash</td>
+<td>按IP分配</td>
+<td>需要会话保持</td>
+</tr>
+<tr>
+<td>最少连接</td>
+<td>分配给连接最少的</td>
+<td>长连接场景</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="8">8. 性能优化</h2>
+<h3 id="81">8.1 模型优化技巧</h3>
+<ol>
+<li><strong>模型量化</strong>：FP32 → INT8，减少模型大小和推理时间</li>
+<li><strong>模型剪枝</strong>：移除不重要的参数</li>
+<li><strong>知识蒸馏</strong>：用小模型学习大模型</li>
+<li><strong>批处理推理</strong>：一次处理多个请求</li>
+</ol>
+<h3 id="82">8.2 服务优化</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 使用连接池</span>
+<span class="kn">from</span> <span class="nn">sqlalchemy.pool</span> <span class="kn">import</span> <span class="n">QueuePool</span>
+
+<span class="c1"># 异步处理</span>
+<span class="nd">@app</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">&quot;/predict_async&quot;</span><span class="p">)</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">predict_async</span><span class="p">(</span><span class="n">request</span><span class="p">:</span> <span class="n">PredictionRequest</span><span class="p">):</span>
+    <span class="c1"># 异步推理不阻塞事件循环</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">to_thread</span><span class="p">(</span><span class="n">sync_predict</span><span class="p">,</span> <span class="n">request</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+<span class="c1"># 缓存结果</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">lru_cache</span>
+
+<span class="nd">@lru_cache</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="mi">1000</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">cached_predict</span><span class="p">(</span><span class="n">features_hash</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+    <span class="c1"># 缓存相同输入的预测结果</span>
+    <span class="k">pass</span>
+</code></pre></div>
+<h3 id="83">8.3 监控指标</h3>
+<pre class="plain"><code>关键监控指标:
+- 请求延迟 (P50/P95/P99)
+- QPS (每秒请求数)
+- 错误率
+- 模型推理时间
+- 内存使用率
+- CPU/GPU 使用率
+</code></pre>
+<hr>
+<h2 id="9">9. 实战代码</h2>
+<ul>
+<li><code>01-flask-model-service.py</code>：Flask 模型服务</li>
+<li><code>02-fastapi-model-service.py</code>：FastAPI 模型服务（推荐）</li>
+<li><code>03-onnx-deployment.py</code>：ONNX 模型导出与部署</li>
+</ul>
+<hr>
+<h2 id="10">10. 思考题</h2>
+<ol>
+<li>
+<p><strong>Flask 和 FastAPI 在模型服务场景下各有什么优缺点？</strong> 什么情况下你会选择 Flask 而不是 FastAPI？</p>
+</li>
+<li>
+<p><strong>ONNX 格式相比 Pickle 有什么优势？</strong> 为什么在生产环境中推荐使用 ONNX？</p>
+</li>
+<li>
+<p><strong>如何实现模型的灰度发布？</strong> 即新旧版本模型同时运行，逐步切换流量。</p>
+</li>
+<li>
+<p><strong>Docker 容器化部署有哪些注意事项？</strong> 如何处理模型文件过大、GPU 资源分配等问题？</p>
+</li>
+<li>
+<p><strong>如何监控线上模型的性能衰减？</strong> 当模型效果下降时应该如何处理？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_1">参考资料</h2>
+<ul>
+<li><a href="https://fastapi.tiangolo.com/">FastAPI 官方文档</a></li>
+<li><a href="https://onnxruntime.ai/">ONNX Runtime</a></li>
+<li><a href="https://mlflow.org/">MLflow 模型管理</a></li>
+<li><a href="https://www.bentoml.com/">BentoML</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-122/index.html">← Day 122 推荐系统基础</a><a class="nav-next" href="../day-124/index.html">Day 124 时间序列预测 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

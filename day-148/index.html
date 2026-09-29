@@ -1,0 +1,832 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 148 — 对称与非对称加密：AES、RSA 与混合加密</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 148 — 对称与非对称加密：AES、RSA 与混合加密</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">583 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-148-symmetric-asymmetric-encryption" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-symmetric-encryption">1.1 对称加密（Symmetric Encryption）</a>
+<a class="toc-l3" href="#12-asymmetric-public-key-encryption">1.2 非对称加密（Asymmetric / Public-Key Encryption）</a>
+<a class="toc-l3" href="#13-hybrid-encryption">1.3 混合加密（Hybrid Encryption）</a>
+<a class="toc-l3" href="#14">1.4 三个概念别混淆：编码 / 哈希 / 加密</a>
+<a class="toc-l3" href="#15">1.5 分组密码的五个关键术语</a>
+<a class="toc-l2" href="#_2">二、原理深入</a>
+<a class="toc-l3" href="#21-aes">2.1 AES 内部结构（为什么它安全且可逆）</a>
+<a class="toc-l3" href="#22-ecb-cbc-ctr-gcm">2.2 分组模式：ECB / CBC / CTR / GCM</a>
+<a class="toc-l3" href="#23-padding-pkcs7">2.3 填充（Padding）与 PKCS#7</a>
+<a class="toc-l3" href="#24-rsa">2.4 RSA 的数学原理</a>
+<a class="toc-l3" href="#25-forward-secrecy">2.5 密钥协商与前向保密（Forward Secrecy）</a>
+<a class="toc-l3" href="#26">2.6 为什么非对称加密慢：数量级对比</a>
+<a class="toc-l2" href="#_3">三、常见陷阱与避坑指南</a>
+<a class="toc-l3" href="#31-ecb">3.1 用 ECB 模式加密（结构性泄露）</a>
+<a class="toc-l3" href="#32-iv-nonce">3.2 IV / nonce 重用（最致命的一类错误）</a>
+<a class="toc-l3" href="#33-rsa">3.3 用&quot;教科书 RSA&quot;（无填充）</a>
+<a class="toc-l3" href="#34-rsa">3.4 拿 RSA 加密大文件 / 超长消息</a>
+<a class="toc-l3" href="#35-taghmac">3.5 用 == 比较密钥、tag、HMAC</a>
+<a class="toc-l3" href="#36-git">3.6 硬编码密钥 / 把密钥提交进 Git</a>
+<a class="toc-l3" href="#37">3.7 自己发明加密方案 / 自造填充</a>
+<a class="toc-l3" href="#38">3.8 把编码当加密</a>
+<a class="toc-l3" href="#39-encrypt-then-mac">3.9 加密了却忘了认证（Encrypt-then-MAC 顺序）</a>
+<a class="toc-l3" href="#310">3.10 忽略随机源质量</a>
+<a class="toc-l2" href="#api">四、定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#41-aesgcm">4.1 对称加密 AESGCM</a>
+<a class="toc-l3" href="#42-chacha20-poly1305-aes">4.2 ChaCha20-Poly1305（无 AES 硬件时的替代）</a>
+<a class="toc-l3" href="#43-rsa">4.3 RSA 密钥生成与序列化</a>
+<a class="toc-l3" href="#44-rsa-oaeppss">4.4 RSA 加密（OAEP）与签名（PSS）</a>
+<a class="toc-l3" href="#45">4.5 常用填充别名</a>
+<a class="toc-l3" href="#46">4.6 选型速查</a>
+<a class="toc-l3" href="#47">4.7 官方文档入口</a>
+<a class="toc-l2" href="#mermaid-ascii">五、图解（Mermaid / ASCII）</a>
+<a class="toc-l3" href="#51">5.1 两种加密的密钥流向</a>
+<a class="toc-l3" href="#52">5.2 混合加密时序</a>
+<a class="toc-l3" href="#53-aead">5.3 AEAD 密文结构</a>
+<a class="toc-l2" href="#_4">六、实战代码案例</a>
+<a class="toc-l3" href="#61-01">6.1 01 — 基础：把一次加密做对</a>
+<a class="toc-l3" href="#62-02-rsa">6.2 02 — 进阶：RSA 的正确边界</a>
+<a class="toc-l3" href="#63-03">6.3 03 — 实战：安全通信工具</a>
+<a class="toc-l3" href="#64">6.4 运行方式</a>
+<a class="toc-l2" href="#_5">七、思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-148-aesrsa">Day 148 — 对称与非对称加密：AES、RSA 与混合加密</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化 · 主题：实战密码学</p>
+<p>前置知识：Day 147 学了哈希与 HMAC（解决<strong>完整性 / 不可否认</strong>）。今天进入另一个方向——<strong>机密性（Confidentiality）</strong>：数据要在不可信信道上传输，怎么保证别人看不到。理解了 AES / RSA / 混合加密，你才看得懂 TLS、VPN、加密聊天软件、JWT 签名背后到底发生了什么。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-symmetric-encryption">1.1 对称加密（Symmetric Encryption）</h3>
+<p><strong>定义</strong>：加密和解密使用<strong>同一把密钥</strong>的加密方式。</p>
+<pre class="plain"><code>明文 + 密钥 K ──[加密]──► 密文 ──[解密]──► 明文（同一个密钥 K）
+</code></pre>
+<p>代表算法：</p>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th>密钥长度</th>
+<th>分组长度</th>
+<th>状态</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DES</td>
+<td>56 bit</td>
+<td>64 bit</td>
+<td>❌ 已淘汰</td>
+<td>密钥太短，暴力可破</td>
+</tr>
+<tr>
+<td>3DES</td>
+<td>112/168 bit</td>
+<td>64 bit</td>
+<td>⚠️ 逐步淘汰</td>
+<td>性能差、Sweet32 攻击</td>
+</tr>
+<tr>
+<td><strong>AES</strong></td>
+<td>128/192/256 bit</td>
+<td><strong>128 bit</strong></td>
+<td>✅ 主流</td>
+<td>硬件加速，业界标准</td>
+</tr>
+<tr>
+<td>ChaCha20</td>
+<td>256 bit</td>
+<td>流式</td>
+<td>✅ 主流</td>
+<td>无 AES 硬件时的首选（移动端）</td>
+</tr>
+<tr>
+<td>SM4</td>
+<td>128 bit</td>
+<td>128 bit</td>
+<td>✅ 国密</td>
+<td>国内合规场景</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么它快？</strong> 加密算法本身只做查表、移位、异或这类按位运算，且可以<br>
+硬件指令加速（x86 的 AES-NI）。实测 AES-GCM 在现代 CPU 上可达 <strong>1~5 GB/s</strong>。</p>
+<p><strong>它解决不了的问题</strong>：密钥分发。A 和 B 隔着不可信网络，怎么让两人拥有<br>
+同一把密钥？如果先能安全传密钥，那干脆用它传数据就好了——这就是死循环。<br>
+非对称加密负责打破这个死循环。</p>
+<h3 id="12-asymmetric-public-key-encryption">1.2 非对称加密（Asymmetric / Public-Key Encryption）</h3>
+<p><strong>定义</strong>：使用<strong>一对</strong>数学关联的密钥——公开的公钥（public key）和保密的<br>
+私钥（private key）。公钥加密的数据，只有对应私钥能解；私钥签名的数据，<br>
+任何持有公钥的人都能验证。</p>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th>安全基础</th>
+<th>典型密钥长度</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RSA</td>
+<td>大整数分解难题</td>
+<td>2048 / 3072 / 4096 bit</td>
+<td>最通用，兼容性好，慢</td>
+</tr>
+<tr>
+<td>ECC (ECDSA/ECDH)</td>
+<td>椭圆曲线离散对数</td>
+<td>256 bit</td>
+<td>同等安全下密钥更短、更快</td>
+</tr>
+<tr>
+<td>Ed25519</td>
+<td>爱德华兹曲线</td>
+<td>256 bit</td>
+<td>现代签名首选，快且抗侧信道</td>
+</tr>
+<tr>
+<td>DH / ECDHE</td>
+<td>离散对数</td>
+<td>—</td>
+<td>用于<strong>密钥协商</strong>，不用于加密数据</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么它慢？</strong> 运算对象是上千位的大整数，核心操作是模幂（<code>m^e mod n</code>），<br>
+大量大数乘法和取模，比 AES 的按位操作慢几个数量级（通常几十到上千倍）。</p>
+<p><strong>两大用途必须分清</strong>：</p>
+<pre class="plain"><code>① 加密（保证机密性）:  公钥加密 ──► 私钥解密
+   目标：任何人都能发消息给我，但只有我能看
+
+② 签名（保证身份+完整性）:  私钥签名 ──► 公钥验签
+   目标：证明&quot;这条消息确实来自私钥持有者&quot;，且未被篡改
+</code></pre>
+<blockquote>
+<p>常见误区："用私钥加密、公钥解密" 这种说法容易误导。正确表述是<br>
+<strong>签名 = 用私钥对消息摘要做运算，公钥可以验证</strong>。因为公钥是公开的，<br>
+用"私钥加密"得到的密文谁都能解开，根本谈不上保密。</p>
+</blockquote>
+<h3 id="13-hybrid-encryption">1.3 混合加密（Hybrid Encryption）</h3>
+<p>工业界从不单用 RSA 加密业务数据，而是<strong>混合</strong>：</p>
+<pre class="plain"><code>① 随机生成一次性对称密钥 K（会话密钥，如 32 字节）
+② 用接收方公钥加密 K            → 解决&quot;密钥分发&quot;（非对称的强项）
+③ 用 K 加密真正的数据（AES-GCM）→ 解决&quot;高速大批量&quot;（对称的强项）
+④ 接收方用私钥解出 K，再解密数据
+</code></pre>
+<p>TLS/HTTPS、PGP、Signal、VPN 全是这个套路。<strong>记住一句话：<br>
+非对称加密只用来搬运密钥和做签名，真正的数据永远交给对称加密。</strong></p>
+<h3 id="14">1.4 三个概念别混淆：编码 / 哈希 / 加密</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>可逆？</th>
+<th>有密钥？</th>
+<th>目的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Base64 编码</td>
+<td>✅ 可逆</td>
+<td>❌ 无</td>
+<td>把二进制塞进文本协议，<strong>不是安全措施</strong></td>
+</tr>
+<tr>
+<td>哈希（SHA-256）</td>
+<td>❌ 不可逆</td>
+<td>❌ 无</td>
+<td>完整性校验、指纹</td>
+</tr>
+<tr>
+<td>HMAC</td>
+<td>❌ 不可逆</td>
+<td>✅ 有</td>
+<td>带密钥的完整性/认证（Day 147）</td>
+</tr>
+<tr>
+<td>对称加密</td>
+<td>✅ 可逆</td>
+<td>✅ 有</td>
+<td>机密性</td>
+</tr>
+<tr>
+<td>非对称加密</td>
+<td>✅ 可逆</td>
+<td>✅ 有（一对）</td>
+<td>机密性 + 密钥分发</td>
+</tr>
+<tr>
+<td>数字签名</td>
+<td>—</td>
+<td>✅ 有</td>
+<td>身份认证 + 完整性 + 不可否认</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 把 Base64 当加密用是新手最常见的笑话：<br>
+<code>base64.b64encode(b"password")</code> 的结果 <code>cGFzc3dvcmQ=</code> 任何人都能解。</p>
+</blockquote>
+<h3 id="15">1.5 分组密码的五个关键术语</h3>
+<ul>
+<li><strong>分组（Block）</strong>：AES 一次处理的固定长度，恒为 128 bit（16 字节）。</li>
+<li><strong>密钥长度</strong>：AES-128/192/256，<strong>只影响轮数</strong>（10/12/14 轮），不改分组大小。</li>
+<li><strong>模式（Mode）</strong>：如何把多个分组串起来加密，决定安全性（见 2.2）。</li>
+<li><strong>IV / nonce</strong>：初始向量 / 一次性数字，保证"同样的明文每次加密结果不同"。</li>
+<li><strong>填充（Padding）</strong>：明文长度不是分组整数倍时补齐到整数倍（见 2.3）。</li>
+</ul>
+<p><strong>为什么 AES 分组是 128 bit 不变？</strong> 因为 <code>SubBytes/ShiftRows/MixColumns</code> 这一套<br>
+"状态矩阵"运算天然是 16 字节的结构（4×4 字节矩阵）；加大分组会让安全性<br>
+提升有限而性能骤降，所以设计者选择用更多轮数（更长的密钥）来提升强度。</p>
+<h2 id="_2">二、原理深入</h2>
+<h3 id="21-aes">2.1 AES 内部结构（为什么它安全且可逆）</h3>
+<p>AES 把 16 字节明文排成 4×4 的"状态矩阵"，每轮做四个变换：</p>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    P[明文 16 字节] --&gt; AK0[AddRoundKey: 与第0轮子密钥异或]
+    AK0 --&gt; R{重复 9/11/13 轮}
+    R --&gt; SB[SubBytes: 逐字节 S盒非线性替换]
+    SB --&gt; SR[ShiftRows: 每行循环左移 0/1/2/3]
+    SR --&gt; MC[MixColumns: 列混淆 4x4 矩阵乘法]
+    MC --&gt; AK[AddRoundKey: 异或本轮子密钥]
+    AK --&gt; R
+    R --&gt; F[最后一轮: SubBytes/ShiftRows/AddRoundKey 无 MixColumns]
+    F --&gt; C[密文 16 字节]
+    KS[密钥扩展 Key Schedule] -.子密钥.-&gt; AK0
+    KS -.子密钥.-&gt; AK
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    P[明文 16 字节] --&gt; AK0[AddRoundKey: 与第0轮子密钥异或]
+    AK0 --&gt; R{重复 9/11/13 轮}
+    R --&gt; SB[SubBytes: 逐字节 S盒非线性替换]
+    SB --&gt; SR[ShiftRows: 每行循环左移 0/1/2/3]
+    SR --&gt; MC[MixColumns: 列混淆 4x4 矩阵乘法]
+    MC --&gt; AK[AddRoundKey: 异或本轮子密钥]
+    AK --&gt; R
+    R --&gt; F[最后一轮: SubBytes/ShiftRows/AddRoundKey 无 MixColumns]
+    F --&gt; C[密文 16 字节]
+    KS[密钥扩展 Key Schedule] -.子密钥.-&gt; AK0
+    KS -.子密钥.-&gt; AK
+</code></pre></div>
+<p>四个变换各自的作用（<strong>为什么是这四个</strong>）：</p>
+<ol>
+<li><strong>SubBytes</strong>：唯一的<strong>非线性</strong>步骤（S 盒）。没有它，整个密码就是线性<br>
+   方程组，能被直接解出密钥。它提供"混淆（confusion）"。</li>
+<li><strong>ShiftRows</strong>：把字节在列之间打散，保证一个字节的影响扩散到多列。</li>
+<li><strong>MixColumns</strong>：列内线性混合，提供"扩散（diffusion）"——一位变化迅速<br>
+   影响整块。</li>
+<li><strong>AddRoundKey</strong>：把密钥真正"掺"进去，否则算法与密钥无关。</li>
+</ol>
+<p><strong>密钥扩展</strong>：从 128/192/256 bit 主密钥推导出每轮一把子密钥。这也是为什么<br>
+密钥越长为轮数越多（10/12/14 轮），而不是改分组长度。</p>
+<p><strong>AES 的逆运算</strong>正是把上述步骤逆序 + 用逆 S 盒 / 逆 ShiftRows / 逆 MixColumns，<br>
+所以能解密（这是"对称"的底层保证）。</p>
+<h3 id="22-ecb-cbc-ctr-gcm">2.2 分组模式：ECB / CBC / CTR / GCM</h3>
+<p>分组密码只能处理固定 16 字节，现实数据远超 16 字节，于是有了"模式"。</p>
+<p><strong>ECB（Electronic Codebook）— ❌ 千万不要用</strong></p>
+<pre class="plain"><code>独立加密每个分组:  C_i = AES(P_i)
+</code></pre>
+<p>问题：相同明文分组 → 相同密文分组。加密一张位图后仍能看清轮廓（"ECB 企鹅"）。<br>
+<strong>它泄露的是数据的结构，而这往往就是最敏感的信息。</strong></p>
+<p><strong>CBC（Cipher Block Chaining）— ⚠️ 可用但需谨慎</strong></p>
+<pre class="plain"><code>C_1 = AES(P_1 XOR IV)
+C_i = AES(P_i XOR C_{i-1})
+</code></pre>
+<p>每个明文分组先与<strong>前一个密文分组</strong>异或，破坏了"相同明文→相同密文"。<br>
+要求：IV 必须随机且<strong>不可预测</strong>，且每次加密换新 IV。<br>
+缺点：<strong>只保证机密性，不保证完整性</strong>（可被 bit-flipping 篡改），且不能并行加密。</p>
+<p><strong>CTR（Counter）— ✅ 流式，可并行</strong></p>
+<pre class="plain"><code>C_i = P_i XOR AES(nonce || counter_i)
+</code></pre>
+<p>把分组密码当<strong>流密码</strong>用：加密一串计数器，再与明文异或。优点：可并行、<br>
+可随机访问、无填充。缺点：<strong>nonce+counter 组合绝不能重复</strong>，且同样不带完整性。</p>
+<p><strong>GCM（Galois/Counter Mode）— ✅ 现代默认</strong></p>
+<pre class="plain"><code>GCM = CTR 模式加密  +  GHASH 认证标签
+</code></pre>
+<p>它是 <strong>AEAD（Authenticated Encryption with Associated Data）</strong>：<br>
+一次运算同时给出机密性 + 完整性，还能附带 <strong>AAD</strong>（不加密但受保护的元数据）。<br>
+只要 tag 校验不过，解密直接失败——<strong>不会把被篡改的数据交给你</strong>。<br>
+这就是 TLS 1.3 里只剩 AES-GCM / ChaCha20-Poly1305 的原因。</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>机密性</th>
+<th>完整性</th>
+<th>可并行</th>
+<th>推荐度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ECB</td>
+<td>❌ 泄露结构</td>
+<td>❌</td>
+<td>✅</td>
+<td>🚫 禁止</td>
+</tr>
+<tr>
+<td>CBC</td>
+<td>✅</td>
+<td>❌</td>
+<td>❌</td>
+<td>⚠️ 仅配合 HMAC（Encrypt-then-MAC）</td>
+</tr>
+<tr>
+<td>CTR</td>
+<td>✅</td>
+<td>❌</td>
+<td>✅</td>
+<td>⚠️ 需自行加 MAC</td>
+</tr>
+<tr>
+<td><strong>GCM</strong></td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅ 推荐</td>
+</tr>
+<tr>
+<td>ChaCha20-Poly1305</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+<td>✅ 无 AES 硬件时推荐</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23-padding-pkcs7">2.3 填充（Padding）与 PKCS#7</h3>
+<p>CBC 要求明文长度是 16 的整数倍。PKCS#7 规则：缺 n 字节就补 n 个值为 n<br>
+的字节；若刚好整除，则补满一整块 16 个 <code>0x10</code>。</p>
+<pre class="plain"><code>&quot;HELLO&quot;(5字节) → 补 11 个 0x0B  → 16 字节
+16 字节整块     → 补 16 个 0x10 → 32 字节（必须补！否则无法区分&quot;已去掉填充&quot;）
+</code></pre>
+<blockquote>
+<p><strong>Padding Oracle 攻击</strong>：如果服务端对"填充错误"和"内容错误"返回不同提示，<br>
+攻击者可以逐字节解出明文。这就是为什么 CBC 时代要格外小心，也是 GCM 这种<br>
+AEAD 更安全的原因之一。</p>
+</blockquote>
+<h3 id="24-rsa">2.4 RSA 的数学原理</h3>
+<pre class="plain"><code>密钥生成:
+  选两个大素数 p, q（2048 bit 密钥 ⇒ p、q 各约 1024 bit）
+  n = p * q                       （公开的&quot;模数&quot;）
+  φ(n) = (p-1)(q-1)
+  选 e 与 φ(n) 互素（惯例 65537）
+  求 d 使 e * d ≡ 1 (mod φ(n))
+  公钥 = (n, e)     私钥 = (n, d)
+
+加密: c = m^e mod n
+解密: m = c^d mod n
+</code></pre>
+<p><strong>为什么安全</strong>：攻击者知道 n 和 e，想求 d 必须先分解 n 得到 p、q。而<br>
+2048-bit 的大整数分解在现有算力下不可行。<strong>为什么 e 常取 65537</strong>：<br>
+它是 <code>2^16+1</code>，二进制只有两个 1，模幂运算快，且足够大以避免小指数攻击。</p>
+<p><strong>为什么"教科书 RSA"不安全</strong>：</p>
+<ul>
+<li>确定性：相同明文 + 相同公钥 → 相同密文（可被枚举比对）。</li>
+<li>小消息可开方：若 <code>m^e &lt; n</code>，则 <code>c = m^e</code>，直接对 c 开 e 次方即得 m。</li>
+<li>可乘性：<code>E(m1)*E(m2) = E(m1*m2)</code>，攻击者可构造定向密文。</li>
+</ul>
+<p><strong>填充救场</strong>：OAEP（加密用）在明文前掺入随机数并做 Feistel 变换，让同一明文<br>
+每次密文都不同；PSS（签名用）用随机盐保证签名不可伪造、不可复用。</p>
+<h3 id="25-forward-secrecy">2.5 密钥协商与前向保密（Forward Secrecy）</h3>
+<p>RSA 封装密钥有个隐患：<strong>服务器私钥一旦泄露，攻击者录下的历史流量全被解开</strong>。</p>
+<p>Diffie-Hellman（DH）解决这个：</p>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant A as 客户端
+    participant B as 服务器
+    A-&gt;&gt;B: A = g^a mod p （公开）
+    B-&gt;&gt;A: B = g^b mod p （公开）
+    Note over A: K = B^a mod p
+    Note over B: K = A^b mod p
+    Note over A,B: 双方算出同一个 K，窃听者只知道 A、B，算不出 K（离散对数难题）
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant A as 客户端
+    participant B as 服务器
+    A-&gt;&gt;B: A = g^a mod p （公开）
+    B-&gt;&gt;A: B = g^b mod p （公开）
+    Note over A: K = B^a mod p
+    Note over B: K = A^b mod p
+    Note over A,B: 双方算出同一个 K，窃听者只知道 A、B，算不出 K（离散对数难题）
+</code></pre></div>
+<p>现代 TLS 用 <strong>ECDHE</strong>（椭圆曲线临时 DH）：每次连接生成<strong>一次性</strong>密钥对，<br>
+用完即弃。这样即使长期私钥泄露，也解不开历史会话——即"前向保密"。<br>
+Day 149 学的 JWT 与 Day 148 的这套密码学知识，是同一批底层工具的两种应用。</p>
+<h3 id="26">2.6 为什么非对称加密慢：数量级对比</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>相对速度</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AES-256-GCM 加解密</td>
+<td>1× (基准)</td>
+<td>按位运算 + 硬件加速</td>
+</tr>
+<tr>
+<td>RSA-2048 加密（公钥运算）</td>
+<td>~1000× 慢</td>
+<td>大数模幂，e=65537 已优化</td>
+</tr>
+<tr>
+<td>RSA-2048 解密（私钥运算）</td>
+<td>~3000× 慢</td>
+<td>d 是 2048 bit，全长度模幂</td>
+</tr>
+<tr>
+<td>ECC-256 运算</td>
+<td>~100× 慢</td>
+<td>椭圆曲线点乘</td>
+</tr>
+</tbody>
+</table>
+<p>正是这个数量级差，逼出了混合加密这一必然方案。</p>
+<h2 id="_3">三、常见陷阱与避坑指南</h2>
+<h3 id="31-ecb">3.1 用 ECB 模式加密（结构性泄露）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 错误：ECB 会让相同明文块产生相同密文块</span>
+<span class="n">cipher</span> <span class="o">=</span> <span class="n">Cipher</span><span class="p">(</span><span class="n">algorithms</span><span class="o">.</span><span class="n">AES</span><span class="p">(</span><span class="n">key</span><span class="p">),</span> <span class="n">modes</span><span class="o">.</span><span class="n">ECB</span><span class="p">())</span>
+</code></pre></div>
+<p><strong>后果</strong>：加密图片能看出轮廓，加密数据库字段能看出哪些行值相同。<br>
+<strong>正确做法</strong>：用 <code>AESGCM</code>（推荐）或 CBC + 随机 IV。</p>
+<h3 id="32-iv-nonce">3.2 IV / nonce 重用（最致命的一类错误）</h3>
+<ul>
+<li><strong>CBC 的 IV 可预测</strong>：固定 IV 或"时间戳当 IV"，会让相同明文前缀产生相同<br>
+  密文前缀，泄露信息（BEAST 攻击）。</li>
+<li><strong>GCM 的 nonce 重用是毁灭性的</strong>：同一个 (key, nonce) 加密两条消息，<br>
+  两条密文异或 = 两条明文异或（直接泄露明文关系），更严重的是可以恢复出<br>
+<strong>认证密钥 H</strong>，从而伪造任意消息的 tag。</li>
+</ul>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 错误：nonce 写死 / 每次用同一个</span>
+<span class="n">aesgcm</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x00</span><span class="s2">&quot;</span> <span class="o">*</span> <span class="mi">12</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+<span class="c1"># ✅ 正确：每次加密都生成新 nonce</span>
+<span class="n">nonce</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">urandom</span><span class="p">(</span><span class="mi">12</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>纪律</strong>：自己管 nonce 时用随机 12 字节（碰撞概率极低）或严格单调计数器；<br>
+用 <code>AESGCM</code> 时把 nonce 与密文一起存储/传输。</p>
+<h3 id="33-rsa">3.3 用"教科书 RSA"（无填充）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 错误：确定性加密 + 可乘性 + 小消息可开方</span>
+<span class="n">c</span> <span class="o">=</span> <span class="nb">pow</span><span class="p">(</span><span class="nb">int</span><span class="o">.</span><span class="n">from_bytes</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="s2">&quot;big&quot;</span><span class="p">),</span> <span class="n">e</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+<span class="c1"># ✅ 正确：必须带 OAEP 填充</span>
+<span class="n">public_key</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="n">padding</span><span class="o">.</span><span class="n">OAEP</span><span class="p">(</span><span class="n">mgf</span><span class="o">=...</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="n">SHA256</span><span class="p">(),</span> <span class="n">label</span><span class="o">=</span><span class="kc">None</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="34-rsa">3.4 拿 RSA 加密大文件 / 超长消息</h3>
+<p>2048-bit 密钥 + SHA-256 的 OAEP 上限约 <strong>190 字节</strong>。超了会直接报<br>
+<code>ValueError: Encryption failed</code>。正确姿势是用混合加密（见 <code>code/03</code>）。</p>
+<h3 id="35-taghmac">3.5 用 <code>==</code> 比较密钥、tag、HMAC</h3>
+<p>字符串/字节比较会在第一个不同字节处提前返回，攻击者可据耗时逐字节猜测<br>
+（<strong>时序攻击</strong>）。必须用常数时间比较：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">hmac</span>
+<span class="n">hmac</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">)</span>   <span class="c1"># ✅</span>
+<span class="n">a</span> <span class="o">==</span> <span class="n">b</span>                      <span class="c1"># ❌ 用于安全比较</span>
+</code></pre></div>
+<h3 id="36-git">3.6 硬编码密钥 / 把密钥提交进 Git</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">KEY</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;1234567890123456&quot;</span>   <span class="c1"># ❌ 会被 git 永远记住</span>
+</code></pre></div>
+<p>正确做法：密钥放环境变量、KMS、Vault 或密钥管理服务；用 <code>.gitignore</code><br>
+排除密钥文件；一旦泄露必须<strong>轮换密钥</strong>（历史提交无法真正删除）。</p>
+<h3 id="37">3.7 自己发明加密方案 / 自造填充</h3>
+<p>"我用 AES 加密，再把结果倒序一下，再加个盐，肯定更安全" —— 这类<br>
+<strong>自制密码学（Roll Your Own Crypto）</strong> 是安全事故高发区。用经过审计的<br>
+库与标准组合：<code>AESGCM</code>、<code>ChaCha20Poly1305</code>、<code>Fernet</code>。</p>
+<h3 id="38">3.8 把编码当加密</h3>
+<p><code>base64</code>、<code>hex</code>、<code>urlencode</code> 全部可逆且无密钥，<strong>不能保护任何机密</strong>。<br>
+它们只用于让二进制适配文本协议。</p>
+<h3 id="39-encrypt-then-mac">3.9 加密了却忘了认证（Encrypt-then-MAC 顺序）</h3>
+<p>CBC 加密不防篡改。若必须用 CBC，应"先加密、后对密文做 HMAC"（<br>
+Encrypt-then-MAC），并<strong>先验 MAC 再解密</strong>。顺序颠倒会引入 Padding Oracle。<br>
+GCM 已经内置了这个顺序，所以优先选 GCM。</p>
+<h3 id="310">3.10 忽略随机源质量</h3>
+<p>用 <code>random</code> 模块生成密钥/IV 是灾难（伪随机，种子可预测）。<br>
+<strong>密钥、IV、盐一律用 <code>os.urandom()</code> 或 <code>secrets</code> 模块。</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">secrets</span>
+<span class="n">key</span> <span class="o">=</span> <span class="n">secrets</span><span class="o">.</span><span class="n">token_bytes</span><span class="p">(</span><span class="mi">32</span><span class="p">)</span>   <span class="c1"># ✅ 密码学安全</span>
+</code></pre></div>
+<h2 id="api">四、定义与使用方法（API 速查表）</h2>
+<blockquote>
+<p>本节所有 API 来自 <code>cryptography</code> 库（<code>pip install cryptography</code>），它是<br>
+Python 生态事实标准的密码学库，底层用 OpenSSL/Rust 实现，<strong>不要自己<br>
+用纯 Python 手写 AES/RSA</strong>。</p>
+</blockquote>
+<h3 id="41-aesgcm">4.1 对称加密 AESGCM</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives.ciphers.aead</span> <span class="kn">import</span> <span class="n">AESGCM</span>
+<span class="kn">import</span> <span class="nn">os</span>
+
+<span class="c1"># 生成密钥</span>
+<span class="n">key</span> <span class="o">=</span> <span class="n">AESGCM</span><span class="o">.</span><span class="n">generate_key</span><span class="p">(</span><span class="n">bit_length</span><span class="o">=</span><span class="mi">256</span><span class="p">)</span>     <span class="c1"># 返回 32 字节 bytes</span>
+<span class="c1"># 或 key = os.urandom(32)</span>
+
+<span class="n">aes</span> <span class="o">=</span> <span class="n">AESGCM</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+<span class="n">nonce</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">urandom</span><span class="p">(</span><span class="mi">12</span><span class="p">)</span>                        <span class="c1"># 12 字节，每次加密都要新</span>
+<span class="n">ct</span> <span class="o">=</span> <span class="n">aes</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span><span class="n">nonce</span><span class="p">,</span> <span class="n">plaintext_bytes</span><span class="p">,</span> <span class="n">aad</span><span class="p">)</span> <span class="c1"># aad 可为 None 或 bytes</span>
+<span class="n">pt</span> <span class="o">=</span> <span class="n">aes</span><span class="o">.</span><span class="n">decrypt</span><span class="p">(</span><span class="n">nonce</span><span class="p">,</span> <span class="n">ct</span><span class="p">,</span> <span class="n">aad</span><span class="p">)</span>              <span class="c1"># 篡改/密钥错 → InvalidTag</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>参数</th>
+<th>返回</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AESGCM.generate_key(bit_length)</code></td>
+<td>128/192/256</td>
+<td><code>bytes</code></td>
+<td>生成随机密钥</td>
+</tr>
+<tr>
+<td><code>AESGCM(key)</code></td>
+<td>32/24/16 字节</td>
+<td>实例</td>
+<td>key 长度不对会报错</td>
+</tr>
+<tr>
+<td><code>.encrypt(nonce, data, aad)</code></td>
+<td>nonce 8~128B（推荐 12）</td>
+<td><code>bytes</code></td>
+<td>输出 = 密文 + 16B tag</td>
+</tr>
+<tr>
+<td><code>.decrypt(nonce, data, aad)</code></td>
+<td>同上</td>
+<td><code>bytes</code></td>
+<td>失败抛 <code>InvalidTag</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-chacha20-poly1305-aes">4.2 ChaCha20-Poly1305（无 AES 硬件时的替代）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives.ciphers.aead</span> <span class="kn">import</span> <span class="n">ChaCha20Poly1305</span>
+<span class="n">chacha</span> <span class="o">=</span> <span class="n">ChaCha20Poly1305</span><span class="p">(</span><span class="n">ChaCha20Poly1305</span><span class="o">.</span><span class="n">generate_key</span><span class="p">())</span>
+<span class="n">ct</span> <span class="o">=</span> <span class="n">chacha</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">urandom</span><span class="p">(</span><span class="mi">12</span><span class="p">),</span> <span class="sa">b</span><span class="s2">&quot;data&quot;</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;aad&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="43-rsa">4.3 RSA 密钥生成与序列化</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives.asymmetric</span> <span class="kn">import</span> <span class="n">rsa</span>
+<span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives</span> <span class="kn">import</span> <span class="n">serialization</span>
+
+<span class="n">private_key</span> <span class="o">=</span> <span class="n">rsa</span><span class="o">.</span><span class="n">generate_private_key</span><span class="p">(</span><span class="n">public_exponent</span><span class="o">=</span><span class="mi">65537</span><span class="p">,</span> <span class="n">key_size</span><span class="o">=</span><span class="mi">2048</span><span class="p">)</span>
+<span class="n">public_key</span> <span class="o">=</span> <span class="n">private_key</span><span class="o">.</span><span class="n">public_key</span><span class="p">()</span>
+
+<span class="c1"># 导出 PEM</span>
+<span class="n">pem_pub</span> <span class="o">=</span> <span class="n">public_key</span><span class="o">.</span><span class="n">public_bytes</span><span class="p">(</span>
+    <span class="n">serialization</span><span class="o">.</span><span class="n">Encoding</span><span class="o">.</span><span class="n">PEM</span><span class="p">,</span>
+    <span class="n">serialization</span><span class="o">.</span><span class="n">PublicFormat</span><span class="o">.</span><span class="n">SubjectPublicKeyInfo</span><span class="p">)</span>
+
+<span class="n">pem_priv</span> <span class="o">=</span> <span class="n">private_key</span><span class="o">.</span><span class="n">private_bytes</span><span class="p">(</span>
+    <span class="n">serialization</span><span class="o">.</span><span class="n">Encoding</span><span class="o">.</span><span class="n">PEM</span><span class="p">,</span>
+    <span class="n">serialization</span><span class="o">.</span><span class="n">PrivateFormat</span><span class="o">.</span><span class="n">PKCS8</span><span class="p">,</span>
+    <span class="n">serialization</span><span class="o">.</span><span class="n">BestAvailableEncryption</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;passphrase&quot;</span><span class="p">))</span>   <span class="c1"># 口令保护</span>
+
+<span class="c1"># 从 PEM 加载</span>
+<span class="n">pub</span> <span class="o">=</span> <span class="n">serialization</span><span class="o">.</span><span class="n">load_pem_public_key</span><span class="p">(</span><span class="n">pem_pub</span><span class="p">)</span>
+<span class="n">priv</span> <span class="o">=</span> <span class="n">serialization</span><span class="o">.</span><span class="n">load_pem_private_key</span><span class="p">(</span><span class="n">pem_priv</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="sa">b</span><span class="s2">&quot;passphrase&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="44-rsa-oaeppss">4.4 RSA 加密（OAEP）与签名（PSS）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives.asymmetric</span> <span class="kn">import</span> <span class="n">padding</span>
+<span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives</span> <span class="kn">import</span> <span class="n">hashes</span>
+
+<span class="n">OAEP</span> <span class="o">=</span> <span class="n">padding</span><span class="o">.</span><span class="n">OAEP</span><span class="p">(</span><span class="n">mgf</span><span class="o">=</span><span class="n">padding</span><span class="o">.</span><span class="n">MGF1</span><span class="p">(</span><span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">()),</span>
+                    <span class="n">algorithm</span><span class="o">=</span><span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">(),</span> <span class="n">label</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+<span class="n">PSS</span>  <span class="o">=</span> <span class="n">padding</span><span class="o">.</span><span class="n">PSS</span><span class="p">(</span><span class="n">mgf</span><span class="o">=</span><span class="n">padding</span><span class="o">.</span><span class="n">MGF1</span><span class="p">(</span><span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">()),</span>
+                   <span class="n">salt_length</span><span class="o">=</span><span class="n">padding</span><span class="o">.</span><span class="n">PSS</span><span class="o">.</span><span class="n">MAX_LENGTH</span><span class="p">)</span>
+
+<span class="n">ct</span> <span class="o">=</span> <span class="n">public_key</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;short msg&quot;</span><span class="p">,</span> <span class="n">OAEP</span><span class="p">)</span>      <span class="c1"># ≤ 190 字节 (2048+SHA256)</span>
+<span class="n">pt</span> <span class="o">=</span> <span class="n">private_key</span><span class="o">.</span><span class="n">decrypt</span><span class="p">(</span><span class="n">ct</span><span class="p">,</span> <span class="n">OAEP</span><span class="p">)</span>
+
+<span class="n">sig</span> <span class="o">=</span> <span class="n">private_key</span><span class="o">.</span><span class="n">sign</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">PSS</span><span class="p">,</span> <span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">())</span>      <span class="c1"># 私钥签名</span>
+<span class="n">public_key</span><span class="o">.</span><span class="n">verify</span><span class="p">(</span><span class="n">sig</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;doc&quot;</span><span class="p">,</span> <span class="n">PSS</span><span class="p">,</span> <span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">())</span>      <span class="c1"># 公钥验签，失败抛 InvalidSignature</span>
+</code></pre></div>
+<h3 id="45">4.5 常用填充别名</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives</span> <span class="kn">import</span> <span class="n">padding</span> <span class="k">as</span> <span class="n">sym_padding</span>
+<span class="n">padder</span> <span class="o">=</span> <span class="n">sym_padding</span><span class="o">.</span><span class="n">PKCS7</span><span class="p">(</span><span class="mi">128</span><span class="p">)</span><span class="o">.</span><span class="n">padder</span><span class="p">()</span>     <span class="c1"># 128 bit = 16 字节分组</span>
+</code></pre></div>
+<h3 id="46">4.6 选型速查</h3>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>推荐 API</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>加密任意数据（同时要完整性）</td>
+<td><code>AESGCM</code> / <code>ChaCha20Poly1305</code></td>
+</tr>
+<tr>
+<td>加密会话密钥 / 短消息</td>
+<td><code>RSA-OAEP</code> 或 ECIES</td>
+</tr>
+<tr>
+<td>数字签名</td>
+<td><code>RSA-PSS</code>（兼容） / <code>Ed25519</code>（现代）</td>
+</tr>
+<tr>
+<td>密钥协商</td>
+<td><code>ECDH</code> / <code>X25519</code></td>
+</tr>
+<tr>
+<td>密码存储</td>
+<td><code>pbkdf2_hmac</code> / <code>scrypt</code> / Argon2（Day 147）</td>
+</tr>
+<tr>
+<td>完整性校验（无密钥）</td>
+<td><code>hashlib.sha256</code>（Day 147）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="47">4.7 官方文档入口</h3>
+<ul>
+<li><code>https://cryptography.io/en/latest/hazmat/primitives/</code></li>
+<li>选模式时先看 "Authenticated encryption" 章节</li>
+</ul>
+<hr>
+<h2 id="mermaid-ascii">五、图解（Mermaid / ASCII）</h2>
+<h3 id="51">5.1 两种加密的密钥流向</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph SYM[对称加密 AES]
+        K1[同一把密钥 K] --&gt; E1[加密] --&gt; C1[密文]
+        K1 --&gt; D1[解密] --&gt; P1[明文]
+    end
+    subgraph ASYM[非对称加密 RSA]
+        PU[公钥 - 可公开] --&gt; E2[加密] --&gt; C2[密文]
+        PR[私钥 - 保密] --&gt; D2[解密] --&gt; P2[明文]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph SYM[对称加密 AES]
+        K1[同一把密钥 K] --&gt; E1[加密] --&gt; C1[密文]
+        K1 --&gt; D1[解密] --&gt; P1[明文]
+    end
+    subgraph ASYM[非对称加密 RSA]
+        PU[公钥 - 可公开] --&gt; E2[加密] --&gt; C2[密文]
+        PR[私钥 - 保密] --&gt; D2[解密] --&gt; P2[明文]
+    end
+</code></pre></div>
+<h3 id="52">5.2 混合加密时序</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as 客户端
+    participant S as 服务器
+    C-&gt;&gt;C: 生成一次性会话密钥 K
+    C-&gt;&gt;S: RSA_OAEP(服务器公钥, K)
+    C-&gt;&gt;S: AES_GCM(K, 业务数据)
+    S-&gt;&gt;S: 私钥解出 K → 解密数据
+    S--&gt;&gt;C: 后续通信都走 AES(K)
+    Note over C,S: RSA 只搬 32 字节密钥，数据全走 AES
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as 客户端
+    participant S as 服务器
+    C-&gt;&gt;C: 生成一次性会话密钥 K
+    C-&gt;&gt;S: RSA_OAEP(服务器公钥, K)
+    C-&gt;&gt;S: AES_GCM(K, 业务数据)
+    S-&gt;&gt;S: 私钥解出 K → 解密数据
+    S--&gt;&gt;C: 后续通信都走 AES(K)
+    Note over C,S: RSA 只搬 32 字节密钥，数据全走 AES
+</code></pre></div>
+<h3 id="53-aead">5.3 AEAD 密文结构</h3>
+<pre class="plain"><code> nonce(12B)      ciphertext(与明文等长)         tag(16B)
+┌──────────┬───────────────────────────────┬──────────────┐
+│  随机数   │         加密后的数据           │  认证标签     │
+└──────────┴───────────────────────────────┴──────────────┘
+     ▲                      ▲                       ▲
+  可公开传输          AAD 参与认证但不加密      篡改任一字节
+                                             → tag 校验失败
+</code></pre>
+<p>更完整的图解（ECB 对比、RSA 数学直觉、选型决策树）见<br>
+<a href="../diagrams/README.md"><code>diagrams/README.md</code></a>。</p>
+<h2 id="_4">六、实战代码案例</h2>
+<p>本日三个可运行示例位于 <code>code/</code>，逐层递进（每个文件都能直接<br>
+<code>python3 xxx.py</code> 运行，需要 <code>pip install cryptography</code>）：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>类型</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01-aes-gcm-basics.py</code></td>
+<td>基础用法</td>
+<td>AES-256-GCM 加解密、AAD 认证、篡改检测、nonce 重用演示</td>
+</tr>
+<tr>
+<td><code>02-rsa-asymmetric.py</code></td>
+<td>进阶 / 避坑</td>
+<td>RSA 密钥对生成与 PEM 序列化、OAEP 加解密、长度上限、PSS 签名验签</td>
+</tr>
+<tr>
+<td><code>03-hybrid-secure-channel.py</code></td>
+<td>实战</td>
+<td>混合加密安全通信工具：客户端/服务器类、密钥封装、签名、篡改与伪造攻击演示</td>
+</tr>
+</tbody>
+</table>
+<h3 id="61-01">6.1 <code>01</code> — 基础：把一次加密做对</h3>
+<p>演示了正确姿势的完整闭环：<code>os.urandom(12)</code> 生成 nonce → <code>AESGCM.encrypt</code><br>
+→ 传输 <code>(nonce, 密文)</code> → <code>AESGCM.decrypt</code>。并连续演示三种篡改（翻密文位、<br>
+改 AAD、换密钥）全部被 <code>InvalidTag</code> 拦下——这是 GCM 相比 CBC 的核心价值。</p>
+<h3 id="62-02-rsa">6.2 <code>02</code> — 进阶：RSA 的正确边界</h3>
+<p>关键代码与结论：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">max_len</span> <span class="o">=</span> <span class="mi">256</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="mi">32</span> <span class="o">-</span> <span class="mi">2</span>      <span class="c1"># 2048bit 密钥 + SHA-256 ⇒ 190 字节</span>
+<span class="n">public_key</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;A&quot;</span> <span class="o">*</span> <span class="mi">191</span><span class="p">,</span> <span class="n">OAEP</span><span class="p">)</span>   <span class="c1"># ValueError: Encryption failed</span>
+</code></pre></div>
+<p><code>02</code> 用一个真实的 <code>ValueError</code> 让你记住：<strong>RSA 装不下业务数据</strong>。同时对比<br>
+"公钥加密→私钥解密"（机密性）与"私钥签名→公钥验证"（身份+完整性）两条<br>
+方向不同的链路。</p>
+<h3 id="63-03">6.3 <code>03</code> — 实战：安全通信工具</h3>
+<p>模拟 TLS 的简化版，<code>SecureServer</code> / <code>SecureClient</code> 两个类完整走通：</p>
+<pre class="plain"><code>客户端                                         服务器
+  │ 生成会话密钥 K ── RSA_OAEP(服务器公钥, K) ──► 私钥解出 K
+  │ AES_GCM(K, 消息) + nonce ─────────────────► 用 K 解密
+  │ RSA_PSS(客户端私钥, 密文) ─────────────────► 用登记的客户端公钥验签
+</code></pre>
+<p><code>03</code> 还内置了两场攻击演示：<br>
+- <strong>篡改密文</strong> → 验签/解密失败；<br>
+- <strong>攻击者自带密钥伪造消息</strong> → 因公钥不在服务器信任名单内被拒。</p>
+<p>这解释了真实系统为什么要"证书固定 / CA 信任链"：<strong>光有加密不够，<br>
+还必须确认"你手里的公钥真的是对方的"</strong>——否则中间人可以直接换掉公钥。</p>
+<h3 id="64">6.4 运行方式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-148-symmetric-asymmetric-encryption/code
+pip<span class="w"> </span>install<span class="w"> </span>cryptography
+python3<span class="w"> </span><span class="m">01</span>-aes-gcm-basics.py
+python3<span class="w"> </span><span class="m">02</span>-rsa-asymmetric.py
+python3<span class="w"> </span><span class="m">03</span>-hybrid-secure-channel.py
+</code></pre></div>
+<hr>
+<h2 id="_5">七、思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 AES 分组长度固定 128 bit，但密钥可以是 128/192/256 bit？</strong><br>
+   密钥变长改变的是轮数还是分组？这样做的好处是什么？</p>
+</li>
+<li>
+<p><strong>GCM 的 nonce 只有 12 字节，如果高并发系统每秒加密上百万条消息，<br>
+   随机 nonce 会不会碰撞？</strong> 请从生日悖论角度估算碰撞概率，并说明工业界<br>
+   如何避免（提示：计数器 / 随机 96 位 / 密钥轮换）。</p>
+</li>
+<li>
+<p><strong>RSA 公钥加密没有前向保密，为什么现代 TLS 1.3 干脆删掉了 RSA 密钥<br>
+   交换，只保留 (EC)DHE？</strong> 如果服务器私钥被盗，两种方案的后果差别在哪？</p>
+</li>
+<li>
+<p><strong>"签名"和"HMAC"都能防篡改，什么时候必须用签名而不能用 HMAC？</strong><br>
+   （提示：HMAC 双方共享同一把密钥，谁都能伪造）</p>
+</li>
+<li>
+<p><strong>假设你要做一个"端到端加密聊天软件"，设计了：客户端各自生成 RSA<br>
+   密钥对，互相用对方公钥加密消息。</strong> 这个方案有哪些致命问题？<br>
+   请至少说出两点并给出改进方向（提示：为何实际产品用双棘轮 / Signal 协议）。</p>
+</li>
+</ol>
+<blockquote>
+<p>做完思考题，再回看 <code>diagrams/README.md</code> 的决策树，尝试用它回答：<br>
+"给 100 万用户的数据库字段做加密，你会怎么设计密钥体系？"</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-147/index.html">← Day 147 密码学基础：哈希、加盐与 HMAC</a><a class="nav-next" href="../day-149/index.html">Day 149 JWT 安全：结构、签名与攻击面 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

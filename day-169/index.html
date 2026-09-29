@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 169 — Fabric 批量执行</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 169 — Fabric 批量执行</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">698 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-169-fabric-批量执行" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21-fabric">2.1 Fabric 是什么：先把两层拆开</a>
+<a class="toc-l3" href="#22-connection">2.2 Connection：一台机器的一切动作都收进一个对象</a>
+<a class="toc-l3" href="#23-result">2.3 Result：一次执行的完整快照</a>
+<a class="toc-l3" href="#24-group">2.4 Group：多机原语</a>
+<a class="toc-l3" href="#25-groupexception">2.5 GroupException：并行失败的聚合</a>
+<a class="toc-l3" href="#26-sudo-pty">2.6 sudo 与 pty：为什么它要密码参数</a>
+<a class="toc-l3" href="#27-config">2.7 Config：配置优先级</a>
+<a class="toc-l3" href="#28-paramiko-ansible">2.8 与 paramiko / Ansible 的定位对比</a>
+<a class="toc-l2" href="#3">3. 原理深入</a>
+<a class="toc-l3" href="#31-fabric-crunuptime">3.1 Fabric 内部：一次 c.run(&quot;uptime&quot;) 到底发生了什么</a>
+<a class="toc-l3" href="#32-gatewayfabric">3.2 跳板机（gateway）：Fabric 帮你做的事</a>
+<a class="toc-l3" href="#33-warn-hide-echo-pty">3.3 warn / hide / echo / pty：四个高频参数的真实语义</a>
+<a class="toc-l3" href="#34-threadinggroup">3.4 并发模型的真相：ThreadingGroup 没有&quot;连接池&quot;</a>
+<a class="toc-l3" href="#35-fabric">3.5 幂等：Fabric 不提供，你必须自己写</a>
+<a class="toc-l3" href="#36-release">3.6 部署事务：release 目录 + 软链切换</a>
+<a class="toc-l3" href="#37">3.7 健康检查与&quot;假成功&quot;</a>
+<a class="toc-l2" href="#4-api">4. 定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#41-connection">4.1 Connection</a>
+<a class="toc-l3" href="#42-resultinvokerunnersresult">4.2 Result（invoke.runners.Result）</a>
+<a class="toc-l3" href="#43-group">4.3 Group</a>
+<a class="toc-l3" href="#44-config-task">4.4 Config 与 task</a>
+<a class="toc-l2" href="#5">5. 图解</a>
+<a class="toc-l3" href="#51-fabric">5.1 Fabric 三层与&quot;谁负责什么&quot;</a>
+<a class="toc-l3" href="#52-threadinggroup-vs-serialgroup">5.2 ThreadingGroup vs SerialGroup</a>
+<a class="toc-l3" href="#53-mermaid">5.3 Mermaid：一次可回滚的部署</a>
+<a class="toc-l3" href="#54-mermaidgroupexception">5.4 Mermaid：GroupException 的信息流</a>
+<a class="toc-l3" href="#55-n-16">5.5 限流分片：把 N 台切成每批 16 台</a>
+<a class="toc-l2" href="#6-top-8">6. 常见陷阱 Top 8</a>
+<a class="toc-l3" href="#1-connection">陷阱 1：以为 Connection(...) 就会连（其实惰性）</a>
+<a class="toc-l3" href="#2run-warnfalse">陷阱 2：run() 默认 warn=False → 一台失败中断整批</a>
+<a class="toc-l3" href="#3ptytrue-rstderr">陷阱 3：pty=True 后 r.stderr 永远是空的</a>
+<a class="toc-l3" href="#4hidetrue">陷阱 4：hide=True 吞掉了诊断信息，出事时无从排查</a>
+<a class="toc-l3" href="#5-groupexception">陷阱 5：把 GroupException 当成&quot;一个异常&quot;</a>
+<a class="toc-l3" href="#6threadinggroup">陷阱 6：ThreadingGroup 无并发上限</a>
+<a class="toc-l3" href="#7">陷阱 7：忘了关连接 → 脚本结束时不退出</a>
+<a class="toc-l3" href="#8-fabric-ansible">陷阱 8：把 Fabric 当 Ansible 用（追求幂等/状态收敛）</a>
+<a class="toc-l2" href="#7_1">7. 实战代码案例</a>
+<a class="toc-l3" href="#71">7.1 运行方法</a>
+<a class="toc-l3" href="#72-day-168">7.2 部署脚本的&quot;三条红线&quot;（与 Day 168 呼应，但更严格）</a>
+<a class="toc-l3" href="#73-04-dry-run">7.3 实测输出样例（04 的 dry-run）</a>
+<a class="toc-l2" href="#8">8. 思考题</a>
+<a class="toc-l2" href="#9">9. 小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-169-fabric">Day 169 — Fabric 批量执行</h1>
+<blockquote>
+<p><strong>一句话定义</strong>：Fabric = <strong>Invoke（任务/CLI 层）</strong> + <strong>Paramiko（SSH 层）</strong>。<br>
+它把你昨天手写的"连接池 + 线程池 + 审计"换成了几个声明式原语，<br>
+代价是你必须接受它的<strong>抽象边界</strong>（尤其：它不提供幂等）。</p>
+</blockquote>
+<p>本课从"Fabric 到底帮你做了什么"讲到"如何写出一份能回滚的部署脚本"。</p>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>学完本课，你应该能够：</p>
+<ul>
+<li>[ ] 说清 Fabric 的三层结构（<code>@task</code> / <code>Connection</code> / <code>Group</code>）与它和 paramiko 的关系</li>
+<li>[ ] 用 <code>Connection.run()</code> / <code>sudo()</code> / <code>put()</code> / <code>get()</code> 完成一次单机交互</li>
+<li>[ ] 用 <code>ThreadingGroup</code> / <code>SerialGroup</code> 做多机批量执行，并正确处理 <code>GroupException</code></li>
+<li>[ ] 解释 <code>warn</code> / <code>hide</code> / <code>echo</code> / <code>pty</code> 四个参数各自的语义与误用后果</li>
+<li>[ ] 写出"release 目录 + 软链切换 + 上一版保留"的可回滚部署脚本</li>
+<li>[ ] 说清 Fabric <strong>不提供</strong>什么（幂等、状态管理、依赖图），以及什么时候该换 Ansible</li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21-fabric">2.1 Fabric 是什么：先把两层拆开</h3>
+<pre class="plain"><code>┌───────────────────────────────────────────────────────────────┐
+│  Invoke（任务与 CLI 层）                                        │
+│    @task 装饰的函数 → 自动变成命令行子命令                        │
+│    fab deploy --env=prod                                      │
+│    处理：参数解析、任务依赖、环境变量（Context）、交互式提示        │
+├───────────────────────────────────────────────────────────────┤
+│  Fabric（SSH 层，本站重点）                                     │
+│    Connection  —— 一台机器的一次会话                             │
+│    Group       —— 多台机器的集合（Threading / Serial）            │
+│    处理：run/sudo/put/get、认证、跳板机、结果对象                   │
+├───────────────────────────────────────────────────────────────┤
+│  Paramiko（协议层，Day 168 学过）                               │
+│    Transport / Channel / SFTPClient                           │
+└───────────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>为什么这个分层很重要</strong>：当 Fabric 的行为让你困惑时，先判断"这是 Invoke 的问题、<br>
+Fabric 的问题，还是 Paramiko 的问题"。绝大多数诡异的"卡住"，根因都在最底下那层<br>
+（TCP/认证/超时），而 Fabric 只是没帮你设好超时。</p>
+<h3 id="22-connection">2.2 <code>Connection</code>：一台机器的一切动作都收进一个对象</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Connection</span>
+
+<span class="n">c</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s2">&quot;web-01&quot;</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="s2">&quot;deploy&quot;</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">22</span><span class="p">,</span>
+               <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;key_filename&quot;</span><span class="p">:</span> <span class="s2">&quot;~/.ssh/id_ed25519&quot;</span><span class="p">})</span>
+
+<span class="n">r</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;uname -a&quot;</span><span class="p">)</span>          <span class="c1"># 执行命令，返回 Result</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>        <span class="c1"># Result 是&quot;已执行完的快照&quot;，不是流</span>
+<span class="n">c</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s2">&quot;app.tar.gz&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp/app.tar.gz&quot;</span><span class="p">)</span>
+<span class="n">c</span><span class="o">.</span><span class="n">sudo</span><span class="p">(</span><span class="s2">&quot;systemctl restart nginx&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>三个关键点</strong>：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">点</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>Connection</code> 复用一条 SSH 连接</td>
+<td style="text-align: left;">同一个 <code>c</code> 上的多次 <code>run</code> 复用 Transport（和 Day 168 的池是一样的道理）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>run</code> 默认<strong>非惰性</strong></td>
+<td style="text-align: left;">调用即执行、立即返回 <code>Result</code>，异常会立刻抛（除非 <code>warn=True</code>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>connect_kwargs</code> 透传给 paramiko</td>
+<td style="text-align: left;">所以 <code>timeout</code>、<code>banner_timeout</code>、<code>auth_timeout</code> 都在这里设</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23-result">2.3 <code>Result</code>：一次执行的完整快照</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">invoke.runners</span> <span class="kn">import</span> <span class="n">Result</span>
+
+<span class="n">r</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;cat /etc/hostname&quot;</span><span class="p">)</span>
+<span class="n">r</span><span class="o">.</span><span class="n">command</span>        <span class="c1"># &#39;cat /etc/hostname&#39;</span>
+<span class="n">r</span><span class="o">.</span><span class="n">stdout</span>         <span class="c1"># &#39;web-01\n&#39;</span>
+<span class="n">r</span><span class="o">.</span><span class="n">stderr</span>         <span class="c1"># &#39;&#39;</span>
+<span class="n">r</span><span class="o">.</span><span class="n">return_code</span>    <span class="c1"># 0</span>
+<span class="n">r</span><span class="o">.</span><span class="n">ok</span>             <span class="c1"># True   （return_code == 0）</span>
+<span class="n">r</span><span class="o">.</span><span class="n">failed</span>         <span class="c1"># False</span>
+<span class="n">r</span><span class="o">.</span><span class="n">exited</span>         <span class="c1"># True   （进程已退出）</span>
+</code></pre></div>
+<p><strong>为什么要看 <code>ok</code> 而不是 <code>exited == 0</code></strong>：两者等价，但 <code>ok</code> 表达了意图。<br>
+⚠ <strong>API 陷阱（本课实测踩到）</strong>：<code>Result.exited</code> <strong>不是布尔</strong>，它就是退出码整数，<br>
+没跑完时为 <code>None</code>。所以 <code>if not r.exited:</code> 会把<strong>成功</strong>的命令（exited=0）误判成“没跑完”。<br>
+正确写法是 <code>if r.ok:</code> 或 <code>if r.exited == 0:</code>，要判“没跑完”请写 <code>if r.exited is None:</code>。</p>
+<h3 id="24-group">2.4 <code>Group</code>：多机原语</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">ThreadingGroup</span><span class="p">,</span> <span class="n">SerialGroup</span>
+
+<span class="n">web</span> <span class="o">=</span> <span class="n">ThreadingGroup</span><span class="p">(</span><span class="s2">&quot;web-01&quot;</span><span class="p">,</span> <span class="s2">&quot;web-02&quot;</span><span class="p">,</span> <span class="s2">&quot;web-03&quot;</span><span class="p">,</span>
+                     <span class="n">user</span><span class="o">=</span><span class="s2">&quot;deploy&quot;</span><span class="p">,</span> <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span><span class="o">...</span><span class="p">})</span>
+
+<span class="n">results</span> <span class="o">=</span> <span class="n">web</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;uptime&quot;</span><span class="p">)</span>        <span class="c1"># dict: {host_str: Result}</span>
+<span class="k">for</span> <span class="n">host</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">ok</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">类</th>
+<th style="text-align: left;">执行方式</th>
+<th style="text-align: left;">适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ThreadingGroup</code></td>
+<td style="text-align: left;">全部并发（每台一个线程）</td>
+<td style="text-align: left;">只读巡检、采集信息：快</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>SerialGroup</code></td>
+<td style="text-align: left;">顺序执行，一台一台来</td>
+<td style="text-align: left;">变更操作、滚动重启：安全（有问题立即停）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键区别（也是本课最重要的一条实践）</strong>：</p>
+<pre class="plain"><code>巡检 / 采集 / 查状态   → ThreadingGroup（并发，越快越好，失败无所谓）
+变更 / 部署 / 重启     → SerialGroup   （串行，一台失败立刻停，别把集群一起打挂）
+</code></pre>
+<p><strong>为什么</strong>：并发变更一旦打到一半失败，你的集群会处于"一半新一半旧"的中间态，<br>
+而且很难判断停在哪。串行变更的失败是"清晰可判定"的。</p>
+<h3 id="25-groupexception">2.5 <code>GroupException</code>：并行失败的聚合</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric.exceptions</span> <span class="kn">import</span> <span class="n">GroupException</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">ThreadingGroup</span><span class="p">(</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;b&quot;</span><span class="p">,</span> <span class="s2">&quot;c&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;false&quot;</span><span class="p">)</span>
+<span class="k">except</span> <span class="n">GroupException</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="c1"># exc.result 是 dict: {Connection对象: Exception}   ← 键不是字符串！</span>
+    <span class="k">for</span> <span class="n">conn</span><span class="p">,</span> <span class="n">err</span> <span class="ow">in</span> <span class="n">exc</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">host</span><span class="p">),</span> <span class="n">conn</span><span class="o">.</span><span class="n">port</span><span class="p">,</span> <span class="nb">type</span><span class="p">(</span><span class="n">err</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span> <span class="n">err</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>为什么需要它</strong>：并发时"部分失败"是常态，但 Python 的异常模型只能抛一个。<br>
+Fabric 的解法是"抛一个装着所有失败的容器异常"。你必须显式遍历它，<br>
+否则会丢掉"另外两台成功/失败的信息"。</p>
+<p>⚠ <strong>两个必须记住的细节（本课实测）</strong>：<br>
+1. <code>.result</code> 的<strong>键是 <code>Connection</code> 对象</strong>（Fabric 3.x），不是 host 字符串。<br>
+   直接 <code>print(key)</code> 会得到 <code>&lt;Connection host=… port=…&gt;</code>，要取主机名用 <code>key.host</code>。<br>
+2. 异常抛出时，<strong>成功主机的 <code>Result</code> 不在里面</strong>。想要全集就全部用 <code>warn=True</code><br>
+   （拿到 <code>{host: Result}</code>，失败只体现在 <code>r.ok</code> 上）。</p>
+<h3 id="26-sudo-pty">2.6 <code>sudo</code> 与 pty：为什么它要密码参数</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 远端有 NOPASSWD sudo → 直接跑</span>
+<span class="n">c</span><span class="o">.</span><span class="n">sudo</span><span class="p">(</span><span class="s2">&quot;systemctl restart nginx&quot;</span><span class="p">)</span>
+
+<span class="c1"># 需要密码 → 必须显式给（Fabric 不会去猜）</span>
+<span class="kn">from</span> <span class="nn">invoke</span> <span class="kn">import</span> <span class="n">Responder</span>
+<span class="n">c</span><span class="o">.</span><span class="n">sudo</span><span class="p">(</span><span class="s2">&quot;systemctl restart nginx&quot;</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">,</span> <span class="n">pty</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p><code>sudo</code> 在远端通常要求 <strong>tty</strong>，所以 Fabric 内部会帮你加 <code>pty=True</code>。<br>
+而 pty 的副作用（Day 168 陷阱 3）在这里同样成立：<strong>stdout 与 stderr 合流</strong>。<br>
+所以"需要干净地分离输出"时，宁可走 <code>run("sudo -n ...")</code> + <code>!requiretty</code>。</p>
+<h3 id="27-config">2.7 <code>Config</code>：配置优先级</h3>
+<pre class="plain"><code>优先级从低到高：
+  ① 内置默认值
+  ② ~/.fabric.yml / fabric.yml（项目级 Config）
+  ③ 环境变量（FABRIC_*）
+  ④ 代码里显式传入（Connection(config=...)）
+  ⑤ 命令行参数（-H host、--user、--port）
+
+配置合并用：
+    from fabric import Config
+    cfg = Config(overrides={&quot;run&quot;: {&quot;warn&quot;: True},
+                            &quot;ssh&quot;: {&quot;connect_kwargs&quot;: {&quot;timeout&quot;: 10}}})
+</code></pre>
+<p><strong>为什么要分层</strong>：同一份部署代码要在 CI（无交互）和本地（有交互）跑出不同行为，<br>
+分层配置让你<strong>不改代码</strong>就能切换。</p>
+<h3 id="28-paramiko-ansible">2.8 与 paramiko / Ansible 的定位对比</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;"></th>
+<th style="text-align: left;">paramiko</th>
+<th style="text-align: left;">Fabric</th>
+<th style="text-align: left;">Ansible</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">抽象层级</td>
+<td style="text-align: left;">协议/会话</td>
+<td style="text-align: left;">会话 + 任务 CLI</td>
+<td style="text-align: left;">声明式状态编排</td>
+</tr>
+<tr>
+<td style="text-align: left;">多机并发</td>
+<td style="text-align: left;">自己写线程池</td>
+<td style="text-align: left;"><code>ThreadingGroup</code></td>
+<td style="text-align: left;"><code>forks</code> 内建</td>
+</tr>
+<tr>
+<td style="text-align: left;">幂等</td>
+<td style="text-align: left;">❌</td>
+<td style="text-align: left;">❌（要自己写检查）</td>
+<td style="text-align: left;">✅（模块级）</td>
+</tr>
+<tr>
+<td style="text-align: left;">需要目标机装东西吗</td>
+<td style="text-align: left;">只需 sshd</td>
+<td style="text-align: left;">只需 sshd</td>
+<td style="text-align: left;">只需 python（或无 agent 模式）</td>
+</tr>
+<tr>
+<td style="text-align: left;">适合</td>
+<td style="text-align: left;">库/精细控制</td>
+<td style="text-align: left;"><strong>一次性脚本/部署/巡检</strong></td>
+<td style="text-align: left;">长期配置管理、大规模状态收敛</td>
+</tr>
+</tbody>
+</table>
+<p><strong>判断口诀</strong>：</p>
+<blockquote>
+<p>"我要<strong>执行命令</strong>" → paramiko / Fabric；<br>
+"我要<strong>保证状态</strong>" → Ansible。</p>
+</blockquote>
+<p>Fabric 是<strong>过程式</strong>的：你写的是"先 A 再 B"。<br>
+Ansible 是<strong>声明式</strong>的：你写的是"最终应该是 X"。这两种诉求不会互相替代。</p>
+<hr>
+<h2 id="3">3. 原理深入</h2>
+<h3 id="31-fabric-crunuptime">3.1 Fabric 内部：一次 <code>c.run("uptime")</code> 到底发生了什么</h3>
+<pre class="plain"><code>  你的代码                Fabric                    Invoke                 Paramiko
+    │                       │                         │                      │
+    │ c.run(&quot;uptime&quot;)       │                         │                      │
+    ├──────────────────────▶│                         │                      │
+    │                       │ 组装上下文（env/hide/   │                      │
+    │                       │ warn/pty/echo…）        │                      │
+    │                       ├────────────────────────▶│                      │
+    │                       │                         │ 选 runner（Local/Remote）
+    │                       │                         ├─────────────────────▶│
+    │                       │                         │  open_session()      │
+    │                       │                         │  exec_command()      │
+    │                       │                         │◀── stdout/stderr ────┤
+    │                       │◀── Result(stdout, ...) ─┤                      │
+    │◀── Result ────────────┤                         │                      │
+
+  要点：Connection 自己持有一个 paramiko.SSHClient（惰性建连 + 复用），
+        所以同一个 Connection 上的 100 次 run 只做 1 次 KEX/认证。
+</code></pre>
+<p><strong>惰性建连</strong>：<code>Connection(...)</code> 只是记下参数，<strong>不</strong>发网络包；<br>
+直到第一次 <code>run()</code> / <code>put()</code> 才真正连接。所以"构造 Connection 不写 try"<br>
+是安全的，而"run 不写 try"是危险的。</p>
+<h3 id="32-gatewayfabric">3.2 跳板机（gateway）：Fabric 帮你做的事</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">jump</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s2">&quot;bastion&quot;</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="s2">&quot;ops&quot;</span><span class="p">,</span> <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;key_filename&quot;</span><span class="p">:</span> <span class="s2">&quot;~/.ssh/id_rsa&quot;</span><span class="p">})</span>
+
+<span class="n">inner</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s2">&quot;10.0.0.11&quot;</span><span class="p">,</span> <span class="n">user</span><span class="o">=</span><span class="s2">&quot;deploy&quot;</span><span class="p">,</span> <span class="n">gateway</span><span class="o">=</span><span class="n">jump</span><span class="p">,</span>
+                   <span class="n">connect_kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;key_filename&quot;</span><span class="p">:</span> <span class="s2">&quot;~/.ssh/id_ed25519&quot;</span><span class="p">})</span>
+<span class="n">inner</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;hostname&quot;</span><span class="p">)</span>     <span class="c1"># 实际链路：本机 → bastion → 10.0.0.11</span>
+</code></pre></div>
+<p><strong>原理</strong>：Fabric 在 gateway 上开一个 <code>direct-tcpip</code> channel（Day 168 图 3 提到的<br>
+第四种 channel 类型），把内网的 TCP 流"隧道"过去，然后在隧道里跑完整的 SSH。</p>
+<p><strong>为什么重要</strong>：手工 <code>ssh -o ProxyJump</code> 无法在 Python 里编排多跳；<br>
+Fabric 把这件事变成一行参数。这也是"为什么不用系统 ssh 命令"的现实理由之一。</p>
+<h3 id="33-warn-hide-echo-pty">3.3 <code>warn</code> / <code>hide</code> / <code>echo</code> / <code>pty</code>：四个高频参数的真实语义</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">参数</th>
+<th style="text-align: left;">默认</th>
+<th style="text-align: left;">语义</th>
+<th style="text-align: left;">误用后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>warn</code></td>
+<td style="text-align: left;"><code>False</code></td>
+<td style="text-align: left;"><code>False</code>：非 0 退出码 → 抛 <code>UnexpectedExit</code>；<code>True</code>：只记录不抛</td>
+<td style="text-align: left;">批量场景里用默认值，第一台失败就中断整批；反过来全用 <code>True</code> 会<strong>静默吞掉</strong>真故障</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>hide</code></td>
+<td style="text-align: left;"><code>False</code></td>
+<td style="text-align: left;"><code>True</code>：不打印命令与输出；也可 <code>hide="stdout"</code> / <code>hide="both"</code></td>
+<td style="text-align: left;">部署时把整个文件内容 echo 出来，日志刷屏还泄露内容</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>echo</code></td>
+<td style="text-align: left;"><code>False</code></td>
+<td style="text-align: left;"><code>True</code>：把执行的命令本身打到本地输出</td>
+<td style="text-align: left;">调试神器；但会泄露命令里的敏感参数</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>pty</code></td>
+<td style="text-align: left;"><code>False</code></td>
+<td style="text-align: left;"><code>True</code>：远端分配伪终端</td>
+<td style="text-align: left;">见 Day 168 陷阱 3：stdout/stderr 合流、多出 <code>\r</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>推荐组合</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;systemctl is-active nginx&quot;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">warn</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># 巡检：静默 + 不中断</span>
+<span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;tar -xzf /tmp/app.tar.gz&quot;</span><span class="p">,</span> <span class="n">echo</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>               <span class="c1"># 变更：打印命令便于审计</span>
+<span class="n">c</span><span class="o">.</span><span class="n">sudo</span><span class="p">(</span><span class="s2">&quot;systemctl restart nginx&quot;</span><span class="p">,</span> <span class="n">pty</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>                <span class="c1"># 需要 tty：只在这时才开</span>
+</code></pre></div>
+<h3 id="34-threadinggroup">3.4 并发模型的真相：<code>ThreadingGroup</code> 没有"连接池"</h3>
+<pre class="plain"><code>  ThreadingGroup(&quot;h1&quot;..&quot;h200&quot;).run(&quot;uptime&quot;)
+
+  构造时：为每台机器**预先**创建一个 Connection 对象（含 connect_kwargs）
+  run 时：  每台一个线程，各自连接 + 执行
+
+  ⇒ 并发度 = 机器数，没有上限概念
+  ⇒ 200 台就是 200 个线程同时发起认证 → 目标侧 MaxStartups 限流
+  ⇒ Fabric 没有 &quot;workers&quot; 参数；要限流必须**自己分片**
+</code></pre>
+<p><strong>限流写法（生产必备）</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">itertools</span>
+<span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">ThreadingGroup</span>
+
+<span class="k">def</span> <span class="nf">chunks</span><span class="p">(</span><span class="n">seq</span><span class="p">,</span> <span class="n">n</span><span class="p">):</span>
+    <span class="n">it</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">(</span><span class="n">seq</span><span class="p">)</span>
+    <span class="k">while</span> <span class="p">(</span><span class="n">batch</span> <span class="o">:=</span> <span class="nb">list</span><span class="p">(</span><span class="n">itertools</span><span class="o">.</span><span class="n">islice</span><span class="p">(</span><span class="n">it</span><span class="p">,</span> <span class="n">n</span><span class="p">))):</span>
+        <span class="k">yield</span> <span class="n">batch</span>
+
+<span class="k">for</span> <span class="n">batch</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">(</span><span class="n">hosts</span><span class="p">,</span> <span class="mi">16</span><span class="p">):</span>          <span class="c1"># 每批 16 台</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">ThreadingGroup</span><span class="p">(</span><span class="o">*</span><span class="n">batch</span><span class="p">,</span> <span class="o">**</span><span class="n">opts</span><span class="p">)</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;uptime&quot;</span><span class="p">)</span>
+    <span class="k">except</span> <span class="n">GroupException</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="o">...</span>                              <span class="c1"># 逐批处理失败，别让一批拖垮全局</span>
+</code></pre></div>
+<h3 id="35-fabric">3.5 幂等：Fabric 不提供，你必须自己写</h3>
+<pre class="plain"><code>   ❌ 不幂等
+   c.run(&quot;mkdir /opt/app/releases/20260927&quot;)     # 重跑一次 → 报错 exist
+   c.run(&quot;systemctl restart nginx&quot;)              # 重跑 → 服务抖动
+
+   ✅ 幂等
+   c.run(&quot;mkdir -p /opt/app/releases/20260927&quot;)  # -p 容忍存在
+   c.run(&quot;test -f /opt/app/current/.deployed-20260927 || systemctl restart nginx&quot;)
+</code></pre>
+<p><strong>为什么要强调</strong>：Fabric 的定位是"远程命令执行器"，它<strong>不理解</strong>你的目标状态。<br>
+幂等必须由你在命令层与脚本层保证（<code>-p</code>、<code>||</code>、先查后改、版本标记文件）。</p>
+<h3 id="36-release">3.6 部署事务：release 目录 + 软链切换</h3>
+<pre class="plain"><code> /opt/app/
+ ├── releases/
+ │   ├── 20260926-1830/     ← 上一版（保留，用于回滚）
+ │   └── 20260927-0600/     ← 本次发布
+ ├── current -&gt; releases/20260927-0600     ← 原子切换点（ln -sfn）
+ └── shared/
+     ├── .env               ← 配置不进 release 目录
+     └── logs/              ← 日志目录软链进 release
+
+ 部署步骤：
+   ① 上传 → ② 解包到新 release 目录
+   ③ 装上 shared 软链 → ④ 跑迁移/预热
+   ⑤ ln -sfn 原子切换 current → ⑥ 重启服务 → ⑦ 健康检查
+   ⑧ 失败 → ln -sfn 回上一版 → 重启（回滚，秒级）
+
+ 为什么这么设计：
+   · 新版本在切换前**不影响**正在服务的旧版本 → 出错不影响线上
+   · 软链切换是**原子**的（rename 语义），不会出现&quot;半个版本&quot;
+   · 旧目录保留 N 版 → 回滚只需要一次 ln + 一次 restart
+</code></pre>
+<h3 id="37">3.7 健康检查与"假成功"</h3>
+<pre class="plain"><code>  重启服务返回 exit 0 ≠ 服务真的起来了。
+  systemctl restart 成功只代表&quot;进程被拉起了&quot;，不代表它能接受请求。
+
+  三级健康检查：
+    ① 进程级：systemctl is-active --quiet nginx        （最快，最弱）
+    ② 端口级：ss -ltn | grep -q &#x27;:80 &#x27;                 （中等）
+    ③ 业务级：curl -fsS -m 5 http://127.0.0.1/healthz  （最真实）
+
+  部署脚本必须等到 ③ 通过才算成功；并设置**超时**与**重试间隔**：
+    失败了要回滚，不能让&quot;半启动&quot;的服务继续对外。
+</code></pre>
+<hr>
+<h2 id="4-api">4. 定义与使用方法（API 速查表）</h2>
+<h3 id="41-connection">4.1 <code>Connection</code></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">成员</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>Connection(host, user=None, port=None, config=None, gateway=None, forward_agent=None, connect_timeout=None, connect_kwargs=None, inline_ssh_env=None)</code></td>
+<td style="text-align: left;">惰性建连；<code>connect_kwargs</code> 传给 paramiko</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>run(command, warn=False, hide=False, echo=False, pty=False, timeout=None, watchers=(), env=None, replace_env=False)</code></td>
+<td style="text-align: left;">执行命令 → <code>Result</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sudo(command, password=None, user=None, ...)</code></td>
+<td style="text-align: left;">sudo 执行（内部偏 pty）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>local(command, ...)</code></td>
+<td style="text-align: left;">在<strong>本地</strong>执行（同一套 Result 语义）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>put(local, remote=None, preserve_mode=True)</code></td>
+<td style="text-align: left;">SFTP 上传</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>get(remote, local=None, preserve_mode=True)</code></td>
+<td style="text-align: left;">SFTP 下载</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>is_connected</code></td>
+<td style="text-align: left;">是否已建连</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>open()</code> / <code>close()</code></td>
+<td style="text-align: left;">显式控制连接生命周期</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cd(path)</code> / <code>prefix(cmd)</code></td>
+<td style="text-align: left;">上下文管理器：<code>with c.cd("/opt/app"):</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-resultinvokerunnersresult">4.2 <code>Result</code>（<code>invoke.runners.Result</code>）</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">属性</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>stdout</code> / <code>stderr</code></td>
+<td style="text-align: left;">字符串（pty 模式下 stderr 为空）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>return_code</code></td>
+<td style="text-align: left;">退出码；被信号杀死时可能是负数</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ok</code> / <code>failed</code></td>
+<td style="text-align: left;"><code>return_code == 0</code> 的语义别名</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>exited</code></td>
+<td style="text-align: left;"><strong>就是退出码本身</strong>（<code>int</code>，不是 bool！）；命令没跑完时为 <code>None</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>return_code</code></td>
+<td style="text-align: left;"><code>exited</code> 的别名（property），值完全相同</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ok</code> / <code>failed</code></td>
+<td style="text-align: left;"><code>ok</code> = <code>exited == 0</code>；<code>failed</code> = <code>not ok</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>command</code></td>
+<td style="text-align: left;">原始命令</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>shell</code></td>
+<td style="text-align: left;">执行用的 shell 包装</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>tail(stream, count=10)</code></td>
+<td style="text-align: left;"><strong>方法</strong>（不是属性）：取某个流末尾 N 行。<code>r.tail("stdout")</code> / <code>r.tail("stderr")</code>，排查最常用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>__str__</code> / <code>__bool__</code></td>
+<td style="text-align: left;">可读文本；<code>bool(r)</code> 等价于 <code>r.ok</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-group">4.3 <code>Group</code></h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">成员</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ThreadingGroup(*hosts, **kwargs)</code></td>
+<td style="text-align: left;">并发；<code>kwargs</code> 与 <code>Connection</code> 相同</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>SerialGroup(*hosts, **kwargs)</code></td>
+<td style="text-align: left;">串行</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>.run(cmd, ...)</code> / <code>.sudo(...)</code> / <code>.put(...)</code> / <code>.get(...)</code></td>
+<td style="text-align: left;">返回 <code>{host: Result}</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>.from_connections([c1, c2])</code></td>
+<td style="text-align: left;">用已有 Connection 构造 Group（可带各自参数）</td>
+</tr>
+<tr>
+<td style="text-align: left;">失败行为</td>
+<td style="text-align: left;">任一主机失败 → 抛 <code>GroupException</code>；其 <code>.result</code> 是 <code>{Connection对象: Exception}</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="44-config-task">4.4 <code>Config</code> 与 task</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">fabric</span> <span class="kn">import</span> <span class="n">Config</span><span class="p">,</span> <span class="n">task</span><span class="p">,</span> <span class="n">Connection</span>
+
+<span class="c1"># 配置分层</span>
+<span class="n">cfg</span> <span class="o">=</span> <span class="n">Config</span><span class="p">(</span><span class="n">overrides</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;run&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;warn&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;hide&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">},</span>
+                        <span class="s2">&quot;ssh&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;connect_kwargs&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;timeout&quot;</span><span class="p">:</span> <span class="mi">10</span><span class="p">}}})</span>
+
+<span class="nd">@task</span>
+<span class="k">def</span> <span class="nf">check</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">hosts</span><span class="o">=</span><span class="s2">&quot;web-01,web-02&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;巡检：fab check --hosts=web-01,web-02&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">hosts</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">Connection</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="n">cfg</span><span class="p">)</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+            <span class="n">r</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;uptime&quot;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+
+<span class="c1"># 命令行：fab -f tasks.py check --hosts=web-01</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">要点</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>@task</code> 函数第一个参数是 <code>Context</code>（习惯叫 <code>c</code>）</td>
+<td style="text-align: left;">不是 Connection！对本地用 <code>c.run</code>，对远端用 <code>Connection(...)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>fab -l</code></td>
+<td style="text-align: left;">列出所有任务（含 docstring）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>fab -H h1,h2 task</code></td>
+<td style="text-align: left;">临时指定主机（需任务里读取 <code>c.hosts</code>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>hide</code>/<code>warn</code> 也可在 <code>@task(hide=True)</code> 指定</td>
+<td style="text-align: left;">任务级默认值</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="5">5. 图解</h2>
+<h3 id="51-fabric">5.1 Fabric 三层与"谁负责什么"</h3>
+<pre class="plain"><code>  你写的代码            fab CLI / @task
+  ──────────────────────────────────────────────────
+  from fabric import …   ← Invoke 层：参数、任务、上下文
+  Connection / Group     ← Fabric 层：会话与多机原语
+  Transport / Channel    ← Paramiko 层：协议与加密
+  ──────────────────────────────────────────────────
+  排查顺序（自下而上）：
+    连不上？        → paramiko 层（超时/密钥/known_hosts）
+    连上但不执行？  → fabric 层（warn/hide/pty/gateway）
+    执行了但没跑对？→ invoke 层（参数没传进去 / task 覆盖了默认值）
+</code></pre>
+<h3 id="52-threadinggroup-vs-serialgroup">5.2 <code>ThreadingGroup</code> vs <code>SerialGroup</code></h3>
+<pre class="plain"><code>ThreadingGroup（并发）                       SerialGroup（串行）
+
+ t=0  ┌─h1─┐                                 t=0  ─h1─▶ done
+      ├─h2─┤                                 t=1        ─h2─▶ done
+      ├─h3─┤  总耗时 ≈ 单台耗时               t=2             ─h3─▶ done
+      └─h4─┘  失败 = 一堆并发错误的聚合                    失败 = 立刻停在&quot;哪一台&quot;很明确
+
+ 用途：读、查、采集（快、可容忍单点失败）      用途：写、改、重启（安全、可判定停点）
+</code></pre>
+<h3 id="53-mermaid">5.3 Mermaid：一次可回滚的部署</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Dev as 本地/CI
+    participant G as gateway(跳板)
+    participant W as web-01..N
+
+    Dev-&gt;&gt;G: 建连（gateway）
+    G-&gt;&gt;W: 隧道转发 SSH
+    Dev-&gt;&gt;W: put app-&lt;rev&gt;.tar.gz → /tmp
+    Dev-&gt;&gt;W: mkdir -p /opt/app/releases/&lt;rev&gt;
+    Dev-&gt;&gt;W: tar -xzf → releases/&lt;rev&gt;
+    Dev-&gt;&gt;W: 建 shared 软链（.env / logs）
+    Dev-&gt;&gt;W: 跑迁移（可失败 → 直接回滚）
+    Dev-&gt;&gt;W: ln -sfn releases/&lt;rev&gt; current  （原子）
+    Dev-&gt;&gt;W: systemctl restart app
+    Dev-&gt;&gt;W: 健康检查 /healthz（重试 N 次）
+    alt 健康检查通过
+        W--&gt;&gt;Dev: 200 OK
+        Dev-&gt;&gt;W: 清理旧 release（保留最近 3 版）
+    else 健康检查失败
+        W--&gt;&gt;Dev: timeout / 5xx
+        Dev-&gt;&gt;W: ln -sfn releases/&lt;prev&gt; current
+        Dev-&gt;&gt;W: systemctl restart app（回滚完成）
+        Dev-&gt;&gt;Dev: 退出码 1 + 告警
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Dev as 本地/CI
+    participant G as gateway(跳板)
+    participant W as web-01..N
+
+    Dev-&gt;&gt;G: 建连（gateway）
+    G-&gt;&gt;W: 隧道转发 SSH
+    Dev-&gt;&gt;W: put app-&lt;rev&gt;.tar.gz → /tmp
+    Dev-&gt;&gt;W: mkdir -p /opt/app/releases/&lt;rev&gt;
+    Dev-&gt;&gt;W: tar -xzf → releases/&lt;rev&gt;
+    Dev-&gt;&gt;W: 建 shared 软链（.env / logs）
+    Dev-&gt;&gt;W: 跑迁移（可失败 → 直接回滚）
+    Dev-&gt;&gt;W: ln -sfn releases/&lt;rev&gt; current  （原子）
+    Dev-&gt;&gt;W: systemctl restart app
+    Dev-&gt;&gt;W: 健康检查 /healthz（重试 N 次）
+    alt 健康检查通过
+        W--&gt;&gt;Dev: 200 OK
+        Dev-&gt;&gt;W: 清理旧 release（保留最近 3 版）
+    else 健康检查失败
+        W--&gt;&gt;Dev: timeout / 5xx
+        Dev-&gt;&gt;W: ln -sfn releases/&lt;prev&gt; current
+        Dev-&gt;&gt;W: systemctl restart app（回滚完成）
+        Dev-&gt;&gt;Dev: 退出码 1 + 告警
+    end
+</code></pre></div>
+<h3 id="54-mermaidgroupexception">5.4 Mermaid：<code>GroupException</code> 的信息流</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;ThreadingGroup(h1..h5).run(cmd)&quot;] --&gt; B{逐台执行}
+    B --&gt;|h1 ok| C[results h1]
+    B --&gt;|h2 网络超时| D[异常收集]
+    B --&gt;|h3 exit 1| E[UnexpectedExit 收集]
+    B --&gt;|h4 ok| F[results h4]
+    B --&gt;|h5 认证失败| G[异常收集]
+    D --&gt; H{有异常?}
+    E --&gt; H
+    G --&gt; H
+    H --&gt;|是| I[抛 GroupException]
+    H --&gt;|否| J[返回 dict host→Result]
+    I --&gt; K[&quot;except GroupException as e:
+遍历 e.result 逐台报告&quot;]
+    K --&gt; L[&quot;⚠ 注意：h1/h4 的成功结果在异常里拿不到
+必须各自 warn=True 或在异常里区分&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;ThreadingGroup(h1..h5).run(cmd)&quot;] --&gt; B{逐台执行}
+    B --&gt;|h1 ok| C[results h1]
+    B --&gt;|h2 网络超时| D[异常收集]
+    B --&gt;|h3 exit 1| E[UnexpectedExit 收集]
+    B --&gt;|h4 ok| F[results h4]
+    B --&gt;|h5 认证失败| G[异常收集]
+    D --&gt; H{有异常?}
+    E --&gt; H
+    G --&gt; H
+    H --&gt;|是| I[抛 GroupException]
+    H --&gt;|否| J[返回 dict host→Result]
+    I --&gt; K[&quot;except GroupException as e:
+遍历 e.result 逐台报告&quot;]
+    K --&gt; L[&quot;⚠ 注意：h1/h4 的成功结果在异常里拿不到
+必须各自 warn=True 或在异常里区分&quot;]
+</code></pre></div>
+<h3 id="55-n-16">5.5 限流分片：把 N 台切成每批 16 台</h3>
+<pre class="plain"><code>  hosts = [h1 .. h200]
+
+  batch 1  ┌h1 … h16┐   ThreadingGroup → 16 线程
+  batch 2  ┌h17…h32┐   ThreadingGroup → 16 线程
+  ...
+  batch 13 ┌h193…h200┐
+
+  单批耗时 ≈ 单台耗时（假设 1.2s）→ 总耗时 ≈ 13 × 1.2 ≈ 15.6s
+  对比&quot;一次 200 并发&quot;：目标机 MaxStartups 限流 → 大量 Connection reset
+</code></pre>
+<hr>
+<h2 id="6-top-8">6. 常见陷阱 Top 8</h2>
+<h3 id="1-connection">陷阱 1：以为 <code>Connection(...)</code> 就会连（其实惰性）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">c</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s2">&quot;不存在的域名&quot;</span><span class="p">)</span>     <span class="c1"># ✅ 不报错（只是记参数）</span>
+<span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;uptime&quot;</span><span class="p">)</span>                   <span class="c1"># ❌ 这里才炸</span>
+</code></pre></div>
+<p><strong>修法</strong>：<code>try/except</code> 包住<strong>第一次 run</strong>；或显式 <code>c.open()</code> 提前暴露问题。</p>
+<h3 id="2run-warnfalse">陷阱 2：<code>run()</code> 默认 <code>warn=False</code> → 一台失败中断整批</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ nginx 没装 → UnexpectedExit → 后面的机器全不执行</span>
+<span class="n">group</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;systemctl is-active nginx&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 巡检场景：warn=True，自己判断 r.ok</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">group</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;systemctl is-active nginx&quot;</span><span class="p">,</span> <span class="n">warn</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">down</span> <span class="o">=</span> <span class="p">[</span><span class="n">h</span> <span class="k">for</span> <span class="n">h</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="ow">not</span> <span class="n">r</span><span class="o">.</span><span class="n">ok</span><span class="p">]</span>
+</code></pre></div>
+<p><strong>但</strong>：变更场景<strong>不要</strong>无脑 <code>warn=True</code> —— 那会让你漏掉真故障。用 <code>SerialGroup</code> + 默认<br>
+<code>warn=False</code> 更安全（失败即停，停点清晰）。</p>
+<h3 id="3ptytrue-rstderr">陷阱 3：<code>pty=True</code> 后 <code>r.stderr</code> 永远是空的</h3>
+<p>见 Day 168 陷阱 3。<strong>修法</strong>：只在 <code>sudo</code> 等确需 tty 的场合开 pty；<br>
+其他场景用 <code>run("sudo -n cmd")</code> 或配置 <code>!requiretty</code>。</p>
+<h3 id="4hidetrue">陷阱 4：<code>hide=True</code> 吞掉了诊断信息，出事时无从排查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 出问题时你什么都看不到</span>
+<span class="n">r</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;./deploy.sh&quot;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># ✅ 失败时把输出捞回来</span>
+<span class="n">r</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;./deploy.sh&quot;</span><span class="p">,</span> <span class="n">hide</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">warn</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">r</span><span class="o">.</span><span class="n">ok</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">stdout</span><span class="p">,</span> <span class="n">r</span><span class="o">.</span><span class="n">stderr</span><span class="p">)</span>     <span class="c1"># 或者写进审计文件</span>
+</code></pre></div>
+<h3 id="5-groupexception">陷阱 5：把 <code>GroupException</code> 当成"一个异常"</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 只打印 str(exc)，丢掉 per-host 细节</span>
+<span class="k">except</span> <span class="n">GroupException</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+
+<span class="c1"># ✅ 遍历 exc.result（键是 Connection 对象！）</span>
+<span class="k">except</span> <span class="n">GroupException</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">conn</span><span class="p">,</span> <span class="n">err</span> <span class="ow">in</span> <span class="n">exc</span><span class="o">.</span><span class="n">result</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;❌ </span><span class="si">{</span><span class="n">conn</span><span class="o">.</span><span class="n">host</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">conn</span><span class="o">.</span><span class="n">port</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">err</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">err</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>关键认知</strong>：异常抛出时，<strong>成功主机的 Result 不在异常里</strong>。<br>
+要么所有操作都 <code>warn=True</code>（拿到完整 dict），要么接受"异常时只知道失败的"。</p>
+<h3 id="6threadinggroup">陷阱 6：<code>ThreadingGroup</code> 无并发上限</h3>
+<p>200 台就是 200 线程同时认证。<strong>修法</strong>：见 3.4 的分片写法，<br>
+每批 8~16 台。<strong>顺便</strong>：Fabric 的 Group 也没有"单机超时"概念，<br>
+<code>connect_timeout</code> 必须在 <code>connect_kwargs</code> 里逐台设置。</p>
+<h3 id="7">陷阱 7：忘了关连接 → 脚本结束时不退出</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 进程可能 hang（paramiko 后台线程未收尾）</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">Connection</span><span class="p">(</span><span class="s2">&quot;h&quot;</span><span class="p">)</span>
+<span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;uptime&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 用上下文管理器</span>
+<span class="k">with</span> <span class="n">Connection</span><span class="p">(</span><span class="s2">&quot;h&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">c</span><span class="p">:</span>
+    <span class="n">c</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="s2">&quot;uptime&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>Group</code> 对象也有 <code>close()</code>；批量脚本结束前 <code>group.close()</code>。</p>
+<h3 id="8-fabric-ansible">陷阱 8：把 Fabric 当 Ansible 用（追求幂等/状态收敛）</h3>
+<p>Fabric 不会帮你判断"这个包装没装"。写一次部署脚本你可以接受；<br>
+一旦你要维护 30 个服务的"最终状态"，就该换 Ansible。<br>
+<strong>判断标准</strong>：脚本里出现大量"先查再决定"的分支 → 你在手写 Ansible，换成 Ansible 吧。</p>
+<hr>
+<h2 id="7_1">7. 实战代码案例</h2>
+<p><code>code/</code> 下 4 个脚本：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">文件</th>
+<th style="text-align: left;">定位</th>
+<th style="text-align: left;">你会学到</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>01-basic-fabric.py</code></td>
+<td style="text-align: left;">基础</td>
+<td style="text-align: left;">Connection/run/sudo/put/get + Result 解析 + <code>--self-test</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>02-pitfalls.py</code></td>
+<td style="text-align: left;">避坑</td>
+<td style="text-align: left;">6 个可离线复现的坑（惰性建连、warn 语义、pty、GroupException、限流、幂等）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>03-advanced-fabric.py</code></td>
+<td style="text-align: left;">进阶</td>
+<td style="text-align: left;">分片并发 + 串行滚动 + 跳板机 + 分组巡检</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>04-deploy-tool.py</code></td>
+<td style="text-align: left;">实战</td>
+<td style="text-align: left;"><strong>批量部署脚本</strong>：release 目录 + 原子软链 + 健康检查 + 回滚</td>
+</tr>
+</tbody>
+</table>
+<h3 id="71">7.1 运行方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-169-fabric-批量执行/code
+pip<span class="w"> </span>install<span class="w"> </span>fabric<span class="w">            </span><span class="c1"># 会自动带上 invoke + paramiko</span>
+
+python3<span class="w"> </span><span class="m">01</span>-basic-fabric.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">01</span>-basic-fabric.py<span class="w"> </span>--host<span class="w"> </span>&lt;h&gt;<span class="w"> </span>--user<span class="w"> </span>&lt;u&gt;<span class="w"> </span>--key<span class="w"> </span>&lt;k&gt;<span class="w"> </span>--cmd<span class="w"> </span><span class="s2">&quot;uname -a&quot;</span>
+
+python3<span class="w"> </span><span class="m">02</span>-pitfalls.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">02</span>-pitfalls.py
+
+python3<span class="w"> </span><span class="m">03</span>-advanced-fabric.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">03</span>-advanced-fabric.py<span class="w"> </span>--hosts<span class="w"> </span>h1,h2,h3<span class="w"> </span>--user<span class="w"> </span>u<span class="w"> </span>--key<span class="w"> </span>k<span class="w"> </span>--cmd<span class="w"> </span><span class="s2">&quot;uptime&quot;</span><span class="w"> </span>--batch<span class="w"> </span><span class="m">16</span>
+
+python3<span class="w"> </span><span class="m">04</span>-deploy-tool.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">04</span>-deploy-tool.py<span class="w"> </span>--hosts<span class="w"> </span>h1,h2<span class="w"> </span>--user<span class="w"> </span>u<span class="w"> </span>--key<span class="w"> </span>k<span class="w"> </span>--artifact<span class="w"> </span>./app.tar.gz<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--release<span class="w"> </span><span class="m">20260927</span><span class="w"> </span>--root<span class="w"> </span>/opt/app<span class="w"> </span>--dry-run
+</code></pre></div>
+<blockquote>
+<p><strong>没机器也能练</strong>：<code>docker run -d -p 2222:22 linuxserver/openssh-server</code>，<br>
+或用前一课的本地 sshd 起两三个实例；<code>--hosts</code> 里重复 <code>127.0.0.1:2222</code> 即可。</p>
+</blockquote>
+<h3 id="72-day-168">7.2 部署脚本的"三条红线"（与 Day 168 呼应，但更严格）</h3>
+<pre class="plain"><code>① 切换必须原子：ln -sfn（rename 语义），永远别 rm -rf current &amp;&amp; ln -s ...
+② 失败必须能回滚：保留上一版 release，回滚 = 一次软链 + 一次重启
+③ 成功必须被验证：健康检查（进程/端口/业务三级），不通过就是失败
+</code></pre>
+<h3 id="73-04-dry-run">7.3 实测输出样例（04 的 dry-run）</h3>
+<pre class="plain"><code>🚀 发布 20260927 → 2 台
+--------------------------------------------------------------------------------
+[local-a:2222] ① 准备目录 /opt/app/releases/20260927
+[local-a:2222] ② 上传 app.tar.gz (12.3 KB)
+[local-a:2222] ③ 解包
+[local-a:2222] ④ shared 软链
+[local-a:2222] ⑤ 原子切换 current → releases/20260927
+[local-a:2222] ⑥ 重启 + 健康检查
+[local-a:2222] ✅ 发布完成（dry-run，未真实执行）
+--------------------------------------------------------------------------------
+汇总：成功 2 / 失败 0      退出码 = 0
+</code></pre>
+<hr>
+<h2 id="8">8. 思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 <code>ThreadingGroup</code> 比 <code>SerialGroup</code> "快"，但部署时却应该用后者？</strong><br>
+   请从"失败的可判定性"与"集群中间态"两个角度回答。</p>
+</li>
+<li>
+<p><strong><code>warn=True</code> 到底是"更健壮"还是"更危险"？</strong><br>
+   分别给出一个必须用 <code>warn=True</code> 的场景和一个绝对不能用它的场景，<br>
+   并说明判断依据是什么。</p>
+</li>
+<li>
+<p><strong><code>ln -sfn</code> 为什么是原子的？</strong><br>
+   它底层实际执行了哪个系统调用？（提示：<code>symlink</code> + <code>rename</code>）。<br>
+   如果换成 <code>rm -f current &amp;&amp; ln -s ...</code>，会出现什么竞态窗口？</p>
+</li>
+<li>
+<p><strong>Fabric 没有"并发上限"，这会带来什么风险？</strong><br>
+   请设计一个"既并发又限流"的实现，并说出为什么不能简单地把<br>
+<code>ThreadingGroup</code> 的 <code>hosts</code> 分批就完事（提示：失败后想重试怎么办）。</p>
+</li>
+<li>
+<p><strong>如果发布必须跨 200 台机器、每台 3 个服务，你会怎么组织？</strong><br>
+   从"分片并发 + 串行滚动 + 健康检查 + 回滚 + 审计"五个维度给出方案。<br>
+   并说明什么时候你会放弃 Fabric 改用 Ansible。</p>
+</li>
+<li>
+<p><strong>为什么健康检查要分三级（进程 / 端口 / 业务）？</strong><br>
+   各举一个"只有本级能发现"的故障例子。</p>
+</li>
+</ol>
+<hr>
+<h2 id="9">9. 小结</h2>
+<pre class="plain"><code>  一句话记住 Fabric：
+    它是&quot;paramiko + 任务 CLI&quot;的组合，
+    用 Connection 管一台，用 Group 管多台，
+    但**不**负责幂等、不负责状态收敛。
+
+  五条铁律：
+    ① 读用 ThreadingGroup，写用 SerialGroup
+    ② 并发必须自己分片限流（每批 8~16）
+    ③ 巡检 warn=True 拿全集，变更保持默认（失败即停）
+    ④ 部署 = release 目录 + 原子软链 + 健康检查 + 可回滚
+    ⑤ 一律用 with Connection(...) / group.close()，否则脚本不退出
+
+  和 paramiko 的分工（Day 168）：
+    paramiko → 你要&quot;精细控制每一项&quot;时用
+    Fabric   → 你要&quot;快速表达一批操作&quot;时用
+</code></pre>
+<blockquote>
+<p>下一课 Day 170：<strong>定时任务</strong> —— <code>schedule</code> 库与 <code>APScheduler</code>，<br>
+以及"任务持久化"这个在生产里最容易翻车的点。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-168/index.html">← Day 168 SSH 远程管理（paramiko）</a><a class="nav-next" href="../day-170/index.html">Day 170 定时任务 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

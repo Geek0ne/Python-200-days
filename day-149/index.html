@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 149 — JWT 安全：结构、签名与攻击面</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 149 — JWT 安全：结构、签名与攻击面</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">556 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-149-jwt-security" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-jwt">1.1 JWT 是什么</a>
+<a class="toc-l3" href="#12-jwt">1.2 JWT 的三段结构</a>
+<a class="toc-l3" href="#13-jwt-jwe">1.3 JWT ≠ JWE</a>
+<a class="toc-l2" href="#_2">二、原理深入：签名、验证与算法选择</a>
+<a class="toc-l3" href="#21-hmachs256">2.1 HMAC（HS256）到底怎么算的</a>
+<a class="toc-l3" href="#22-rsars256">2.2 RSA（RS256）验证流程</a>
+<a class="toc-l3" href="#23-6">2.3 验证方必须检查的 6 件事</a>
+<a class="toc-l3" href="#24">2.4 攻击面全景</a>
+<a class="toc-l2" href="#api">三、定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#31-pyjwt-api">3.1 PyJWT 核心 API</a>
+<a class="toc-l3" href="#32">3.2 异常类型速查（按需捕获）</a>
+<a class="toc-l3" href="#33">3.3 算法对比与选型</a>
+<a class="toc-l3" href="#34">3.4 密钥与生命周期管理清单</a>
+<a class="toc-l2" href="#jwt">四、实战案例：一个安全的 JWT 认证流程</a>
+<a class="toc-l3" href="#41">4.1 场景说明</a>
+<a class="toc-l3" href="#42">4.2 关键设计点（每个都是&quot;为什么&quot;）</a>
+<a class="toc-l3" href="#43">4.3 核心代码骨架（安全版）</a>
+<a class="toc-l3" href="#44">4.4 常见反模式（看到就要修）</a>
+<a class="toc-l2" href="#_3">五、思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-149-jwt">Day 149 — JWT 安全：结构、签名与攻击面</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化 · 主题：实战认证安全</p>
+<p>前置知识：Day 147 哈希/HMAC，Day 148 对称与非对称加密。今天把密码学<br>
+知识落到一个你每天都在用的东西上——<strong>JWT（JSON Web Token）</strong>。<br>
+几乎所有现代 Web / 微服务 / 移动端的登录态都在用它。它看起来只是<br>
+一小段 Base64 字符串，但里面藏着的坑多到能写一本书。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-jwt">1.1 JWT 是什么</h3>
+<p><strong>定义</strong>：JWT（JSON Web Token，读作 "jot"）是一个<strong>开放标准（RFC 7519）</strong>，<br>
+它把一组"声明（claims）"编码成一个<strong>紧凑的、URL 安全的、可签名/可加密</strong>的<br>
+字符串，用来在双方之间安全地传递信息。</p>
+<p>关键词逐个拆开：</p>
+<table>
+<thead>
+<tr>
+<th>词</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JSON</td>
+<td>载荷（payload）本质是一段 JSON 对象</td>
+</tr>
+<tr>
+<td>Web</td>
+<td>设计上适合放在 HTTP Header / URL / Cookie 里传输</td>
+</tr>
+<tr>
+<td>Token</td>
+<td>它是一次"凭证"，不是会话本身；服务器不用保存它（无状态）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么发明它？</strong> 传统 Session 方案里，服务器要在内存/数据库里存一份<br>
+<code>session_id → 用户信息</code> 的映射。当服务从 1 台扩到 100 台，你必须做<br>
+<strong>会话共享</strong>（Redis、sticky session……），否则用户请求飘到另一台机器就掉线。<br>
+JWT 的思路是：<strong>把用户信息本身放进 token，用签名保证它没被篡改</strong>，服务器<br>
+拿到 token 验签即可，不需要查任何存储 —— 这就是<strong>无状态认证</strong>。</p>
+<p><strong>代价是什么？</strong> 无状态不是白来的：</p>
+<ul>
+<li><strong>无法主动失效</strong>：签发出去的 token 在过期前一直有效，除非引入黑名单<br>
+  （那又不无状态了）。所以 JWT 的有效期通常很短（5~30 分钟）。</li>
+<li><strong>体积大</strong>：Base64 后的 token 通常 200~800 字节，比 <code>session_id=abc123</code> 大得多，<br>
+  每个请求都要带上。</li>
+<li><strong>信息是"明文"的</strong>：JWT 的签名只保证<strong>完整性</strong>，不保证<strong>机密性</strong>。<br>
+  任何人 Base64 解码就能看到 payload —— 里面<strong>绝对不能放密码、身份证号</strong>。</li>
+</ul>
+<hr>
+<h3 id="12-jwt">1.2 JWT 的三段结构</h3>
+<p>一个 JWT 是三个 Base64URL 片段用 <code>.</code> 连接：</p>
+<pre class="plain"><code>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 . eyJzdWIiOiIxMjMiLCJuYW1lIjoi5LiJIn0 . dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+└──────────── Header ────────────┘   └──────────── Payload ────────────┘   └──────────── Signature ────────────┘
+</code></pre>
+<h4 id="1-header">① Header（头部）</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;alg&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;HS256&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;typ&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;JWT&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>alg</code>：<strong>签名算法</strong>，是整份 token 最关键、也是被攻击最多的字段。<br>
+  常见值：<code>HS256/384/512</code>（HMAC + SHA）、<code>RS256/384/512</code>（RSA）、<br>
+<code>ES256/384/512</code>（ECDSA）、<code>PS256</code>（RSA-PSS），以及危险的 <code>none</code>。</li>
+<li><code>typ</code>：类型，固定 <code>JWT</code>（可选但有约定）。</li>
+<li><code>kid</code>：<strong>密钥 ID</strong>，告诉验证方用哪把密钥验签（多密钥轮换时用），<br>
+  ⚠️ 这也是攻击入口之一（见 2.4）。</li>
+<li><code>jku</code> / <code>x5u</code>：指向密钥集合的 URL，⚠️ <strong>极度危险</strong>，绝不能盲信。</li>
+</ul>
+<h4 id="2-payload">② Payload（载荷）</h4>
+<p>一组 <strong>claims（声明）</strong>，分三类：</p>
+<p><strong>注册声明（Registered Claims）——RFC 定义的"标准字段"：</strong></p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>全称</th>
+<th>含义</th>
+<th>类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>iss</code></td>
+<td>Issuer</td>
+<td>签发者</td>
+<td>String</td>
+</tr>
+<tr>
+<td><code>sub</code></td>
+<td>Subject</td>
+<td>主体（通常是用户 ID）</td>
+<td>String</td>
+</tr>
+<tr>
+<td><code>aud</code></td>
+<td>Audience</td>
+<td>预期接收方</td>
+<td>String / Array</td>
+</tr>
+<tr>
+<td><code>exp</code></td>
+<td>Expiration Time</td>
+<td>过期时间（Unix 秒）</td>
+<td>NumericDate</td>
+</tr>
+<tr>
+<td><code>nbf</code></td>
+<td>Not Before</td>
+<td>生效时间，早于此时间不可用</td>
+<td>NumericDate</td>
+</tr>
+<tr>
+<td><code>iat</code></td>
+<td>Issued At</td>
+<td>签发时间</td>
+<td>NumericDate</td>
+</tr>
+<tr>
+<td><code>jti</code></td>
+<td>JWT ID</td>
+<td>唯一 ID，用于防重放/黑名单</td>
+<td>String</td>
+</tr>
+</tbody>
+</table>
+<p><strong>公共声明（Public Claims）</strong>：注册在 IANA 或用了防冲突命名空间的字段。<br>
+<strong>私有声明（Private Claims）</strong>：你和业务约定的字段，如 <code>role</code>、<code>tenant_id</code>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;sub&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;10086&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;iss&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://auth.example.com&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;aud&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;api.example.com&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;exp&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1757558400</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;iat&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1757554800</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;jti&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;a1b2c3d4&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;admin&quot;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>⚠️ <strong><code>exp</code>/<code>nbf</code>/<code>iat</code> 用的是 Unix 时间戳（秒），不是毫秒</strong>。写成毫秒会<br>
+导致 token 有效期变成 5 万年 —— 这是真实出现过的生产事故。</p>
+<h4 id="3-signature">③ Signature（签名）</h4>
+<p>签名算法的骨架（HMAC 版本）：</p>
+<pre class="plain"><code>HMAC-SHA256(
+    base64url(header) + &quot;.&quot; + base64url(payload),
+    secret_key
+)
+</code></pre>
+<p>用 RSA/ECDSA 时是：</p>
+<pre class="plain"><code>RSASSA-PKCS1-v1_5(
+    SHA256(base64url(header) + &quot;.&quot; + base64url(payload)),
+    private_key
+)
+</code></pre>
+<p><strong>为什么要签名？</strong> 因为 Header 和 Payload 只是 Base64<strong>编码</strong>（不是加密！），<br>
+任何人都能把 <code>"role":"user"</code> 改成 <code>"role":"admin"</code> 再重新编码。签名的<br>
+作用是：<strong>验证方用密钥重新算一遍签名，对得上才说明这段内容自签发后没被<br>
+改过</strong>。这就是 JWT 的全部安全根基。</p>
+<p><strong>Base64URL vs Base64</strong>：JWT 用的是 URL 安全变体 —— 把 <code>+</code> 换成 <code>-</code>、<br>
+<code>/</code> 换成 <code>_</code>，并且<strong>去掉末尾的 <code>=</code> 填充</strong>。这样 token 能安全地放进 URL<br>
+和 HTTP Header 里，不会因为 <code>+</code> <code>/</code> <code>=</code> 被转义或截断。</p>
+<h3 id="13-jwt-jwe">1.3 JWT ≠ JWE</h3>
+<p>初学最常见的混淆：<strong>JWS 与 JWE 是两件事</strong>。</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>JWS（签名）</th>
+<th>JWE（加密）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>保证</td>
+<td>完整性 + 来源</td>
+<td>机密性 + 完整性</td>
+</tr>
+<tr>
+<td>段数</td>
+<td><strong>3 段</strong></td>
+<td><strong>5 段</strong></td>
+</tr>
+<tr>
+<td>payload</td>
+<td>Base64 明文，谁都能读</td>
+<td>密文，需密钥才能读</td>
+</tr>
+<tr>
+<td>典型头</td>
+<td><code>alg: HS256</code></td>
+<td><code>alg: RSA-OAEP</code>, <code>enc: A256GCM</code></td>
+</tr>
+<tr>
+<td>日常说的"JWT"</td>
+<td>99% 指这个</td>
+<td>少见</td>
+</tr>
+</tbody>
+</table>
+<p>所以看到 <code>xxx.yyy.zzz.aaa.bbb</code>（5 段）才是加密 JWT。日常的 3 段 JWT<br>
+<strong>payload 是公开可读的</strong>，别往里塞秘密。</p>
+<hr>
+<h2 id="_2">二、原理深入：签名、验证与算法选择</h2>
+<h3 id="21-hmachs256">2.1 HMAC（HS256）到底怎么算的</h3>
+<p>HMAC 的核心思想是<strong>双层哈希</strong>，防止长度扩展攻击：</p>
+<pre class="plain"><code>HMAC(K, m) = H( (K ⊕ opad) || H( (K ⊕ ipad) || m ) )
+
+其中 ipad = 0x36 重复到分组长度，opad = 0x5c 重复到分组长度
+</code></pre>
+<ul>
+<li><strong>第一层</strong>：把密钥与明文混在一起做哈希，产生"内部摘要"。</li>
+<li><strong>第二层</strong>：再用密钥对内部摘要做一次哈希，产生最终 MAC。</li>
+</ul>
+<p><strong>为什么不能直接 <code>SHA256(key + msg)</code>？</strong> 因为 SHA-256 是 Merkle–Damgård<br>
+结构，攻击者知道 <code>SHA256(k||m)</code> 后，可以在不知道 <code>k</code> 的情况下接力算出<br>
+<code>SHA256(k||m||padding||extra)</code> —— 这就是著名的<strong>长度扩展攻击</strong>。HMAC 的<br>
+双层设计把这个可能性堵死了。</p>
+<p><strong>HS256 的安全前提</strong>：密钥必须有<strong>足够的熵</strong>。<code>secret</code>、<code>123456</code>、<br>
+<code>company2024</code> 这类弱密钥，配合 JWT 常见的高频词表，几秒钟就能被爆破。<br>
+RFC 7518 要求 HS256 密钥<strong>至少 256 bit（32 字节）的随机熵</strong>。</p>
+<h3 id="22-rsars256">2.2 RSA（RS256）验证流程</h3>
+<p>非对称签名解决了"验证方不该拿到签名密钥"的问题：</p>
+<pre class="plain"><code>签发方（Auth Server）                    验证方（API Server）
+     ┌──────────┐                            ┌──────────┐
+     │ 私钥(sec)│                            │ 公钥(pub)│
+     └────┬─────┘                            └────┬─────┘
+   sign(header.payload)                         verify(header.payload, sig)
+          │                                          │
+          ▼                                          ▼
+      signature ────── 网络上传输 ─────────────►  通过? → 信任
+</code></pre>
+<ul>
+<li><strong>HS256</strong>：签发方 = 验证方，共享一把密钥。适合单体应用。</li>
+<li><strong>RS256/ES256</strong>：只有授权服务器有私钥，其他服务只持公钥。适合微服务、<br>
+  第三方登录（Google 的公钥是公开的，谁都能验，但只有 Google 能签）。</li>
+<li><strong>ES256</strong>：256 bit 密钥 ≈ 3072 bit RSA 的安全强度，签名更短、速度更快，<br>
+  现代系统首选。</li>
+</ul>
+<p><strong>选型口诀</strong>：多方验证用非对称（RS/ES/PS），单方自用可 HMAC（HS），<br>
+<strong>永远不要用 none</strong>。</p>
+<h3 id="23-6">2.3 验证方必须检查的 6 件事</h3>
+<p>一个<strong>正确</strong>的 JWT 验证不是"签名对就放行"，而是逐项校验：</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>检查项</th>
+<th>不检查的后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>签名</strong>（用 Header 里声明的算法，但算法必须来自服务端白名单）</td>
+<td>伪造 token</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong><code>alg</code> 在白名单内</strong></td>
+<td><code>alg:none</code> / HS-RS 混淆攻击</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong><code>exp</code></strong> 未过期（并允许少量 clock skew，如 30s）</td>
+<td>永久有效 token</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong><code>nbf</code></strong> 已生效</td>
+<td>提前使用</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong><code>iss</code></strong> 等于可信签发者</td>
+<td>拿别家签的 token 登录</td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong><code>aud</code></strong> 包含自己</td>
+<td><strong>跨服务 token 混用</strong>：给 A 服务的 token 拿去调 B 服务</td>
+</tr>
+</tbody>
+</table>
+<p>第 6 条最容易被忽略：如果 A 服务和 B 服务共用一把密钥/同一签发者，<br>
+而双方都不校验 <code>aud</code>，那<strong>低权限服务签发的 token 就能直接访问高权限服务</strong>。</p>
+<p><strong>为什么 <code>exp</code> 要允许 clock skew？</strong> 分布式系统各机器时钟有毫秒到秒级<br>
+漂移，不允许偏差会偶发地"刚签发就过期"。</p>
+<h3 id="24">2.4 攻击面全景</h3>
+<p>JWT 的经典攻击分两大类：<strong>算法类</strong>和<strong>密钥/实现类</strong>。</p>
+<pre class="plain"><code>                    ┌─────────────────────────────┐
+                    │        JWT 攻击面            │
+                    └──────────────┬──────────────┘
+        ┌──────────────────────┐   │   ┌──────────────────────┐
+        │      算法类攻击       │   │   │     密钥 / 实现类      │
+        ├──────────────────────┤   │   ├──────────────────────┤
+        │ alg=none             │   │   │ 弱密钥爆破 (HS256)     │
+        │ HS/RS 算法混淆        │   │   │ kid 路径穿越 / SQLi    │
+        │ 弱算法降级 (HS256)    │   │   │ jku/x5u 密钥注入       │
+        └──────────────────────┘   │   │ 库实现漏洞 (CVE)       │
+                                   │   │ payload 里藏敏感数据    │
+                                   │   │ 无 exp / 超长有效期     │
+                                   └──────────────────────┘
+</code></pre>
+<h4 id="1alg-none">攻击 1：<code>alg: none</code></h4>
+<p>最古老的 JWT 漏洞。攻击者把 Header 改成 <code>{"alg":"none","typ":"JWT"}</code>，<br>
+删掉签名段（保留末尾的点），构造 <code>header.payload.</code>。如果服务端库在<br>
+<code>alg</code> 为 <code>none</code> 时<strong>跳过验签</strong>，攻击者就能伪造任意身份。</p>
+<p><strong>根因</strong>：库的"宽容"设计 + 应用没指定允许的算法。<br>
+<strong>防护</strong>：验证时<strong>显式指定</strong> <code>algorithms=["HS256"]</code>，并把 <code>none</code> 列入<br>
+黑名单。现代 PyJWT 默认会拒绝 <code>none</code>，除非你传 <code>options={"verify_signature": False}</code>。</p>
+<h4 id="2hsrs-algorithm-confusion">攻击 2：HS/RS 算法混淆（Algorithm Confusion）</h4>
+<p>前提：服务端用 <strong>RS256</strong>（公钥公开可得），但验证代码写成"按 Header 里的<br>
+<code>alg</code> 动态选择算法"。攻击者把 Header 改成 <code>{"alg":"HS256"}</code>，然后用<br>
+<strong>服务端公开的 RSA 公钥字符串</strong>当作 HMAC 密钥重新签名。</p>
+<pre class="plain"><code>服务端预期：  RS256 验证 → 用公钥验签
+攻击者构造：  HS256 签名 → 密钥 = 公钥文本（人人可得！）
+服务端 bug：  看到 alg=HS256 → 拿&quot;公钥&quot;当 HMAC 密钥 → 验签通过 ✅ 伪造成功
+</code></pre>
+<p><strong>根因</strong>：信任了攻击者可控的 Header 字段来决定"用什么算法验证"。<br>
+<strong>防护</strong>：<strong>算法必须由服务端配置决定，绝不能来自 token</strong>。<br>
+PyJWT 要求显式传 <code>algorithms=["RS256"]</code> 正是为此。</p>
+<h4 id="3">攻击 3：弱密钥爆破</h4>
+<p>如果服务端用 HS256 且密钥是弱口令，攻击者可以<strong>离线</strong>爆破：本地拿<br>
+token + 候选密钥字典算出签名对比即可，完全不需要访问服务器。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">for</span> <span class="n">candidate</span> <span class="ow">in</span> <span class="n">wordlist</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">jwt</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">header_payload</span><span class="p">,</span> <span class="n">candidate</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;HS256&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="n">stolen_token</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;密钥是&quot;</span><span class="p">,</span> <span class="n">candidate</span><span class="p">)</span>   <span class="c1"># 几秒到几分钟</span>
+</code></pre></div>
+<p><strong>防护</strong>：密钥用 <code>secrets.token_bytes(32)</code> 或 KMS 生成/托管，<br>
+定期轮换；用强随机密钥后爆破在计算上不可行。</p>
+<h4 id="4kid">攻击 4：<code>kid</code> 注入</h4>
+<p><code>kid</code> 用来标识用哪把密钥，实现不当会变成漏洞：</p>
+<ul>
+<li><strong>路径穿越</strong>：<code>kid=../../../../dev/null</code> → 读到空文件 → HMAC 密钥为空 → 可伪造。</li>
+<li><strong>SQL 注入</strong>：<code>kid=' UNION SELECT 'attacker_key'--</code> → 密钥变成攻击者已知值。</li>
+<li><strong>命令注入</strong>：<code>kid</code> 拼进 shell 命令。</li>
+</ul>
+<p><strong>防护</strong>：<code>kid</code> <strong>绝不可直接用作文件路径或 SQL</strong>，必须映射到服务端<br>
+预置的密钥表。</p>
+<h4 id="5jku-x5u">攻击 5：<code>jku</code> / <code>x5u</code> 密钥注入</h4>
+<p>Header 里 <code>jku</code> 指向 JWKS（JSON Web Key Set）地址。若服务端盲信，<br>
+攻击者把 <code>jku</code> 指向自己的服务器，放上自己的公钥，用自己的私钥签名 —— 验证通过。</p>
+<p><strong>防护</strong>：<code>jku</code>/<code>x5u</code> 必须在<strong>服务端白名单</strong>内，绝不取用户可控 URL。</p>
+<h4 id="6payload">攻击 6：payload 泄密</h4>
+<p>payload 只是 Base64，<strong>不是加密</strong>。把手机号、身份证、内部 IP 放进去，<br>
+等于明文广播。</p>
+<p><strong>防护</strong>：payload 只放<strong>非敏感</strong>标识（<code>sub</code>、<code>jti</code>、<code>role</code>）；敏感数据<br>
+服务端按 <code>sub</code> 查库；确需放入则改用 JWE。</p>
+<hr>
+<h2 id="api">三、定义与使用方法（API 速查）</h2>
+<h3 id="31-pyjwt-api">3.1 PyJWT 核心 API</h3>
+<p>安装：<code>pip install pyjwt</code>（要 RS256/ES256 再加 <code>pip install cryptography</code>）。</p>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>签名</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>jwt.encode</code></td>
+<td><code>(payload, key, algorithm="HS256", headers=None)</code> → <code>str</code></td>
+<td>签发 token。PyJWT ≥2.0 返回 <code>str</code>，不再是 <code>bytes</code></td>
+</tr>
+<tr>
+<td><code>jwt.decode</code></td>
+<td><code>(jwt, key, algorithms=[...], options=None, audience=None, issuer=None, leeway=0)</code></td>
+<td>验证 + 解码。<strong><code>algorithms</code> 必填</strong></td>
+</tr>
+<tr>
+<td><code>jwt.get_unverified_header</code></td>
+<td><code>(jwt)</code> → <code>dict</code></td>
+<td>⚠️ <strong>不验签</strong>只解 Header，仅用于取 <code>kid</code> 选密钥</td>
+</tr>
+<tr>
+<td><code>jwt.decode_complete</code></td>
+<td><code>(jwt, key, algorithms=[...])</code> → <code>dict</code></td>
+<td>同时返回 <code>header</code> / <code>payload</code> / <code>signature</code></td>
+</tr>
+<tr>
+<td><code>jwt.api_jwk.PyJWKClient</code></td>
+<td><code>(uri).get_signing_key_from_jwt(token)</code></td>
+<td>从 JWKS 端点按 <code>kid</code> 取公钥（内含缓存）</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>jwt.decode</code> 常用参数：</strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+<th>建议值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>algorithms</code></td>
+<td>允许的算法<strong>白名单</strong></td>
+<td><code>["RS256"]</code>，绝不要传 <code>[header["alg"]]</code></td>
+</tr>
+<tr>
+<td><code>audience</code></td>
+<td>校验 <code>aud</code></td>
+<td>你的服务名，如 <code>"api.example.com"</code></td>
+</tr>
+<tr>
+<td><code>issuer</code></td>
+<td>校验 <code>iss</code></td>
+<td>可信签发者，如 <code>"https://auth.example.com"</code></td>
+</tr>
+<tr>
+<td><code>leeway</code></td>
+<td>允许的时钟偏移（秒）</td>
+<td><code>30</code></td>
+</tr>
+<tr>
+<td><code>options</code></td>
+<td>细粒度开关</td>
+<td>见下</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>options</code> 常用开关：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">options</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;verify_signature&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>      <span class="c1"># 永远保持 True</span>
+    <span class="s2">&quot;verify_exp&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>            <span class="c1"># 校验过期</span>
+    <span class="s2">&quot;verify_nbf&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>            <span class="c1"># 校验生效时间</span>
+    <span class="s2">&quot;verify_aud&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>            <span class="c1"># 校验受众</span>
+    <span class="s2">&quot;verify_iss&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>            <span class="c1"># 校验签发者</span>
+    <span class="s2">&quot;require&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;exp&quot;</span><span class="p">,</span> <span class="s2">&quot;iat&quot;</span><span class="p">,</span> <span class="s2">&quot;sub&quot;</span><span class="p">],</span>  <span class="c1"># 强制这些 claim 必须存在</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><code>options["require"]</code> 是<strong>很容易被忽略但极其重要</strong>的一项：把 <code>exp</code>、<code>iss</code>、<br>
+<code>aud</code> 设为必填，能从根上避免"攻击者把字段删掉绕过校验"。</p>
+<h3 id="32">3.2 异常类型速查（按需捕获）</h3>
+<pre class="plain"><code>jwt.InvalidTokenError            ← 所有 JWT 异常的基类（兜底 catch 这个）
+├── DecodeError                  ← token 格式/Base64 解码错误
+├── InvalidSignatureError        ← 签名不匹配（最常见）
+├── InvalidAlgorithmError        ← 算法不在白名单
+├── ExpiredSignatureError        ← exp 已过
+├── ImmatureSignatureError       ← nbf 未到
+├── InvalidAudienceError         ← aud 不匹配
+├── InvalidIssuerError           ← iss 不匹配
+├── MissingRequiredClaimError    ← require 里要求的 claim 缺失
+└── InvalidKeyError              ← 密钥类型不对（如拿 PEM 当 HMAC 密钥）
+</code></pre>
+<p><strong>注意</strong>：<code>ExpiredSignatureError</code> 继承自 <code>InvalidSignatureError</code>，而<br>
+<code>InvalidSignatureError</code> 继承自 <code>InvalidTokenError</code>。所以捕获顺序要从具体到宽泛。<br>
+对外返回时<strong>统一返回 401，不要泄露具体是"签名错"还是"过期"</strong>，<br>
+否则等于给攻击者送情报。</p>
+<h3 id="33">3.3 算法对比与选型</h3>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th>类型</th>
+<th>密钥</th>
+<th>签名长度</th>
+<th>速度</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>HS256</code></td>
+<td>HMAC-SHA256</td>
+<td>共享密钥</td>
+<td>32 B</td>
+<td>⚡ 最快</td>
+<td>单体应用、内部服务</td>
+</tr>
+<tr>
+<td><code>RS256</code></td>
+<td>RSA-PKCS1v1.5</td>
+<td>私钥签/公钥验</td>
+<td>256 B</td>
+<td>慢（验证比签名快）</td>
+<td>微服务、开放平台</td>
+</tr>
+<tr>
+<td><code>PS256</code></td>
+<td>RSA-PSS</td>
+<td>私钥签/公钥验</td>
+<td>256 B</td>
+<td>慢</td>
+<td>RS256 的现代化替代，抗签名伪造</td>
+</tr>
+<tr>
+<td><code>ES256</code></td>
+<td>ECDSA P-256</td>
+<td>私钥签/公钥验</td>
+<td>64 B</td>
+<td>快</td>
+<td><strong>现代首选</strong>，token 短</td>
+</tr>
+<tr>
+<td><code>EdDSA</code></td>
+<td>Ed25519</td>
+<td>私钥签/公钥验</td>
+<td>64 B</td>
+<td>最快</td>
+<td>新系统首选，需较新库支持</td>
+</tr>
+<tr>
+<td><code>none</code></td>
+<td>无签名</td>
+<td>—</td>
+<td>0 B</td>
+<td>—</td>
+<td>❌ <strong>永远不要用</strong></td>
+</tr>
+</tbody>
+</table>
+<p>选型决策：</p>
+<pre class="plain"><code>需要多方验证（第三方登录 / 微服务各自验签）？
+   ├─ 是 → 用非对称：EdDSA &gt; ES256 &gt; PS256 &gt; RS256
+   └─ 否 → 单方自用，可以 HS256，但密钥必须 ≥32B 随机
+</code></pre>
+<h3 id="34">3.4 密钥与生命周期管理清单</h3>
+<ul>
+<li>[ ] 密钥用 <code>secrets.token_bytes(32)</code> 或 KMS 生成，<strong>不写进代码/git</strong></li>
+<li>[ ] 配置走环境变量或密钥管理服务（Vault / AWS KMS / 阿里云 KMS）</li>
+<li>[ ] 支持<strong>双密钥并存</strong>：换钥时新旧同时可验，过渡期后再撤旧钥</li>
+<li>[ ] access token 短（5~30 分钟）+ refresh token 长（7~30 天，且可撤销）</li>
+<li>[ ] 用 <code>jti</code> + 服务端黑名单实现"主动登出"</li>
+<li>[ ] 定期审计：日志里绝不打完整 token（打前 8 位 + 哈希即可）</li>
+</ul>
+<hr>
+<h2 id="jwt">四、实战案例：一个安全的 JWT 认证流程</h2>
+<h3 id="41">4.1 场景说明</h3>
+<p>一个典型的 Web 应用：用户登录后拿到 <strong>access token</strong>（短效）和<br>
+<strong>refresh token</strong>（长效），访问受保护接口时带 access token，过期后用<br>
+refresh token 换新的。</p>
+<pre class="plain"><code>                        ┌──────────────────────────────┐
+                        │        Auth 服务              │
+   ① 登录(用户名/密码)    │  ┌────────────────────────┐  │
+ ───────────────────────►│  │ 验密码 → 签发双 token   │  │
+                        │  └────────────────────────┘  │
+   ② access(15min)        │                              │
+      refresh(7d)         │                              │
+ ◄───────────────────────┤                              │
+                        └──────────────────────────────┘
+   ③ 每次请求带 access ──►  API 服务（只持公钥，本地验签，无状态）
+       签名对 + 未过期 → 放行
+       已过期 → 401
+   ④ 拿 refresh 换新 access ──► Auth 服务（查库校验 refresh 是否被撤销）
+</code></pre>
+<p><strong>为什么 access 要短、refresh 要长？</strong> 这是"安全"与"体验"的折中：<br>
+access 短 → 泄露窗口小；但每次都让用户重新登录体验差 → 用 refresh 续命。<br>
+而 refresh 一旦泄露危害极大，所以它<strong>必须可撤销</strong>（存库 + 黑名单）。</p>
+<h3 id="42">4.2 关键设计点（每个都是"为什么"）</h3>
+<table>
+<thead>
+<tr>
+<th>设计</th>
+<th>为什么这么做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>access / refresh 用不同 <code>aud</code></td>
+<td>防止 refresh token 被拿去当 access 用</td>
+</tr>
+<tr>
+<td>refresh 存库、可撤销</td>
+<td>access 无状态；refresh 必须有状态才能"登出"</td>
+</tr>
+<tr>
+<td><code>sub</code> 放用户 ID，不放用户名</td>
+<td>ID 稳定，用户名可改；改用户名不用重发 token</td>
+</tr>
+<tr>
+<td><code>role</code> 放 token</td>
+<td>免去每个请求查库拿角色，但<strong>改角色要等 token 过期</strong>（或加版本号）</td>
+</tr>
+<tr>
+<td>加 <code>jti</code></td>
+<td>支持单 token 黑名单 / 审计追溯</td>
+</tr>
+<tr>
+<td>加 <code>kid</code></td>
+<td>密钥轮换时，验证方知道用哪把公钥</td>
+</tr>
+<tr>
+<td>不用 <code>none</code>、算法写死白名单</td>
+<td>从根上堵掉 alg 系列攻击</td>
+</tr>
+<tr>
+<td>dev/prod 密钥不同</td>
+<td>防止开发环境 token 拿到生产用</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43">4.3 核心代码骨架（安全版）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">secrets</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">jwt</span>
+
+<span class="n">ACCESS_TTL</span> <span class="o">=</span> <span class="mi">15</span> <span class="o">*</span> <span class="mi">60</span>          <span class="c1"># 15 分钟</span>
+<span class="n">REFRESH_TTL</span> <span class="o">=</span> <span class="mi">7</span> <span class="o">*</span> <span class="mi">24</span> <span class="o">*</span> <span class="mi">3600</span>   <span class="c1"># 7 天</span>
+
+<span class="c1"># HS256：单方自用；生产建议换成 RS256 + 公私钥分离</span>
+<span class="n">ACCESS_SECRET</span> <span class="o">=</span> <span class="n">secrets</span><span class="o">.</span><span class="n">token_bytes</span><span class="p">(</span><span class="mi">32</span><span class="p">)</span>
+<span class="n">REFRESH_SECRET</span> <span class="o">=</span> <span class="n">secrets</span><span class="o">.</span><span class="n">token_bytes</span><span class="p">(</span><span class="mi">32</span><span class="p">)</span>   <span class="c1"># ✅ 两套密钥，互不通用</span>
+
+
+<span class="k">def</span> <span class="nf">issue_tokens</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">role</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+    <span class="n">now</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span>
+    <span class="n">common</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;sub&quot;</span><span class="p">:</span> <span class="n">user_id</span><span class="p">,</span> <span class="s2">&quot;iss&quot;</span><span class="p">:</span> <span class="s2">&quot;https://auth.example.com&quot;</span><span class="p">,</span> <span class="s2">&quot;iat&quot;</span><span class="p">:</span> <span class="n">now</span><span class="p">,</span>
+              <span class="s2">&quot;jti&quot;</span><span class="p">:</span> <span class="n">secrets</span><span class="o">.</span><span class="n">token_hex</span><span class="p">(</span><span class="mi">8</span><span class="p">)}</span>
+    <span class="n">access</span> <span class="o">=</span> <span class="n">jwt</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+        <span class="p">{</span><span class="o">**</span><span class="n">common</span><span class="p">,</span> <span class="s2">&quot;aud&quot;</span><span class="p">:</span> <span class="s2">&quot;api.example.com&quot;</span><span class="p">,</span> <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="n">role</span><span class="p">,</span> <span class="s2">&quot;exp&quot;</span><span class="p">:</span> <span class="n">now</span> <span class="o">+</span> <span class="n">ACCESS_TTL</span><span class="p">},</span>
+        <span class="n">ACCESS_SECRET</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;HS256&quot;</span><span class="p">)</span>
+    <span class="n">refresh</span> <span class="o">=</span> <span class="n">jwt</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span>
+        <span class="p">{</span><span class="o">**</span><span class="n">common</span><span class="p">,</span> <span class="s2">&quot;aud&quot;</span><span class="p">:</span> <span class="s2">&quot;auth.example.com&quot;</span><span class="p">,</span> <span class="s2">&quot;exp&quot;</span><span class="p">:</span> <span class="n">now</span> <span class="o">+</span> <span class="n">REFRESH_TTL</span><span class="p">},</span>
+        <span class="n">REFRESH_SECRET</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;HS256&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;access_token&quot;</span><span class="p">:</span> <span class="n">access</span><span class="p">,</span> <span class="s2">&quot;refresh_token&quot;</span><span class="p">:</span> <span class="n">refresh</span><span class="p">,</span>
+            <span class="s2">&quot;expires_in&quot;</span><span class="p">:</span> <span class="n">ACCESS_TTL</span><span class="p">,</span> <span class="s2">&quot;token_type&quot;</span><span class="p">:</span> <span class="s2">&quot;Bearer&quot;</span><span class="p">}</span>
+
+
+<span class="k">def</span> <span class="nf">verify_access</span><span class="p">(</span><span class="n">token</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;API 服务的验证函数：算法白名单 + aud/iss 校验 + exp 必填&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span>
+        <span class="n">token</span><span class="p">,</span> <span class="n">ACCESS_SECRET</span><span class="p">,</span>
+        <span class="n">algorithms</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;HS256&quot;</span><span class="p">],</span>                 <span class="c1"># ✅ 白名单，绝不读 Header.alg</span>
+        <span class="n">audience</span><span class="o">=</span><span class="s2">&quot;api.example.com&quot;</span><span class="p">,</span>           <span class="c1"># ✅ 防止 refresh 当 access 用</span>
+        <span class="n">issuer</span><span class="o">=</span><span class="s2">&quot;https://auth.example.com&quot;</span><span class="p">,</span>    <span class="c1"># ✅ 只认自己的签发者</span>
+        <span class="n">leeway</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>                            <span class="c1"># ✅ 容忍时钟漂移</span>
+        <span class="n">options</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;require&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;exp&quot;</span><span class="p">,</span> <span class="s2">&quot;iat&quot;</span><span class="p">,</span> <span class="s2">&quot;sub&quot;</span><span class="p">,</span> <span class="s2">&quot;aud&quot;</span><span class="p">,</span> <span class="s2">&quot;iss&quot;</span><span class="p">]},</span>  <span class="c1"># ✅ 必填</span>
+    <span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">refresh_access</span><span class="p">(</span><span class="n">refresh_token</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">is_revoked</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用 refresh 换新 access；必须先查撤销状态&quot;&quot;&quot;</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span>
+        <span class="n">refresh_token</span><span class="p">,</span> <span class="n">REFRESH_SECRET</span><span class="p">,</span>
+        <span class="n">algorithms</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;HS256&quot;</span><span class="p">],</span>
+        <span class="n">audience</span><span class="o">=</span><span class="s2">&quot;auth.example.com&quot;</span><span class="p">,</span>
+        <span class="n">issuer</span><span class="o">=</span><span class="s2">&quot;https://auth.example.com&quot;</span><span class="p">,</span>
+        <span class="n">leeway</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+        <span class="n">options</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;require&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;exp&quot;</span><span class="p">,</span> <span class="s2">&quot;iat&quot;</span><span class="p">,</span> <span class="s2">&quot;sub&quot;</span><span class="p">,</span> <span class="s2">&quot;jti&quot;</span><span class="p">]},</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">is_revoked</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="s2">&quot;jti&quot;</span><span class="p">]):</span>            <span class="c1"># ✅ refresh 必须可撤销</span>
+        <span class="k">raise</span> <span class="n">jwt</span><span class="o">.</span><span class="n">InvalidTokenError</span><span class="p">(</span><span class="s2">&quot;refresh token 已被撤销&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">issue_tokens</span><span class="p">(</span><span class="n">payload</span><span class="p">[</span><span class="s2">&quot;sub&quot;</span><span class="p">],</span> <span class="n">role</span><span class="o">=</span><span class="s2">&quot;user&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>注意 HS256 与 RS256 的 token 不能互验</strong>：两者的签名算法完全不同，<br>
+就算密钥碰巧相同也会失败 —— 这正是防算法混淆的最后一道物理屏障。</p>
+<h3 id="44">4.4 常见反模式（看到就要修）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 1. 算法来自 token</span>
+<span class="n">alg</span> <span class="o">=</span> <span class="n">jwt</span><span class="o">.</span><span class="n">get_unverified_header</span><span class="p">(</span><span class="n">token</span><span class="p">)[</span><span class="s2">&quot;alg&quot;</span><span class="p">]</span>
+<span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">algorithms</span><span class="o">=</span><span class="p">[</span><span class="n">alg</span><span class="p">])</span>
+
+<span class="c1"># ❌ 2. 关掉签名验证（有人为了&quot;先解析看看&quot;这么写，然后忘了改回来）</span>
+<span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;verify_signature&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">})</span>
+
+<span class="c1"># ❌ 3. 不做 aud 校验（多服务共用密钥时 = 横向越权）</span>
+<span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">algorithms</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;HS256&quot;</span><span class="p">])</span>
+
+<span class="c1"># ❌ 4. 密钥写死在代码里</span>
+<span class="n">SECRET</span> <span class="o">=</span> <span class="s2">&quot;my-super-secret-key-2026&quot;</span>      <span class="c1"># 进了 git = 全世界都知道</span>
+
+<span class="c1"># ❌ 5. 用 kid 直接拼路径 / SQL</span>
+<span class="nb">open</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;/keys/</span><span class="si">{</span><span class="n">kid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+<span class="c1"># ❌ 6. 把敏感信息放 payload</span>
+<span class="n">jwt</span><span class="o">.</span><span class="n">encode</span><span class="p">({</span><span class="s2">&quot;phone&quot;</span><span class="p">:</span> <span class="s2">&quot;138...&quot;</span><span class="p">,</span> <span class="s2">&quot;password&quot;</span><span class="p">:</span> <span class="s2">&quot;...&quot;</span><span class="p">},</span> <span class="n">key</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;HS256&quot;</span><span class="p">)</span>
+
+<span class="c1"># ❌ 7. catch 住所有异常后放行</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+    <span class="k">pass</span>            <span class="c1"># 相当于没有任何验证</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">五、思考题</h2>
+<ol>
+<li>
+<p><strong>无状态的代价</strong>：JWT 的卖点是"服务端不存会话"，但这就带来"无法主动<br>
+   失效"的问题。请设计一个方案，既保留 JWT 的无状态优势，又能在<br>
+   用户改密码 / 被盗号时<strong>立刻</strong>让旧 token 失效。提示：从"密钥版本号"、<br>
+   "<code>jti</code> 黑名单的粒度"、"短 access + 可撤销 refresh"三个角度比较<br>
+   各自的召回延迟与存储成本。</p>
+</li>
+<li>
+<p><strong><code>aud</code> 到底防的是什么</strong>：假设 A 服务（权限低）和 B 服务（权限高）<br>
+   共用同一个签发者和同一把密钥，且两边都<strong>不校验 <code>aud</code></strong>。请写出一个<br>
+   具体的越权攻击步骤，并说明加上 <code>aud</code> 校验后为什么攻击失败。</p>
+</li>
+<li>
+<p><strong>算法混淆的本质</strong>：HS/RS 混淆之所以能成功，是因为验证方"用了攻击者<br>
+   可控的输入来决定验证逻辑"。请举出另外 <strong>两个</strong> 非 JWT 场景中<br>
+   同样"信任了输入中的元数据"而导致的漏洞（提示：反序列化、<br>
+   模板引擎、<code>Content-Type</code> 协商、XXE 的 DTD 处理都是候选）。</p>
+</li>
+<li>
+<p><strong>时钟与过期</strong>：如果签发服务器比验证服务器快 10 分钟，<code>exp</code> 校验会<br>
+   出现什么现象？<code>leeway</code> 能解决到什么程度？如果服务器<strong>慢</strong> 10 分钟，<br>
+   又会怎样？请说明为什么"签发时钟"和"验证时钟"的漂移方向不同，<br>
+   风险是不对称的。</p>
+</li>
+<li>
+<p><strong>Base64 不是加密</strong>：有人主张"反正 payload 只放用户 ID，不怕看"。<br>
+   但请思考：一个只含 <code>sub</code> 和 <code>role</code> 的 payload，在<strong>统计层面</strong>能泄露<br>
+   哪些信息？（提示：token 长度、<code>role</code> 分布、不同用户 token 可否被打包<br>
+   关联、以及"加密的 cookie 会话"与之相比的差异。）</p>
+</li>
+<li>
+<p><strong>密钥轮换</strong>：如果你要支持"每 90 天轮换一次签名密钥，且不能让已登录<br>
+   用户掉线"，请设计完整的轮换流程，说明 <code>kid</code>、验证端密钥环、<br>
+   以及新旧密钥的并存时长应该如何设置。</p>
+</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-148/index.html">← Day 148 对称与非对称加密：AES、RSA 与混合加密</a><a class="nav-next" href="../day-150/index.html">Day 150 OAuth2 与认证安全：授权流程、CSRF/SSRF 与安全审计 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

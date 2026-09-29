@@ -1,0 +1,1504 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 151 — SQL 注入原理：五类注入、参数化查询与 ORM 防线</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 151 — SQL 注入原理：五类注入、参数化查询与 ORM 防线</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">988 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-151-sql-injection" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-sql">1.1 什么是 SQL 注入</a>
+<a class="toc-l3" href="#12">1.2 为什么它这么危险（危害分级）</a>
+<a class="toc-l3" href="#13-90">1.3 三类根因（记住这三个，90% 的场景都能对号入座）</a>
+<a class="toc-l3" href="#14">1.4 五类注入：按&quot;攻击者能看到什么&quot;分类</a>
+<a class="toc-l3" href="#15">1.5 与相邻知识的边界（避免概念混淆）</a>
+<a class="toc-l2" href="#_2">二、原理解释（底层机制）</a>
+<a class="toc-l3" href="#21-sql">2.1 数据库是怎么&quot;读懂&quot;一条 SQL 的（五步流水线）</a>
+<a class="toc-l3" href="#22-token">2.2 为什么&quot;拼接&quot;会改变语义（Token 层面的真相）</a>
+<a class="toc-l3" href="#23-prepare-bind-execute">2.3 参数化查询的底层：编译与绑定分离（prepare / bind / execute）</a>
+<a class="toc-l3" href="#24">2.4 五类注入的原理逐一拆解</a>
+<a class="toc-l3" href="#25">2.5 盲注为什么&quot;慢但可行&quot;：算一笔账</a>
+<a class="toc-l3" href="#26-orm">2.6 ORM 是怎么&quot;自动防注入&quot;的，以及它什么时候失效</a>
+<a class="toc-l3" href="#27-wafmysql_real_escape_string">2.7 为什么 WAF、黑名单、mysql_real_escape_string 都不算根治</a>
+<a class="toc-l2" href="#_3">三、攻击方式 · 手段 · 原理</a>
+<a class="toc-l3" href="#31">3.1 第一步永远是一样的：探测</a>
+<a class="toc-l3" href="#32">3.2 五类注入的手段与原理（完整版）</a>
+<a class="toc-l3" href="#33">3.3 盲注经济学：为什么“限速”是最有效的缓解</a>
+<a class="toc-l3" href="#34">3.4 二次注入：为什么扫描器扫不出来</a>
+<a class="toc-l3" href="#35">3.5 当代码“过滤了特殊字符”时：常见的绕过思路</a>
+<a class="toc-l3" href="#36">3.6 检测信号：从日志里看出&quot;有人在盲注&quot;</a>
+<a class="toc-l2" href="#_4">四、防护与修复原理</a>
+<a class="toc-l3" href="#41">4.1 根治：参数化查询（为什么它而不是&quot;转义&quot;）</a>
+<a class="toc-l3" href="#42">4.2 补齐参数化的盲区：标识符只能白名单</a>
+<a class="toc-l3" href="#43">4.3 业务语义层的校验（参数化管不到的部分）</a>
+<a class="toc-l3" href="#44">4.4 让“万一漏了”的损失可控：五层辅助防御</a>
+<a class="toc-l3" href="#45-ci">4.5 把防线写进 CI：注入回归测试</a>
+<a class="toc-l2" href="#api">五、定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#51-python-sqlite3">5.1 Python 标准库 sqlite3 的四种参数风格</a>
+<a class="toc-l3" href="#52">5.2 各数据库驱动的占位符对照（换库时最容易踩的坑）</a>
+<a class="toc-l3" href="#53">5.3 &quot;能/不能参数化&quot;总速查（背下这张表就够了）</a>
+<a class="toc-l3" href="#54-orm-django-sqlalchemy-orm">5.4 ORM 安全写法对照（Django / SQLAlchemy，思维可迁移到任何 ORM）</a>
+<a class="toc-l3" href="#55-code-review-checklist">5.5 代码自查清单（可直接当 Code Review Checklist）</a>
+<a class="toc-l2" href="#_5">六、图解</a>
+<a class="toc-l3" href="#61-mermaid">6.1 注入是怎么发生的（Mermaid 时序）</a>
+<a class="toc-l3" href="#62-vs-ascii">6.2 参数化 vs 拼接：协议层对比（ASCII）</a>
+<a class="toc-l3" href="#63-ascii">6.3 五类注入的&quot;信息信道&quot;对比（ASCII）</a>
+<a class="toc-l3" href="#64-ascii">6.4 纵深防御：七层，但只有第一层是根治（ASCII）</a>
+<a class="toc-l3" href="#65-ascii">6.5 二次注入的时间线（ASCII）</a>
+<a class="toc-l2" href="#_6">七、代码案例逐节说明 + 运行命令 + 预期输出</a>
+<a class="toc-l3" href="#70">7.0 统一验证命令（一键跑完三个自检）</a>
+<a class="toc-l3" href="#71-01-sql-injection-basicspy">7.1 01-sql-injection-basics.py — 五类注入 + 参数化修复（基础）</a>
+<a class="toc-l3" href="#72-02-parameterized-pitfallspy-orm">7.2 02-parameterized-pitfalls.py — 参数化的边界与 ORM 失效（进阶/避坑）</a>
+<a class="toc-l3" href="#73-03-sqli-detectorpy-sql">7.3 03-sqli-detector.py — SQL 注入检测脚本（实战工具）</a>
+<a class="toc-l2" href="#_7">八、思考题</a>
+<a class="toc-l2" href="#_8">附：本日文件清单</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-151-sql-orm">Day 151 — SQL 注入原理：五类注入、参数化查询与 ORM 防线</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化 · 主题：实战数据安全</p>
+<p>前置知识：Day 150 OAuth2 与认证安全（认证/授权、CSRF/SSRF 的思路）。<br>
+今天我们进入 Web 安全里<strong>最经典、最老、却依然年年上榜</strong>的漏洞：<br>
+<strong>SQL 注入（SQL Injection, SQLi）</strong>。</p>
+<p>⚠️ <strong>本日内容定位：安全防御与教学</strong>。所有攻击演示都只针对<br>
+<strong>进程内存里的 sqlite3 靶场</strong>（<code>sqlite3.connect(":memory:")</code>），<br>
+随进程销毁、不连网络、不碰任何真实站点。目标是让你<strong>看懂成因</strong>，<br>
+从而写出<strong>不需要靠运气</strong>的代码 —— 不是给你一份攻击 payload 清单。</p>
+<p><strong>本次升级</strong>：三个脚本都新增 <code>--self-test</code> 离线自检（不联网、不依赖第三方库、<br>
+<strong>不依赖计时</strong>，重复运行结果一致）；时间盲注的自检改用"一执行就报错的表达式"<br>
+（<code>SELECT abs(-9223372036854775808)</code>）代替看耗时，把易抖动的计时断言换成了确定性断言。<br>
+每个脚本的"逐节说明 + 运行命令 + 预期输出"见 <strong>第七节</strong>。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-sql">1.1 什么是 SQL 注入</h3>
+<p><strong>定义</strong>：SQL 注入是指<strong>用户可控的数据</strong>被程序当成 <strong>SQL 代码</strong>去执行，<br>
+从而让攻击者能够<strong>修改原本的查询语义</strong>，达到越权读取、篡改、删除数据，<br>
+甚至执行数据库层面的危险操作（读写文件、命令执行、探测内网）的漏洞。</p>
+<p>一句话概括：<strong>程序本来想"把用户输入拼进一句 SQL"，结果用户输入变成了新的一句 SQL。</strong></p>
+<p>一个最小例子（本日示例 01 会完整复现）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 反例</span>
+<span class="n">sql</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;SELECT id, username, role FROM users WHERE username = &#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">sql</span><span class="p">)</span>
+</code></pre></div>
+<p>当 <code>name</code> 是 <code>alice</code> 时，没问题。当 <code>name</code> 是下面这串时：</p>
+<pre class="plain"><code>nobody&#x27; UNION SELECT 1, owner, content FROM secrets--
+</code></pre>
+<p>数据库收到的完整语句变成：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">sql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">SELECT</span><span class="w"> </span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">username</span><span class="p">,</span><span class="w"> </span><span class="k">role</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">username</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;nobody&#39;</span>
+<span class="k">UNION</span><span class="w"> </span><span class="k">SELECT</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="k">owner</span><span class="p">,</span><span class="w"> </span><span class="n">content</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">secrets</span><span class="c1">--&#39;</span>
+</code></pre></div>
+<p><code>--</code> 把行尾多余的引号"注释"掉了，于是这条语句<strong>合法且有意义</strong>，<br>
+但它干的事是：把 <code>secrets</code> 表的内容读出来，伪装成用户资料返回。<br>
+<strong>程序的本意被彻底改写了。</strong></p>
+<hr>
+<h3 id="12">1.2 为什么它这么危险（危害分级）</h3>
+<table>
+<thead>
+<tr>
+<th>层级</th>
+<th>后果</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数据泄漏</td>
+<td>脱库</td>
+<td>用户表、订单表、密钥表被 <code>UNION</code> 或盲注逐字节搬走</td>
+</tr>
+<tr>
+<td>数据篡改</td>
+<td>越权/提权</td>
+<td><code>UPDATE users SET role='admin' WHERE id=1</code> 类操作</td>
+</tr>
+<tr>
+<td>数据销毁</td>
+<td>删库删表</td>
+<td>堆叠注入里的 <code>DROP TABLE</code>，甚至 <code>DROP DATABASE</code></td>
+</tr>
+<tr>
+<td>认证绕过</td>
+<td>免密登录</td>
+<td><code>' OR '1'='1'--</code> 让登录条件恒真</td>
+</tr>
+<tr>
+<td>横向移动</td>
+<td>打内网</td>
+<td>数据库的 <code>xp_cmdshell</code>、<code>LOAD_FILE</code>、<code>UTL_HTTP</code> 等</td>
+</tr>
+<tr>
+<td>持久化</td>
+<td>写文件留后门</td>
+<td><code>INTO OUTFILE</code> 写 WebShell（MySQL 经典路径）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>📌 <strong>为什么它老而不死？</strong> 因为它不是"某个库的 bug"，而是<br>
+<strong>人写代码时的一次偷懒</strong>：<code>f"...{user_input}..."</code> 在语法上完全合法、<br>
+在测试环境完全正常（你自己输入的都是正常数据），<br>
+只有被恶意输入碰到时才爆。换句话说，<strong>它靠人的疏忽存活</strong>。</p>
+</blockquote>
+<hr>
+<h3 id="13-90">1.3 三类根因（记住这三个，90% 的场景都能对号入座）</h3>
+<ol>
+<li><strong>字符串拼接</strong>：<code>f"..."</code>、<code>+</code>、<code>%</code>、<code>.format()</code>、模板引擎把变量拼进 SQL。</li>
+<li><strong>标识符拼接</strong>：表名、列名、<code>ORDER BY</code> 字段、<code>ASC/DESC</code> —— 这些<strong>无法参数化</strong>，<br>
+   只能白名单，但很多人直接拼了（示例 02 的坑 1、坑 2）。</li>
+<li><strong>"数据出库即可信"的错觉</strong>：第一次入库是安全的，第二次取出来又拼进 SQL<br>
+   （二次注入，示例 02 的坑 5）。</li>
+</ol>
+<hr>
+<h3 id="14">1.4 五类注入：按"攻击者能看到什么"分类</h3>
+<p>这是本日最核心的一张表。分类依据<strong>不是攻击手法，而是信息回传信道</strong><br>
+（因为我们防的就是"信息泄漏"）：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>攻击者能看到的信号</th>
+<th>典型构造</th>
+<th>适合场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>UNION 注入</strong></td>
+<td>完整数据回显</td>
+<td><code>' UNION SELECT ...--</code></td>
+<td>页面直接把查询结果渲染出来</td>
+</tr>
+<tr>
+<td><strong>报错注入</strong></td>
+<td>数据库报错文本</td>
+<td>故意构造语法/类型错误</td>
+<td>页面回显异常信息（未统一错误处理）</td>
+</tr>
+<tr>
+<td><strong>布尔盲注</strong></td>
+<td>真/假 两种状态</td>
+<td><code>' OR substr(...)='a'--</code></td>
+<td>页面只显示"有结果/无结果"</td>
+</tr>
+<tr>
+<td><strong>时间盲注</strong></td>
+<td>响应耗时</td>
+<td><code>' OR CASE WHEN (...) THEN &lt;慢查询&gt; END--</code></td>
+<td>页面<strong>毫无差异</strong>，只能测时间</td>
+</tr>
+<tr>
+<td><strong>堆叠注入</strong></td>
+<td>副作用的间接证据</td>
+<td><code>'; DROP TABLE x;--</code></td>
+<td>驱动允许一次执行多条语句</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>✨ <strong>这张表怎么用？</strong> 反过来读就是防御清单：<br>
+<strong>不要回显数据、不要回显报错、不要让响应可区分、不要让查询可计时、不要让一条请求跑多条语句</strong>，<br>
+再叠加<strong>参数化</strong>这个根治手段。</p>
+</blockquote>
+<hr>
+<h3 id="15">1.5 与相邻知识的边界（避免概念混淆）</h3>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>与 SQLi 的关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>XSS</td>
+<td>都是"注入"，但 XSS 注入的是 <strong>HTML/JS</strong>，SQLi 注入的是 <strong>SQL</strong></td>
+</tr>
+<tr>
+<td>命令注入</td>
+<td>同一个思路，注入到 shell；防御思路不同（避免 shell=True、参数化数组）</td>
+</tr>
+<tr>
+<td>CSRF / SSRF</td>
+<td>不修改 SQL 语义，而是"借身份/借网络位置"，见 Day 150</td>
+</tr>
+<tr>
+<td>越权访问</td>
+<td>不改变 SQL 语句，而是<strong>合法语句 + 缺失鉴权</strong>；SQLi 是<strong>绕过鉴权</strong></td>
+</tr>
+<tr>
+<td>反序列化</td>
+<td>注入的是"对象"，语言层面；SQLi 在数据传输层</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_2">二、原理解释（底层机制）</h2>
+<h3 id="21-sql">2.1 数据库是怎么"读懂"一条 SQL 的（五步流水线）</h3>
+<pre class="plain"><code>SQL 文本
+   │
+   ▼
+① 词法分析（Lexer）   把字符切成 Token：标识符 / 关键字 / 字面量 / 运算符 / 注释
+   │                  ⚠️ 关键：`&#x27;...&#x27;` 里的内容被标成&quot;字符串字面量&quot;，其它都是&quot;语法&quot;
+   ▼
+② 语法分析（Parser）  按语法生成抽象语法树（AST）：SELECT list / FROM / WHERE / ...
+   │
+   ▼
+③ 语义分析（Binder）  解析表名、列名是否存在；检查类型；检查权限
+   │
+   ▼
+④ 查询计划（Planner） 决定用哪个索引、怎么 Join（这一步定了&quot;要做什么事&quot;）
+   │
+   ▼
+⑤ 执行（Executor）    真正去读页、做过滤、返回结果行
+</code></pre>
+<p><strong>这五步里，只有在第 ① 步之后，"结构"就已经定了。</strong> 参数化查询的全部魔力，<br>
+就在于它<strong>把第 ①~④ 步（编译）和第 ⑤ 步（填值）分开了</strong> —— 见 2.3。</p>
+<h3 id="22-token">2.2 为什么"拼接"会改变语义（Token 层面的真相）</h3>
+<p>假设程序写的是：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">sql</span> <span class="o">=</span> <span class="s2">&quot;SELECT id FROM users WHERE username = &#39;&quot;</span> <span class="o">+</span> <span class="n">name</span> <span class="o">+</span> <span class="s2">&quot;&#39;&quot;</span>
+</code></pre></div>
+<p>当 <code>name = "alice"</code>，数据库收到的字符流是：</p>
+<pre class="plain"><code>SELECT  id  FROM  users  WHERE  username  =  &#x27;alice&#x27;
+  关键字  列   关键字  表    关键字    列     运算符  字面量
+</code></pre>
+<p>当 <code>name = "x' OR '1'='1"</code>，收到的字符流变成：</p>
+<pre class="plain"><code>SELECT  id  FROM  users  WHERE  username  =  &#x27;x&#x27;  OR  &#x27;1&#x27;  =  &#x27;1&#x27;
+   关键字  列  关键字  表    关键字    列   运算符 字面量 关键字 字面量 运算符 字面量
+</code></pre>
+<p><strong>注意那条边界线消失了</strong>：原本 <code>name</code> 的全部内容都应该落在"字面量"这个桶里，<br>
+现在它<strong>越过了单引号这道围栏</strong>，把 <code>OR '1'='1'</code> 变成了<strong>新语法</strong>。<br>
+数据库在第 ② 步就按这个新语法去构建执行计划，从此程序说什么都不算数了。</p>
+<blockquote>
+<p>📌 <strong>一句话记住：注入的本质不是"特殊字符"，而是"字符跨过了字面量边界"。</strong><br>
+所以防御的关键也不是"删掉特殊字符"（黑名单永远删不干净），<br>
+而是"<strong>让数据永远跨不过那道边界</strong>"。</p>
+</blockquote>
+<h3 id="23-prepare-bind-execute">2.3 参数化查询的底层：编译与绑定分离（prepare / bind / execute）</h3>
+<p>参数化查询（Prepared Statement）在协议层面是<strong>两次往返</strong>：</p>
+<pre class="plain"><code>第一次：客户端 → 服务端      只发&quot;模板&quot;，不带值
+   PREPARE stmt FROM &quot;SELECT id, username, role FROM users WHERE username = ?&quot;
+服务端：词法/语法/语义/计划 全部做完，把执行计划缓存起来
+        —— 此时语句结构已经**冻结**，`?` 就是一个&quot;占位洞&quot;，
+           它只能是&quot;值&quot;，永远不会被重新词法分析
+
+第二次：客户端 → 服务端      只发&quot;值&quot;（二进制协议里的 parameter 字段）
+   EXECUTE stmt USING &#x27;x&#x27;&#x27; OR &#x27;&#x27;1&#x27;&#x27;=&#x27;&#x27;1&#x27;
+服务端：把值塞进洞里，执行，返回结果
+        —— 值里哪怕包含引号、UNION、分号，也只是**一段普通字符串**
+</code></pre>
+<p><strong>为什么这能根治？</strong> 因为值<strong>从未参与词法分析</strong>。它不经过 Lexer，<br>
+没有机会被识别成 <code>OR</code>（关键字）或 <code>'</code>（字符串定界符）。攻击者能控制的<br>
+只有"洞里的字节"，而洞的位置、数量、它属于哪个列，<strong>全部由程序在编译期决定</strong>。</p>
+<blockquote>
+<p>✨ <strong>与"转义"的本质差别</strong>：<br>
+- 转义（escaping）是"我猜哪些字符危险，把它们加上反斜杠"。它依赖：<br>
+  字符集正确（GBK 宽字节绕过）、开发者没漏掉某个上下文（数字型、LIKE、注释符）、<br>
+  库的转义函数被正确使用。<strong>任何一个环节猜错就破防。</strong><br>
+- 参数化是"我根本不让你进入语法层"。它不依赖"猜"，是<strong>结构性</strong>的。</p>
+<p>这就是为什么安全界反复强调：<strong>参数化查询不是"更安全的转义"，它是另一条路。</strong></p>
+</blockquote>
+<h3 id="24">2.4 五类注入的原理逐一拆解</h3>
+<h4 id="1-union">① UNION 注入 —— 把别人的表接到结果集</h4>
+<p><code>UNION</code> 会<strong>纵向合并两个结果集</strong>，要求两侧<strong>列数相同、类型兼容</strong>。<br>
+攻击者只要知道列数（靠报错或试数字），就能把任意表的数据"接"进来：</p>
+<pre class="plain"><code>原始：SELECT id, username, role FROM users WHERE username = &#x27;X&#x27;
+注入：SELECT id, username, role FROM users WHERE username = &#x27;X&#x27;
+      UNION SELECT 1, owner, content FROM secrets -- &#x27;
+</code></pre>
+<p><strong>为什么列数要试？</strong> 因为类型不匹配/列数不同会直接报错。这也是为什么<br>
+"报错信息泄漏"本身就是帮凶。防御上：<strong>查询只返回需要的列</strong>（<code>SELECT *</code> 更危险），<br>
+并且<strong>数据库账号最小权限</strong>（用户查询的账号不该有 <code>secrets</code> 表的读权限）。</p>
+<h4 id="2">② 报错注入 —— 报错文本就是情报</h4>
+<p>数据库的报错信息对开发者是调试工具，对攻击者是<strong>地图</strong>：</p>
+<ul>
+<li>语法报错 ⇒ 暴露 SQL 片段 ⇒ 确认存在拼接；</li>
+<li>列数报错（<code>SELECTs ... do not have the same number of result columns</code>）<br>
+  ⇒ 暴露 SELECT 的列数；</li>
+<li><code>no such column: api_token</code> ⇒ 暴露<strong>列名</strong>；</li>
+<li><code>no such table: secrets</code> ⇒ 暴露<strong>表名</strong>。</li>
+</ul>
+<p>拿到表名列名之后，攻击者就能构造精确的 UNION/盲注。<br>
+<strong>防御</strong>：统一异常处理，对外只返回错误码；细节进服务端日志。</p>
+<h4 id="3-1-bit">③ 布尔盲注 —— 一个请求 1 bit</h4>
+<p>当页面只区分"有结果/无结果"时，攻击者把<strong>条件表达式</strong>塞进 SQL，<br>
+用真假来编码信息：</p>
+<pre class="plain"><code>payload: nobody&#x27; OR substr((SELECT api_token FROM users WHERE username=&#x27;admin&#x27;),1,1)=&#x27;t&#x27;--
+                                               ↑ 第 1 个字符          ↑ 猜它是不是 &#x27;t&#x27;
+</code></pre>
+<p>返回"有结果" ⇒ 条件为真 ⇒ 第 1 个字符是 <code>t</code>；否则换下一个候选字符。<br>
+逐字符、逐位地"问"出整条数据。<strong>注意这里用 <code>OR</code> 而不是 <code>AND</code></strong>：<br>
+<code>WHERE username='nobody'</code> 已经是假，<code>AND</code> 会让整句恒假（SQL 的短路求值），<br>
+必须用 <code>OR</code> 让真假完全由右半部分决定 —— 这是真实盲注的细节，示例 01 里演示了。</p>
+<p><strong>为什么可行？</strong> 因为信息论的铁律：<strong>只要响应可区分，就存在信道</strong>。<br>
+防御上无法把信道完全堵死（"有/无结果"是业务必需的），<br>
+所以真正的对策是<strong>参数化</strong>（让条件表达式根本进不来）+ <strong>速率限制</strong>（让 1 bit/请求 变得不经济）。</p>
+<h4 id="4">④ 时间盲注 —— 连真假都看不见时，用耗时编码</h4>
+<p>当页面<strong>完全不可区分</strong>（永远返回同一个页面）时，攻击者改用<strong>响应时间</strong>：</p>
+<pre class="plain"><code>payload: nobody&#x27; OR CASE WHEN (条件) THEN &lt;一个很慢的表达式&gt; ELSE 0 END--
+</code></pre>
+<p>条件为真 ⇒ 执行慢表达式 ⇒ 响应多花几十毫秒；条件为假 ⇒ 立刻返回。<br>
+攻击者测的是"统计上慢不慢"，仍然能读出 1 bit。</p>
+<blockquote>
+<p>⚠️ <strong>细节坑</strong>：这里必须用 <code>OR</code>。若写成 <code>username='nobody' AND CASE ...</code>，<br>
+左边恒假，SQLite 会<strong>短路跳过</strong>右边表达式，重表达式根本不执行 —— 时间差就没了。<br>
+示例 01 在两处踩过这个坑并给出了正确写法，这正是"原理必须动手验证"的例子。</p>
+</blockquote>
+<p><strong>防御</strong>：参数化（根治）+ <strong>语句超时</strong>（让慢查询直接被 kill）+ 监控 P99 延迟。</p>
+<h4 id="5">⑤ 堆叠注入 —— 从"读"升级到"写/删"</h4>
+<p>当驱动允许<strong>一次执行多条语句</strong>时，攻击者用 <code>;</code> 追加新语句：</p>
+<pre class="plain"><code>1) INSERT INTO search_log (term) SELECT username FROM users WHERE username = &#x27;x&#x27;;
+2) DROP TABLE secrets;              ← `;` 之后全是攻击者的地盘
+</code></pre>
+<ul>
+<li><strong>Python 的 sqlite3 <code>execute()</code> 默认只允许一条语句</strong><br>
+  （会抛 <code>ProgrammingError: You can only execute one statement at a time.</code>），<br>
+  这是标准库送的免费防护；</li>
+<li>但 <strong><code>executescript()</code> 允许多条</strong>，一旦用它拼接用户输入，堆叠注入立刻成立；</li>
+<li>其它数据库驱动（如某些 MySQL 客户端）默认允许 <code>multi=True</code>，<br>
+  此时 <code>execute()</code> 也不是防线。</li>
+</ul>
+<blockquote>
+<p>📌 <strong>结论：驱动层的"单语句限制"可以当纵深防御的一层，但</strong>永远不能当主防线**。<br>
+主防线只有参数化。</p>
+</blockquote>
+<h3 id="25">2.5 盲注为什么"慢但可行"：算一笔账</h3>
+<table>
+<thead>
+<tr>
+<th>数据</th>
+<th>长度</th>
+<th>单字符候选数</th>
+<th>请求数上限</th>
+<th>按 10 req/s 估算</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>用户名</td>
+<td>8</td>
+<td>36（小写+数字）</td>
+<td>288</td>
+<td>≈ 29 秒</td>
+</tr>
+<tr>
+<td>32 位 token</td>
+<td>32</td>
+<td>36</td>
+<td>1152</td>
+<td>≈ 2 分钟</td>
+</tr>
+<tr>
+<td>某列全部内容</td>
+<td>10 万字符</td>
+<td>36</td>
+<td>360 万</td>
+<td>≈ 100 小时</td>
+</tr>
+</tbody>
+</table>
+<p><strong>这张表的三个启示：</strong></p>
+<ol>
+<li>盲注<strong>永远"可行"</strong>（信息论上），但<strong>成本随数据量线性增长</strong>；</li>
+<li>所以<strong>速率限制（rate limit）会让盲注从"几分钟"变成"几年"</strong> —— 这是最有效的缓解手段；</li>
+<li><strong>但速率限制是缓解不是根治</strong>：攻击者可以并发、可以分布式。<br>
+   根治仍然是参数化。</li>
+</ol>
+<h3 id="26-orm">2.6 ORM 是怎么"自动防注入"的，以及它什么时候失效</h3>
+<p><strong>机制（这一点必须先说清楚）</strong>：ORM 并没有"消毒"你的字符串。<br>
+Django ORM / SQLAlchemy 做的事，本质是<strong>把你写的 Python 调用翻译成<br>
+"带占位符的 SQL + 参数列表"</strong>，也就是<strong>自动帮你写了参数化查询</strong>。</p>
+<pre class="plain"><code>user_input = &quot;x&#x27; OR &#x27;1&#x27;=&#x27;1&quot;
+User.objects.filter(username=user_input)
+        │
+        ▼ 翻译
+SELECT ... FROM user WHERE username = ?        ← SQL 里没有用户数据
+参数列表: [&quot;x&#x27; OR &#x27;1&#x27;=&#x27;1&quot;]                     ← 用户数据在参数里
+</code></pre>
+<p>推而广之：<strong>只要你能看到"SQL 字符串里有用户数据"，保护就已经消失了</strong>。<br>
+ORM 的三种典型失效场景：</p>
+<table>
+<thead>
+<tr>
+<th>失效场景</th>
+<th>具体写法</th>
+<th>为什么破防</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>原生 SQL 逃生舱</strong></td>
+<td>Django <code>extra()</code>/<code>RawSQL</code>、SQLAlchemy <code>text()</code> + f-string、各种 <code>raw()</code>/<code>whereRaw()</code></td>
+<td>你已经离开了 ORM 的参数化链路，等同于手写拼接</td>
+</tr>
+<tr>
+<td><strong>标识符由用户决定</strong></td>
+<td><code>.order_by(request.GET['sort'])</code>、<code>.extra(order_by=[...])</code>、动态表名</td>
+<td>ORM <strong>无法参数化表名/列名</strong>，只能靠白名单；你不做白名单就等于拼接</td>
+</tr>
+<tr>
+<td><strong>参数化被"掉包"</strong></td>
+<td><code>cursor.execute(sql % params)</code>、<code>sql.format(**kw)</code>、<code>"... " + col</code></td>
+<td>值在进入驱动之前就被拼进了字符串</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>✨ <strong>判断标准（背下来）</strong>：<br>
+<strong>凡是 SQL 变量里出现了 f-string / <code>+</code> / <code>%</code> / <code>.format()</code>，参数化就已经失效。</strong><br>
+正确写法永远是：<code>cursor.execute(静态SQL, 参数)</code> —— <strong>是逗号，不是百分号。</strong></p>
+</blockquote>
+<h3 id="27-wafmysql_real_escape_string">2.7 为什么 WAF、黑名单、<code>mysql_real_escape_string</code> 都不算根治</h3>
+<table>
+<thead>
+<tr>
+<th>手段</th>
+<th>为什么不可靠</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>黑名单过滤 <code>'</code>、<code>UNION</code>、<code>--</code></td>
+<td>编码绕过（<code>%2527</code>）、大小写（<code>uNiOn</code>）、注释插入（<code>UN/**/ION</code>）、等价语法无穷无尽</td>
+</tr>
+<tr>
+<td>转义函数</td>
+<td>依赖字符集（宽字节 <code>%bf%27</code>）、依赖调用点正确（不同上下文转义规则不同）</td>
+</tr>
+<tr>
+<td>WAF</td>
+<td>是"绕过游戏"，规则总滞后；且内网东西向流量常常不经过 WAF</td>
+</tr>
+<tr>
+<td>只隐藏报错</td>
+<td>只堵住了"报错注入"，UNION/布尔/时间盲注照旧</td>
+</tr>
+<tr>
+<td>只限速</td>
+<td>只把盲注变慢，不阻止 UNION 一次取走数据</td>
+</tr>
+</tbody>
+</table>
+<p><strong>它们都是"纵深防御的一层"，不是"根因修复"。</strong> 根因只有一个：<strong>数据与代码分离</strong>。</p>
+<hr>
+<h2 id="_3">三、攻击方式 · 手段 · 原理</h2>
+<blockquote>
+<p>这一节从攻击者视角把五类注入 + 二次注入完整推一遍。<br>
+<strong>所有演示只存在于进程内存的 sqlite3 靶场里</strong>，不连网络、不碰真实站点。</p>
+</blockquote>
+<h3 id="31">3.1 第一步永远是一样的：探测</h3>
+<p>攻击者拿到一个可疑参数后，第一步不是直接拖库，而是<strong>探测</strong>——回答三个问题：</p>
+<pre class="plain"><code>① 能不能注入？   → 送一个 &#x27;，看报错 / 看页面是否变化
+② 有几列？       → ORDER BY 1/2/3... 或 UNION SELECT 1,2,3...（直到不再报错）
+③ 哪一列能回显？ → 把常量换成可观测的值（如 CONCAT 版本号），看哪一列出现在页面上
+</code></pre>
+<p>本日示例 01 的 <code>demo_error_based()</code> 实测了第 ② 步：</p>
+<pre class="plain"><code>输入 name = x&#x27; UNION SELECT 1,2--
+→ OperationalError: SELECTs to the left and right of UNION do not have
+  the same number of result columns
+</code></pre>
+<p>报错把"目标查询有 3 列"这个事实拱手送给了攻击者 —— <strong>信息泄漏本身就是一次漏洞</strong>。</p>
+<h3 id="32">3.2 五类注入的手段与原理（完整版）</h3>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>完整构造</th>
+<th>为什么这样写能成立</th>
+<th>本日实测结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>UNION</td>
+<td><code>nobody' UNION SELECT 1,owner,content FROM secrets--</code></td>
+<td>前段查空集，UNION 把另一张表接到结果集；列数必须相同；<code>--</code> 注释掉尾部引号使语法合法</td>
+<td>真读出了 <code>secrets</code> 两行</td>
+</tr>
+<tr>
+<td>报错</td>
+<td><code>'</code>、<code>x' UNION SELECT 1,2--</code></td>
+<td>利用了"异常原文回显"；报错本身携带结构信息</td>
+<td>报错泄漏了 SQL 片段与列数</td>
+</tr>
+<tr>
+<td>布尔盲注</td>
+<td><code>nobody' OR substr((SELECT api_token FROM users WHERE username='admin'),1,1)='t'--</code></td>
+<td>前半句恒假，使整个 WHERE 的真假<strong>完全由 OR 右边决定</strong></td>
+<td>173 次请求提出 <code>tk9xq2</code></td>
+</tr>
+<tr>
+<td>时间盲注</td>
+<td><code>nobody' OR CASE WHEN (1=1) THEN &lt;慢表达式&gt; ELSE 0 END--</code></td>
+<td>真假不可见，改用<strong>响应耗时</strong>当信道</td>
+<td>实测恒真 96.8ms vs 恒假 0.1ms</td>
+</tr>
+<tr>
+<td>堆叠</td>
+<td><code>x'; DROP TABLE secrets;--</code></td>
+<td><code>;</code> 后追加新语句，需要驱动允许多语句</td>
+<td><code>secrets</code> 表真被删掉</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ <strong>盲注里两个必须亲手验证的细节</strong>（本日示例 01 都实测了）：<br>
+* <strong>必须用 <code>OR</code></strong>：写成 <code>username='nobody' AND CASE WHEN ...</code> 时左边已为假，<br>
+  数据库<strong>短路求值</strong>会直接跳过右边，慢表达式根本不执行 —— 时间差就没了。<br>
+* <strong>验证方式不要只看时间</strong>：自检里用 <code>abs(-9223372036854775808)</code>（在 SQLite 里<br>
+  必然报 <code>integer overflow</code>）充当"一执行就有副作用"的表达式，<br>
+  条件为真 → 报错；条件为假 → 不报错。<strong>确定性比重复计时可靠得多</strong>。</p>
+</blockquote>
+<h3 id="33">3.3 盲注经济学：为什么“限速”是最有效的缓解</h3>
+<table>
+<thead>
+<tr>
+<th>数据</th>
+<th>长度</th>
+<th>单字符候选</th>
+<th>请求数上限</th>
+<th>按 10 req/s 估算</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>用户名</td>
+<td>8</td>
+<td>36</td>
+<td>288</td>
+<td>≈ 29 秒</td>
+</tr>
+<tr>
+<td>32 位 token</td>
+<td>32</td>
+<td>36</td>
+<td>1152</td>
+<td>≈ 2 分钟</td>
+</tr>
+<tr>
+<td>某列全部内容</td>
+<td>10 万字符</td>
+<td>36</td>
+<td>360 万</td>
+<td>≈ 100 小时</td>
+</tr>
+</tbody>
+</table>
+<p>启示：盲注在信息论上<strong>永远可行</strong>（只要响应可区分就存在信道），<br>
+但<strong>成本随数据量线性增长</strong>，所以限速把"几分钟"变成"几年"。<br>
+⚠️ 但它是<strong>缓解</strong>不是根治：攻击者可并发、可分布式。</p>
+<h3 id="34">3.4 二次注入：为什么扫描器扫不出来</h3>
+<pre class="plain"><code>请求①  注册：username = x&#x27; OR &#x27;1&#x27;=&#x27;1   → 参数化 INSERT，完全安全（库单里就是这段字串）
+          ↓  （扫描器在这里看到的是“安全”，代码评审也看不出问题）
+请求②  改密码：取出 username → 拼进 SQL → WHERE username = &#x27;x&#x27; OR &#x27;1&#x27;=&#x27;1&#x27; → 恒真 → 全表被改
+</code></pre>
+<p>突破点在于<strong>跨请求的数据流</strong>：任何一次扫描都只看得到一半。<br>
+本日示例 02 的坑 5 实测：全表 4 行的 <code>role</code> 全部被改成 <code>vip</code>。</p>
+<p><strong>修复的两个铁律</strong>：① 出库的数据不代表可信，二次使用仍要参数化；<br>
+② <strong>定位记录只用不可变主键 id</strong>，不要用户可控的 name/email。</p>
+<h3 id="35">3.5 当代码“过滤了特殊字符”时：常见的绕过思路</h3>
+<table>
+<thead>
+<tr>
+<th>过滤方式</th>
+<th>为什么不可靠</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>黑名单 <code>'</code>、<code>UNION</code>、<code>--</code></td>
+<td>编码绕过（<code>%2527</code> 双重解码）、大小写（<code>uNiOn</code>）、注释插入（<code>UN/**/ION</code>）、等价语法无穷</td>
+</tr>
+<tr>
+<td>只转义引号</td>
+<td>数字型注入（<code>WHERE id = 1 OR 1=1</code>）根本不需要引号；<code>LIKE</code>/<code>ORDER BY</code> 上下文规则不同</td>
+</tr>
+<tr>
+<td>依赖字符集转义函数</td>
+<td>宽字节注入（GBK 下 <code>%bf%27</code> 触发）—— 字符集不匹配时转义会失效</td>
+</tr>
+<tr>
+<td>只限制长度</td>
+<td>注入只需要几十字节</td>
+</tr>
+<tr>
+<td>只隐藏报错</td>
+<td>只堵住报错注入，UNION / 布尔 / 时间盲注照旧</td>
+</tr>
+<tr>
+<td>只靠 WAF</td>
+<td>是"绕过游戏"，规则总滞后；内网东西向流量常常不过 WAF</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>📌 一句话：<strong>你在猜"哪些字符危险"，而攻击者面对的是一个无限的语言。</strong><br>
+所以正确做法不是把黑名单做长，而是换一条路：<strong>参数化（数据永不进入语法层）</strong>。</p>
+</blockquote>
+<h3 id="36">3.6 检测信号：从日志里看出"有人在盲注"</h3>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>含义</th>
+<th>建议阈值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>同一账号/IP 短时间大量相似查询</td>
+<td>盲注逐字符探测</td>
+<td>查询指纹聚类 + 均值+3σ</td>
+</tr>
+<tr>
+<td>P99 延迟突然抬高（无业务变化）</td>
+<td>时间盲注</td>
+<td>相对基线 3σ</td>
+</tr>
+<tr>
+<td>数据库报错率上升</td>
+<td>报错注入探测</td>
+<td>任意异常峰值</td>
+</tr>
+<tr>
+<td>输入里出现引号/注释符集中分布</td>
+<td>注入探测</td>
+<td>采样观测（<strong>不可当唯一依据</strong>）</td>
+</tr>
+<tr>
+<td>参数值长度/字符集意外（如 <code>%</code>、<code>_</code> 滥用）</td>
+<td>LIKE 通配符滥用</td>
+<td>与业务模型对比</td>
+</tr>
+<tr>
+<td>同一接口在不同参数下返回行数差异很大</td>
+<td>布尔盲注</td>
+<td>行数分布异常检测</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">四、防护与修复原理</h2>
+<h3 id="41">4.1 根治：参数化查询（为什么它而不是"转义"）</h3>
+<pre class="plain"><code>拼  接：发送「一整段字符串」→ 解析器必须先决定结构 → 用户输入参与了结构构建 ✗
+参数化：PREPARE 模板（结构冻结）→ EXECUTE 只发值 → 值**不经过词法分析** ✓
+</code></pre>
+<p>参数化是<strong>结构性防御</strong>，它不依赖"猜对哪些字符危险"，不依赖字符集，<br>
+不依赖开发者在每个上下文都调用转义函数。这是它与一切过滤式防御的本质区别。</p>
+<p><strong>记住判断标准</strong>：<strong>只要 SQL 变量里出现了用户数据（f-string / <code>+</code> / <code>%</code> / <code>.format()</code>），<br>
+参数化就已经失效</strong>。正确写法永远是 <code>cursor.execute(静态SQL, 参数)</code> —— <strong>逗号，不是百分号</strong>。</p>
+<h3 id="42">4.2 补齐参数化的盲区：标识符只能白名单</h3>
+<p>表名 / 列名 / <code>ORDER BY</code> 字段 / <code>ASC|DESC</code> 这些位置<strong>物理上无法参数化</strong><br>
+（它们决定的是结构，不是值）。所以这里的正确做法只有一个：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">ALLOWED_SORT</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;username&quot;</span><span class="p">,</span> <span class="s2">&quot;id&quot;</span><span class="p">,</span> <span class="s2">&quot;role&quot;</span><span class="p">}</span>    <span class="c1"># 源是我方常量集合</span>
+<span class="k">if</span> <span class="n">column</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">ALLOWED_SORT</span><span class="p">:</span>                 <span class="c1"># 不在集合里直接拒绝</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;... ORDER BY </span><span class="si">{</span><span class="n">column</span><span class="si">}</span><span class="s2"> ASC&quot;</span><span class="p">)</span>      <span class="c1"># 拼进去的一定是白名单常量</span>
+</code></pre></div>
+<p>❌ 不要用"转义 + 黑名单"处理标识符：绕过手法比字符串转义多得多。</p>
+<h3 id="43">4.3 业务语义层的校验（参数化管不到的部分）</h3>
+<table>
+<thead>
+<tr>
+<th>风险</th>
+<th>修法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LIKE 通配符滥用（<code>%</code> 拉全表）</td>
+<td>转义 <code>%</code> <code>_</code> <code>\\</code> 并声明 <code>ESCAPE '\\'</code></td>
+</tr>
+<tr>
+<td>IN 列表超长（占位符爆炸）</td>
+<td>限制最大长度（如 500），超限拒绝</td>
+</tr>
+<tr>
+<td>数值范围/枚举</td>
+<td>类型转换 + 闭区间校验（在 SQL 之前）</td>
+</tr>
+<tr>
+<td>大结果集/深度分页</td>
+<td>强制 LIMIT 上限（防数据被一次性拉走）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="44">4.4 让“万一漏了”的损失可控：五层辅助防御</h3>
+<pre class="plain"><code>① 数据库最小权限：每应用一个账号，读写分离；业务账号绝不能 DROP/GRANT/读系统表
+② 统一异常处理：对外只返回错误码，细节只进服务端日志（堵死报错注入）
+③ 语句超时 statement_timeout：让时间盲注的&quot;慢&quot;变成&quot;直接被 kill&quot;
+④ 速率限制 + 异常查询量告警：抬高盲注成本，并留下检测信号
+⑤ WAF / 审计日志：**补偿控制**，不作为主防线
+</code></pre>
+<h3 id="45-ci">4.5 把防线写进 CI：注入回归测试</h3>
+<p>修完一个漏洞后最怕的是<strong>下次又改回去</strong>。本日示例 03 提供的是可进 CI 的两层测试：</p>
+<ol>
+<li><strong>静态层（AST）</strong>：任何 PR 里出现 f-string 拼 SQL 就报警（含嵌套加法、<code>executescript</code>、<code>raw()</code>）；</li>
+<li><strong>动态层（探针）</strong>：把你真实的 DAO 函数接入，用"恒真/恒假/UNION"差分探针断言<br>
+   "新旧查询函数全都没信号"，任一报警就让流水线失败。</li>
+</ol>
+<blockquote>
+<p>📌 这正是本日交付物的"可验证"部分：一修复就能用探针证明修复生效（示例 03 实测<br>
+拼接版 4 个探针全中、参数化版 4 个探针全绿）。</p>
+</blockquote>
+<hr>
+<h2 id="api">五、定义与使用方法（API 速查）</h2>
+<h3 id="51-python-sqlite3">5.1 Python 标准库 sqlite3 的四种参数风格</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">sqlite3</span>
+
+<span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;:memory:&quot;</span><span class="p">)</span>
+
+<span class="c1"># ① qmark 风格（最常用，推荐）</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM users WHERE username = ? AND role = ?&quot;</span><span class="p">,</span> <span class="p">(</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">))</span>
+
+<span class="c1"># ② named 风格（参数多时更可读）</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+    <span class="s2">&quot;SELECT * FROM users WHERE username = :name AND role = :role&quot;</span><span class="p">,</span>
+    <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">},</span>
+<span class="p">)</span>
+
+<span class="c1"># ③ 序列位置也用 named（用一个序列按顺序填）</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM users WHERE id = :id&quot;</span><span class="p">,</span> <span class="p">(</span><span class="mi">1</span><span class="p">,))</span>
+
+<span class="c1"># ④ 批量：executemany 只对&quot;参数&quot;生效，SQL 模板只编译一次</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span>
+    <span class="s2">&quot;INSERT INTO users (username, role) VALUES (?, ?)&quot;</span><span class="p">,</span>
+    <span class="p">[(</span><span class="s2">&quot;a&quot;</span><span class="p">,</span> <span class="s2">&quot;user&quot;</span><span class="p">),</span> <span class="p">(</span><span class="s2">&quot;b&quot;</span><span class="p">,</span> <span class="s2">&quot;admin&quot;</span><span class="p">)],</span>
+<span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>是否允许多语句</th>
+<th>是否参数化</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>execute(sql, params)</code></td>
+<td>❌ 只允许 1 条</td>
+<td>✅</td>
+<td><strong>首选</strong></td>
+</tr>
+<tr>
+<td><code>executemany(sql, seq)</code></td>
+<td>❌</td>
+<td>✅</td>
+<td>批量插入，性能好</td>
+</tr>
+<tr>
+<td><code>executescript(sql)</code></td>
+<td>✅ 允许</td>
+<td>❌ 不支持参数</td>
+<td>⚠️ 只用于<strong>常量</strong>脚本（建表等）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52">5.2 各数据库驱动的占位符对照（换库时最容易踩的坑）</h3>
+<table>
+<thead>
+<tr>
+<th>数据库 / 驱动</th>
+<th>占位符</th>
+<th>参数容器</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sqlite3（标准库）</td>
+<td><code>?</code> 或 <code>:name</code></td>
+<td>tuple / dict</td>
+<td>也支持 <code>%s</code> 吗？<strong>不支持</strong></td>
+</tr>
+<tr>
+<td>psycopg2 / psycopg3（PostgreSQL）</td>
+<td><code>%s</code> / <code>%(name)s</code></td>
+<td>tuple / dict</td>
+<td><code>%</code> 需写成 <code>%%</code></td>
+</tr>
+<tr>
+<td>PyMySQL / mysqlclient</td>
+<td><code>%s</code></td>
+<td>tuple / dict</td>
+<td>同上</td>
+</tr>
+<tr>
+<td>SQLAlchemy Core</td>
+<td><code>:name</code></td>
+<td>dict</td>
+<td>自己再翻译到驱动层</td>
+</tr>
+<tr>
+<td>Django ORM</td>
+<td>无（用 kwargs）</td>
+<td><code>.filter(col=value)</code></td>
+<td>底层自动参数化</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 常见事故：把 <code>%s</code> 拿到 sqlite3 上用（报错），<br>
+或者把 <code>?</code> 拿到 MySQL 上用（<code>?</code> 会被当字面字符，<strong>不报错但也不生效</strong> —— 静默错误最危险）。</p>
+</blockquote>
+<h3 id="53">5.3 "能/不能参数化"总速查（背下这张表就够了）</h3>
+<table>
+<thead>
+<tr>
+<th>SQL 位置</th>
+<th>能参数化？</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WHERE</code> 条件值</td>
+<td>✅</td>
+<td><code>col = ?</code></td>
+</tr>
+<tr>
+<td><code>INSERT ... VALUES</code></td>
+<td>✅</td>
+<td><code>VALUES (?, ?)</code></td>
+</tr>
+<tr>
+<td><code>UPDATE ... SET</code> 值</td>
+<td>✅</td>
+<td><code>SET col = ?</code></td>
+</tr>
+<tr>
+<td><code>LIMIT</code> / <code>OFFSET</code> 数值</td>
+<td>✅（多数数据库）</td>
+<td><code>LIMIT ? OFFSET ?</code></td>
+</tr>
+<tr>
+<td><code>IN (...)</code> 的值</td>
+<td>✅</td>
+<td>只拼 <code>"?,?,?"</code>，值走参数；并限制列表长度</td>
+</tr>
+<tr>
+<td><code>LIKE</code> 的模式串</td>
+<td>✅（SQL 语法层）</td>
+<td>仍需转义 <code>%</code>/<code>_</code> 并加 <code>ESCAPE '\\'</code></td>
+</tr>
+<tr>
+<td><code>IN (...)</code> 的元素个数</td>
+<td>⚠️ 半</td>
+<td>生成占位符（内容不含用户数据），但要限长防 DoS</td>
+</tr>
+<tr>
+<td><strong>表名 / 列名</strong></td>
+<td>❌</td>
+<td><strong>白名单映射</strong>（<code>{"users": "users"}</code>）</td>
+</tr>
+<tr>
+<td><strong><code>ORDER BY</code> 字段 / 方向</strong></td>
+<td>❌</td>
+<td><strong>白名单映射</strong>（字段集合 + <code>ASC/DESC</code> 集合）</td>
+</tr>
+<tr>
+<td><strong>运算符 / 关键字（AND、OR、=）</strong></td>
+<td>❌</td>
+<td>代码里写死，不由用户决定</td>
+</tr>
+</tbody>
+</table>
+<h3 id="54-orm-django-sqlalchemy-orm">5.4 ORM 安全写法对照（Django / SQLAlchemy，思维可迁移到任何 ORM）</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>❌ 危险写法</th>
+<th>✅ 安全写法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>条件过滤</td>
+<td><code>.filter(username=name)</code> 本身安全，但 <code>.extra(where=[f"username='{name}'"])</code> ❌</td>
+<td>用 kwargs + <code>__gt</code>/<code>__in</code>/<code>__contains</code> 等内置 lookups</td>
+</tr>
+<tr>
+<td>排序</td>
+<td><code>.order_by(request.GET["sort"])</code> ❌</td>
+<td>白名单映射后再传，或 <code>Case/When</code> 常量表</td>
+</tr>
+<tr>
+<td>原生 SQL</td>
+<td><code>raw(f"SELECT ... {x}")</code> ❌</td>
+<td><code>raw("SELECT ... WHERE id = %s", (x,))</code>（Django <code>raw</code> 支持 params）</td>
+</tr>
+<tr>
+<td>SQLAlchemy</td>
+<td><code>text(f"SELECT ... {x}")</code> ❌</td>
+<td><code>text("SELECT ... WHERE id = :id").bindparams(id=x)</code></td>
+</tr>
+<tr>
+<td>表名动态</td>
+<td><code>f"SELECT * FROM {table}"</code> ❌</td>
+<td>白名单字典 + 只拼常量</td>
+</tr>
+<tr>
+<td>日志</td>
+<td>打印拼好值的 SQL ❌</td>
+<td>打印 SQL 模板 + 参数个数（敏感值脱敏）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="55-code-review-checklist">5.5 代码自查清单（可直接当 Code Review Checklist）</h3>
+<pre class="plain"><code>□ 全仓库搜索：SQL 关键字附近有没有 f&quot; / + / % / .format（AST 脚本见示例 03）
+□ 所有 execute/query 调用都是&quot;常量 SQL + 第二参数&quot;，没有 sql % params
+□ executescript / multi=True / raw() / extra() / text() 的使用点逐个复核
+□ 表名、列名、ORDER BY 全部来自白名单常量，不来自请求参数
+□ LIKE 查询对 % 和 _ 做了转义并声明 ESCAPE
+□ IN 列表：只拼占位符，且限制最大长度
+□ 数据库账号是&quot;每应用一个&quot;，权限最小化（用户查询账号不能读 secrets 等表）
+□ 统一异常处理：对外不返回数据库报错原文
+□ 生产库关闭详细错误显示 / 日志不落库不落敏感值
+□ 接口层有速率限制（盲注的经济学攻击面）
+□ 慢查询有 statement_timeout
+□ 有 CI 级别的注入回归测试（示例 03 的动态探针）
+</code></pre>
+<hr>
+<h2 id="_5">六、图解</h2>
+<h3 id="61-mermaid">6.1 注入是怎么发生的（Mermaid 时序）</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant U as 攻击者
+    participant A as 应用服务
+    participant D as 数据库
+
+    U-&gt;&gt;A: username = &quot;nobody&#x27; UNION SELECT 1,owner,content FROM secrets--&quot;
+    Note over A: sql = &quot;SELECT id,username,role FROM users&lt;br/&gt;WHERE username = &#x27;&quot; + 输入 + &quot;&#x27;&quot;
+    A-&gt;&gt;D: 发送【一整段字符串】（SQL 结构 + 用户数据混在一起）
+    Note over D: 词法分析：`&#x27;` 在这里闭合了字面量&lt;br/&gt;`UNION` 被当成关键字 → 新语法生效
+    D-&gt;&gt;A: 返回 users ∪ secrets 的结果
+    A-&gt;&gt;U: 页面正常渲染&quot;用户资料&quot;（数据已泄漏）
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant U as 攻击者
+    participant A as 应用服务
+    participant D as 数据库
+
+    U-&gt;&gt;A: username = &quot;nobody&#x27; UNION SELECT 1,owner,content FROM secrets--&quot;
+    Note over A: sql = &quot;SELECT id,username,role FROM users&lt;br/&gt;WHERE username = &#x27;&quot; + 输入 + &quot;&#x27;&quot;
+    A-&gt;&gt;D: 发送【一整段字符串】（SQL 结构 + 用户数据混在一起）
+    Note over D: 词法分析：`&#x27;` 在这里闭合了字面量&lt;br/&gt;`UNION` 被当成关键字 → 新语法生效
+    D-&gt;&gt;A: 返回 users ∪ secrets 的结果
+    A-&gt;&gt;U: 页面正常渲染&quot;用户资料&quot;（数据已泄漏）
+</code></pre></div>
+<p><strong>关键点</strong>：数据库从始至终"不知情" —— 它只是忠实地执行了一条<strong>合法</strong>语句。</p>
+<h3 id="62-vs-ascii">6.2 参数化 vs 拼接：协议层对比（ASCII）</h3>
+<pre class="plain"><code>【拼接 —— 一次往返，结构由字符串内容决定】
+  应用 ──── &quot;SELECT ... WHERE username = &#x27;x&#x27; UNION SELECT ...--&#x27;&quot; ────▶ 数据库
+                                                                      │
+                                    词法→语法→语义→计划→执行 全在收到后决定
+                                    用户输入参与了&quot;结构&quot;的构建 ✗
+
+【参数化 —— 两次往返，结构在编译期冻结】
+  应用 ──── PREPARE: &quot;SELECT ... WHERE username = ?&quot; ─────────────────▶ 数据库
+                                                                      │
+                                          编译完成，结构冻结，`?` = 只能装值的洞
+  应用 ──── EXECUTE: 参数 [ &quot;x&#x27; UNION SELECT ...--&quot; ] ─────────────────▶ 数据库
+                                                                      │
+                                    值是纯数据，不经过词法分析 ⇒ 只能当用户名 ✗
+</code></pre>
+<h3 id="63-ascii">6.3 五类注入的"信息信道"对比（ASCII）</h3>
+<pre class="plain"><code>                 有无数据回显？
+                  ├── 有 ──────────────▶ UNION 注入（直接读走）
+                  └── 无
+                       ├── 有报错回显？ ──▶ 报错注入（读结构，再升级）
+                       └── 无
+                            ├── 有真/假差异？ ──▶ 布尔盲注（1 bit / 请求）
+                            └── 完全不可区分
+                                 └── 测量耗时 ──▶ 时间盲注（1 bit / 请求）
+                 能否执行多条语句？ ────────▶ 堆叠注入（可写/可删）
+</code></pre>
+<h3 id="64-ascii">6.4 纵深防御：七层，但只有第一层是根治（ASCII）</h3>
+<pre class="plain"><code>        ┌──────────────────────────────────────────────────────┐
+ 第 1 层│ ✅ 参数化查询 / ORM 安全 API          ← 根治（必做）   │
+        ├──────────────────────────────────────────────────────┤
+ 第 2 层│ ✅ 标识符白名单（表名/列名/ORDER BY）  ← 补上参数化的盲区│
+        ├──────────────────────────────────────────────────────┤
+ 第 3 层│ ✅ 输入校验（长度/类型/枚举/LIKE 转义）               │
+        ├──────────────────────────────────────────────────────┤
+ 第 4 层│ ✅ 数据库最小权限（分库分账号、禁 DROP、只读账号）     │
+        ├──────────────────────────────────────────────────────┤
+ 第 5 层│ ✅ 统一错误处理（不对外回显 SQL/堆栈）                 │
+        ├──────────────────────────────────────────────────────┤
+ 第 6 层│ ✅ 速率限制 + 语句超时（抬高盲注成本）                 │
+        ├──────────────────────────────────────────────────────┤
+ 第 7 层│ ⚠️ WAF / 审计日志告警（补偿控制，不作为主防线）        │
+        └──────────────────────────────────────────────────────┘
+   任何一层被绕过，其余层仍在 —— 这就是&quot;纵深防御&quot;的意义。
+</code></pre>
+<h3 id="65-ascii">6.5 二次注入的时间线（ASCII）</h3>
+<pre class="plain"><code> 请求①  注册用户，输入 username = x&#x27; OR &#x27;1&#x27;=&#x27;1
+        参数化 INSERT → 安全入库（库里就是这段**字符串**）
+                 │
+                 ▼  （时间过去，审计/扫描都没发现问题）
+ 请求②  改密码流程：先按 username 查出该用户，再拼 SQL
+        存储的字符串被拼进 WHERE username = &#x27;x&#x27; OR &#x27;1&#x27;=&#x27;1&#x27;
+        → 条件恒真 → 全表被 UPDATE
+ ✨ 修复：跨请求的数据**出库也不可信**；定位记录只用不可变主键 id。
+</code></pre>
+<hr>
+<h2 id="_6">七、代码案例逐节说明 + 运行命令 + 预期输出</h2>
+<blockquote>
+<p>三个脚本都在 <code>code/</code> 下，<strong>只依赖标准库</strong>（Python 3.10+），<code>python3 xx.py</code> 直接跑通。<br>
+全部演示都跑在 <code>sqlite3</code> 内存靶场上（<code>:memory:</code>，进程退出即销毁），<br>
+不连网络、不写任何文件、不碰真实站点。</p>
+<p>每个脚本两种模式：<br>
+* <strong>演示模式</strong>：<code>python3 code/xx.py</code>（含真实计时探针，输出会因机器而异，这是正常的）；<br>
+* <strong>自检模式</strong>：<code>python3 code/xx.py --self-test</code>（离线、确定性，末行必为 <code>SELF-TEST OK</code>）。</p>
+</blockquote>
+<h3 id="70">7.0 统一验证命令（一键跑完三个自检）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span>days/day-151-sql-injection/code/*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;=== </span><span class="nv">$f</span><span class="s2">&quot;</span>
+<span class="w">  </span>python3<span class="w"> </span>-B<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span>&gt;<span class="w"> </span>/tmp/st.log<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span>
+<span class="w">  </span><span class="nv">code</span><span class="o">=</span><span class="nv">$?</span>
+<span class="w">  </span>tail<span class="w"> </span>-2<span class="w"> </span>/tmp/st.log
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$code</span><span class="s2">&quot;</span>
+<span class="k">done</span>
+</code></pre></div>
+<p><strong>预期输出（实测）</strong>：</p>
+<pre class="plain"><code>=== days/day-151-sql-injection/code/01-sql-injection-basics.py
+共 29 项断言全部通过
+SELF-TEST OK
+exit=0
+=== days/day-151-sql-injection/code/02-parameterized-pitfalls.py
+共 34 项断言全部通过
+SELF-TEST OK
+exit=0
+=== days/day-151-sql-injection/code/03-sqli-detector.py
+共 22 项断言全部通过
+SELF-TEST OK
+exit=0
+</code></pre>
+<h3 id="71-01-sql-injection-basicspy">7.1 <code>01-sql-injection-basics.py</code> — 五类注入 + 参数化修复（基础）</h3>
+<p><strong>逐节说明</strong></p>
+<table>
+<thead>
+<tr>
+<th>节</th>
+<th>函数 / 代码</th>
+<th>演示内容</th>
+<th>原理要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>靶场</td>
+<td><code>make_range()</code></td>
+<td><code>:memory:</code> 建表 + 3 个用户 + 两行秘密</td>
+<td>用内置库搭靶场：随进程销毁、可重复、零外部依赖</td>
+</tr>
+<tr>
+<td>❌ 接口 1</td>
+<td><code>insecure_user_profile()</code></td>
+<td>f-string 拼 SQL 的用户资料查询</td>
+<td>数据跨过了字面量边界 ⇒ 变成语法</td>
+</tr>
+<tr>
+<td>❌ 接口 2</td>
+<td><code>insecure_user_exists()</code></td>
+<td>只返回 True/False</td>
+<td>盲注的典型场景：<strong>响应可区分就有信道</strong></td>
+</tr>
+<tr>
+<td>❌ 接口 3</td>
+<td><code>insecure_slow_endpoint()</code></td>
+<td>什么都不返回</td>
+<td>只要语句被执行，时间就是信道</td>
+</tr>
+<tr>
+<td>❌ 接口 4</td>
+<td><code>insecure_batch_search()</code></td>
+<td><code>executescript()</code> 跑多语句</td>
+<td><code>;</code> 之后是攻击者的地盘（堆叠注入）</td>
+</tr>
+<tr>
+<td>0</td>
+<td><code>demo_normal()</code></td>
+<td>正常查询基线</td>
+<td>先看清"正常长什么样"，异常才看得懂</td>
+</tr>
+<tr>
+<td>①</td>
+<td><code>demo_union()</code></td>
+<td>UNION 注入</td>
+<td>列数相同才能接，<code>--</code> 注释掉尾巴</td>
+</tr>
+<tr>
+<td>②</td>
+<td><code>demo_error_based()</code></td>
+<td>报错注入</td>
+<td>报错文本 = 地图（SQL 片段 / 列数 / 表名）</td>
+</tr>
+<tr>
+<td>③</td>
+<td><code>demo_boolean_blind()</code></td>
+<td>布尔盲注逐字符提取</td>
+<td>1 请求 ≈ 1 bit；用 <code>OR</code> 而非 <code>AND</code></td>
+</tr>
+<tr>
+<td>④</td>
+<td><code>demo_time_blind()</code></td>
+<td>时间盲注</td>
+<td>把条件真/假编码成"快/慢"</td>
+</tr>
+<tr>
+<td>⑤</td>
+<td><code>demo_stacked()</code></td>
+<td>堆叠注入删表</td>
+<td>从"读"升级到"改结构"</td>
+</tr>
+<tr>
+<td>⑥</td>
+<td><code>safe_user_profile()</code> / <code>demo_fix()</code></td>
+<td>同样 payload 全部失效</td>
+<td>参数化 = 编译与绑定分离</td>
+</tr>
+</tbody>
+</table>
+<p><strong>运行命令与预期输出（实测，时间数字因机器而异）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-151-sql-injection/code/01-sql-injection-basics.py
+</code></pre></div>
+<pre class="plain"><code>正常输入 name=&#x27;alice&#x27; →
+    [(2, &#x27;alice&#x27;, &#x27;user&#x27;)]
+
+① UNION 注入：把别的表的数据接到结果集里
+攻击者输入：
+   name = nobody&#x27; UNION SELECT 1, owner, content FROM secrets--
+攻击者拿到：
+    (1, &#x27;admin&#x27;, &#x27;内部定价表：成本 12.5 元 / 售价 99 元&#x27;)
+    (1, &#x27;admin&#x27;, &#x27;数据库备份口令：backup!2024&#x27;)
+
+② 报错注入：数据库的报错信息就是情报
+输入 name = &quot;&#x27;&quot; → 抛出： &#x27;unrecognized token: &quot;\&#x27;\&#x27;&quot;&#x27;
+输入 name = x&#x27; UNION SELECT 1,2-- → 抛出： &#x27;SELECTs to the left and right of
+   UNION do not have the same number of result columns&#x27;
+攻击者最终常用 sqlite_master 列全部表名：[&#x27;users&#x27;, &#x27;secrets&#x27;, &#x27;search_log&#x27;]
+
+③ 布尔盲注：没有数据回显，只有 True/False
+   盲注提取结果：api_token = &#x27;tk9xq2&#x27;
+   共发出 173 次请求，每次只泄漏 1 bit 左右的信息。
+
+④ 时间盲注：连 True/False 都看不到，只看响应时间
+   条件 为真 (1=1)：响应耗时    96.8 ms
+   条件 为假 (1=2)：响应耗时     0.1 ms
+
+⑤ 堆叠注入：用 `;` 追加第二条语句
+先确认 secrets 表还在： 2 行
+再查 secrets 表 → 报错：no such table: secrets
+conn.execute(...) → ProgrammingError &#x27;You can only execute one statement at a time.&#x27;
+
+⑥ 修复验证：同样的 payload，参数化之后全部失效
+   name=&quot;nobody&#x27; UNION SELECT 1, owner, content FROM se&quot; → 结果 []
+   name=&quot;x&#x27;; DROP TABLE users;--&quot;                        → 结果 []
+</code></pre>
+<blockquote>
+<p>🔍 <strong>怎么看输出</strong>：① <code>④</code> 里的两个时间数字是本文件里<strong>唯一不稳定</strong>的部分<br>
+（看机器负载，实测 62~97ms 都出现过）；要确定性结论就跑 <code>--self-test</code>，<br>
+它用"条件为真会报错 vs 条件为假不报错"证明同一个结论。<br>
+② <code>③</code> 的请求次数（173）是确定的 —— 它由字母表和 token 内容决定。</p>
+</blockquote>
+<p><strong>自检模式</strong>：<code>--self-test</code> → <code>共 29 项断言全部通过</code> / <code>SELF-TEST OK</code> / exit 0。<br>
+自检把五类注入的<strong>具体结果</strong>（UNION 拿到哪两行、盲注提出什么 token、<br>
+堆叠注入真的删了表）全部钉成断言，并且用 <code>BOOM_EXPR</code>（必然报错的表达式）<br>
+把时间盲注的两个关键结论变成确定性断言：</p>
+<pre class="plain"><code>[PASS] 条件为真 → THEN 分支真的被执行了（所以时间盲注能靠耗时传信息）
+[PASS] 条件为假 → 分支未执行（等价于&quot;很快返回&quot;）
+[PASS] 用 AND 时左边已为假 → 右边被短路跳过（所以时间盲注必须用 OR）
+</code></pre>
+<h3 id="72-02-parameterized-pitfallspy-orm">7.2 <code>02-parameterized-pitfalls.py</code> — 参数化的边界与 ORM 失效（进阶/避坑）</h3>
+<p><strong>逐节说明（七个坑）</strong></p>
+<table>
+<thead>
+<tr>
+<th>坑</th>
+<th>代码</th>
+<th>现象（为什么会中招）</th>
+<th>修复原理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>pitfall_1()</code></td>
+<td><code>SELECT * FROM ?</code> 直接报错</td>
+<td>占位符只能装值；标识符走<strong>白名单映射</strong></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>insecure_sort()</code> / <code>safe_sort()</code></td>
+<td><code>ORDER BY</code> 拼接 ⇒ 排序顺序成为 1 bit 信道</td>
+<td>字段 + 方向<strong>双白名单</strong></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>search_naive()</code> / <code>search_escaped()</code></td>
+<td>参数化了，但 <code>%</code> 仍能拉全表</td>
+<td>这是<strong>业务语义</strong>问题：转义 <code>%</code>/<code>_</code> + <code>ESCAPE</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>insecure_in_clause()</code> / <code>safe_in_clause()</code></td>
+<td>把值拼进 <code>IN ('..')</code> 直接泄露 token</td>
+<td><strong>只拼占位符</strong>，值走参数；并限长防 DoS</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>pitfall_5()</code></td>
+<td>入库安全、取出后拼接 ⇒ 全表改 <code>vip</code></td>
+<td>出库不可信；定位只用不可变主键 id</td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>MiniORM</code></td>
+<td>打印出 <code>?</code> 与参数列表 ⇒ 揭示"ORM = 自动参数化"</td>
+<td>避开 <code>raw()/extra()</code> 与用户可控标识符</td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>pitfall_7()</code></td>
+<td><code>log(f"SQL: {拼好的SQL}")</code> 泄漏密码/token</td>
+<td>只记模板 + 参数个数，参数值脱敏</td>
+</tr>
+</tbody>
+</table>
+<p><strong>运行命令与预期输出（实测）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-151-sql-injection/code/02-parameterized-pitfalls.py
+</code></pre></div>
+<pre class="plain"><code>坑 1：占位符放表名 → SELECT * FROM ? WHERE id = ? → near &quot;?&quot;: syntax error
+坑 1：safe_count(&#x27;secrets&#x27;)→ 拒绝：非法表名: &#x27;secrets&#x27;
+
+坑 2：admin 令牌首字母 = &#x27;t&#x27;   → 排序结果 [&#x27;admin&#x27;, &#x27;alice&#x27;, &#x27;bob&#x27;]
+      首字母 = &#x27;x&#x27;             → 排序结果 [&#x27;bob&#x27;, &#x27;alice&#x27;, &#x27;admin&#x27;]
+      ⇒ 两次行序不同 ⇒ 盲注信道成立
+
+坑 3：search_naive(&#x27;%&#x27;)   → [&#x27;admin&#x27;, &#x27;alice&#x27;, &#x27;bob&#x27;]   ← 全表被返回
+      修复后 search_escaped(&#x27;%&#x27;) → []  ← `%` 被当成普通字符
+
+坑 4：insecure_in_clause([evil]) → [(&#x27;tk9xq2&#x27;, &#x27;leak&#x27;), (&#x27;u_alice_01&#x27;, &#x27;leak&#x27;), ...]
+      safe_in_clause([evil])     → []  ← 当成普通值
+
+坑 5：拼出来的 SQL：UPDATE users SET role = &#x27;vip&#x27; WHERE username = &#x27;x&#x27; OR &#x27;1&#x27;=&#x27;1&#x27;
+      更新后所有人的 role：{&#x27;admin&#x27;: &#x27;vip&#x27;, &#x27;alice&#x27;: &#x27;vip&#x27;, &#x27;bob&#x27;: &#x27;vip&#x27;, &quot;x&#x27; OR &#x27;1&#x27;=&#x27;1&quot;: &#x27;vip&#x27;}
+
+坑 6：ORM 生成的 SQL : SELECT * FROM users WHERE username = ? AND role = ?
+      实际下发的参数 : [&quot;x&#x27; OR &#x27;1&#x27;=&#x27;1&quot;, &#x27;user&#x27;]
+      查询结果       : []   ← 恶意串被当成普通值 ✅
+</code></pre>
+<blockquote>
+<p>🔍 <strong>本文件最容易被忽略的一行</strong>：坑 6 里 <code>ORM 生成的 SQL</code> 末尾的 <code>?</code>。<br>
+它证明了 ORM 没有"消毒"你的字符串 —— 它只是<strong>没有拼接</strong>。<br>
+只要 SQL 字符串里出现了用户数据，保护就消失了（坑 6 的三种失效场景）。</p>
+</blockquote>
+<p><strong>自检模式</strong>：<code>--self-test</code> → <code>共 34 项断言全部通过</code> / <code>SELF-TEST OK</code> / exit 0。<br>
+自检覆盖 7 个坑的每个结论，包括容易被当成"玄学"的两条：<br>
+<code>ORDER BY</code> 注入确实能让行序可区分、<code>raw()</code> 逃生舱确实让参数化失效。</p>
+<h3 id="73-03-sqli-detectorpy-sql">7.3 <code>03-sqli-detector.py</code> — SQL 注入检测脚本（实战工具）</h3>
+<p><strong>逐节说明</strong></p>
+<table>
+<thead>
+<tr>
+<th>部分</th>
+<th>代码</th>
+<th>做什么</th>
+<th>判定策略</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第 0 部分</td>
+<td><code>SAMPLE_CODE</code></td>
+<td>一段故意写错的迷你应用（<strong>只被 parse，从不执行</strong>）</td>
+<td>用于证明检测器真的能抓到东西</td>
+</tr>
+<tr>
+<td>第 1 部分</td>
+<td><code>SQLSourceAuditor</code>（AST）</td>
+<td>找 f-string / <code>+</code> / <code>%</code> / <code>.format()</code> / <code>executescript</code> / <code>raw()</code></td>
+<td>假阳性可接受，<strong>假阴性不可接受</strong></td>
+</tr>
+<tr>
+<td>第 2 部分</td>
+<td><code>probe_boolean_diff/union/error/time</code></td>
+<td>对本地靶场发"语法特征探针"，差分判定</td>
+<td>只比"两种输入结果是否不同"，<strong>不依赖具体数据库特性</strong></td>
+</tr>
+<tr>
+<td>第 3 部分</td>
+<td><code>dynamic_scan(include_time=...)</code></td>
+<td>拼接版必须全中、参数化版必须全绿</td>
+<td>与预期不符就计数，给 CI 用</td>
+</tr>
+<tr>
+<td>自检</td>
+<td><code>self_test()</code></td>
+<td>漏报测试 + 假阳性测试 + 探针校准</td>
+<td>内置样本必须 7 处 HIGH；干净代码必须 0 处</td>
+</tr>
+</tbody>
+</table>
+<p><strong>运行命令与预期输出（实测）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-151-sql-injection/code/03-sqli-detector.py<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+</code></pre></div>
+<pre class="plain"><code>┌─ 静态检测：&lt;内置样本 SAMPLE_CODE&gt; ───────────────────────────────
+│ [HIGH] 行   5: &quot;SELECT id FROM users WHERE username = &#x27;&quot; + username + &quot;&#x27; AND password = &#x27;&quot; + password + &quot;&#x27;&quot;
+│         原因：SQL 字符串里插入了动态内容（字符串用 + 拼接），参数会变成 SQL 语法的一部分。
+│ [HIGH] 行   6: conn.execute(sql)
+│         原因：执行的 sql 是拼出来的 SQL（定义在第 5 行）。
+│ [HIGH] 行   9: f&quot;SELECT id, title FROM articles WHERE title LIKE &#x27;%{keyword}%&#x27;&quot;
+│ [HIGH] 行  19: conn.executescript(&quot;DELETE FROM log; INSERT INTO log VALUES (&#x27;&quot; + name + &quot;&#x27;);&quot;)
+│ 📊 小计：7 处问题，其中 HIGH 7 处
+└────────────────────────────────────────────────────────────────
+
+┌─ 动态验证：对本地内存靶场跑注入回归测试 ───────────────────────
+│ ▸ target_vulnerable  (拼接版 ❌)
+│    布尔差分       ❗可注入   恒真返回 3 行，恒假返回 0 行
+│    UNION 改写   ❗可注入   返回了非空结果 [(1, 2, 3)]（数据可被读出）
+│    报错泄漏       ❗可注入   抛出 OperationalError: unrecognized token: &quot;&#x27;zzz&#x27;&#x27;&quot;
+│    时间差异       ❗可注入   恒真 62.6ms vs 恒假 0.0ms（差 62.6ms）
+│ ▸ target_parameterized (参数化版 ✅)
+│    布尔差分       ✅ 无信号   两者都返回 0 行
+│    UNION 改写   ✅ 无信号   返回空结果
+│    报错泄漏       ✅ 无信号   未抛异常
+│    时间差异       ✅ 无信号   耗时无显著差异（0.0ms / 0.0ms）
+│ ✅ 检测器行为符合预期：拼接版被判为可注入，参数化版全绿
+└────────────────────────────────────────────────────────────────
+
+  汇总：静态 HIGH 7 处 / 静态问题共 7 处 / 动态异常 0 项
+</code></pre>
+<blockquote>
+<p>⚠️ <strong>退出码是 1，这是对的</strong>：内置样本本身就是坏代码，检测器发现 HIGH 就应该<br>
+以 1 退出（"有活干"）。要验证"干净代码"的行为，请跑 <code>--self-test</code>：<br>
+它在自检里对 <code>CLEAN_CODE</code>（标准库参数化写法）断言 <strong>0 findings</strong>。</p>
+</blockquote>
+<p><strong>扫描你自己的源码</strong>（实用入口）</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-151-sql-injection/code/03-sqli-detector.py<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>days/day-151-sql-injection/code/01-sql-injection-basics.py<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-4
+</code></pre></div>
+<pre class="plain"><code>  汇总：静态 HIGH 13 处 / 静态问题共 13 处 / 动态异常 0 项
+  退出码：0 = 干净，1 = 需要处理（可直接接入 CI）
+</code></pre>
+<p>（13 处全部来自本日靶场里<strong>故意写错</strong>的 <code>insecure_*</code> 函数：<br>
+这正好说明工具能当 PR 门禁 —— 真实项目里出现这个数字就该拦下。）</p>
+<p><strong>--no-dynamic（只跑静态，更快）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-151-sql-injection/code/03-sqli-detector.py<span class="w"> </span>--no-dynamic<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p><strong>自检模式</strong>：<code>--self-test</code> → <code>共 22 项断言全部通过</code> / <code>SELF-TEST OK</code> / exit 0。<br>
+关键断言（这是"检测器本身可信"的证据）：</p>
+<pre class="plain"><code>[PASS] 内置样本找到 7 处问题
+[PASS] 命中行号与人工核对一致          ← 行号：[5, 6, 9, 10, 13, 19, 27]
+[PASS] 标准库参数化写法：0 findings（不冤枉好代码）
+[PASS] 动态扫描（含 3 个确定性探针）与预期零偏差
+</code></pre>
+<blockquote>
+<p>📌 为什么自检<strong>跳过计时探针</strong>？因为 <code>probe_time</code> 测的是"中位数差 &gt; 20ms"，<br>
+机器一忙就可能不达标 —— 把它放进自检就会变成一个随时会红的 flaky 测试。<br>
+自检只跑三个确定性探针（布尔差分 / UNION / 报错），计时结论留给演示模式观察。</p>
+</blockquote>
+<hr>
+<h2 id="_7">八、思考题</h2>
+<ol>
+<li>
+<p><strong>为什么"参数化查询"比"转义特殊字符"更可靠？</strong><br>
+   请从"转义需要正确猜对哪些字符危险""字符集与上下文会影响转义正确性"<br>
+   两个角度说明，并解释为什么参数化被称为<strong>结构性防御</strong>而不是<strong>过滤式防御</strong>。</p>
+</li>
+<li>
+<p><strong>下面三种写法都用了参数化，请指出哪些仍然可能被注入，为什么？</strong></p>
+</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">   <span class="c1"># A</span>
+   <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM users WHERE id = ?&quot;</span><span class="p">,</span> <span class="p">(</span><span class="n">uid</span><span class="p">,))</span>
+   <span class="c1"># B</span>
+   <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM users WHERE id = ? ORDER BY &quot;</span> <span class="o">+</span> <span class="n">sort_col</span><span class="p">)</span>
+   <span class="c1"># C</span>
+   <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT * FROM users WHERE name LIKE ?&quot;</span><span class="p">,</span> <span class="p">(</span><span class="s2">&quot;%&quot;</span> <span class="o">+</span> <span class="n">kw</span> <span class="o">+</span> <span class="s2">&quot;%&quot;</span><span class="p">,))</span>
+</code></pre></div>
+<p>分别说出修复方式（提示：B 的 <code>ORDER BY</code>、C 的通配符语义）。</p>
+<ol start="3">
+<li>
+<p><strong>盲注为什么"永远可行"？</strong> 请用信息论的角度（响应可区分 ⇒ 存在信道）解释，<br>
+   并算出"提取一个 32 位小写字母数字 token"在 10 请求/秒的限速下大约需要多久。<br>
+   然后回答：<strong>速率限制是根治还是缓解？</strong> 根本修复应该做什么？</p>
+</li>
+<li>
+<p><strong>ORM 到底做了什么才"自动防注入"？</strong> 请写出 Django 里<br>
+<code>.filter(username=user_input)</code> 最终在数据库端执行的大致语句形状<br>
+   （SQL 模板 + 参数列表），并各举一个"ORM 失效"的真实场景<br>
+   （提示：<code>extra()</code>/<code>RawSQL</code>、<code>order_by(request.GET[...])</code>、<code>cursor.execute(sql % params)</code>）。</p>
+</li>
+<li>
+<p><strong>设计一个"看不出任何差异"的接口，它还能被注入吗？</strong><br>
+   假设你有个 API：永远返回 <code>{"ok": true}</code>，无数据、无报错、无耗时差异<br>
+   （所有查询都很快）。请说明：(a) 它还能不能有注入风险？<br>
+   (b) 堆叠注入在这里意味着什么？(c) 你会为它加哪三层防御？<br>
+   （提示：想想数据被<strong>改写</strong>时，攻击者虽然看不到，但业务后果已经发生。）</p>
+</li>
+</ol>
+<hr>
+<h2 id="_8">附：本日文件清单</h2>
+<pre class="plain"><code>days/day-151-sql-injection/
+├── README.md                             ← 本文
+├── code/                                 ← 仅依赖标准库，Python 3.10+
+│   ├── 01-sql-injection-basics.py        ← 五类注入复现 + 参数化修复（--self-test：29 项）
+│   ├── 02-parameterized-pitfalls.py      ← 参数化边界 7 个坑 + ORM 失效（--self-test：34 项）
+│   └── 03-sqli-detector.py               ← 静态 AST 检测 + 动态注入回归（--self-test：22 项）
+├── diagrams/
+│   └── README.md                         ← 时序 / 协议 / 信道 / 防御 ASCII + Mermaid
+└── exercises/
+    └── checklist.md                      ← 完成清单 + 基础/进阶练习题
+</code></pre>
+<blockquote>
+<p>✅ <strong>验收方式</strong>（与 "可验证" 对应）：三个脚本分别跑 <code>--self-test</code>，<br>
+全部输出 <code>SELF-TEST OK</code> 且 <code>exit=0</code>；演示模式下的预期输出见第七节。</p>
+<p>🔒 <strong>再次强调</strong>：本日所有"攻击"代码都是<strong>教学靶场</strong>的一部分，<br>
+运行在内存数据库上。请勿将其用于未授权的系统测试。<br>
+想练手，就把靶场做大一点：自己写一个"有漏洞的迷你 Web 应用"，<br>
+然后拿示例 03 的探针去测它 —— 这是完全合法且最有效的学习方式。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-150/index.html">← Day 150 OAuth2 与认证安全：授权流程、CSRF/SSRF 与安全审计</a><a class="nav-next" href="../day-152/index.html">Day 152 XSS 与 Web 漏洞：反射/存储/DOM 型、防护原理与本地检测实战 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

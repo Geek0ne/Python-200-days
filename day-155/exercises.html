@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 155 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 155 正文</a>
+  <h1>Day 155 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-155-mitmproxy">Day 155 — mitmproxy 中间人 · 完成清单与练习</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化
+目标：能独立搭起 mitmproxy、解释 TLS 拆分的每一步、写出可用的 Addon 并避开 8 大坑。</p>
+</blockquote>
+<hr>
+<h2 id="_1">✅ 今日完成清单</h2>
+<h3 id="_2">理解层面</h3>
+<ul>
+<li>[ ] 能解释 <strong>HTTP 代理为什么不需要证书，HTTPS 为什么需要</strong></li>
+<li>[ ] 能画出「客户端 ↔ mitmproxy ↔ 服务器」的双 TLS 会话（TLS① / TLS②）</li>
+<li>[ ] 能说明 mitmproxy CA 私钥（<code>mitmproxy-ca.pem</code>）泄露的后果</li>
+<li>[ ] 能说出 <code>CONNECT</code> 请求的作用，以及代理如何在隧道里"扮演服务器"</li>
+<li>[ ] 能解释 <strong>certificate pinning</strong> 为什么能防住 MITM</li>
+<li>[ ] 能说出 <code>requestheaders</code> / <code>request</code> / <code>responseheaders</code> / <code>response</code> 的区别</li>
+<li>[ ] 能解释"改 body 必须重算 <code>Content-Length</code>"，以及为什么 <code>chunked</code> 也要处理</li>
+<li>[ ] 能解释"为什么 Addon 里不能 <code>time.sleep</code>"（事件循环 / 单线程）</li>
+<li>[ ] 能区分正向 / 透明 / 反向 / 上游 四种代理模式的用途</li>
+</ul>
+<h3 id="_3">操作层面</h3>
+<p><strong>路径 A（真 mitmproxy，需要联网安装）：</strong></p>
+<ul>
+<li>[ ] <code>pip install mitmproxy</code> 成功，<code>mitmdump --version</code> 有输出</li>
+<li>[ ] 运行过 <code>mitmdump -s code/01-addon-basics.py -p 8080</code></li>
+<li>[ ] 用 <code>curl -x ... --cacert ~/.mitmproxy/mitmproxy-ca-cert.pem</code> 成功看到明文</li>
+<li>[ ] 浏览器访问过 <code>http://mitm.it</code> 并安装 CA</li>
+<li>[ ] 在 <code>mitmproxy</code> TUI 里试过 <code>e</code>（编辑）+ <code>r</code>（重放）</li>
+</ul>
+<p><strong>路径 B（本地实验台，纯标准库，不需要 mitmproxy）—— 推荐先跑通这条：</strong></p>
+<ul>
+<li>[ ] <code>python3 code/00-local-lab.py</code> 起来后，<code>curl -x http://127.0.0.1:&lt;代理端口&gt;
+      http://127.0.0.1:&lt;上游端口&gt;/api/users</code> 能拿到 JSON</li>
+<li>[ ] 加载 01：<code>python3 code/00-local-lab.py --addon code/01-addon-basics.py</code>
+      能在日志里看到 <code>[#1] → GET ...</code> 与 `[1] ← 302 ...</li>
+<li>[ ] 加载 02：<code>--addon code/02-addon-pitfalls.py --set demo_rewrite=true</code>，
+      访问 <code>/mock/users</code> 看到 mock 响应、访问 <code>/</code> 看到注入的 <code>&lt;script&gt;</code></li>
+<li>[ ] 加载 03：<code>--addon code/03-traffic-tool.py --set traffic_out_dir=/tmp/tr</code>，
+      打断点看到 <code>flows.jsonl</code> 里 <code>Authorization: "***"</code></li>
+<li>[ ] 跑通四个自检（<strong>离线、不联网、不装第三方库，必须以 <code>SELF-TEST OK</code> 结尾</strong>）：
+      <code>python3 -B code/00-local-lab.py --self-test</code>（50 项，含真跑 01/02/03）
+      <code>python3 -B code/01-addon-basics.py --self-test</code>（28 项）
+      <code>python3 -B code/02-addon-pitfalls.py --self-test</code>（37 项）
+      <code>python3 -B code/03-traffic-tool.py --self-test</code>（51 项）</li>
+<li>[ ] 生成过一份 <code>report.html</code> 并打开看过（<code>03 --report flows.jsonl --out-dir /tmp/tr</code>）</li>
+</ul>
+<h3 id="_4">产出物</h3>
+<ul>
+<li>[ ] 一份 <code>flows.jsonl</code></li>
+<li>[ ] 一份 <code>report.html</code></li>
+<li>[ ] 一张自己画的 TLS 拆分图</li>
+</ul>
+<hr>
+<h2 id="_5">📝 基础练习（必做）</h2>
+<details>
+<summary>点击展开答案要点</summary>
+
+### Q1 判断：哪些操作合法？
+
+| 操作 | 合法？ | 理由 |
+|---|---|---|
+| 抓自己浏览器访问自己博客的流量 | ? | |
+| 抓自己手机 App 访问公司内部测试环境的流量 | ? | |
+| 在公共 WiFi 上跑透明代理，看别人的请求 | ? | |
+| 公司授权下，对内部 App 做抓包审计（员工已签知情书） | ? | |
+| 用 mitmproxy 改自己的响应，去掉广告 | ? | |
+
+**答案要点：**
+
+- 抓自己浏览器 → ✅ 合法，你就是数据主体；
+- 抓自己手机访问**内部测试环境** → ✅ 合法（自有设备 + 自有服务），
+  但要确认公司安全制度允许携带设备接入；
+- 公共 WiFi 抓别人 → ❌ **刑事**，中国大陆适用《刑法》285 条 /
+  侵犯公民个人信息罪；这不是"技术问题"；
+- 公司授权 + 知情书 → ⚠️ 合法但需严格合规：明确范围、留存记录、最小必要、
+  员工可退出；
+- 改自己的响应去广告 → ⚠️ 灰区：技术合法，但可能违反服务条款（ToS）。
+
+### Q2 最小 Addon：给所有请求加一个头
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">mitmproxy</span> <span class="kn">import</span> <span class="n">http</span>
+
+<span class="k">class</span> <span class="nc">AddHeader</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">:</span> <span class="n">http</span><span class="o">.</span><span class="n">HTTPFlow</span><span class="p">):</span>
+        <span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">[</span><span class="s2">&quot;X-Debug-By&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;mitmproxy&quot;</span>
+
+<span class="n">addons</span> <span class="o">=</span> <span class="p">[</span><span class="n">AddHeader</span><span class="p">()]</span>
+</code></pre></div>
+
+
+
+运行：
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mitmdump<span class="w"> </span>-s<span class="w"> </span>add_header.py<span class="w"> </span>-p<span class="w"> </span><span class="m">8080</span>
+</code></pre></div>
+
+
+
+**要点：** 不需要继承任何基类，**方法名就是事件名**；
+模块级 `addons` 列表是唯一的注册入口。
+
+### Q3 改响应体：把 JSON 里的 `role` 改掉（越权测试）
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">mitmproxy</span> <span class="kn">import</span> <span class="n">http</span>
+<span class="kn">import</span> <span class="nn">json</span>
+
+<span class="k">class</span> <span class="nc">PrivilegeProbe</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;在授权渗透测试里，验证服务端是否真的校验角色。&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">response</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">:</span> <span class="n">http</span><span class="o">.</span><span class="n">HTTPFlow</span><span class="p">):</span>
+        <span class="k">if</span> <span class="s2">&quot;/api/me&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">path</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="n">ct</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;Content-Type&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="s2">&quot;json&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">ct</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">)</span>   <span class="c1"># ✅ .text 自动解压+解码</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="ow">and</span> <span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;role&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;user&quot;</span><span class="p">:</span>
+            <span class="n">data</span><span class="p">[</span><span class="s2">&quot;role&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;admin&quot;</span>
+            <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>   <span class="c1"># ✅ 自动重算 Content-Length</span>
+</code></pre></div>
+
+
+
+**要点：** 必须是**已授权**测试；改的是"客户端看到的"，服务端是否买账
+取决于它有没有真的校验——这正是测试目的。
+
+### Q4 解释：为什么这行会白屏？
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;foo&quot;</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;foobar&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+
+
+**答案要点：**
+
+1. 若响应是 `gzip`，`content` 是**压缩字节**，`replace` 匹配不到；
+2. 即使匹配到，长度变了，`Content-Length` 仍是旧值；
+3. 客户端读到旧长度，多出的字节被当作下一个响应 → 协议错乱 / 白屏；
+4. 正确：`flow.response.text = flow.response.text.replace("foo", "foobar")`。
+
+### Q5 写一个"只记录含敏感参数的请求"的 Addon
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">mitmproxy</span> <span class="kn">import</span> <span class="n">ctx</span><span class="p">,</span> <span class="n">http</span>
+
+<span class="n">SENSITIVE</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;token&quot;</span><span class="p">,</span> <span class="s2">&quot;password&quot;</span><span class="p">,</span> <span class="s2">&quot;passwd&quot;</span><span class="p">,</span> <span class="s2">&quot;secret&quot;</span><span class="p">,</span> <span class="s2">&quot;api_key&quot;</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">SensitiveWatch</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">:</span> <span class="n">http</span><span class="o">.</span><span class="n">HTTPFlow</span><span class="p">):</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">query</span>
+        <span class="n">hits</span> <span class="o">=</span> <span class="p">[</span><span class="n">k</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">q</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span> <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">s</span> <span class="ow">in</span> <span class="n">k</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">SENSITIVE</span><span class="p">)]</span>
+        <span class="k">if</span> <span class="n">hits</span> <span class="ow">or</span> <span class="nb">any</span><span class="p">(</span><span class="n">s</span> <span class="ow">in</span> <span class="n">path</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">SENSITIVE</span><span class="p">):</span>
+            <span class="c1"># ⚠️ 只记录&quot;存在敏感参数&quot;这个事实，绝不记录值</span>
+            <span class="n">ctx</span><span class="o">.</span><span class="n">log</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[sensitive] </span><span class="si">{</span><span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="si">}</span><span class="s2"> &quot;</span>
+                         <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">host</span><span class="si">}{</span><span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;?&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2"> &quot;</span>
+                         <span class="sa">f</span><span class="s2">&quot;敏感参数=</span><span class="si">{</span><span class="n">hits</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">addons</span> <span class="o">=</span> <span class="p">[</span><span class="n">SensitiveWatch</span><span class="p">()]</span>
+</code></pre></div>
+
+
+
+**要点：** 这就是"**记录事实，不记录值**"的最小示例。
+很多事故不是被黑，而是日志里存了明文密码。
+
+</details>
+
+<hr>
+<h2 id="_6">🚀 进阶挑战（选做）</h2>
+<details>
+<summary>点击展开</summary>
+
+### C1 用 `asyncio.to_thread` 消除阻塞
+
+需求：写一个 Addon，在 `request` 里调用一个**同步**函数（模拟 500ms 的
+外部校验），但不阻塞事件循环。
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span><span class="o">,</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">mitmproxy</span> <span class="kn">import</span> <span class="n">http</span><span class="p">,</span> <span class="n">ctx</span>
+
+<span class="k">def</span> <span class="nf">slow_check</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>                 <span class="c1"># 模拟同步阻塞</span>
+    <span class="k">return</span> <span class="s2">&quot;admin&quot;</span> <span class="ow">in</span> <span class="n">path</span>
+
+<span class="k">class</span> <span class="nc">AsyncGuard</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">:</span> <span class="n">http</span><span class="o">.</span><span class="n">HTTPFlow</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># mitmproxy 支持 async 事件回调</span>
+        <span class="n">ok</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">to_thread</span><span class="p">(</span><span class="n">slow_check</span><span class="p">,</span> <span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">ok</span><span class="p">:</span>
+            <span class="n">flow</span><span class="o">.</span><span class="n">response</span> <span class="o">=</span> <span class="n">http</span><span class="o">.</span><span class="n">Response</span><span class="o">.</span><span class="n">make</span><span class="p">(</span><span class="mi">403</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;blocked&quot;</span><span class="p">)</span>
+            <span class="n">ctx</span><span class="o">.</span><span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;已拦截（未阻塞事件循环）&quot;</span><span class="p">)</span>
+
+<span class="n">addons</span> <span class="o">=</span> <span class="p">[</span><span class="n">AsyncGuard</span><span class="p">()]</span>
+</code></pre></div>
+
+
+
+**对比实验：** 用 20 并发压测，对比 `time.sleep` 版与
+`asyncio.to_thread` 版的吞吐差异。**这就是"代理为什么慢"的答案。**
+
+### C2 实现"响应延迟注入"（弱网测试）
+
+需求：随机给 10% 的响应注入 1~3 秒延迟，用于测试客户端的超时处理。
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span><span class="o">,</span> <span class="nn">random</span>
+<span class="kn">from</span> <span class="nn">mitmproxy</span> <span class="kn">import</span> <span class="n">http</span>
+
+<span class="k">class</span> <span class="nc">LatencyInjector</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span> <span class="nf">response</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">:</span> <span class="n">http</span><span class="o">.</span><span class="n">HTTPFlow</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="mf">0.1</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+
+<span class="n">addons</span> <span class="o">=</span> <span class="p">[</span><span class="n">LatencyInjector</span><span class="p">()]</span>
+</code></pre></div>
+
+
+
+**思考：** 为什么要在 `response` 而不是 `request` 注入延迟？
+
+### C3 从 JSONL 里找出"疑似越权成功"
+
+需求：给 `03-traffic-tool.py` 加一个 `--find-idor` 参数，扫描 JSONL，
+找出满足以下条件的记录：
+
+1. 请求里带了 `id` / `user_id` / `order_id` 参数；
+2. 响应的 status 是 200；
+3. 响应体里出现了与请求 id **不同**的 id（说明"拿别人的数据"成功了）。
+
+输出可疑清单（脱敏后的 URL + 差异 id）。
+
+### C4 写一个 `map_local` 风格的 mock 服务
+
+需求：不用真后端，用 `flow.response` 直接返回 mock 数据：
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">mitmproxy</span> <span class="kn">import</span> <span class="n">http</span>
+
+<span class="n">MOCKS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;/api/user&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;mock-user&quot;</span><span class="p">,</span> <span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;user&quot;</span><span class="p">},</span>
+    <span class="s2">&quot;/api/orders&quot;</span><span class="p">:</span> <span class="p">[{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}],</span>
+<span class="p">}</span>
+
+<span class="k">class</span> <span class="nc">Mocker</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">:</span> <span class="n">http</span><span class="o">.</span><span class="n">HTTPFlow</span><span class="p">):</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;?&quot;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">MOCKS</span><span class="p">:</span>
+            <span class="n">flow</span><span class="o">.</span><span class="n">response</span> <span class="o">=</span> <span class="n">http</span><span class="o">.</span><span class="n">Response</span><span class="o">.</span><span class="n">make</span><span class="p">(</span>
+                <span class="mi">200</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">MOCKS</span><span class="p">[</span><span class="n">path</span><span class="p">])</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span>
+                <span class="p">{</span><span class="s2">&quot;Content-Type&quot;</span><span class="p">:</span> <span class="s2">&quot;application/json&quot;</span><span class="p">})</span>
+
+<span class="n">addons</span> <span class="o">=</span> <span class="p">[</span><span class="n">Mocker</span><span class="p">()]</span>
+</code></pre></div>
+
+
+
+**思考：** mitmproxy 自带的 `map_local` / `map_remote` 选项能直接做这件事，
+为什么还要手写 Addon？（提示：需要动态逻辑/鉴权/随机数据时）
+
+### C5 检测"我的流量是否被 MITM"
+
+写一个脚本（不依赖 mitmproxy），检查指定站点的证书链：
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ssl</span><span class="o">,</span> <span class="nn">socket</span><span class="o">,</span> <span class="nn">sys</span>
+<span class="n">host</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span> <span class="k">else</span> <span class="s2">&quot;example.com&quot;</span>
+<span class="n">ctx</span> <span class="o">=</span> <span class="n">ssl</span><span class="o">.</span><span class="n">create_default_context</span><span class="p">()</span>
+<span class="k">with</span> <span class="n">socket</span><span class="o">.</span><span class="n">create_connection</span><span class="p">((</span><span class="n">host</span><span class="p">,</span> <span class="mi">443</span><span class="p">),</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span> <span class="k">as</span> <span class="n">sock</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">ctx</span><span class="o">.</span><span class="n">wrap_socket</span><span class="p">(</span><span class="n">sock</span><span class="p">,</span> <span class="n">server_hostname</span><span class="o">=</span><span class="n">host</span><span class="p">)</span> <span class="k">as</span> <span class="n">ssock</span><span class="p">:</span>
+        <span class="n">cert</span> <span class="o">=</span> <span class="n">ssock</span><span class="o">.</span><span class="n">getpeercert</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;颁发者:&quot;</span><span class="p">,</span> <span class="n">cert</span><span class="p">[</span><span class="s2">&quot;issuer&quot;</span><span class="p">])</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;主题  :&quot;</span><span class="p">,</span> <span class="n">cert</span><span class="p">[</span><span class="s2">&quot;subject&quot;</span><span class="p">])</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;有效期:&quot;</span><span class="p">,</span> <span class="n">cert</span><span class="p">[</span><span class="s2">&quot;notBefore&quot;</span><span class="p">],</span> <span class="s2">&quot;→&quot;</span><span class="p">,</span> <span class="n">cert</span><span class="p">[</span><span class="s2">&quot;notAfter&quot;</span><span class="p">])</span>
+</code></pre></div>
+
+
+
+**判断依据：** 如果颁发者不是你预期的 CA（或与前一天看到的不一致），
+就要怀疑链路被中间人接管了。**这就是普通的证书检查，也是每个客户端
+每天在做的事。**
+
+</details>
+
+<hr>
+<h2 id="_7">📌 今日自检的三个问题</h2>
+<ol>
+<li>为什么"抓得到 HTTPS 流量"从来不意味着"服务器不安全"？</li>
+<li><code>flow.response.text</code> 和 <code>flow.response.content</code>，什么时候必须用哪个？</li>
+<li>如果只能给你的 App 加一项防抓包措施，你加什么？为什么？</li>
+</ol>
+<hr>
+<h2 id="_8">🚫 今日红线</h2>
+<ul>
+<li>❌ 不抓任何<strong>不属于你</strong>的设备/账号的流量；</li>
+<li>❌ 不把 <code>mitmproxy-ca.pem</code>（CA 私钥）提交到 git 或发到聊天里；</li>
+<li>❌ 不在"公共网络 + <code>--listen-host 0.0.0.0</code>"下长时间开着代理；</li>
+<li>❌ 不把抓到的真实凭据写进任何日志/报表（本日工具已内置脱敏，但你要确认）；</li>
+<li>❌ 不用透明代理去"研究"别人家 WiFi 的流量；</li>
+<li>✅ 用完立刻在客户端<strong>移除被信任的 mitmproxy CA</strong>。</li>
+</ul></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

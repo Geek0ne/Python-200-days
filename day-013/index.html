@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 13 — 作用域与命名空间</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 13 — 作用域与命名空间</h1>
+  <div class="lmeta">
+    <span class="badge">Python基础</span>
+    <span class="badge">723 行</span>
+    <span class="badge">2 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（2 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-013-scopes-and-namespaces" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 目录</a>
+<a class="toc-l2" href="#1">1. 作用域的概念</a>
+<a class="toc-l3" href="#11">1.1 什么是作用域？</a>
+<a class="toc-l3" href="#12">1.2 为什么需要作用域？</a>
+<a class="toc-l3" href="#13">1.3 命名空间的概念</a>
+<a class="toc-l2" href="#2-legb">2. LEGB 规则详解</a>
+<a class="toc-l3" href="#21">2.1 定义</a>
+<a class="toc-l3" href="#22-legb">2.2 图解 LEGB 查找过程</a>
+<a class="toc-l3" href="#23">2.3 分层示例</a>
+<a class="toc-l3" href="#24-shadowing">2.4 遮蔽现象（Shadowing）</a>
+<a class="toc-l3" href="#25-legb">2.5 LEGB 的例外：赋值与可变对象</a>
+<a class="toc-l2" href="#3-global-nonlocal">3. global 与 nonlocal 声明</a>
+<a class="toc-l3" href="#31-global-nonlocal">3.1 为什么需要 global 和 nonlocal？</a>
+<a class="toc-l3" href="#32-global">3.2 global 声明</a>
+<a class="toc-l3" href="#33-nonlocal">3.3 nonlocal 声明</a>
+<a class="toc-l3" href="#33-global-vs-nonlocal">3.3 global vs nonlocal 对比</a>
+<a class="toc-l2" href="#4">4. 闭包原理</a>
+<a class="toc-l3" href="#41">4.1 什么是闭包？</a>
+<a class="toc-l3" href="#42">4.2 闭包的底层机制</a>
+<a class="toc-l3" href="#43">4.3 为什么需要闭包？</a>
+<a class="toc-l3" href="#44">4.4 闭包的常见陷阱：延迟绑定</a>
+<a class="toc-l3" href="#45-vs">4.5 闭包 vs 对象</a>
+<a class="toc-l2" href="#5">5. 变量生命周期</a>
+<a class="toc-l3" href="#51">5.1 变量的创建与销毁</a>
+<a class="toc-l3" href="#52">5.2 不同作用域的变量生命周期</a>
+<a class="toc-l3" href="#53">5.3 闭包延长生命周期</a>
+<a class="toc-l3" href="#54">5.4 引用计数与循环引用</a>
+<a class="toc-l2" href="#6">6. 实战：计数器工厂</a>
+<a class="toc-l3" href="#61">6.1 需求分析</a>
+<a class="toc-l3" href="#62">6.2 实现代码</a>
+<a class="toc-l3" href="#63">6.3 代码运行流程</a>
+<a class="toc-l2" href="#7">7. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-013">Day 013：作用域与命名空间</h1>
+<blockquote>
+<p>理解 Python 如何在代码中查找变量 —— 这是写出可维护、无 Bug 代码的基石。</p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 目录</h2>
+<ol>
+<li><a href="#1-作用域的概念">作用域的概念</a></li>
+<li><a href="#2-legb-规则详解">LEGB 规则详解</a></li>
+<li><a href="#3-global-与-nonlocal-声明">global 与 nonlocal 声明</a></li>
+<li><a href="#4-闭包原理">闭包原理</a></li>
+<li><a href="#5-变量生命周期">变量生命周期</a></li>
+<li><a href="#6-实战计数器工厂">实战：计数器工厂</a></li>
+<li><a href="#7-思考题">思考题</a></li>
+</ol>
+<hr>
+<h2 id="1">1. 作用域的概念</h2>
+<h3 id="11">1.1 什么是作用域？</h3>
+<p><strong>作用域（Scope）</strong> 是变量在程序中可见和可访问的区域。简单说：一个变量在代码的哪些位置可以被读取或修改。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">outer</span><span class="p">():</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="mi">10</span>          <span class="c1"># x 定义在 outer 函数内部</span>
+    <span class="k">def</span> <span class="nf">inner</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>    <span class="c1"># 这里能访问 x 吗？</span>
+    <span class="n">inner</span><span class="p">()</span>
+
+<span class="n">outer</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>            <span class="c1"># ❌ 这里能访问 x 吗？</span>
+</code></pre></div>
+<h3 id="12">1.2 为什么需要作用域？</h3>
+<blockquote>
+<p><strong>设计原理</strong>：作用域的存在是为了实现 <strong>命名隔离（name isolation）</strong>。</p>
+</blockquote>
+<p>没有作用域的世界会怎样？<br>
+- 不同函数里的变量会互相覆盖<br>
+- 一个循环的 <code>i</code> 会污染整个程序<br>
+- 无法把代码拆分成独立模块</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 如果没有作用域隔离...</span>
+<span class="k">def</span> <span class="nf">calc_a</span><span class="p">():</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">100</span>   <span class="c1"># 会覆盖 calc_b 的 total 吗？</span>
+
+<span class="k">def</span> <span class="nf">calc_b</span><span class="p">():</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">200</span>   <span class="c1"># 会覆盖 calc_a 的 total 吗？</span>
+</code></pre></div>
+<p>Python 通过作用域机制，让不同代码块的变量互不干扰。</p>
+<h3 id="13">1.3 命名空间的概念</h3>
+<p><strong>命名空间（Namespace）</strong> 是变量名到对象的映射。本质上就是一个字典：<code>{变量名: 对象引用}</code>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># Python 内部大致是这样管理命名空间的</span>
+<span class="n">scope</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;x&#39;</span><span class="p">:</span> <span class="mi">42</span><span class="p">,</span>
+    <span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="s1">&#39;Alice&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;items&#39;</span><span class="p">:</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>每个作用域对应一个命名空间。Python 在运行时维护多个命名空间：<br>
+- <strong>局部命名空间（Local）</strong> ── 当前函数的变量<br>
+- <strong>封闭命名空间（Enclosing）</strong> ── 外层函数的变量<br>
+- <strong>全局命名空间（Global）</strong> ── 模块级别的变量<br>
+- <strong>内置命名空间（Built-in）</strong> ── Python 内置函数和异常</p>
+<hr>
+<h2 id="2-legb">2. LEGB 规则详解</h2>
+<h3 id="21">2.1 定义</h3>
+<p><strong>LEGB</strong> 是 Python 解析变量名时的查找顺序，代表四层作用域的优先级：</p>
+<pre class="plain"><code>L ── Local（局部）────────── 当前函数内部
+E ── Enclosing（封闭）────── 外层函数（嵌套函数场景）
+G ── Global（全局）────────── 当前模块顶层
+B ── Built-in（内置）──────── Python 内置的命名空间
+</code></pre>
+<blockquote>
+<p><strong>为什么是 LEGB 这个顺序？</strong> Python 编译器在设计时遵循 <strong>"最内层优先"（innermost-first）</strong> 原则。这样做的理由是：<br>
+1. <strong>局部性原理</strong>：一个函数内最常访问的是它的局部变量，优先查找能提升性能<br>
+2. <strong>封装性</strong>：内部变量可以安全地"遮蔽"外部同名变量，不影响外部逻辑<br>
+3. <strong>可预测性</strong>：无论嵌套多深，查找路径总是由内向外，规则简单明确</p>
+</blockquote>
+<h3 id="22-legb">2.2 图解 LEGB 查找过程</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[遇到变量名 x] --&gt; B{在 Local 中？}
+    B --&gt;|是| C[使用局部 x]
+    B --&gt;|否| D{在 Enclosing 中？}
+    D --&gt;|是| E[使用封闭作用域的 x]
+    D --&gt;|否| F{在 Global 中？}
+    F --&gt;|是| G[使用全局 x]
+    F --&gt;|否| H{在 Built-in 中？}
+    H --&gt;|是| I[使用内置 x]
+    H --&gt;|否| J[NameError ❌]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[遇到变量名 x] --&gt; B{在 Local 中？}
+    B --&gt;|是| C[使用局部 x]
+    B --&gt;|否| D{在 Enclosing 中？}
+    D --&gt;|是| E[使用封闭作用域的 x]
+    D --&gt;|否| F{在 Global 中？}
+    F --&gt;|是| G[使用全局 x]
+    F --&gt;|否| H{在 Built-in 中？}
+    H --&gt;|是| I[使用内置 x]
+    H --&gt;|否| J[NameError ❌]
+</code></pre></div>
+<h3 id="23">2.3 分层示例</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 内置命名空间</span>
+<span class="nb">print</span>           <span class="c1"># ← 来自 Built-in，不需要定义</span>
+
+<span class="c1"># 全局命名空间</span>
+<span class="n">x</span> <span class="o">=</span> <span class="s2">&quot;全局 x&quot;</span>    <span class="c1"># ← 全局作用域</span>
+
+<span class="k">def</span> <span class="nf">outer</span><span class="p">():</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="s2">&quot;封闭 y&quot;</span>  <span class="c1"># ← outer 的局部，对 inner 来说是 Enclosing</span>
+
+    <span class="k">def</span> <span class="nf">inner</span><span class="p">():</span>
+        <span class="n">z</span> <span class="o">=</span> <span class="s2">&quot;局部 z&quot;</span>  <span class="c1"># ← inner 的局部</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">z</span><span class="p">)</span>      <span class="c1"># L：找到局部 z</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">y</span><span class="p">)</span>      <span class="c1"># E：local 没有 y，去 enclosing 找</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>      <span class="c1"># G：前两层都没有，去全局找</span>
+        <span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">)</span>    <span class="c1"># B：全局也没有 len，去内置找</span>
+
+    <span class="n">inner</span><span class="p">()</span>
+
+<span class="n">outer</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="24-shadowing">2.4 遮蔽现象（Shadowing）</h3>
+<p>当内层变量与外层变量同名时，<strong>内层会遮蔽外层</strong>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">x</span> <span class="o">=</span> <span class="mi">10</span>
+
+<span class="k">def</span> <span class="nf">shadow</span><span class="p">():</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="mi">20</span>      <span class="c1"># 这个 x 是局部变量，遮蔽了全局 x</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>    <span class="c1"># → 20</span>
+
+<span class="n">shadow</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>        <span class="c1"># → 10（全局 x 不受影响）</span>
+</code></pre></div>
+<blockquote>
+<p>⚠️ <strong>常见陷阱</strong>：很多初学者认为在函数内修改外部变量会"同步修改"，实际上只是创建了一个同名的局部变量。</p>
+</blockquote>
+<h3 id="25-legb">2.5 LEGB 的例外：赋值与可变对象</h3>
+<p><strong>原则</strong>：LEGB 查找规则适用于<strong>读取变量</strong>。对于<strong>赋值</strong>，Python 默认在当前作用域创建或修改变量。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">nums</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+
+<span class="k">def</span> <span class="nf">mutate</span><span class="p">():</span>
+    <span class="n">nums</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>          <span class="c1"># ✅ 可以！这是&quot;读取后修改&quot;，不是&quot;赋值&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">nums</span><span class="p">)</span>             <span class="c1"># → [1, 2, 3, 4]</span>
+
+<span class="k">def</span> <span class="nf">reassign</span><span class="p">():</span>
+    <span class="n">nums</span> <span class="o">=</span> <span class="p">[</span><span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">6</span><span class="p">]</span>       <span class="c1"># ⚡ 这是&quot;赋值&quot;——创建了新局部变量 nums</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">nums</span><span class="p">)</span>             <span class="c1"># → [4, 5, 6]</span>
+
+<span class="n">mutate</span><span class="p">()</span>
+<span class="n">reassign</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">nums</span><span class="p">)</span>                 <span class="c1"># → [1, 2, 3, 4]（mutate 真的修改了列表）</span>
+</code></pre></div>
+<blockquote>
+<p><strong>关键区别</strong>：<code>nums.append(4)</code> 是读→修改（先通过 LEGB 找到 nums，再调用 append 方法），<code>nums = [...]</code> 是赋值（在局部创建新变量）。</p>
+</blockquote>
+<hr>
+<h2 id="3-global-nonlocal">3. global 与 nonlocal 声明</h2>
+<h3 id="31-global-nonlocal">3.1 为什么需要 global 和 nonlocal？</h3>
+<p>Python 默认在函数内赋值会创建<strong>局部变量</strong>。如果想让赋值操作影响<strong>外层作用域</strong>的变量，需要显式声明。</p>
+<blockquote>
+<p><strong>设计原理</strong>：这是 Python 的 <strong>显式优于隐式（Explicit is better than implicit）</strong> 哲学的体现。其他语言（如 JavaScript）在嵌套函数中修改变量可能需要复杂的规则，Python 选择了简单粗暴的方式——需要通过关键字告诉解释器你的意图。</p>
+</blockquote>
+<h3 id="32-global">3.2 global 声明</h3>
+<p><strong>作用</strong>：声明一个变量来自全局命名空间，函数内的赋值操作会修改全局变量。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>           <span class="c1"># 全局变量</span>
+
+<span class="k">def</span> <span class="nf">increment</span><span class="p">():</span>
+    <span class="k">global</span> <span class="n">count</span>    <span class="c1"># 声明：这个 count 是全局的</span>
+    <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;count = </span><span class="si">{</span><span class="n">count</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">increment</span><span class="p">()</span>         <span class="c1"># → count = 1</span>
+<span class="n">increment</span><span class="p">()</span>         <span class="c1"># → count = 2</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">count</span><span class="p">)</span>        <span class="c1"># → 2（确实被修改了）</span>
+</code></pre></div>
+<p><strong>如果不加 global</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="k">def</span> <span class="nf">increment</span><span class="p">():</span>
+    <span class="c1"># 这里没有 global 声明</span>
+    <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>      <span class="c1"># 🚫 UnboundLocalError!</span>
+</code></pre></div>
+<p>为什么会报错？因为 Python 在编译函数时就发现 <code>count += 1</code> 里对 <code>count</code> 进行了赋值，于是将其标记为局部变量。后续 <code>+=</code> 需要先读取 <code>count</code>，但此时局部 <code>count</code> 还没有定义，所以抛出错误。</p>
+<blockquote>
+<p>⚠️ <strong>最佳实践</strong>：尽量避免大量使用 <code>global</code>。它破坏了函数的封装性——函数不应该依赖或修改外部状态。如果确实需要，考虑使用类（<code>class</code>）或返回值来替代。</p>
+</blockquote>
+<h3 id="33-nonlocal">3.3 nonlocal 声明</h3>
+<p><strong>作用</strong>：声明一个变量来自<strong>最近的外层函数作用域</strong>（Enclosing），用于嵌套函数中修改外层函数的局部变量。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">outer</span><span class="p">():</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="mi">10</span>              <span class="c1"># outer 的局部变量</span>
+
+    <span class="k">def</span> <span class="nf">inner</span><span class="p">():</span>
+        <span class="k">nonlocal</span> <span class="n">x</span>      <span class="c1"># 声明：这个 x 来自外层函数</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="mi">20</span>          <span class="c1"># 修改的是 outer 的 x，不是创建新变量</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;inner: x = </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">inner</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;outer: x = </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># → 20（被 inner 修改了）</span>
+
+<span class="n">outer</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>为什么需要 nonlocal？</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">outer</span><span class="p">():</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="mi">10</span>
+
+    <span class="k">def</span> <span class="nf">inner_bad</span><span class="p">():</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="mi">20</span>          <span class="c1"># 这创建了一个新的局部 x，不会影响 outer 的 x</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;inner_bad: x = </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">inner_good</span><span class="p">():</span>
+        <span class="k">nonlocal</span> <span class="n">x</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="mi">20</span>          <span class="c1"># 这修改了 outer 的 x</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;inner_good: x = </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">inner_bad</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;after inner_bad: x = </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># → 10（没变）</span>
+
+    <span class="n">inner_good</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;after inner_good: x = </span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># → 20（变了）</span>
+
+<span class="n">outer</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="33-global-vs-nonlocal">3.3 global vs nonlocal 对比</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th><code>global</code></th>
+<th><code>nonlocal</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>作用目标</td>
+<td>全局命名空间</td>
+<td>最近的外层函数（非全局）</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>模块顶层变量</td>
+<td>嵌套函数中的封闭作用域</td>
+</tr>
+<tr>
+<td>多层嵌套</td>
+<td>跳过多层到全局</td>
+<td>逐层向上，找到最近的</td>
+</tr>
+<tr>
+<td>使用频率</td>
+<td>很少（破坏封装）</td>
+<td>较多（闭包场景）</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">x</span> <span class="o">=</span> <span class="s2">&quot;全局&quot;</span>
+
+<span class="k">def</span> <span class="nf">a</span><span class="p">():</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="s2">&quot;a 层的 x&quot;</span>       <span class="c1"># 局部</span>
+
+    <span class="k">def</span> <span class="nf">b</span><span class="p">():</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="s2">&quot;b 层的 x&quot;</span>   <span class="c1"># a 到 b 之间还有一个局部</span>
+
+        <span class="k">def</span> <span class="nf">c</span><span class="p">():</span>
+            <span class="k">global</span> <span class="n">x</span>     <span class="c1"># 跳过 a 层和 b 层，直接到全局</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="s2">&quot;被 c 修改的全局 x&quot;</span>
+
+        <span class="k">def</span> <span class="nf">d</span><span class="p">():</span>
+            <span class="k">nonlocal</span> <span class="n">x</span>   <span class="c1"># 去最近的外层找 x → b 层的 x</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="s2">&quot;被 d 修改的 b 层 x&quot;</span>
+
+        <span class="n">c</span><span class="p">()</span>
+        <span class="n">d</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;b:&quot;</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>   <span class="c1"># → &quot;被 d 修改的 b 层 x&quot;</span>
+
+    <span class="n">b</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;a:&quot;</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>       <span class="c1"># → &quot;a 层的 x&quot;（没被 nonlocal 影响）</span>
+
+<span class="n">a</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;全局:&quot;</span><span class="p">,</span> <span class="n">x</span><span class="p">)</span>        <span class="c1"># → &quot;被 c 修改的全局 x&quot;</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 闭包原理</h2>
+<h3 id="41">4.1 什么是闭包？</h3>
+<p><strong>闭包（Closure）</strong> 是一个函数对象，它记住了其创建时所在作用域中的自由变量，即使那个作用域已经执行完毕。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">make_greeter</span><span class="p">(</span><span class="n">greeting</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">greeting</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
+    <span class="k">return</span> <span class="n">greet</span>
+
+<span class="n">say_hi</span> <span class="o">=</span> <span class="n">make_greeter</span><span class="p">(</span><span class="s2">&quot;你好&quot;</span><span class="p">)</span>
+<span class="n">say_hello</span> <span class="o">=</span> <span class="n">make_greeter</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">say_hi</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">))</span>      <span class="c1"># → 你好, Alice!</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">say_hello</span><span class="p">(</span><span class="s2">&quot;Bob&quot;</span><span class="p">))</span>     <span class="c1"># → Hello, Bob!</span>
+</code></pre></div>
+<p>这里 <code>greet</code> 就是闭包——它捕获了 <code>greeting</code> 这个自由变量（既不是 <code>greet</code> 的局部变量，也不是全局变量）。</p>
+<h3 id="42">4.2 闭包的底层机制</h3>
+<blockquote>
+<p><strong>实现原理</strong>：Python 的闭包机制基于 <strong>函数对象</strong> 和 <strong><strong>closure</strong> 属性</strong>。</p>
+</blockquote>
+<p>当一个嵌套函数引用了外层函数的变量时，Python 会：</p>
+<ol>
+<li><strong>在编译时发现</strong>：检查到内层函数引用了外层变量，标记这些变量为 <strong>自由变量（free variable）</strong></li>
+<li><strong>创建闭包元组</strong>：将自由变量的引用存储在函数的 <code>__closure__</code> 属性中</li>
+<li><strong>延长变量生命周期</strong>：外层函数返回后，这些变量本应被销毁，但因为闭包还有它们的引用，所以继续存活</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">make_counter</span><span class="p">():</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span> <span class="nf">counter</span><span class="p">():</span>
+        <span class="k">nonlocal</span> <span class="n">count</span>
+        <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">count</span>
+
+    <span class="k">return</span> <span class="n">counter</span>
+
+<span class="n">ct</span> <span class="o">=</span> <span class="n">make_counter</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ct</span><span class="p">())</span>          <span class="c1"># → 1</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ct</span><span class="p">())</span>          <span class="c1"># → 2</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ct</span><span class="p">())</span>          <span class="c1"># → 3</span>
+
+<span class="c1"># 查看闭包的内部结构</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ct</span><span class="o">.</span><span class="vm">__closure__</span><span class="p">)</span>           <span class="c1"># 闭包元组</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ct</span><span class="o">.</span><span class="vm">__closure__</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>        <span class="c1"># cell 对象</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ct</span><span class="o">.</span><span class="vm">__closure__</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cell_contents</span><span class="p">)</span>  <span class="c1"># → 3（当前值）</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ct</span><span class="o">.</span><span class="vm">__code__</span><span class="o">.</span><span class="n">co_free_vars</span><span class="p">)</span> <span class="c1"># → (&#39;count&#39;,) 自由变量名</span>
+</code></pre></div>
+<p><strong>内部结构示意</strong>：</p>
+<pre class="plain"><code>make_counter() 返回的 counter 函数对象
+├── __code__.co_free_vars ──→ (&#x27;count&#x27;,)
+├── __closure__ ──→ (&lt;cell at 0x...: int object at 0x...&gt;,)
+│                     └── cell_contents ──→ 3
+└── 普通局部变量 ──→ {}
+</code></pre>
+<h3 id="43">4.3 为什么需要闭包？</h3>
+<p>闭包是 Python 中实现以下模式的核心机制：</p>
+<ol>
+<li><strong>数据封装</strong>：创建"私有"状态，对外部隐藏细节</li>
+<li><strong>函数工厂</strong>：生成带有预设参数的不同函数</li>
+<li><strong>装饰器</strong>（Day 041 会讲）</li>
+<li><strong>回调函数</strong>：保存上下文信息</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 闭包实现数据封装</span>
+<span class="k">def</span> <span class="nf">create_secure_storage</span><span class="p">(</span><span class="n">initial_value</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;创建一个带&quot;私有&quot;状态的计数器&quot;&quot;&quot;</span>
+    <span class="n">_value</span> <span class="o">=</span> <span class="n">initial_value</span>
+
+    <span class="k">def</span> <span class="nf">get</span><span class="p">():</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;获取当前值&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">_value</span>
+
+    <span class="k">def</span> <span class="nf">set</span><span class="p">(</span><span class="n">new_value</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;设置新值（有验证）&quot;&quot;&quot;</span>
+        <span class="k">nonlocal</span> <span class="n">_value</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">new_value</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">)):</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;只支持数字类型&quot;</span><span class="p">)</span>
+        <span class="n">_value</span> <span class="o">=</span> <span class="n">new_value</span>
+
+    <span class="c1"># 返回操作接口，但不直接暴露 _value</span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;get&quot;</span><span class="p">:</span> <span class="n">get</span><span class="p">,</span> <span class="s2">&quot;set&quot;</span><span class="p">:</span> <span class="nb">set</span><span class="p">}</span>
+
+<span class="n">storage</span> <span class="o">=</span> <span class="n">create_secure_storage</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">storage</span><span class="p">[</span><span class="s2">&quot;get&quot;</span><span class="p">]())</span>           <span class="c1"># → 100</span>
+<span class="n">storage</span><span class="p">[</span><span class="s2">&quot;set&quot;</span><span class="p">](</span><span class="mi">200</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">storage</span><span class="p">[</span><span class="s2">&quot;get&quot;</span><span class="p">]())</span>           <span class="c1"># → 200</span>
+<span class="c1"># storage[&quot;set&quot;](&quot;abc&quot;)            # ← TypeError</span>
+<span class="c1"># print(storage[&quot;_value&quot;])          # ← NameError（无法直接访问！）</span>
+</code></pre></div>
+<h3 id="44">4.4 闭包的常见陷阱：延迟绑定</h3>
+<p>看这个经典问题：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">create_multipliers</span><span class="p">():</span>
+    <span class="n">multipliers</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+        <span class="k">def</span> <span class="nf">multiplier</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="n">i</span>       <span class="c1"># i 是自由变量</span>
+        <span class="n">multipliers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">multiplier</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">multipliers</span>
+
+<span class="n">multipliers</span> <span class="o">=</span> <span class="n">create_multipliers</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">multipliers</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">m</span><span class="p">(</span><span class="mi">2</span><span class="p">),</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot; &quot;</span><span class="p">)</span>  <span class="c1"># → 8 8 8 8 8  (不是 0 2 4 6 8! 😱)</span>
+</code></pre></div>
+<p><strong>为什么？</strong> 因为所有 <code>multiplier</code> 函数共享同一个 <code>i</code>，循环结束后 <code>i = 4</code>，所以所有函数都返回 <code>x * 4</code>。</p>
+<p><strong>解决方案</strong>：用默认参数捕获当前值，或创建新的作用域。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 方案 1：默认参数（立即绑定当前 i 的值）</span>
+<span class="k">def</span> <span class="nf">create_multipliers_fixed1</span><span class="p">():</span>
+    <span class="n">multipliers</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+        <span class="k">def</span> <span class="nf">multiplier</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">i</span><span class="o">=</span><span class="n">i</span><span class="p">):</span>   <span class="c1"># 默认参数在定义时求值</span>
+            <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="n">i</span>
+        <span class="n">multipliers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">multiplier</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">multipliers</span>
+
+<span class="c1"># 方案 2：额外闭包层（创建新作用域）</span>
+<span class="k">def</span> <span class="nf">create_multipliers_fixed2</span><span class="p">():</span>
+    <span class="n">multipliers</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">):</span>
+        <span class="k">def</span> <span class="nf">make_multiplier</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
+            <span class="k">def</span> <span class="nf">multiplier</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+                <span class="k">return</span> <span class="n">x</span> <span class="o">*</span> <span class="n">i</span>
+            <span class="k">return</span> <span class="n">multiplier</span>
+        <span class="n">multipliers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">make_multiplier</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">multipliers</span>
+
+<span class="nb">print</span><span class="p">([</span><span class="n">m</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">create_multipliers_fixed1</span><span class="p">()])</span>  <span class="c1"># → [0, 2, 4, 6, 8] ✅</span>
+<span class="nb">print</span><span class="p">([</span><span class="n">m</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">create_multipliers_fixed2</span><span class="p">()])</span>  <span class="c1"># → [0, 2, 4, 6, 8] ✅</span>
+</code></pre></div>
+<h3 id="45-vs">4.5 闭包 vs 对象</h3>
+<p>闭包和对象都能保存状态：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 闭包方式</span>
+<span class="k">def</span> <span class="nf">counter_closure</span><span class="p">():</span>
+    <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">def</span> <span class="nf">inc</span><span class="p">():</span>
+        <span class="k">nonlocal</span> <span class="n">count</span>
+        <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">count</span>
+    <span class="k">return</span> <span class="n">inc</span>
+
+<span class="c1"># 类方式</span>
+<span class="k">class</span> <span class="nc">CounterClass</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">def</span> <span class="nf">inc</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">count</span>
+
+<span class="n">c1</span> <span class="o">=</span> <span class="n">counter_closure</span><span class="p">()</span>
+<span class="n">c2</span> <span class="o">=</span> <span class="n">CounterClass</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">c1</span><span class="p">())</span>        <span class="c1"># → 1</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">c2</span><span class="o">.</span><span class="n">inc</span><span class="p">())</span>    <span class="c1"># → 1</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>对比</th>
+<th>闭包</th>
+<th>类</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>简洁性</td>
+<td>更短，无冗余</td>
+<td>需要定义完整类</td>
+</tr>
+<tr>
+<td>可扩展性</td>
+<td>有限</td>
+<td>可以添加方法、继承</td>
+</tr>
+<tr>
+<td>状态封装</td>
+<td>自动隐藏</td>
+<td>需要 <code>__private</code></td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>简单状态管理</td>
+<td>复杂逻辑处理</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="5">5. 变量生命周期</h2>
+<h3 id="51">5.1 变量的创建与销毁</h3>
+<p>Python 中每个变量的生命周期由<strong>引用计数</strong>和<strong>垃圾回收</strong>共同管理。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1. 变量创建：赋值时创建</span>
+<span class="n">x</span> <span class="o">=</span> <span class="mi">42</span>          <span class="c1"># 对象 42 被创建，x 引用它</span>
+
+<span class="c1"># 2. 变量存活：只要有引用指向它</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">x</span>           <span class="c1"># 42 的引用计数 +1</span>
+
+<span class="c1"># 3. 变量销毁：离开作用域时</span>
+<span class="k">def</span> <span class="nf">demo</span><span class="p">():</span>
+    <span class="n">temp</span> <span class="o">=</span> <span class="s2">&quot;临时&quot;</span>  <span class="c1"># 函数离开时，temp 被销毁</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">temp</span><span class="p">)</span>
+
+<span class="n">demo</span><span class="p">()</span>
+<span class="c1"># print(temp)   # NameError ❌</span>
+</code></pre></div>
+<h3 id="52">5.2 不同作用域的变量生命周期</h3>
+<table>
+<thead>
+<tr>
+<th>作用域</th>
+<th>创建时间</th>
+<th>销毁时间</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全局（模块）</td>
+<td>模块导入/执行时</td>
+<td>程序退出时</td>
+</tr>
+<tr>
+<td>局部（函数）</td>
+<td>函数被调用时</td>
+<td>函数返回或异常退出时</td>
+</tr>
+<tr>
+<td>封闭（Enclosing）</td>
+<td>外层函数调用时</td>
+<td>外层函数返回时（除非被闭包引用）</td>
+</tr>
+<tr>
+<td>内置（Built-in）</td>
+<td>Python 解释器启动时</td>
+<td>解释器退出时</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">sys</span>
+
+<span class="c1"># 全局变量</span>
+<span class="n">module_var</span> <span class="o">=</span> <span class="s2">&quot;我活在模块中&quot;</span>  <span class="c1"># 创建于导入时，销毁于程序退出</span>
+
+<span class="k">def</span> <span class="nf">outer</span><span class="p">():</span>
+    <span class="c1"># Enclosing 变量</span>
+    <span class="n">enclosing_var</span> <span class="o">=</span> <span class="s2">&quot;我活在 outer 函数中&quot;</span>  <span class="c1"># 创建于 outer() 调用时</span>
+
+    <span class="k">def</span> <span class="nf">inner</span><span class="p">():</span>
+        <span class="c1"># 局部变量</span>
+        <span class="n">local_var</span> <span class="o">=</span> <span class="s2">&quot;我活在 inner 函数中&quot;</span>  <span class="c1"># 创建于 inner() 调用时</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">local_var</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">enclosing_var</span><span class="p">)</span>   <span class="c1"># 引用外层变量</span>
+
+    <span class="n">inner</span><span class="p">()</span>
+    <span class="c1"># inner() 返回，local_var 被销毁</span>
+    <span class="c1"># outer() 返回，enclosing_var 被销毁</span>
+
+<span class="n">outer</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="53">5.3 闭包延长生命周期</h3>
+<p>变量通常在其作用域结束时被销毁，但<strong>闭包会延长自由变量的生命周期</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">make_closure</span><span class="p">():</span>
+    <span class="c1"># 这个变量在 make_closure 返回后本该销毁</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">keep</span><span class="p">():</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;我还记得 data: </span><span class="si">{</span><span class="n">data</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">keep</span>
+
+<span class="n">keeper</span> <span class="o">=</span> <span class="n">make_closure</span><span class="p">()</span>
+<span class="c1"># 此时 make_closure 已经执行完毕</span>
+<span class="c1"># 但 data 没有被销毁——因为 keeper 的闭包还引用着它</span>
+<span class="n">keeper</span><span class="p">()</span>  <span class="c1"># → 我还记得 data: [1, 2, 3]</span>
+
+<span class="c1"># 查看引用情况</span>
+<span class="kn">import</span> <span class="nn">gc</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">gc</span><span class="o">.</span><span class="n">get_referrers</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>  <span class="c1"># 注意：在函数外无法直接访问 data</span>
+</code></pre></div>
+<h3 id="54">5.4 引用计数与循环引用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">sys</span>
+
+<span class="n">x</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getrefcount</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>  <span class="c1"># → 2（x 的引用 + getrefcount 参数）</span>
+
+<span class="n">y</span> <span class="o">=</span> <span class="n">x</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getrefcount</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>  <span class="c1"># → 3</span>
+
+<span class="k">del</span> <span class="n">y</span>                       <span class="c1"># 引用计数 -1</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getrefcount</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>  <span class="c1"># → 2</span>
+
+<span class="c1"># ⚠️ 循环引用</span>
+<span class="n">a</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">b</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">a</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+<span class="n">b</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>
+<span class="c1"># a 和 b 互相引用，引用计数永远不会归零</span>
+<span class="c1"># Python 的垃圾回收器会检测并回收这种情况</span>
+</code></pre></div>
+<hr>
+<h2 id="6">6. 实战：计数器工厂</h2>
+<blockquote>
+<p>结合作用域、闭包、nonlocal 的综合实战。</p>
+</blockquote>
+<h3 id="61">6.1 需求分析</h3>
+<p>实现一个灵活的计数器工厂函数：</p>
+<ul>
+<li><code>create_counter(start=0, step=1)</code>：创建计数器</li>
+<li>计数器有 <code>next()</code>、<code>reset()</code>、<code>peek()</code> 方法</li>
+<li>支持多个独立计数器互不干扰</li>
+<li>支持设置上下限（可选）</li>
+</ul>
+<h3 id="62">6.2 实现代码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">create_counter</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">min_val</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">max_val</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    创建计数器闭包</span>
+
+<span class="sd">    参数:</span>
+<span class="sd">        start: 起始值（默认 0）</span>
+<span class="sd">        step: 步长（默认 1）</span>
+<span class="sd">        min_val: 最小值限制（可选）</span>
+<span class="sd">        max_val: 最大值限制（可选）</span>
+
+<span class="sd">    返回:</span>
+<span class="sd">        包含 next/reset/peek 方法的字典</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">current</span> <span class="o">=</span> <span class="n">start</span>
+
+    <span class="k">def</span> <span class="nf">next</span><span class="p">():</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;增加计数并返回新值&quot;&quot;&quot;</span>
+        <span class="k">nonlocal</span> <span class="n">current</span>
+        <span class="n">new_val</span> <span class="o">=</span> <span class="n">current</span> <span class="o">+</span> <span class="n">step</span>
+
+        <span class="c1"># 检查上限</span>
+        <span class="k">if</span> <span class="n">max_val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">new_val</span> <span class="o">&gt;</span> <span class="n">max_val</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">StopIteration</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;已达到上限 </span><span class="si">{</span><span class="n">max_val</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># 检查下限</span>
+        <span class="k">if</span> <span class="n">min_val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">new_val</span> <span class="o">&lt;</span> <span class="n">min_val</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">StopIteration</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;已达到下限 </span><span class="si">{</span><span class="n">min_val</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">current</span> <span class="o">=</span> <span class="n">new_val</span>
+        <span class="k">return</span> <span class="n">current</span>
+
+    <span class="k">def</span> <span class="nf">reset</span><span class="p">():</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;重置到起始值&quot;&quot;&quot;</span>
+        <span class="k">nonlocal</span> <span class="n">current</span>
+        <span class="n">current</span> <span class="o">=</span> <span class="n">start</span>
+
+    <span class="k">def</span> <span class="nf">peek</span><span class="p">():</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;查看当前值（不修改）&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">current</span>
+
+    <span class="c1"># 返回操作接口</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">&quot;next&quot;</span><span class="p">:</span> <span class="nb">next</span><span class="p">,</span>
+        <span class="s2">&quot;reset&quot;</span><span class="p">:</span> <span class="n">reset</span><span class="p">,</span>
+        <span class="s2">&quot;peek&quot;</span><span class="p">:</span> <span class="n">peek</span><span class="p">,</span>
+        <span class="s2">&quot;current&quot;</span><span class="p">:</span> <span class="n">current</span>  <span class="c1"># 这不是闭包，只是当前值快照！</span>
+    <span class="p">}</span>
+
+
+<span class="c1"># ============ 使用示例 ============</span>
+
+<span class="c1"># 基础计数器：从 0 开始，步长 1</span>
+<span class="n">counter</span> <span class="o">=</span> <span class="n">create_counter</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counter</span><span class="p">[</span><span class="s2">&quot;peek&quot;</span><span class="p">]())</span>      <span class="c1"># → 0</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counter</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>      <span class="c1"># → 1</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counter</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>      <span class="c1"># → 2</span>
+<span class="n">counter</span><span class="p">[</span><span class="s2">&quot;reset&quot;</span><span class="p">]()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counter</span><span class="p">[</span><span class="s2">&quot;peek&quot;</span><span class="p">]())</span>      <span class="c1"># → 0</span>
+
+<span class="c1"># 自定义计数器：从 100 开始，步长 -5，下限 80</span>
+<span class="n">counter2</span> <span class="o">=</span> <span class="n">create_counter</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">step</span><span class="o">=-</span><span class="mi">5</span><span class="p">,</span> <span class="n">min_val</span><span class="o">=</span><span class="mi">80</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counter2</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>     <span class="c1"># → 95</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counter2</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>     <span class="c1"># → 90</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counter2</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>     <span class="c1"># → 85</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">counter2</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>     <span class="c1"># → 80</span>
+<span class="c1"># print(counter2[&quot;next&quot;]())     # ← StopIteration!</span>
+
+<span class="c1"># 多个计数器互不干扰</span>
+<span class="n">c3</span> <span class="o">=</span> <span class="n">create_counter</span><span class="p">()</span>
+<span class="n">c4</span> <span class="o">=</span> <span class="n">create_counter</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">c3</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>           <span class="c1"># → 1</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">c3</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>           <span class="c1"># → 2</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">c4</span><span class="p">[</span><span class="s2">&quot;next&quot;</span><span class="p">]())</span>           <span class="c1"># → 1（c4 是独立的）</span>
+</code></pre></div>
+<h3 id="63">6.3 代码运行流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant User as 调用方
+    participant Factory as create_counter()
+    participant Counter as 闭包函数集
+    participant Value as current 变量
+
+    User-&gt;&gt;Factory: create_counter(start=0, step=1)
+    Factory-&gt;&gt;Value: current = 0（在工厂作用域中）
+    Factory--&gt;&gt;User: 返回 {next, reset, peek, current}
+
+    User-&gt;&gt;Counter: counter[&quot;next&quot;]()
+    Counter-&gt;&gt;Value: 读取 current（通过 nonlocal）
+    Value--&gt;&gt;Counter: 0
+    Counter-&gt;&gt;Value: current = 0 + 1 = 1
+    Counter--&gt;&gt;User: 返回 1
+
+    User-&gt;&gt;Counter: counter[&quot;next&quot;]()
+    Counter-&gt;&gt;Value: 读取 current
+    Value--&gt;&gt;Counter: 1
+    Counter-&gt;&gt;Value: current = 2
+    Counter--&gt;&gt;User: 返回 2
+
+    User-&gt;&gt;Counter: counter[&quot;reset&quot;]()
+    Counter-&gt;&gt;Value: current = 0
+    Counter--&gt;&gt;User: OK
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant User as 调用方
+    participant Factory as create_counter()
+    participant Counter as 闭包函数集
+    participant Value as current 变量
+
+    User-&gt;&gt;Factory: create_counter(start=0, step=1)
+    Factory-&gt;&gt;Value: current = 0（在工厂作用域中）
+    Factory--&gt;&gt;User: 返回 {next, reset, peek, current}
+
+    User-&gt;&gt;Counter: counter[&quot;next&quot;]()
+    Counter-&gt;&gt;Value: 读取 current（通过 nonlocal）
+    Value--&gt;&gt;Counter: 0
+    Counter-&gt;&gt;Value: current = 0 + 1 = 1
+    Counter--&gt;&gt;User: 返回 1
+
+    User-&gt;&gt;Counter: counter[&quot;next&quot;]()
+    Counter-&gt;&gt;Value: 读取 current
+    Value--&gt;&gt;Counter: 1
+    Counter-&gt;&gt;Value: current = 2
+    Counter--&gt;&gt;User: 返回 2
+
+    User-&gt;&gt;Counter: counter[&quot;reset&quot;]()
+    Counter-&gt;&gt;Value: current = 0
+    Counter--&gt;&gt;User: OK
+</code></pre></div>
+<hr>
+<h2 id="7">7. 思考题</h2>
+<ol>
+<li>
+<p><strong>遮蔽与非遮蔽</strong>：如果一个外部函数定义一个变量 <code>name</code>，内部函数也定义一个 <code>name</code>，通过什么机制可以控制是否覆盖外层变量？</p>
+</li>
+<li>
+<p><strong>闭包的对象等价物</strong>：用类改写下面这个闭包。闭包相比类的优势和劣势分别是什么？</p>
+</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">   <span class="k">def</span> <span class="nf">make_adder</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+       <span class="k">def</span> <span class="nf">add</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+           <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="n">n</span>
+       <span class="k">return</span> <span class="n">add</span>
+</code></pre></div>
+<ol start="3">
+<li>
+<p><strong>跨模块作用域</strong>：如果 <code>a.py</code> 里有一个全局变量 <code>x</code>，<code>b.py</code> 里 <code>import a</code> 后修改 <code>a.x</code>，<code>a.py</code> 本身的代码能看到这个修改吗？为什么？</p>
+</li>
+<li>
+<p><strong>闭包的内存泄漏</strong>：如果一个长时间运行的程序大量创建闭包，会有什么问题？如何避免？</p>
+</li>
+<li>
+<p><strong>global 的根本问题</strong>：说明为什么 <code>global</code> 被认为是有害的编程实践。能用什么替代方案来实现类似功能？</p>
+</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-012/index.html">← Day 12 函数进阶</a><a class="nav-next" href="../day-014/index.html">Day 14 模块与包 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

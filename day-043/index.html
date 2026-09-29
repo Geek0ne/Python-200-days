@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 43 — 数据类（dataclass）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 43 — 数据类（dataclass）</h1>
+  <div class="lmeta">
+    <span class="badge">面向对象编程</span>
+    <span class="badge">275 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-043-dataclass" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#1-dataclass">1. @dataclass 装饰器原理</a>
+<a class="toc-l3" href="#11">1.1 它到底做了什么？</a>
+<a class="toc-l3" href="#12">1.2 装饰器参数</a>
+<a class="toc-l2" href="#2-field">2. field() 函数与高级配置</a>
+<a class="toc-l3" href="#21-field">2.1 field() 能做什么？</a>
+<a class="toc-l3" href="#22">2.2 核心参数速查</a>
+<a class="toc-l3" href="#23">2.3 ⚠️ 可变默认值的陷阱</a>
+<a class="toc-l3" href="#24-__post_init__">2.4 __post_init__ 钩子方法</a>
+<a class="toc-l2" href="#3-namedtuple">3. 与 namedtuple / 普通类的对比</a>
+<a class="toc-l3" href="#31">3.1 对比总览</a>
+<a class="toc-l3" href="#32">3.2 何时用哪个？</a>
+<a class="toc-l2" href="#4">4. 实战：配置管理系统</a>
+<a class="toc-l2" href="#5">5. 高级话题</a>
+<a class="toc-l3" href="#51">5.1 继承中的字段顺序</a>
+<a class="toc-l3" href="#52">5.2 与类型检查工具配合</a>
+<a class="toc-l3" href="#53-dataclass">5.3 dataclass 的哈希行为</a>
+<a class="toc-l2" href="#_2">总结</a>
+<a class="toc-l2" href="#_3">参考资料</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-43dataclass">Day 43：数据类（dataclass）</h1>
+<blockquote>
+<p>数据类是 Python 3.7（PEP 557）引入的一种"语法糖"，让你用最少的代码定义数据容器类。它自动生成 <code>__init__</code>、<code>__repr__</code>、<code>__eq__</code> 等特殊方法，是日常开发中<strong>最常用的 OOP 工具之一</strong>。</p>
+</blockquote>
+<hr>
+<h2 id="_1">概述</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Point</span><span class="p">:</span>
+    <span class="n">x</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">y</span><span class="p">:</span> <span class="nb">float</span>
+</code></pre></div>
+<p><strong>这一行装饰器做了什么？</strong><br>
+它自动为 <code>Point</code> 类生成了以下方法：<br>
+- <code>__init__(self, x: float, y: float)</code> — 不用写构造函数了<br>
+- <code>__repr__(self)</code> — 返回 <code>Point(x=1.0, y=2.0)</code> 这样的可读字符串<br>
+- <code>__eq__(self, other)</code> — 两个实例如果属性相同就相等<br>
+- <code>__hash__</code> — 可选，默认是 <code>None</code>（不可哈希）</p>
+<p>对比普通类，省掉了大约 <strong>15 行</strong>模板代码。</p>
+<hr>
+<h2 id="1-dataclass">1. <code>@dataclass</code> 装饰器原理</h2>
+<h3 id="11">1.1 它到底做了什么？</h3>
+<p><code>@dataclass</code> 本质上是一个<strong>类装饰器</strong>，它在类定义完成后遍历所有带有类型注解的类变量（字段），然后动态生成特殊方法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 你写的代码：</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Person</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="c1"># Python 实际生成的 __init__（简化版）：</span>
+<span class="k">class</span> <span class="nc">Person</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">age</span><span class="p">:</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">age</span> <span class="o">=</span> <span class="n">age</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Person(name=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2">, age=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">age</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__eq__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">Person</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">NotImplemented</span>
+        <span class="k">return</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">age</span><span class="p">)</span> <span class="o">==</span> <span class="p">(</span><span class="n">other</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">age</span><span class="p">)</span>
+</code></pre></div>
+<blockquote>
+<p><strong>重要理解</strong>：<code>@dataclass</code> 不是运行时类型检查工具！它不校验类型，即使传了 <code>age="hello"</code> 也能运行。</p>
+</blockquote>
+<h3 id="12">1.2 装饰器参数</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@dataclass</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">eq</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">frozen</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">slots</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>init</code></td>
+<td><code>True</code></td>
+<td>是否生成 <code>__init__</code></td>
+</tr>
+<tr>
+<td><code>repr</code></td>
+<td><code>True</code></td>
+<td>是否生成 <code>__repr__</code></td>
+</tr>
+<tr>
+<td><code>eq</code></td>
+<td><code>True</code></td>
+<td>是否生成 <code>__eq__</code></td>
+</tr>
+<tr>
+<td><code>order</code></td>
+<td><code>False</code></td>
+<td>是否生成比较方法（<code>__lt__</code>/<code>__le__</code>/<code>__gt__</code>/<code>__ge__</code>）</td>
+</tr>
+<tr>
+<td><code>frozen</code></td>
+<td><code>False</code></td>
+<td>是否不可变（类似 namedtuple）</td>
+</tr>
+<tr>
+<td><code>slots</code></td>
+<td><code>False</code></td>
+<td>是否使用 <code>__slots__</code>（Python 3.10+）</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@dataclass</span><span class="p">(</span><span class="n">order</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span> <span class="nc">Version</span><span class="p">:</span>
+    <span class="n">major</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">minor</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">patch</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="n">v1</span> <span class="o">=</span> <span class="n">Version</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+<span class="n">v2</span> <span class="o">=</span> <span class="n">Version</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">v1</span> <span class="o">&lt;</span> <span class="n">v2</span><span class="p">)</span>  <span class="c1"># True — order=True 生成比较方法</span>
+<span class="c1"># v1.major = 2  # ❌ FrozenInstanceError — frozen=True 禁止修改</span>
+</code></pre></div>
+<hr>
+<h2 id="2-field">2. <code>field()</code> 函数与高级配置</h2>
+<h3 id="21-field">2.1 field() 能做什么？</h3>
+<p><code>field()</code> 让你对<strong>单个字段</strong>进行精细化配置：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">field</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Config</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="mi">8080</span><span class="p">,</span> <span class="n">metadata</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;unit&quot;</span><span class="p">:</span> <span class="s2">&quot;端口号&quot;</span><span class="p">})</span>
+    <span class="n">hosts</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">debug</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>    <span class="c1"># repr 不显示</span>
+    <span class="n">_secret</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="nb">repr</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>      <span class="c1"># 隐藏敏感字段</span>
+</code></pre></div>
+<h3 id="22">2.2 核心参数速查</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+<th>经典场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>default</code></td>
+<td>字段默认值</td>
+<td>简单类型默认值</td>
+</tr>
+<tr>
+<td><code>default_factory</code></td>
+<td>返回默认值的工厂函数</td>
+<td>可变类型默认值（list, dict, set）</td>
+</tr>
+<tr>
+<td><code>init</code></td>
+<td>该字段是否出现在 <code>__init__</code> 中</td>
+<td>计算字段</td>
+</tr>
+<tr>
+<td><code>repr</code></td>
+<td>该字段是否出现在 <code>__repr__</code> 中</td>
+<td>隐藏敏感数据</td>
+</tr>
+<tr>
+<td><code>compare</code></td>
+<td>该字段是否参与 <code>__eq__</code>/比较方法</td>
+<td>排除无意义的比较字段</td>
+</tr>
+<tr>
+<td><code>hash</code></td>
+<td>该字段是否参与 <code>__hash__</code></td>
+<td>精细控制哈希行为</td>
+</tr>
+<tr>
+<td><code>metadata</code></td>
+<td>用户自定义元数据</td>
+<td>验证规则、序列化配置</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23">2.3 ⚠️ 可变默认值的陷阱</h3>
+<p>这是新手最常踩的坑：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 错误！所有实例共享同一个列表</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Bad</span><span class="p">:</span>
+    <span class="n">items</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[]</span>  <span class="c1"># 这会报错：ValueError: mutable default &lt;class &#39;list&#39;&gt; for field items is not allowed</span>
+
+<span class="c1"># ✅ 正确：使用 default_factory</span>
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Good</span><span class="p">:</span>
+    <span class="n">items</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>原因</strong>：Python 的默认参数在<strong>定义时求值</strong>一次。如果直接用 <code>[]</code>，所有实例共享同一个列表对象，修改一个会影响全部。<code>default_factory</code> 在每个实例创建时调用一次工厂函数，保证独立副本。</p>
+<h3 id="24-__post_init__">2.4 <code>__post_init__</code> 钩子方法</h3>
+<p>你可以定义 <code>__post_init__</code> 方法来执行初始化后的额外逻辑（验证、转换、计算）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Person</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">adult</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">init</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>  <span class="c1"># 不在 __init__ 中</span>
+
+    <span class="k">def</span> <span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># 验证</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">age</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;年龄不能为负数&quot;</span><span class="p">)</span>
+        <span class="c1"># 计算字段</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">adult</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">age</span> <span class="o">&gt;=</span> <span class="mi">18</span>
+
+<span class="n">p</span> <span class="o">=</span> <span class="n">Person</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="mi">25</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">adult</span><span class="p">)</span>  <span class="c1"># True</span>
+</code></pre></div>
+<hr>
+<h2 id="3-namedtuple">3. 与 namedtuple / 普通类的对比</h2>
+<h3 id="31">3.1 对比总览</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>普通类</th>
+<th>namedtuple</th>
+<th>数据类 (dataclass)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>代码量</td>
+<td>多（需要手写模板方法）</td>
+<td>极少（一行）</td>
+<td>少（几行注解）</td>
+</tr>
+<tr>
+<td>可变性</td>
+<td>可变</td>
+<td><strong>不可变</strong></td>
+<td>可变（可设置 frozen=True）</td>
+</tr>
+<tr>
+<td>类型注解</td>
+<td>手动</td>
+<td>无（字段是字符串）</td>
+<td>完整的类型注解支持</td>
+</tr>
+<tr>
+<td>默认值</td>
+<td>手动</td>
+<td>通过 <code>defaults</code> 参数</td>
+<td>通过 <code>field()</code> 或直接赋值</td>
+</tr>
+<tr>
+<td>继承</td>
+<td>完整支持</td>
+<td>有限</td>
+<td>完整支持</td>
+</tr>
+<tr>
+<td>方法定义</td>
+<td>任意方法</td>
+<td>有限（可以添加方法但麻烦）</td>
+<td>任意方法</td>
+</tr>
+<tr>
+<td>可读性</td>
+<td>好（构造函数明确）</td>
+<td>差（位置参数）</td>
+<td>极好</td>
+</tr>
+<tr>
+<td>性能</td>
+<td>一般</td>
+<td><strong>最快</strong>（底层 C 实现）</td>
+<td>稍慢于 namedtuple</td>
+</tr>
+<tr>
+<td>序列化</td>
+<td>手动</td>
+<td>支持 _asdict()</td>
+<td>原生支持（dataclasses.asdict）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32">3.2 何时用哪个？</h3>
+<pre class="plain"><code>普通类（class）
+├── 需要复杂业务逻辑、方法封装
+├── 需要多重继承
+└── 需要细致的访问控制（property、描述符）
+
+namedtuple（推荐用 typing.NamedTuple）
+├── 简单的不可变数据结构
+├── 性能敏感的场合（大量创建 10 万+ 对象）
+├── 需要元组拆包兼容性
+└── 作为字典键（必须可哈希）
+
+数据类（dataclass）⭐⭐ 日常首选
+├── 大多数&quot;数据携带&quot;场景
+├── 需要类型注解提高可读性
+├── 需要可变对象
+├── 需要继承和自定义方法
+├── 需要默认值/验证/后处理
+└── 需要序列化支持
+</code></pre>
+<hr>
+<h2 id="4">4. 实战：配置管理系统</h2>
+<p>Day 43 的实战是一个完整的配置管理系统，支持：<br>
+- 多种配置来源（默认值、环境变量、JSON 文件、命令行参数）<br>
+- 配置验证和类型转换<br>
+- 配置只读保护<br>
+- 配置序列化与合并</p>
+<p>详见 <code>code/04-config-manager.py</code>。</p>
+<hr>
+<h2 id="5">5. 高级话题</h2>
+<h3 id="51">5.1 继承中的字段顺序</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Base</span><span class="p">:</span>
+    <span class="n">x</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Derived</span><span class="p">(</span><span class="n">Base</span><span class="p">):</span>
+    <span class="n">y</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="c1"># ⚠️ 这会导致 TypeError: non-default argument &#39;y&#39; follows default argument</span>
+<span class="c1"># 因为字段顺序是 [x, y]，而 x 有默认值、y 没有</span>
+</code></pre></div>
+<p><strong>规则</strong>：所有没有默认值的字段必须在有默认值的字段之前声明。dataclass 的字段顺序是父类字段在前，子类字段在后。</p>
+<h3 id="52">5.2 与类型检查工具配合</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">User</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">age</span><span class="p">:</span> <span class="nb">int</span>
+
+<span class="c1"># mypy 会发现类型错误</span>
+<span class="n">u</span> <span class="o">=</span> <span class="n">User</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;25&quot;</span><span class="p">)</span>  <span class="c1"># ❌ mypy: Argument 2 to &quot;User&quot; has incompatible type &quot;str&quot;; expected &quot;int&quot;</span>
+</code></pre></div>
+<h3 id="53-dataclass">5.3 dataclass 的哈希行为</h3>
+<p>默认情况下：<br>
+- <code>frozen=True</code> → 自动生成 <code>__hash__</code>，实例可哈希<br>
+- <code>frozen=False</code> + <code>eq=True</code> → <code>__hash__</code> 设为 <code>None</code>，实例不可哈希<br>
+- 手动设置 <code>unsafe_hash=True</code> → 强制生成 <code>__hash__</code>（即使可变，不推荐）</p>
+<hr>
+<h2 id="_2">总结</h2>
+<pre class="plain"><code>@dataclass  =  &quot;给我一个类，专门装数据&quot;
+  ├── 自动生成 __init__ / __repr__ / __eq__
+  ├── field() 提供精细的字段控制
+  ├── __post_init__ 做初始化后处理
+  ├── frozen=True 做不可变版本
+  └── 完整支持继承和类型注解
+</code></pre>
+<blockquote>
+<p><strong>一句话记住</strong>：需要装数据的类，默认选 <code>@dataclass</code>。需要装数据的元组，选 <code>NamedTuple</code>。需要复杂行为的类，用手写 class。</p>
+</blockquote>
+<hr>
+<h2 id="_3">参考资料</h2>
+<ul>
+<li><a href="https://peps.python.org/pep-0557/">PEP 557 – Data Classes</a></li>
+<li><a href="https://docs.python.org/3/library/dataclasses.html">Python dataclasses 官方文档</a></li>
+<li><a href="https://www.youtube.com/watch?v=T-TwcmT6Rcw">Raymond Hettinger 的 dataclass 演讲</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-042/index.html">← Day 42 类型提示与检查</a><a class="nav-next" href="../day-044/index.html">Day 44 枚举与常量 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

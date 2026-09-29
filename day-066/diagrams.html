@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 66 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 66 正文</a>
+  <h1>Day 66 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-066-flask">Day 066 — 图解：Flask 进阶核心概念</h1>
+<blockquote>
+<p>本目录包含 Flask 进阶话题的图解说明：ORM 原理、JWT 认证、RESTful API 架构。</p>
+</blockquote>
+<hr>
+<h2 id="1-sqlalchemy">1. SQLAlchemy 架构总览</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph &quot;应用代码 (Python)&quot;
+        A[&quot;class User(db.Model):&lt;br/&gt;id = Column(Integer)&lt;br/&gt;name = Column(String)&quot;]
+        B[&quot;user = User(name=&#x27;Alice&#x27;)&lt;br/&gt;db.session.add(user)&lt;br/&gt;db.session.commit()&quot;]
+        C[&quot;User.query.filter_by(name=&#x27;Alice&#x27;)&lt;br/&gt;.order_by(User.id.desc())&lt;br/&gt;.all()&quot;]
+    end
+    
+    subgraph &quot;SQLAlchemy ORM&quot;
+        D[&quot;ORM 层&lt;br/&gt;对象 ↔ 关系映射&lt;br/&gt;会话管理&lt;br/&gt;变更跟踪&quot;]
+    end
+    
+    subgraph &quot;SQLAlchemy Core&quot;
+        E[&quot;SQL 表达式语言&lt;br/&gt;schema/types/sql&lt;br/&gt;engine/connection&quot;]
+    end
+    
+    subgraph &quot;数据库驱动 (Dialect)&quot;
+        F[&quot;SQLite&lt;br/&gt;Dialect&quot;]
+        G[&quot;PostgreSQL&lt;br/&gt;Dialect&quot;]
+        H[&quot;MySQL&lt;br/&gt;Dialect&quot;]
+    end
+    
+    subgraph &quot;数据库&quot;
+        I[&quot;📁 SQLite&lt;br/&gt;app.db&quot;]
+        J[&quot;🐘 PostgreSQL&quot;]
+        K[&quot;🐬 MySQL&quot;]
+    end
+    
+    A --&gt; D
+    B --&gt; D
+    C --&gt; D
+    D --&gt; E
+    E --&gt; F
+    E --&gt; G
+    E --&gt; H
+    F --&gt; I
+    G --&gt; J
+    H --&gt; K
+    
+    style D fill:#4A90D9,color:#fff
+    style E fill:#7B68EE,color:#fff
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph &quot;应用代码 (Python)&quot;
+        A[&quot;class User(db.Model):&lt;br/&gt;id = Column(Integer)&lt;br/&gt;name = Column(String)&quot;]
+        B[&quot;user = User(name=&#x27;Alice&#x27;)&lt;br/&gt;db.session.add(user)&lt;br/&gt;db.session.commit()&quot;]
+        C[&quot;User.query.filter_by(name=&#x27;Alice&#x27;)&lt;br/&gt;.order_by(User.id.desc())&lt;br/&gt;.all()&quot;]
+    end
+    
+    subgraph &quot;SQLAlchemy ORM&quot;
+        D[&quot;ORM 层&lt;br/&gt;对象 ↔ 关系映射&lt;br/&gt;会话管理&lt;br/&gt;变更跟踪&quot;]
+    end
+    
+    subgraph &quot;SQLAlchemy Core&quot;
+        E[&quot;SQL 表达式语言&lt;br/&gt;schema/types/sql&lt;br/&gt;engine/connection&quot;]
+    end
+    
+    subgraph &quot;数据库驱动 (Dialect)&quot;
+        F[&quot;SQLite&lt;br/&gt;Dialect&quot;]
+        G[&quot;PostgreSQL&lt;br/&gt;Dialect&quot;]
+        H[&quot;MySQL&lt;br/&gt;Dialect&quot;]
+    end
+    
+    subgraph &quot;数据库&quot;
+        I[&quot;📁 SQLite&lt;br/&gt;app.db&quot;]
+        J[&quot;🐘 PostgreSQL&quot;]
+        K[&quot;🐬 MySQL&quot;]
+    end
+    
+    A --&gt; D
+    B --&gt; D
+    C --&gt; D
+    D --&gt; E
+    E --&gt; F
+    E --&gt; G
+    E --&gt; H
+    F --&gt; I
+    G --&gt; J
+    H --&gt; K
+    
+    style D fill:#4A90D9,color:#fff
+    style E fill:#7B68EE,color:#fff
+</code></pre></div>
+<h3 id="_1">各层职责</h3>
+<pre class="plain"><code>应用层 (你的 Python 代码)
+    │
+    ▼ 定义模型、CRUD 操作、业务逻辑
+    │
+ORM 层 (对象关系映射)
+    │
+    │  • 模型 ↔ 表的映射
+    │  • 关系管理 (一对多/多对多)
+    │  • 变更追踪 (unit of work)
+    │  • 会话管理 (session)
+    │  • 惰性加载/预加载
+    │
+    ▼ 翻译成 SQL 表达式
+    │
+Core 层 (SQL 表达式语言)
+    │
+    │  • SQL 抽象语法树
+    │  • 类型系统与类型转换
+    │  • 连接池与事务管理
+    │  • 结果集处理
+    │
+    ▼ 发送到具体数据库
+    │
+Dialect (数据库方言)
+    │
+    │  • SQL 语法适配 (不同数据库 SQL 略有差异)
+    │  • 驱动封装 (sqlite3/psycopg2/mysql-connector)
+    │
+    ▼
+Database (数据库)
+</code></pre>
+<hr>
+<h2 id="2-sqlalchemy">2. SQLAlchemy 对象状态生命周期</h2>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; Transient: User()
+    
+    Transient --&gt; Pending: db.session.add(user)
+    
+    Pending --&gt; Flushed: db.session.flush()
+    Pending --&gt; Detached: db.session.expunge(user)
+    
+    Flushed --&gt; Committed: db.session.commit()
+    Flushed --&gt; Pending: 事务回滚
+    
+    Committed --&gt; Loaded: user.todos
+    
+    Loaded --&gt; Expired: db.session.expire(user)
+    Expired --&gt; Loaded: user.name (触发重新查询)
+    
+    Loaded --&gt; Deleted: db.session.delete(user)
+    Deleted --&gt; Detached: db.session.commit()
+    
+    Loaded --&gt; Detached: 会话关闭
+    Detached --&gt; Loaded: db.session.merge(user)
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; Transient: User()
+    
+    Transient --&gt; Pending: db.session.add(user)
+    
+    Pending --&gt; Flushed: db.session.flush()
+    Pending --&gt; Detached: db.session.expunge(user)
+    
+    Flushed --&gt; Committed: db.session.commit()
+    Flushed --&gt; Pending: 事务回滚
+    
+    Committed --&gt; Loaded: user.todos
+    
+    Loaded --&gt; Expired: db.session.expire(user)
+    Expired --&gt; Loaded: user.name (触发重新查询)
+    
+    Loaded --&gt; Deleted: db.session.delete(user)
+    Deleted --&gt; Detached: db.session.commit()
+    
+    Loaded --&gt; Detached: 会话关闭
+    Detached --&gt; Loaded: db.session.merge(user)
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>说明</th>
+<th>是否在 session 中</th>
+<th>数据库中是否存在</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Transient</strong></td>
+<td>刚创建的 Python 对象</td>
+<td>❌</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>Pending</strong></td>
+<td>已添加到 session，未刷新</td>
+<td>✅</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><strong>Flushed</strong></td>
+<td>SQL 已发送到数据库，未提交</td>
+<td>✅</td>
+<td>✅（事务中）</td>
+</tr>
+<tr>
+<td><strong>Committed</strong></td>
+<td>已提交到数据库</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>Detached</strong></td>
+<td>与 session 分离</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>Deleted</strong></td>
+<td>标记为删除</td>
+<td>✅</td>
+<td>✅（等待提交删除）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-jwt">3. JWT 结构详解</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph &quot;JWT = Header.Payload.Signature&quot;
+        H[&quot;Header&lt;br/&gt;{&lt;br/&gt;&amp;nbsp;&quot;alg&quot;: &quot;HS256&quot;,&lt;br/&gt;&amp;nbsp;&quot;typ&quot;: &quot;JWT&quot;&lt;br/&gt;}&quot;]
+        P[&quot;Payload&lt;br/&gt;{&lt;br/&gt;&amp;nbsp;&quot;sub&quot;: 1,&lt;br/&gt;&amp;nbsp;&quot;iat&quot;: 1700000000,&lt;br/&gt;&amp;nbsp;&quot;exp&quot;: 1700086400&lt;br/&gt;}&quot;]
+        S[&quot;Signature&lt;br/&gt;HMACSHA256(&lt;br/&gt;&amp;nbsp;base64(Header) + &#x27;.&#x27; +&lt;br/&gt;&amp;nbsp;base64(Payload),&lt;br/&gt;&amp;nbsp;SECRET_KEY&lt;br/&gt;)&quot;]
+    end
+    
+    H --&gt;|Base64URL| H64[&quot;eyJhbGciOiJIUzI1NiIs...&quot;]
+    P --&gt;|Base64URL| P64[&quot;eyJzdWIiOjEsImlhdCI6MTcw...&quot;]
+    S --&gt; S64[&quot;dGhpcyBpcyB0aGUgc2lnbmF0...&quot;]
+    
+    H64 --&gt; Token[&quot;eyJhbGciOiJIUzI1NiIs...&lt;br/&gt;.&lt;br/&gt;eyJzdWIiOjEsImlhdCI6MTcw...&lt;br/&gt;.&lt;br/&gt;dGhpcyBpcyB0aGUgc2lnbmF0...&quot;]
+    P64 --&gt; Token
+    S64 --&gt; Token
+    
+    style Token fill:#f0f0f0,stroke:#333,stroke-width:2px
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph &quot;JWT = Header.Payload.Signature&quot;
+        H[&quot;Header&lt;br/&gt;{&lt;br/&gt;&amp;nbsp;&quot;alg&quot;: &quot;HS256&quot;,&lt;br/&gt;&amp;nbsp;&quot;typ&quot;: &quot;JWT&quot;&lt;br/&gt;}&quot;]
+        P[&quot;Payload&lt;br/&gt;{&lt;br/&gt;&amp;nbsp;&quot;sub&quot;: 1,&lt;br/&gt;&amp;nbsp;&quot;iat&quot;: 1700000000,&lt;br/&gt;&amp;nbsp;&quot;exp&quot;: 1700086400&lt;br/&gt;}&quot;]
+        S[&quot;Signature&lt;br/&gt;HMACSHA256(&lt;br/&gt;&amp;nbsp;base64(Header) + &#x27;.&#x27; +&lt;br/&gt;&amp;nbsp;base64(Payload),&lt;br/&gt;&amp;nbsp;SECRET_KEY&lt;br/&gt;)&quot;]
+    end
+    
+    H --&gt;|Base64URL| H64[&quot;eyJhbGciOiJIUzI1NiIs...&quot;]
+    P --&gt;|Base64URL| P64[&quot;eyJzdWIiOjEsImlhdCI6MTcw...&quot;]
+    S --&gt; S64[&quot;dGhpcyBpcyB0aGUgc2lnbmF0...&quot;]
+    
+    H64 --&gt; Token[&quot;eyJhbGciOiJIUzI1NiIs...&lt;br/&gt;.&lt;br/&gt;eyJzdWIiOjEsImlhdCI6MTcw...&lt;br/&gt;.&lt;br/&gt;dGhpcyBpcyB0aGUgc2lnbmF0...&quot;]
+    P64 --&gt; Token
+    S64 --&gt; Token
+    
+    style Token fill:#f0f0f0,stroke:#333,stroke-width:2px
+</code></pre></div>
+<h3 id="jwt">JWT 三个部分的含义</h3>
+<pre class="plain"><code>第一部分 ─ Header（头部）
+    {&quot;alg&quot;: &quot;HS256&quot;}    → 签名算法：HMAC-SHA256
+    {&quot;typ&quot;: &quot;JWT&quot;}      → Token 类型
+
+第二部分 ─ Payload（载荷）
+    &quot;sub&quot;  (Subject)   → 用户 ID
+    &quot;iat&quot;  (Issued At) → 签发时间
+    &quot;exp&quot;  (Expiration)→ 过期时间
+    &quot;type&quot;             → access / refresh
+
+第三部分 ─ Signature（签名）
+    防止 Token 被篡改
+    用 SECRET_KEY + Header + Payload 计算
+    服务器端唯一能验证（因为只有服务器知道 SECRET_KEY）
+</code></pre>
+<hr>
+<h2 id="4">4. 认证流程：注册 → 登录 → 受保护请求</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as 客户端
+    participant API as Flask API
+    participant JWT as JWT 模块
+    participant DB as SQLAlchemy
+    
+    Note over C,DB: ─── 注册流程 ───
+    
+    C-&gt;&gt;API: POST /api/auth/register&lt;br/&gt;{username, password}
+    API-&gt;&gt;API: 参数校验
+    API-&gt;&gt;DB: 检查用户名是否已存在
+    DB--&gt;&gt;API: 不存在
+    API-&gt;&gt;API: generate_password_hash(password)
+    API-&gt;&gt;DB: INSERT user
+    DB--&gt;&gt;API: 用户已创建
+    API-&gt;&gt;JWT: create_token(user_id)
+    JWT--&gt;&gt;API: &quot;eyJhbGciOiJIUzI1NiIs...&quot;
+    API--&gt;&gt;C: 201 Created&lt;br/&gt;{token, user}
+    
+    Note over C,DB: ─── 登录流程 ───
+    
+    C-&gt;&gt;API: POST /api/auth/login&lt;br/&gt;{username, password}
+    API-&gt;&gt;DB: SELECT user WHERE username=?
+    DB--&gt;&gt;API: User 对象
+    API-&gt;&gt;API: check_password_hash(hash, password)
+    Note over API: 验证通过 ✅
+    API-&gt;&gt;JWT: create_token(user_id)
+    JWT--&gt;&gt;API: &quot;eyJhbGciOiJIUzI1NiIs...&quot;
+    API--&gt;&gt;C: 200 OK&lt;br/&gt;{token, user}
+    
+    Note over C,DB: ─── 受保护请求 ───
+    
+    C-&gt;&gt;API: GET /api/todos&lt;br/&gt;Authorization: Bearer xxx
+    API-&gt;&gt;JWT: decode_token(token)
+    JWT--&gt;&gt;API: {sub: 1, exp: ...}
+    API-&gt;&gt;DB: SELECT user WHERE id=1
+    DB--&gt;&gt;API: User 对象
+    API-&gt;&gt;DB: SELECT todos WHERE user_id=1
+    DB--&gt;&gt;API: [Todo, Todo, Todo]
+    API--&gt;&gt;C: 200 OK&lt;br/&gt;{data: [...]}
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as 客户端
+    participant API as Flask API
+    participant JWT as JWT 模块
+    participant DB as SQLAlchemy
+    
+    Note over C,DB: ─── 注册流程 ───
+    
+    C-&gt;&gt;API: POST /api/auth/register&lt;br/&gt;{username, password}
+    API-&gt;&gt;API: 参数校验
+    API-&gt;&gt;DB: 检查用户名是否已存在
+    DB--&gt;&gt;API: 不存在
+    API-&gt;&gt;API: generate_password_hash(password)
+    API-&gt;&gt;DB: INSERT user
+    DB--&gt;&gt;API: 用户已创建
+    API-&gt;&gt;JWT: create_token(user_id)
+    JWT--&gt;&gt;API: &quot;eyJhbGciOiJIUzI1NiIs...&quot;
+    API--&gt;&gt;C: 201 Created&lt;br/&gt;{token, user}
+    
+    Note over C,DB: ─── 登录流程 ───
+    
+    C-&gt;&gt;API: POST /api/auth/login&lt;br/&gt;{username, password}
+    API-&gt;&gt;DB: SELECT user WHERE username=?
+    DB--&gt;&gt;API: User 对象
+    API-&gt;&gt;API: check_password_hash(hash, password)
+    Note over API: 验证通过 ✅
+    API-&gt;&gt;JWT: create_token(user_id)
+    JWT--&gt;&gt;API: &quot;eyJhbGciOiJIUzI1NiIs...&quot;
+    API--&gt;&gt;C: 200 OK&lt;br/&gt;{token, user}
+    
+    Note over C,DB: ─── 受保护请求 ───
+    
+    C-&gt;&gt;API: GET /api/todos&lt;br/&gt;Authorization: Bearer xxx
+    API-&gt;&gt;JWT: decode_token(token)
+    JWT--&gt;&gt;API: {sub: 1, exp: ...}
+    API-&gt;&gt;DB: SELECT user WHERE id=1
+    DB--&gt;&gt;API: User 对象
+    API-&gt;&gt;DB: SELECT todos WHERE user_id=1
+    DB--&gt;&gt;API: [Todo, Todo, Todo]
+    API--&gt;&gt;C: 200 OK&lt;br/&gt;{data: [...]}
+</code></pre></div>
+<hr>
+<h2 id="5-restful-api">5. RESTful API 资源映射</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph &quot;HTTP 方法&quot;
+        GET[GET&lt;br/&gt;读取]
+        POST[POST&lt;br/&gt;创建]
+        PUT[PUT&lt;br/&gt;全量更新]
+        PATCH[PATCH&lt;br/&gt;局部更新]
+        DELETE[DELETE&lt;br/&gt;删除]
+    end
+    
+    subgraph &quot;URL 路径&quot;
+        COLL[&quot;/todos&lt;br/&gt;资源集合&quot;]
+        ITEM[&quot;/todos/:id&lt;br/&gt;单个资源&quot;]
+        ACT[&quot;/todos/:id/toggle&lt;br/&gt;动作&quot;]
+    end
+    
+    GET --&gt; COLL
+    POST --&gt; COLL
+    GET --&gt; ITEM
+    PUT --&gt; ITEM
+    PATCH --&gt; ITEM
+    DELETE --&gt; ITEM
+    POST --&gt; ACT
+    
+    COLL --&gt;|返回列表| R1[&quot;200 + 数组&quot;]
+    COLL --&gt;|创建| R2[&quot;201 + 新资源&quot;]
+    ITEM --&gt;|读取| R3[&quot;200 + 资源&quot;]
+    ITEM --&gt;|更新| R4[&quot;200 + 资源&quot;]
+    ITEM --&gt;|删除| R5[&quot;204 无内容&quot;]
+    ACT --&gt;|操作| R6[&quot;200 + 结果&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph &quot;HTTP 方法&quot;
+        GET[GET&lt;br/&gt;读取]
+        POST[POST&lt;br/&gt;创建]
+        PUT[PUT&lt;br/&gt;全量更新]
+        PATCH[PATCH&lt;br/&gt;局部更新]
+        DELETE[DELETE&lt;br/&gt;删除]
+    end
+    
+    subgraph &quot;URL 路径&quot;
+        COLL[&quot;/todos&lt;br/&gt;资源集合&quot;]
+        ITEM[&quot;/todos/:id&lt;br/&gt;单个资源&quot;]
+        ACT[&quot;/todos/:id/toggle&lt;br/&gt;动作&quot;]
+    end
+    
+    GET --&gt; COLL
+    POST --&gt; COLL
+    GET --&gt; ITEM
+    PUT --&gt; ITEM
+    PATCH --&gt; ITEM
+    DELETE --&gt; ITEM
+    POST --&gt; ACT
+    
+    COLL --&gt;|返回列表| R1[&quot;200 + 数组&quot;]
+    COLL --&gt;|创建| R2[&quot;201 + 新资源&quot;]
+    ITEM --&gt;|读取| R3[&quot;200 + 资源&quot;]
+    ITEM --&gt;|更新| R4[&quot;200 + 资源&quot;]
+    ITEM --&gt;|删除| R5[&quot;204 无内容&quot;]
+    ACT --&gt;|操作| R6[&quot;200 + 结果&quot;]
+</code></pre></div>
+<h3 id="restful-url">RESTful URL 设计原则</h3>
+<pre class="plain"><code>集合 (Collection):              /resources
+单个资源:                       /resources/:id
+子资源:                        /resources/:id/sub-resources
+动作 (非 CRUD):                /resources/:id/action
+搜索/过滤:                     /resources?q=keyword&amp;status=active
+分页:                          /resources?page=1&amp;per_page=20
+</code></pre>
+<hr>
+<h2 id="6-todo-api">6. 完整请求处理流程（TODO API）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    Start[&quot;HTTP 请求&lt;br/&gt;POST /api/v1/todos&quot;] --&gt; Auth{&quot;token_required&lt;br/&gt;检查 Authorization&quot;}
+    
+    Auth --&gt;|&quot;无 Token&quot;| Err401[&quot;401 Unauthorized&lt;br/&gt;{code: AUTH_REQUIRED}&quot;]
+    Auth --&gt;|&quot;Token 无效/过期&quot;| Err401
+    
+    Auth --&gt;|Token 有效| UserCheck[&quot;查找用户&lt;br/&gt;User.query.get(sub)&quot;]
+    
+    UserCheck --&gt;|用户不存在| Err401_2[&quot;401 Unauthorized&lt;br/&gt;{code: USER_NOT_FOUND}&quot;]
+    UserCheck --&gt;|用户存在| Validate[&quot;参数校验&lt;br/&gt;validate_todo_data()&quot;]
+    
+    Validate --&gt;|校验失败| Err422[&quot;422 Unprocessable&lt;br/&gt;{code: VALIDATION_ERROR,&lt;br/&gt;details: {...}}&quot;]
+    
+    Validate --&gt;|校验通过| Create[&quot;创建 Todo 对象&lt;br/&gt;todo = Todo(**cleaned)&quot;]
+    
+    Create --&gt; Add[&quot;db.session.add(todo)&quot;]
+    Add --&gt; Commit[&quot;db.session.commit()&quot;]
+    Commit --&gt; Response[&quot;201 Created&lt;br/&gt;{message, data}&quot;]
+    
+    style Err401 fill:#ff9999
+    style Err401_2 fill:#ff9999
+    style Err422 fill:#ffcc99
+    style Response fill:#90EE90
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    Start[&quot;HTTP 请求&lt;br/&gt;POST /api/v1/todos&quot;] --&gt; Auth{&quot;token_required&lt;br/&gt;检查 Authorization&quot;}
+    
+    Auth --&gt;|&quot;无 Token&quot;| Err401[&quot;401 Unauthorized&lt;br/&gt;{code: AUTH_REQUIRED}&quot;]
+    Auth --&gt;|&quot;Token 无效/过期&quot;| Err401
+    
+    Auth --&gt;|Token 有效| UserCheck[&quot;查找用户&lt;br/&gt;User.query.get(sub)&quot;]
+    
+    UserCheck --&gt;|用户不存在| Err401_2[&quot;401 Unauthorized&lt;br/&gt;{code: USER_NOT_FOUND}&quot;]
+    UserCheck --&gt;|用户存在| Validate[&quot;参数校验&lt;br/&gt;validate_todo_data()&quot;]
+    
+    Validate --&gt;|校验失败| Err422[&quot;422 Unprocessable&lt;br/&gt;{code: VALIDATION_ERROR,&lt;br/&gt;details: {...}}&quot;]
+    
+    Validate --&gt;|校验通过| Create[&quot;创建 Todo 对象&lt;br/&gt;todo = Todo(**cleaned)&quot;]
+    
+    Create --&gt; Add[&quot;db.session.add(todo)&quot;]
+    Add --&gt; Commit[&quot;db.session.commit()&quot;]
+    Commit --&gt; Response[&quot;201 Created&lt;br/&gt;{message, data}&quot;]
+    
+    style Err401 fill:#ff9999
+    style Err401_2 fill:#ff9999
+    style Err422 fill:#ffcc99
+    style Response fill:#90EE90
+</code></pre></div>
+<hr>
+<h2 id="7">7. 密码哈希原理图解</h2>
+<pre class="plain"><code>用户注册密码: &quot;myPassword123&quot;
+                    │
+                    ▼
+    生成随机 Salt: &quot;a1b2c3d4e5f6g7h8&quot;
+                    │
+                    ▼
+    组合: &quot;myPassword123&quot; + &quot;a1b2c3d4e5f6g7h8&quot;
+                    │
+                    ▼
+    PBKDF2-HMAC-SHA256 (600000 次迭代)
+                    │
+                    ▼
+    输出哈希: &quot;pbkdf2:sha256:600000$a1b2c3d4e5f6g7h8$...&quot;
+                                          ↑
+                                    Salt 被包含在输出中
+    
+    存储到数据库: password_hash 字段 ← &quot;pbkdf2:sha256:600000$...&quot;
+    
+    ──────────── 验证 ────────────
+    
+    用户输入密码: &quot;myPassword123&quot;
+    
+    check_password_hash() 执行:
+    1. 从存储的哈希中提取 Salt: &quot;a1b2c3d4e5f6g7h8&quot;
+    2. 用同样的 Salt + 算法重新计算哈希
+    3. 比较结果是否一致
+    
+    如果一致 → 密码正确 ✅
+    如果不一致 → 密码错误 ❌
+</code></pre>
+<hr>
+<h2 id="8-orm-n1">8. ORM 查询中 N+1 问题</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph &quot;❌ N+1 查询 (lazy=&#x27;select&#x27;)&quot;
+        Q1[&quot;1 次查询: SELECT * FROM users&quot;]
+        Q1 --&gt; U1[&quot;用户 1&quot;]
+        Q1 --&gt; U2[&quot;用户 2&quot;]
+        Q1 --&gt; U3[&quot;用户 3&quot;]
+        
+        U1 --&gt; T1[&quot;1 次查询: SELECT * FROM todos WHERE user_id=1&quot;]
+        U2 --&gt; T2[&quot;1 次查询: SELECT * FROM todos WHERE user_id=2&quot;]
+        U3 --&gt; T3[&quot;1 次查询: SELECT * FROM todos WHERE user_id=3&quot;]
+        
+        Total1[&quot;总共: 1 (用户) + N (用户数) 次查询&quot;]
+    end
+    
+    subgraph &quot;✅ 预加载 (lazy=&#x27;joined&#x27;)&quot;
+        Q2[&quot;1 次查询: SELECT * FROM users&lt;br/&gt;LEFT JOIN todos ON user.id=todos.user_id&quot;]
+        Q2 --&gt; R1[&quot;用户 1 + TODO 列表  ← 一次查询全部获取&quot;]
+        Q2 --&gt; R2[&quot;用户 2 + TODO 列表&quot;]
+        Q2 --&gt; R3[&quot;用户 3 + TODO 列表&quot;]
+        
+        Total2[&quot;总共: 1 次查询！&quot;]
+    end
+    
+    style Total1 fill:#ff9999
+    style Total2 fill:#90EE90
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph &quot;❌ N+1 查询 (lazy=&#x27;select&#x27;)&quot;
+        Q1[&quot;1 次查询: SELECT * FROM users&quot;]
+        Q1 --&gt; U1[&quot;用户 1&quot;]
+        Q1 --&gt; U2[&quot;用户 2&quot;]
+        Q1 --&gt; U3[&quot;用户 3&quot;]
+        
+        U1 --&gt; T1[&quot;1 次查询: SELECT * FROM todos WHERE user_id=1&quot;]
+        U2 --&gt; T2[&quot;1 次查询: SELECT * FROM todos WHERE user_id=2&quot;]
+        U3 --&gt; T3[&quot;1 次查询: SELECT * FROM todos WHERE user_id=3&quot;]
+        
+        Total1[&quot;总共: 1 (用户) + N (用户数) 次查询&quot;]
+    end
+    
+    subgraph &quot;✅ 预加载 (lazy=&#x27;joined&#x27;)&quot;
+        Q2[&quot;1 次查询: SELECT * FROM users&lt;br/&gt;LEFT JOIN todos ON user.id=todos.user_id&quot;]
+        Q2 --&gt; R1[&quot;用户 1 + TODO 列表  ← 一次查询全部获取&quot;]
+        Q2 --&gt; R2[&quot;用户 2 + TODO 列表&quot;]
+        Q2 --&gt; R3[&quot;用户 3 + TODO 列表&quot;]
+        
+        Total2[&quot;总共: 1 次查询！&quot;]
+    end
+    
+    style Total1 fill:#ff9999
+    style Total2 fill:#90EE90
+</code></pre></div>
+<hr>
+<h2 id="9-flask">9. Flask 项目分层架构（推荐）</h2>
+<pre class="plain"><code>flask-todo-api/
+│
+├── app.py                 ← 创建 Flask 实例、配置加载
+│
+├── config.py              ← 不同环境的配置类
+│
+├── models/                ← 数据库模型
+│   ├── __init__.py
+│   ├── user.py
+│   └── todo.py
+│
+├── routes/                ← 路由（蓝图）
+│   ├── __init__.py
+│   ├── auth.py            ← 认证相关路由
+│   └── todos.py           ← TODO CRUD 路由
+│
+├── services/              ← 业务逻辑
+│   ├── __init__.py
+│   ├── auth_service.py
+│   └── todo_service.py
+│
+├── utils/                 ← 工具函数
+│   ├── __init__.py
+│   ├── errors.py          ← 错误码和异常
+│   ├── validators.py      ← 参数校验
+│   └── jwt_utils.py       ← JWT 工具
+│
+├── requirements.txt
+├── Dockerfile
+└── .env                    ← 环境变量
+</code></pre>
+<p><strong>分层职责：</strong></p>
+<pre class="plain"><code>路由层 (routes/)        ← 接收请求、返回响应、参数提取
+    │
+    ▼ 调用服务层
+服务层 (services/)      ← 业务逻辑、事务管理
+    │
+    ▼ 调用模型层
+模型层 (models/)        ← 数据定义、数据库操作
+    │
+    ▼
+工具层 (utils/)         ← JWT、校验、错误码等通用工具
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

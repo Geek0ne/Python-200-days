@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 90 — 碰撞检测与动画</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 90 — 碰撞检测与动画</h1>
+  <div class="lmeta">
+    <span class="badge">实战项目（一）</span>
+    <span class="badge">464 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-090-碰撞检测与动画" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📚 学习目标</a>
+<a class="toc-l2" href="#_2">一、碰撞检测基础</a>
+<a class="toc-l3" href="#11">1.1 为什么需要碰撞检测？</a>
+<a class="toc-l3" href="#12">1.2 碰撞检测的三种主要类型</a>
+<a class="toc-l3" href="#13-aabb-axis-aligned-bounding-box">1.3 AABB 碰撞检测（Axis-Aligned Bounding Box）</a>
+<a class="toc-l3" href="#14">1.4 圆形碰撞检测</a>
+<a class="toc-l3" href="#15">1.5 混合碰撞检测</a>
+<a class="toc-l2" href="#_3">二、碰撞响应</a>
+<a class="toc-l3" href="#21">2.1 碰撞响应类型</a>
+<a class="toc-l3" href="#22">2.2 反射碰撞（反弹）</a>
+<a class="toc-l3" href="#23">2.3 停止碰撞（墙壁阻挡）</a>
+<a class="toc-l3" href="#24">2.4 分离碰撞（推开）</a>
+<a class="toc-l2" href="#_4">三、动画系统</a>
+<a class="toc-l3" href="#31">3.1 帧动画原理</a>
+<a class="toc-l3" href="#32-sprite-sheet">3.2 精灵表（Sprite Sheet）</a>
+<a class="toc-l3" href="#33">3.3 动画状态机</a>
+<a class="toc-l3" href="#34">3.4 插值动画</a>
+<a class="toc-l2" href="#pygame">四、Pygame 碰撞与动画实战</a>
+<a class="toc-l3" href="#41-pygame">4.1 Pygame 内置碰撞检测</a>
+<a class="toc-l3" href="#42">4.2 碰撞遮罩（像素级）</a>
+<a class="toc-l3" href="#43">4.3 动画实现</a>
+<a class="toc-l2" href="#_5">五、性能优化</a>
+<a class="toc-l3" href="#51-spatial-partitioning">5.1 空间分区（Spatial Partitioning）</a>
+<a class="toc-l3" href="#52-quadtree">5.2 四叉树（Quadtree）</a>
+<a class="toc-l2" href="#_6">六、实战：飞机大战完整示例</a>
+<a class="toc-l3" href="#_7">游戏流程图</a>
+<a class="toc-l2" href="#_8">七、思考题</a>
+<a class="toc-l2" href="#_9">📖 延伸阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-090">Day 090 — 碰撞检测与动画</h1>
+<blockquote>
+<p>🎮 Phase 6 实战项目 | Python 游戏开发第三天</p>
+</blockquote>
+<h2 id="_1">📚 学习目标</h2>
+<p>今天我们将掌握游戏开发中两个核心主题：<strong>碰撞检测</strong>和<strong>动画系统</strong>。碰撞检测是让游戏世界"真实"的关键，而动画则让游戏角色和场景"活"起来。</p>
+<hr>
+<h2 id="_2">一、碰撞检测基础</h2>
+<h3 id="11">1.1 为什么需要碰撞检测？</h3>
+<p>在没有碰撞检测的游戏里，角色可以穿过墙壁、子弹打不到敌人、两个角色可以重叠。碰撞检测就是让游戏物体之间产生"物理交互"的机制。</p>
+<pre class="plain"><code>没有碰撞检测:          有碰撞检测:
+  🧑 → 🧱              🧑 🧱
+  (穿过去了!)           (被墙挡住!)
+</code></pre>
+<h3 id="12">1.2 碰撞检测的三种主要类型</h3>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>原理</th>
+<th>性能</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>AABB（轴对齐包围盒）</strong></td>
+<td>用矩形框住物体</td>
+<td>⭐⭐⭐ 极快</td>
+<td>矩形物体、快速原型</td>
+</tr>
+<tr>
+<td><strong>圆形碰撞</strong></td>
+<td>检查两个圆是否重叠</td>
+<td>⭐⭐⭐ 极快</td>
+<td>球类游戏、子弹</td>
+</tr>
+<tr>
+<td><strong>像素级碰撞</strong></td>
+<td>逐像素检查重叠</td>
+<td>⭐ 很慢</td>
+<td>需要精确碰撞的场景</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13-aabb-axis-aligned-bounding-box">1.3 AABB 碰撞检测（Axis-Aligned Bounding Box）</h3>
+<p>AABB 是最常用的碰撞检测方式，原理简单：</p>
+<p><strong>核心判断条件：</strong></p>
+<pre class="plain"><code>两个矩形 AABB 碰撞 ⟺
+  A.left &lt; B.right  AND
+  A.right &gt; B.left  AND
+  A.top &lt; B.bottom  AND
+  A.bottom &gt; B.top
+</code></pre>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">aabb_collision</span><span class="p">(</span><span class="n">rect_a</span><span class="p">,</span> <span class="n">rect_b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;检测两个矩形是否碰撞&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">rect_a</span><span class="o">.</span><span class="n">left</span> <span class="o">&lt;</span> <span class="n">rect_b</span><span class="o">.</span><span class="n">right</span> <span class="ow">and</span>
+        <span class="n">rect_a</span><span class="o">.</span><span class="n">right</span> <span class="o">&gt;</span> <span class="n">rect_b</span><span class="o">.</span><span class="n">left</span> <span class="ow">and</span>
+        <span class="n">rect_a</span><span class="o">.</span><span class="n">top</span> <span class="o">&lt;</span> <span class="n">rect_b</span><span class="o">.</span><span class="n">bottom</span> <span class="ow">and</span>
+        <span class="n">rect_a</span><span class="o">.</span><span class="n">bottom</span> <span class="o">&gt;</span> <span class="n">rect_b</span><span class="o">.</span><span class="n">top</span>
+    <span class="p">)</span>
+</code></pre></div>
+<p><strong>为什么是这个顺序？</strong> 因为我们需要检查的是"不重叠"的条件——只要任一条件不满足，就说明没有碰撞。取反后就是"发生碰撞"的条件。</p>
+<h3 id="14">1.4 圆形碰撞检测</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">math</span>
+
+<span class="k">def</span> <span class="nf">circle_collision</span><span class="p">(</span><span class="n">pos_a</span><span class="p">,</span> <span class="n">radius_a</span><span class="p">,</span> <span class="n">pos_b</span><span class="p">,</span> <span class="n">radius_b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;检测两个圆形是否碰撞&quot;&quot;&quot;</span>
+    <span class="n">distance</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span>
+        <span class="p">(</span><span class="n">pos_a</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="n">pos_b</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span>
+        <span class="p">(</span><span class="n">pos_a</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="n">pos_b</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span><span class="o">**</span><span class="mi">2</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">distance</span> <span class="o">&lt;=</span> <span class="p">(</span><span class="n">radius_a</span> <span class="o">+</span> <span class="n">radius_b</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>原理图解：</strong></p>
+<pre class="plain"><code>      A ●──── r_a
+         \     
+          \  ← 距离 d
+           \
+      B ●──── r_b
+
+碰撞条件: d &lt;= r_a + r_b
+</code></pre>
+<h3 id="15">1.5 混合碰撞检测</h3>
+<p>实际游戏中，物体形状复杂，通常用 <strong>包围盒 + 细化检测</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">smart_collision</span><span class="p">(</span><span class="n">obj_a</span><span class="p">,</span> <span class="n">obj_b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;先用 AABB 快速排除，再做精确检测&quot;&quot;&quot;</span>
+    <span class="c1"># 第一步：AABB 快速过滤</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">aabb_collision</span><span class="p">(</span><span class="n">obj_a</span><span class="o">.</span><span class="n">rect</span><span class="p">,</span> <span class="n">obj_b</span><span class="o">.</span><span class="n">rect</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    
+    <span class="c1"># 第二步：圆形精确检测（如果物体大致是圆的）</span>
+    <span class="k">if</span> <span class="n">obj_a</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="s1">&#39;circle&#39;</span> <span class="ow">and</span> <span class="n">obj_b</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="s1">&#39;circle&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">circle_collision</span><span class="p">(</span>
+            <span class="n">obj_a</span><span class="o">.</span><span class="n">center</span><span class="p">,</span> <span class="n">obj_a</span><span class="o">.</span><span class="n">radius</span><span class="p">,</span>
+            <span class="n">obj_b</span><span class="o">.</span><span class="n">center</span><span class="p">,</span> <span class="n">obj_b</span><span class="o">.</span><span class="n">radius</span>
+        <span class="p">)</span>
+    
+    <span class="c1"># 第三步：像素级检测（如果需要精确）</span>
+    <span class="k">if</span> <span class="n">obj_a</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="s1">&#39;sprite&#39;</span> <span class="ow">and</span> <span class="n">obj_b</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="s1">&#39;sprite&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">pixel_perfect_collision</span><span class="p">(</span><span class="n">obj_a</span><span class="o">.</span><span class="n">mask</span><span class="p">,</span> <span class="n">obj_b</span><span class="o">.</span><span class="n">mask</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="kc">True</span>  <span class="c1"># 默认用 AABB 结果</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">二、碰撞响应</h2>
+<p>碰撞检测告诉你"撞了"，碰撞响应告诉你"撞了之后怎么办"。</p>
+<h3 id="21">2.1 碰撞响应类型</h3>
+<pre class="plain"><code>碰撞类型:
+├── 弹性碰撞 (Elastic)    → 物体反弹，动能守恒
+├── 非弹性碰撞 (Inelastic) → 物体粘在一起
+├── 反射碰撞 (Bounce)     → 反射速度方向
+└── 穿透碰撞 (Penetrate)  → 物体穿过（子弹打墙）
+</code></pre>
+<h3 id="22">2.2 反射碰撞（反弹）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">bounce_response</span><span class="p">(</span><span class="n">velocity</span><span class="p">,</span> <span class="n">normal</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;根据法线计算反弹速度&quot;&quot;&quot;</span>
+    <span class="c1"># 反射公式: v&#39; = v - 2(v·n)n</span>
+    <span class="n">dot</span> <span class="o">=</span> <span class="n">velocity</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">normal</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">velocity</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">normal</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">velocity</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dot</span> <span class="o">*</span> <span class="n">normal</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="n">velocity</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dot</span> <span class="o">*</span> <span class="n">normal</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="p">)</span>
+</code></pre></div>
+<h3 id="23">2.3 停止碰撞（墙壁阻挡）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">stop_response</span><span class="p">(</span><span class="n">position</span><span class="p">,</span> <span class="n">velocity</span><span class="p">,</span> <span class="n">wall_rect</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;碰到墙壁时停止移动&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">position</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">wall_rect</span><span class="o">.</span><span class="n">left</span><span class="p">:</span>
+        <span class="n">position</span> <span class="o">=</span> <span class="p">(</span><span class="n">wall_rect</span><span class="o">.</span><span class="n">left</span><span class="p">,</span> <span class="n">position</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">velocity</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">velocity</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="k">elif</span> <span class="n">position</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">wall_rect</span><span class="o">.</span><span class="n">right</span><span class="p">:</span>
+        <span class="n">position</span> <span class="o">=</span> <span class="p">(</span><span class="n">wall_rect</span><span class="o">.</span><span class="n">right</span><span class="p">,</span> <span class="n">position</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">velocity</span> <span class="o">=</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">velocity</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    
+    <span class="k">if</span> <span class="n">position</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&lt;</span> <span class="n">wall_rect</span><span class="o">.</span><span class="n">top</span><span class="p">:</span>
+        <span class="n">position</span> <span class="o">=</span> <span class="p">(</span><span class="n">position</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">wall_rect</span><span class="o">.</span><span class="n">top</span><span class="p">)</span>
+        <span class="n">velocity</span> <span class="o">=</span> <span class="p">(</span><span class="n">velocity</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">position</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">wall_rect</span><span class="o">.</span><span class="n">bottom</span><span class="p">:</span>
+        <span class="n">position</span> <span class="o">=</span> <span class="p">(</span><span class="n">position</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">wall_rect</span><span class="o">.</span><span class="n">bottom</span><span class="p">)</span>
+        <span class="n">velocity</span> <span class="o">=</span> <span class="p">(</span><span class="n">velocity</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">0</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">position</span><span class="p">,</span> <span class="n">velocity</span>
+</code></pre></div>
+<h3 id="24">2.4 分离碰撞（推开）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">separate_response</span><span class="p">(</span><span class="n">obj_a</span><span class="p">,</span> <span class="n">obj_b</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;将两个重叠的物体分开&quot;&quot;&quot;</span>
+    <span class="n">dx</span> <span class="o">=</span> <span class="n">obj_a</span><span class="o">.</span><span class="n">center_x</span> <span class="o">-</span> <span class="n">obj_b</span><span class="o">.</span><span class="n">center_x</span>
+    <span class="n">dy</span> <span class="o">=</span> <span class="n">obj_a</span><span class="o">.</span><span class="n">center_y</span> <span class="o">-</span> <span class="n">obj_b</span><span class="o">.</span><span class="n">center_y</span>
+    <span class="n">distance</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">dx</span><span class="o">*</span><span class="n">dx</span> <span class="o">+</span> <span class="n">dy</span><span class="o">*</span><span class="n">dy</span><span class="p">)</span>
+    
+    <span class="k">if</span> <span class="n">distance</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">dx</span><span class="p">,</span> <span class="n">dy</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span>  <span class="c1"># 避免除零</span>
+        <span class="n">distance</span> <span class="o">=</span> <span class="mi">1</span>
+    
+    <span class="c1"># 计算重叠量</span>
+    <span class="n">overlap</span> <span class="o">=</span> <span class="p">(</span><span class="n">obj_a</span><span class="o">.</span><span class="n">radius</span> <span class="o">+</span> <span class="n">obj_b</span><span class="o">.</span><span class="n">radius</span><span class="p">)</span> <span class="o">-</span> <span class="n">distance</span>
+    
+    <span class="c1"># 按距离比例分开</span>
+    <span class="n">ratio</span> <span class="o">=</span> <span class="n">overlap</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">distance</span><span class="p">)</span>
+    <span class="n">obj_a</span><span class="o">.</span><span class="n">x</span> <span class="o">+=</span> <span class="n">dx</span> <span class="o">*</span> <span class="n">ratio</span>
+    <span class="n">obj_a</span><span class="o">.</span><span class="n">y</span> <span class="o">+=</span> <span class="n">dy</span> <span class="o">*</span> <span class="n">ratio</span>
+    <span class="n">obj_b</span><span class="o">.</span><span class="n">x</span> <span class="o">-=</span> <span class="n">dx</span> <span class="o">*</span> <span class="n">ratio</span>
+    <span class="n">obj_b</span><span class="o">.</span><span class="n">y</span> <span class="o">-=</span> <span class="n">dy</span> <span class="o">*</span> <span class="n">ratio</span>
+</code></pre></div>
+<hr>
+<h2 id="_4">三、动画系统</h2>
+<h3 id="31">3.1 帧动画原理</h3>
+<p>帧动画就是快速播放一系列图片，利用人眼的视觉暂留产生运动效果：</p>
+<pre class="plain"><code>时间轴:  0ms    100ms   200ms   300ms   400ms
+画面:    🧑🚶   🧑🏃   🧑🏃   🧑🚶   🧑🏃
+         帧1    帧2    帧3    帧4    帧1(循环)
+</code></pre>
+<h3 id="32-sprite-sheet">3.2 精灵表（Sprite Sheet）</h3>
+<p>精灵表将多帧画面放在一张大图里，减少文件IO：</p>
+<pre class="plain"><code>┌─────────────────────────────────┐
+│  帧1    帧2    帧3    帧4       │  ← 行1: 走路
+│ ┌────┐ ┌────┐ ┌────┐ ┌────┐   │
+│ │ 🧑 │ │ 🧑 │ │ 🧑 │ │ 🧑 │   │
+│ └────┘ └────┘ └────┘ └────┘   │
+├─────────────────────────────────┤
+│  帧1    帧2    帧3    帧4       │  ← 行2: 跑步
+│ ┌────┐ ┌────┐ ┌────┐ ┌────┐   │
+│ │ 🧑 │ │ 🧑 │ │ 🧑 │ │ 🧑 │   │
+│ └────┘ └────┘ └────┘ └────┘   │
+└─────────────────────────────────┘
+</code></pre>
+<h3 id="33">3.3 动画状态机</h3>
+<p>游戏角色可以有多种动画状态：</p>
+<pre class="plain"><code>         ┌──────────┐
+    ┌───→│   空闲   │←───┐
+    │    │  idle    │    │
+    │    └────┬─────┘    │
+    │         │ 按键     │ 松开
+    │         ↓          │
+    │    ┌──────────┐    │
+    └────│   行走   │────┘
+         │  walk    │
+         └────┬─────┘
+              │ 速度&gt;阈值
+              ↓
+         ┌──────────┐
+         │   跑步   │
+         │  run     │
+         └────┬─────┘
+              │ 跳跃
+              ↓
+         ┌──────────┐
+         │   跳跃   │
+         │  jump    │
+         └──────────┘
+</code></pre>
+<h3 id="34">3.4 插值动画</h3>
+<p>除了帧动画，还可以用数学公式平滑地改变属性：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">lerp</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">,</span> <span class="n">t</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;线性插值 (Linear Interpolation)&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">start</span> <span class="o">+</span> <span class="p">(</span><span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span> <span class="o">*</span> <span class="n">t</span>
+
+<span class="c1"># 用法：从 A 点平滑移动到 B 点</span>
+<span class="n">current_x</span> <span class="o">=</span> <span class="n">lerp</span><span class="p">(</span><span class="n">start_x</span><span class="p">,</span> <span class="n">end_x</span><span class="p">,</span> <span class="n">progress</span><span class="p">)</span>  <span class="c1"># progress: 0.0 → 1.0</span>
+</code></pre></div>
+<p><strong>缓动函数（Easing）：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">ease_in_quad</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;二次加速&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">t</span> <span class="o">*</span> <span class="n">t</span>
+
+<span class="k">def</span> <span class="nf">ease_out_quad</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;二次减速&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">t</span> <span class="o">*</span> <span class="p">(</span><span class="mi">2</span> <span class="o">-</span> <span class="n">t</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">ease_in_out_quad</span><span class="p">(</span><span class="n">t</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;加速后减速&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">t</span> <span class="o">*</span> <span class="n">t</span> <span class="k">if</span> <span class="n">t</span> <span class="o">&lt;</span> <span class="mf">0.5</span> <span class="k">else</span> <span class="o">-</span><span class="mi">1</span> <span class="o">+</span> <span class="p">(</span><span class="mi">4</span> <span class="o">-</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">t</span><span class="p">)</span> <span class="o">*</span> <span class="n">t</span>
+</code></pre></div>
+<pre class="plain"><code>缓动效果:
+线性:     ╱╱╱╱╱╱╱╱╱╱  匀速
+加速:    ╱  ╱ ╱╱╱╱╱╱  先慢后快
+减速:    ╱╱╱╱╱ ╱  ╱   先快后慢
+S曲线:   ╱  ╱╱╱╱  ╱   慢→快→慢
+</code></pre>
+<hr>
+<h2 id="pygame">四、Pygame 碰撞与动画实战</h2>
+<h3 id="41-pygame">4.1 Pygame 内置碰撞检测</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">pygame</span>
+
+<span class="c1"># 矩形碰撞</span>
+<span class="k">if</span> <span class="n">player</span><span class="o">.</span><span class="n">rect</span><span class="o">.</span><span class="n">colliderect</span><span class="p">(</span><span class="n">enemy</span><span class="o">.</span><span class="n">rect</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;碰撞了!&quot;</span><span class="p">)</span>
+
+<span class="c1"># 圆形碰撞</span>
+<span class="k">if</span> <span class="n">pygame</span><span class="o">.</span><span class="n">sprite</span><span class="o">.</span><span class="n">collide_circle</span><span class="p">(</span><span class="n">player</span><span class="p">,</span> <span class="n">enemy</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;圆形碰撞!&quot;</span><span class="p">)</span>
+
+<span class="c1"># 精灵组碰撞检测</span>
+<span class="n">hits</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">sprite</span><span class="o">.</span><span class="n">groupcollide</span><span class="p">(</span><span class="n">bullets</span><span class="p">,</span> <span class="n">enemies</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="kc">True</span><span class="p">)</span>
+<span class="c1"># 参数: 组A, 组B, 碰撞后销毁A, 碰撞后销毁B</span>
+
+<span class="c1"># 精灵与组碰撞</span>
+<span class="n">hits</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">sprite</span><span class="o">.</span><span class="n">spritecollide</span><span class="p">(</span><span class="n">player</span><span class="p">,</span> <span class="n">enemies</span><span class="p">,</span> <span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="42">4.2 碰撞遮罩（像素级）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 创建碰撞遮罩</span>
+<span class="n">mask_a</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">mask</span><span class="o">.</span><span class="n">from_surface</span><span class="p">(</span><span class="n">image_a</span><span class="p">)</span>
+<span class="n">mask_b</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">mask</span><span class="o">.</span><span class="n">from_surface</span><span class="p">(</span><span class="n">image_b</span><span class="p">)</span>
+
+<span class="c1"># 像素级碰撞检测</span>
+<span class="n">offset</span> <span class="o">=</span> <span class="p">(</span><span class="n">rect_b</span><span class="o">.</span><span class="n">x</span> <span class="o">-</span> <span class="n">rect_a</span><span class="o">.</span><span class="n">x</span><span class="p">,</span> <span class="n">rect_b</span><span class="o">.</span><span class="n">y</span> <span class="o">-</span> <span class="n">rect_a</span><span class="o">.</span><span class="n">y</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">mask_a</span><span class="o">.</span><span class="n">overlap</span><span class="p">(</span><span class="n">mask_b</span><span class="p">,</span> <span class="n">offset</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;像素级碰撞!&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="43">4.3 动画实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">AnimatedSprite</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sprite_sheet</span><span class="p">,</span> <span class="n">frame_width</span><span class="p">,</span> <span class="n">frame_height</span><span class="p">,</span> <span class="n">fps</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">frames</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">current_frame</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">timer</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fps</span> <span class="o">=</span> <span class="n">fps</span>
+        
+        <span class="c1"># 从精灵表切割帧</span>
+        <span class="n">cols</span> <span class="o">=</span> <span class="n">sprite_sheet</span><span class="o">.</span><span class="n">get_width</span><span class="p">()</span> <span class="o">//</span> <span class="n">frame_width</span>
+        <span class="n">rows</span> <span class="o">=</span> <span class="n">sprite_sheet</span><span class="o">.</span><span class="n">get_height</span><span class="p">()</span> <span class="o">//</span> <span class="n">frame_height</span>
+        <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">rows</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">col</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">cols</span><span class="p">):</span>
+                <span class="n">frame</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">Surface</span><span class="p">((</span><span class="n">frame_width</span><span class="p">,</span> <span class="n">frame_height</span><span class="p">),</span> <span class="n">pygame</span><span class="o">.</span><span class="n">SRCALPHA</span><span class="p">)</span>
+                <span class="n">frame</span><span class="o">.</span><span class="n">blit</span><span class="p">(</span><span class="n">sprite_sheet</span><span class="p">,</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">),</span>
+                          <span class="p">(</span><span class="n">col</span> <span class="o">*</span> <span class="n">frame_width</span><span class="p">,</span> <span class="n">row</span> <span class="o">*</span> <span class="n">frame_height</span><span class="p">,</span>
+                           <span class="n">frame_width</span><span class="p">,</span> <span class="n">frame_height</span><span class="p">))</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">frames</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">frame</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dt</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;更新动画帧&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">timer</span> <span class="o">+=</span> <span class="n">dt</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">timer</span> <span class="o">&gt;=</span> <span class="mf">1.0</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">fps</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">timer</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">current_frame</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">current_frame</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span> <span class="o">%</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">frames</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">get_frame</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;获取当前帧&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">frames</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">current_frame</span><span class="p">]</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">五、性能优化</h2>
+<h3 id="51-spatial-partitioning">5.1 空间分区（Spatial Partitioning）</h3>
+<p>当物体很多时，逐一检测太慢。空间分区可以快速排除不可能碰撞的物体：</p>
+<pre class="plain"><code>全部物体逐一检测: O(n²)
+  物体1 vs 物体2,3,4,5,6,7,8...
+  物体2 vs 物体1,3,4,5,6,7,8...
+  ...
+
+网格分区后:       O(n)
+  ┌───┬───┬───┐
+  │1,2│ 3 │4,5│  → 只检测同一格子内的物体
+  ├───┼───┼───┤
+  │ 6 │7,8│   │
+  └───┴───┴───┘
+</code></pre>
+<h3 id="52-quadtree">5.2 四叉树（Quadtree）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Quadtree</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;四叉树空间分区&quot;&quot;&quot;</span>
+    <span class="n">MAX_OBJECTS</span> <span class="o">=</span> <span class="mi">5</span>
+    <span class="n">MAX_LEVELS</span> <span class="o">=</span> <span class="mi">5</span>
+    
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">level</span><span class="p">,</span> <span class="n">bounds</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">level</span> <span class="o">=</span> <span class="n">level</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bounds</span> <span class="o">=</span> <span class="n">bounds</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">objects</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span> <span class="o">=</span> <span class="p">[]</span>
+    
+    <span class="k">def</span> <span class="nf">split</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;将当前区域分成四个子区域&quot;&quot;&quot;</span>
+        <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="n">h</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">bounds</span>
+        <span class="n">sub_w</span><span class="p">,</span> <span class="n">sub_h</span> <span class="o">=</span> <span class="n">w</span> <span class="o">/</span> <span class="mi">2</span><span class="p">,</span> <span class="n">h</span> <span class="o">/</span> <span class="mi">2</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">Quadtree</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">level</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">sub_w</span><span class="p">,</span> <span class="n">sub_h</span><span class="p">)),</span>         <span class="c1"># 左上</span>
+            <span class="n">Quadtree</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">level</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="n">sub_w</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">sub_w</span><span class="p">,</span> <span class="n">sub_h</span><span class="p">)),</span> <span class="c1"># 右上</span>
+            <span class="n">Quadtree</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">level</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="o">+</span> <span class="n">sub_h</span><span class="p">,</span> <span class="n">sub_w</span><span class="p">,</span> <span class="n">sub_h</span><span class="p">)),</span> <span class="c1"># 左下</span>
+            <span class="n">Quadtree</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">level</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="p">(</span><span class="n">x</span> <span class="o">+</span> <span class="n">sub_w</span><span class="p">,</span> <span class="n">y</span> <span class="o">+</span> <span class="n">sub_h</span><span class="p">,</span> <span class="n">sub_w</span><span class="p">,</span> <span class="n">sub_h</span><span class="p">)),</span> <span class="c1"># 右下</span>
+        <span class="p">]</span>
+    
+    <span class="k">def</span> <span class="nf">insert</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;插入物体&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">objects</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">MAX_OBJECTS</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">level</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">MAX_LEVELS</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_insert_to_node</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">objects</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+    
+    <span class="k">def</span> <span class="nf">retrieve</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rect</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;检索可能与给定矩形碰撞的物体&quot;&quot;&quot;</span>
+        <span class="n">candidates</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">objects</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">nodes</span><span class="p">:</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_intersects</span><span class="p">(</span><span class="n">rect</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">bounds</span><span class="p">):</span>
+                    <span class="n">candidates</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">retrieve</span><span class="p">(</span><span class="n">rect</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">candidates</span>
+</code></pre></div>
+<hr>
+<h2 id="_6">六、实战：飞机大战完整示例</h2>
+<h3 id="_7">游戏流程图</h3>
+<pre class="plain"><code>┌─────────────────────────────────────┐
+│            游戏主循环               │
+│  ┌───────┐  ┌───────┐  ┌───────┐  │
+│  │ 事件  │→│ 更新  │→│ 渲染  │  │
+│  │ 处理  │  │ 逻辑  │  │ 画面  │  │
+│  └───────┘  └───┬───┘  └───────┘  │
+│                 │                   │
+│         ┌───────┴───────┐          │
+│         ↓               ↓          │
+│   ┌──────────┐   ┌──────────┐     │
+│   │ 移动检测 │   │ 碰撞检测 │     │
+│   └──────────┘   └────┬─────┘     │
+│                       ↓            │
+│              ┌──────────────┐      │
+│              │  碰撞响应    │      │
+│              │ (扣血/爆炸)  │      │
+│              └──────────────┘      │
+└─────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="_8">七、思考题</h2>
+<ol>
+<li>
+<p><strong>碰撞检测频率</strong>：如果游戏运行在 60 FPS，每帧都做全量碰撞检测是否合理？什么情况下需要做"物理帧"和"渲染帧"分离？</p>
+</li>
+<li>
+<p><strong>AABB 的局限性</strong>：当游戏角色是旋转的矩形时，AABB 碰撞检测会出问题吗？如何解决？</p>
+</li>
+<li>
+<p><strong>动画流畅性</strong>：帧动画的帧率应该和游戏帧率同步吗？如果游戏从 60 FPS 降到 30 FPS，动画会怎么表现？</p>
+</li>
+<li>
+<p><strong>四叉树 vs 网格</strong>：在什么场景下四叉树比网格分区更优？反之呢？</p>
+</li>
+<li>
+<p><strong>碰撞预测</strong>：在高速移动的物体（如子弹）中，可能出现"穿透"问题（一帧从墙这边跳到墙那边）。如何解决？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_9">📖 延伸阅读</h2>
+<ul>
+<li><a href="https://www.pygame.org/docs/ref/sprite.html">Pygame 官方文档 - Sprite</a></li>
+<li><a href="https://gameprogrammingpatterns.com/double-buffer.html">Game Programming Patterns - Double Buffer</a></li>
+<li><a href="https://www.redblobgames.com/articles/visibility/">Red Blob Games - 碰撞检测</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-089/index.html">← Day 89 游戏循环与事件</a><a class="nav-next" href="../day-091/index.html">Day 91 性能剖析 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

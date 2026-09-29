@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 168 — SSH 远程管理（paramiko）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 168 — SSH 远程管理（paramiko）</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">651 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-168-ssh-远程管理" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21-ssh">2.1 SSH 解决的是什么问题</a>
+<a class="toc-l3" href="#22-vs">2.2 认证：密码 vs 公钥</a>
+<a class="toc-l3" href="#23-paramiko">2.3 paramiko 是什么，不是什么</a>
+<a class="toc-l3" href="#24-apisshclient-transport-channel">2.4 三层 API：SSHClient / Transport / Channel</a>
+<a class="toc-l3" href="#25-tofu">2.5 主机密钥验证：TOFU 模型</a>
+<a class="toc-l3" href="#26-sftp-scp">2.6 SFTP 与 SCP 的区别</a>
+<a class="toc-l3" href="#27">2.7 并发模型：批量运维为什么必须并发</a>
+<a class="toc-l2" href="#3">3. 原理深入</a>
+<a class="toc-l3" href="#31-ssh-rfc-42514254">3.1 SSH 协议的分层（RFC 4251~4254）</a>
+<a class="toc-l3" href="#32">3.2 密钥交换与&quot;前向保密&quot;</a>
+<a class="toc-l3" href="#33-pty">3.3 伪终端（pty）：为什么&quot;没有输出&quot;</a>
+<a class="toc-l3" href="#34-exit_status">3.4 退出状态码：exit_status 从哪来</a>
+<a class="toc-l3" href="#35-keepalive">3.5 保活（keepalive）与&quot;卡死&quot;</a>
+<a class="toc-l3" href="#36-sftp">3.6 SFTP 是独立子系统</a>
+<a class="toc-l3" href="#37-shelltrue">3.7 命令拼装：为什么 shell=True 式的拼接是灾难</a>
+<a class="toc-l2" href="#4-api">4. 定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#41-sshclient">4.1 SSHClient —— 最常用入口</a>
+<a class="toc-l3" href="#42">4.2 命令执行三件套</a>
+<a class="toc-l3" href="#43-sftpclient">4.3 SFTPClient 速查</a>
+<a class="toc-l3" href="#44-transport">4.4 Transport 精细控制</a>
+<a class="toc-l3" href="#45">4.5 常用策略类</a>
+<a class="toc-l2" href="#5">5. 图解</a>
+<a class="toc-l3" href="#51-exec_command">5.1 一次 exec_command 的完整旅程</a>
+<a class="toc-l3" href="#52-api">5.2 三层 API 与&quot;连接复用&quot;的真实结构</a>
+<a class="toc-l3" href="#53-mermaid">5.3 Mermaid：批量运维的执行时序</a>
+<a class="toc-l3" href="#54-mermaidsftp">5.4 Mermaid：SFTP 上传与断点续传</a>
+<a class="toc-l3" href="#55-rm-rf">5.5 命令注入：一次 ; rm -rf / 的解构</a>
+<a class="toc-l2" href="#6-top-8">6. 常见陷阱 Top 8</a>
+<a class="toc-l3" href="#1-paramiko-ssh-sshconfig">陷阱 1：把 paramiko 当 ssh 命令用，指望它读 ~/.ssh/config</a>
+<a class="toc-l3" href="#2autoaddpolicy">陷阱 2：AutoAddPolicy() 一把梭</a>
+<a class="toc-l3" href="#3_1">陷阱 3：忘记超时 → 脚本永久挂起</a>
+<a class="toc-l3" href="#4-stderr">陷阱 4：不读 stderr 导致&quot;远端缓冲区写满 → 命令挂死&quot;</a>
+<a class="toc-l3" href="#5get_ptytrue-stdout-stderr">陷阱 5：get_pty=True 后 stdout 与 stderr 混在一起</a>
+<a class="toc-l3" href="#6">陷阱 6：把密码/私钥口令硬编码进代码</a>
+<a class="toc-l3" href="#7sftp">陷阱 7：SFTP 传完不校验，传了个&quot;半个文件&quot;上去</a>
+<a class="toc-l3" href="#8">陷阱 8：并发度无上限 → 把目标机打死</a>
+<a class="toc-l2" href="#7">7. 实战代码案例</a>
+<a class="toc-l3" href="#71">7.1 运行方法</a>
+<a class="toc-l3" href="#72">7.2 批量运维工具的&quot;三条设计红线&quot;</a>
+<a class="toc-l3" href="#73-04">7.3 实测输出样例（04 的表格报告）</a>
+<a class="toc-l2" href="#8_1">8. 思考题</a>
+<a class="toc-l2" href="#9">9. 小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-168-ssh-paramiko">Day 168 — SSH 远程管理（paramiko）</h1>
+<blockquote>
+<p><strong>一句话定义</strong>：SSH 是一条<strong>加密、可复用、双向</strong>的隧道；paramiko 是这条隧道的<br>
+<strong>纯 Python 客户端实现</strong>，让你不装 <code>ssh</code> 命令也能执行远程命令、传文件。</p>
+</blockquote>
+<p>本课从"SSH 到底在保护什么"讲到"批量运维工具怎么写才不会把自己玩死"，<br>
+最后落在一个可运行的四脚本工程上（<code>code/01</code>~<code>04</code>）。</p>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>学完本课，你应该能够：</p>
+<ul>
+<li>[ ] 说清 SSH 协议的四层结构，以及每层各解决什么问题</li>
+<li>[ ] 解释"公钥认证比密码认证更安全"的<strong>三个具体理由</strong>（不是口号）</li>
+<li>[ ] 用 <code>paramiko.SSHClient</code> 连上一台机器，正确取回 <code>stdout</code>/<code>stderr</code>/<code>exit_status</code></li>
+<li>[ ] 用 <code>Transport</code> + <code>Channel</code> 复用一条连接跑几百条命令，而不是每次新建连接</li>
+<li>[ ] 用 <code>SFTPClient</code> 上传/下载文件，并知道它与 <code>scp</code>/<code>sftp</code> 命令的关系</li>
+<li>[ ] 写出<strong>带并发、带超时、带重试、带审计</strong>的批量运维脚本</li>
+<li>[ ] 说出至少 5 个真实生产事故对应的坑（拼接注入、无超时、不校验主机密钥……）</li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21-ssh">2.1 SSH 解决的是什么问题</h3>
+<p>回到 1995 年：<code>telnet</code> 明文传输，<code>rsh</code>/<code>rlogin</code> 依赖 <code>.rhosts</code> 信任（等于没有认证）。<br>
+一个网络抓包就能拿到你的密码和全部操作内容。</p>
+<p>SSH 的三个核心承诺（按重要性排序）：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">承诺</th>
+<th style="text-align: left;">手段</th>
+<th style="text-align: left;">如果缺失会怎样</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>机密性</strong></td>
+<td style="text-align: left;">对称加密（AES/ChaCha20）</td>
+<td style="text-align: left;">同网段任何人都能用 tcpdump 看到你的密码</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>完整性</strong></td>
+<td style="text-align: left;">MAC（HMAC）/ AEAD</td>
+<td style="text-align: left;">中间人可以静默篡改命令内容</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>对端认证</strong></td>
+<td style="text-align: left;">主机密钥 + 用户认证</td>
+<td style="text-align: left;">你以为连的是生产机，其实是攻击者的跳板</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>关键认知</strong>：SSH 不是"一条管道"，而是一条<strong>可以复用、可开多路</strong>的隧道。<br>
+一次 TCP 连接里可以同时跑 3 个 shell、2 个 SFTP 会话、若干端口转发。<br>
+这就是为什么"每次命令都新建连接"的脚本是<strong>反协议设计</strong>的。</p>
+</blockquote>
+<h3 id="22-vs">2.2 认证：密码 vs 公钥</h3>
+<pre class="plain"><code>密码认证（password）：
+    client ──&quot;我是 root，密码是 hunter2&quot;──▶ server
+    ❌ 密码会离开客户端（虽然隧道加密，但服务端拿到了明文；
+       且可被钓鱼、可被暴力破解、无法自动化轮换）
+
+公钥认证（publickey）：
+    server 事先持有 client 的公钥
+    client ──&quot;我想用 key 指纹 XX 登录&quot;──▶ server
+    server ──&quot;challenge: 用私钥签这段随机数&quot;──▶ client
+    client ──&quot;签名 = ...&quot;──▶ server  （私钥永不离开客户端！）
+    ✅ 私钥不出本机、✅ 抗暴力破解（4096 位 ≈ 不可枚举）、
+    ✅ 可无交互自动化、✅ 一条 known_hosts + 一个 key 就能精确吊销
+</code></pre>
+<p><strong>工程结论</strong>：<br>
+- 自动化用<strong>密钥</strong>，密钥必须有口令（passphrase）+ 用代理（ssh-agent）避免硬编码<br>
+- 密码认证留给"人第一次登录"，之后立刻换密钥<br>
+- 永远不要 <code>password="..."</code> 写死在代码里（Git 历史删不干净）</p>
+<h3 id="23-paramiko">2.3 paramiko 是什么，不是什么</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">是</th>
+<th style="text-align: left;">不是</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">纯 Python 的 SSH2 客户端/服务端库</td>
+<td style="text-align: left;">不是 <code>ssh</code> 命令的包装（不读你的 <code>~/.ssh/config</code>！）</td>
+</tr>
+<tr>
+<td style="text-align: left;">支持公钥/密码/键盘交互认证、SFTP、端口转发</td>
+<td style="text-align: left;">不是运维框架（无并发编排、无重试、无幂等）</td>
+</tr>
+<tr>
+<td style="text-align: left;">依赖 <code>cryptography</code>，可跨平台</td>
+<td style="text-align: left;">不负责"任务该不该跑"——那是 Ansible/Fabric/Salt 的事</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠ 最常见的误解：<strong>paramiko 不会自动读 <code>~/.ssh/config</code></strong>。<br>
+你在命令行能 <code>ssh prod</code> 是因为 <code>ssh</code> 命令读了 config；<br>
+用 paramiko 就必须自己解析 <code>Host</code> 段（<code>04</code> 实战脚本里演示了简化版解析）。</p>
+</blockquote>
+<h3 id="24-apisshclient-transport-channel">2.4 三层 API：SSHClient / Transport / Channel</h3>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│ 最上层 SSHClient   —— &quot;一把好用的瑞士军刀&quot;                      │
+│   · connect() / exec_command() / open_sftp()                  │
+│   · 每次 exec_command 在内部**复用**同一条 Transport 的 channel │
+│   · 适合：脚本化、命令量不大（几十~几百条）                      │
+├──────────────────────────────────────────────────────────────┤
+│ 中层 Transport     —— &quot;连接本体&quot;，可精细控制                     │
+│   · 管理密钥交换、加密、keepalive、channel 生命周期              │
+│   · 可同时 open_session() 多个 channel（真正的多路复用）          │
+│   · 适合：连接池、长连接、自定义保活、端口转发                    │
+├──────────────────────────────────────────────────────────────┤
+│ 下层 Channel       —— &quot;一条逻辑流&quot;                              │
+│   · 有独立的 recv/send、exit_status、pty 设置                   │
+│   · exec_command / invoke_shell / SFTP 都跑在 channel 上         │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>为什么值得分清</strong>：<code>SSHClient.exec_command()</code> 每调一次就开一个新 channel；<br>
+如果你要跑 1000 条命令，要么复用 client（推荐），要么用 <code>Transport.open_session()</code><br>
+自己管理。<code>SSHClient</code> 底层也是 <code>Transport</code>，只是帮你把脏活包了。</p>
+<h3 id="25-tofu">2.5 主机密钥验证：TOFU 模型</h3>
+<pre class="plain"><code>第一次连接某主机：
+    服务端发来自己的公钥指纹
+    客户端：没记录过 → 弹窗&quot;你确定吗？(yes/no)&quot;
+            你输 yes → 指纹写进 ~/.ssh/known_hosts（Trust On First Use）
+
+第二次以后：
+    指纹与记录一致 → 静默通过
+    指纹不一致     → ⚠⚠⚠ &quot;REMOTE HOST IDENTIFICATION HAS CHANGED&quot;
+                    （可能被 MITM，也可能只是重装系统）
+</code></pre>
+<p>paramiko 的默认策略是 <strong><code>RejectPolicy</code></strong>：未知主机直接抛异常。<br>
+这比命令行 <code>ssh</code> 更严格。开发时图省事写成 <code>AutoAddPolicy</code> 很方便，<br>
+但<strong>生产脚本里应该改成"白名单校验"</strong>（见陷阱 2）。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 生产禁用：等于完全不校验</span>
+<span class="n">client</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">())</span>
+
+<span class="c1"># ✅ 生产写法：显式加载一份受信 known_hosts，未知主机直接失败</span>
+<span class="n">client</span><span class="o">.</span><span class="n">load_system_host_keys</span><span class="p">(</span><span class="s2">&quot;/etc/ssh/ssh_known_hosts&quot;</span><span class="p">)</span>
+<span class="n">client</span><span class="o">.</span><span class="n">set_missing_host_key_policy</span><span class="p">(</span><span class="n">paramiko</span><span class="o">.</span><span class="n">RejectPolicy</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="26-sftp-scp">2.6 SFTP 与 SCP 的区别</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;"></th>
+<th style="text-align: left;">SCP</th>
+<th style="text-align: left;">SFTP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">协议</td>
+<td style="text-align: left;">复用 <code>ssh</code> 命令 + 传统 cp 语义（老）</td>
+<td style="text-align: left;"><strong>独立子系统</strong>，跑在 SSH channel 上</td>
+</tr>
+<tr>
+<td style="text-align: left;">能否断点续传</td>
+<td style="text-align: left;">不能</td>
+<td style="text-align: left;">能（<code>seek</code> + <code>prefetch</code>）</td>
+</tr>
+<tr>
+<td style="text-align: left;">能否列目录/改权限/建软链</td>
+<td style="text-align: left;">不能</td>
+<td style="text-align: left;">能</td>
+</tr>
+<tr>
+<td style="text-align: left;">能否在文件不影响 shell 的情况下并发</td>
+<td style="text-align: left;">差</td>
+<td style="text-align: left;">好</td>
+</tr>
+<tr>
+<td style="text-align: left;">paramiko 支持</td>
+<td style="text-align: left;">无直接 API（用 sftp 代替）</td>
+<td style="text-align: left;"><code>open_sftp()</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：自动化里统一用 SFTP。paramiko 的 <code>SFTPClient</code> 还提供了<br>
+<code>put</code>/<code>get</code>/<code>listdir</code>/<code>stat</code>/<code>chmod</code>/<code>rename</code>/<code>symlink</code> 等一整套。</p>
+<h3 id="27">2.7 并发模型：批量运维为什么必须并发</h3>
+<p>假设 200 台机器，每台执行一条 <code>uptime</code> 耗时 1.2 秒（网络 RTT 占大头）：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">模式</th>
+<th style="text-align: left;">总耗时</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">顺序</td>
+<td style="text-align: left;">200 × 1.2 ≈ <strong>240 秒</strong></td>
+<td style="text-align: left;">4 分钟里你只是在等网络</td>
+</tr>
+<tr>
+<td style="text-align: left;">并发 20</td>
+<td style="text-align: left;">10 批 × 1.2 ≈ <strong>12 秒</strong></td>
+<td style="text-align: left;">运维体验的临界点</td>
+</tr>
+<tr>
+<td style="text-align: left;">并发 100</td>
+<td style="text-align: left;">2 批 × 1.2 ≈ <strong>2.4 秒</strong></td>
+<td style="text-align: left;">但可能触发目标机 <code>sshd</code> 的 <code>MaxStartups</code> 限流</td>
+</tr>
+<tr>
+<td style="text-align: left;">并发 200</td>
+<td style="text-align: left;">~1.2 秒</td>
+<td style="text-align: left;">❌ 大概率被限流/被安全设备判定为扫描</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>关键认知</strong>：并发的瓶颈<strong>不是 CPU</strong>（网络 IO 等待），<br>
+所以用 <code>ThreadPoolExecutor</code> 就够了，不需要 asyncio 重写。<br>
+但并发度必须<strong>有上限</strong>（默认建议 8~16），否则你会亲手制造一次"分布式拒绝服务"。</p>
+</blockquote>
+<pre class="plain"><code>顺序执行（200 台）             并发 16（200 台）
+台1 ──1.2s──▶                  16 台并排 ──1.2s──▶ 第 1 批
+台2 ──1.2s──▶                  16 台并排 ──1.2s──▶ 第 2 批
+...                            ...
+台200 ──1.2s──▶                ≈ 13 批 × 1.2s ≈ 15.6s
+总计 ≈ 240s                    吞吐提升 ≈ 15×
+</code></pre>
+<hr>
+<h2 id="3">3. 原理深入</h2>
+<h3 id="31-ssh-rfc-42514254">3.1 SSH 协议的分层（RFC 4251~4254）</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────────┐
+│ ④ 连接层 Connection Protocol (RFC 4254)                      │
+│    把一条隧道切成多个 channel：session / direct-tcpip /       │
+│    forwarded-tcpip / x11。每个 channel 有自己的流控窗口。      │
+├─────────────────────────────────────────────────────────────┤
+│ ③ 用户认证 User Auth (RFC 4252)                              │
+│    publickey / password / keyboard-interactive / hostbased   │
+│    认证发生在**加密隧道已建立之后** —— 密码本来就受保护        │
+├─────────────────────────────────────────────────────────────┤
+│ ② 密钥交换 Key Exchange (RFC 4253)                           │
+│    协商算法套件 + 交换临时密钥 → 派生会话密钥                   │
+│    支持 ECDH/DH/curve25519 → 前向保密（PFS）                  │
+├─────────────────────────────────────────────────────────────┤
+│ ① 传输层 Transport (RFC 4253)                                │
+│    加密、压缩、MAC、重传；本质是 TCP 之上的一层安全封装        │
+└─────────────────────────────────────────────────────────────┘
+        ▲ 版本交换：&quot;SSH-2.0-OpenSSH_9.6&quot;（**明文**，别放敏感信息）
+</code></pre>
+<p><strong>为什么要分层</strong>：认证方式可以升级（从密码到公钥到 FIDO2）而不动传输层；<br>
+通道类型可以扩展（新增 <code>session</code> 子类型）而不动认证层。</p>
+<h3 id="32">3.2 密钥交换与"前向保密"</h3>
+<pre class="plain"><code>❌ 不用 PFS（老式 RSA 传输）：
+   client 生成随机会话密钥 → 用 server 的 RSA 公钥加密 → 发给 server
+   ⇒ 攻击者今天录下全部流量，三年后拿到 server 私钥 → **全部历史流量被解**
+
+✅ 用 PFS（ECDH / curve25519）：
+   client 与 server 各生成**临时**密钥对，交换公钥，各自算出同一个共享密钥
+   ⇒ 临时私钥用完即弃；即使 server 长期私钥泄露，历史流量依然无法解
+</code></pre>
+<p>因此现代 <code>sshd_config</code> 应该优先 <code>KexAlgorithms curve25519-sha256,ecdh-*</code>。<br>
+<code>paramiko</code> 会自动协商，你通常不用管——但要<strong>知道</strong>你在享受 PFS。</p>
+<h3 id="33-pty">3.3 伪终端（pty）：为什么"没有输出"</h3>
+<pre class="plain"><code>不开 pty（默认 exec_command）：
+    sshd 把远端进程的 stdout 直接接到 channel 上
+    ⇒ 输出是&quot;字节流&quot;，没有回显、没有行缓冲、颜色/TTY 探测失败
+
+开 pty（get_pty=True）：
+    sshd 分配一个伪终端（/dev/pts/N）
+    ⇒ 有回显、有行缓冲、`ls --color` 有效
+    ❌ 但 stdout 与 stderr **被合并**在一起（都在 pty 上），且会多出 \r\n
+</code></pre>
+<p><strong>踩坑实例</strong>：<code>sudo</code> 通常要求 tty。不开 pty 时 <code>sudo -n cmd</code> 可能报<br>
+<code>sudo: sorry, you must have a tty to run sudo</code>。<br>
+工程上两条路：① <code>get_pty=True</code>（牺牲 stdout/stderr 分离）；<br>
+② 配置 <code>sudoers</code> 的 <code>!requiretty</code>（推荐，保持流纯净）。</p>
+<h3 id="34-exit_status">3.4 退出状态码：<code>exit_status</code> 从哪来</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">stdin</span><span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="s2">&quot;exit 3&quot;</span><span class="p">)</span>
+<span class="n">status</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">channel</span><span class="o">.</span><span class="n">recv_exit_status</span><span class="p">()</span>   <span class="c1"># 阻塞直到远端进程结束 → 3</span>
+</code></pre></div>
+<p>三个必须知道的点：</p>
+<ol>
+<li><code>recv_exit_status()</code> 会<strong>阻塞</strong>。如果远端命令永不退出，你的脚本也永不退出<br>
+   —— 必须配合 <code>channel.settimeout()</code> 或用 <code>channel.status_event.wait(timeout)</code>。</li>
+<li><code>stdout.read()</code> 也可能<strong>永远阻塞</strong>（远端还在写）。<br>
+   稳妥写法：<code>read()</code> 之后才 <code>recv_exit_status()</code>，或用 <code>channel.recv_exit_status()</code> 前先关写端。</li>
+<li>远端命令的退出码 <strong>127</strong> = 命令不存在，<strong>126</strong> = 不可执行，<br>
+<strong>128+N</strong> = 被信号 N 杀死（如 137 = SIGKILL，常见于 OOM）。<br>
+<strong>自定义退出码契约</strong>（0 成功 / 2 有告警 / 1 失败）能让你的运维脚本被上游自动化消费。</li>
+</ol>
+<h3 id="35-keepalive">3.5 保活（keepalive）与"卡死"</h3>
+<pre class="plain"><code>问题场景：NAT/防火墙 300 秒无流量就静默丢弃连接映射
+   → 你的脚本 5 分钟不执行任何东西，然后下一次 read() 永远阻塞
+   （TCP 层面认为连接还活着，因为没人发 RST）
+
+解法三层：
+   ① transport.set_keepalive(30)      # SSH 层：每 30s 发一个加密空包
+   ② channel.settimeout(10)           # 应用层：单次 IO 超时
+   ③ 全局 connect(timeout=10, banner_timeout=15, auth_timeout=15)
+                                      # 连接建立三阶段的分别超时
+</code></pre>
+<p><strong>为什么三层都要</strong>：第①层防"空闲被掐"，第②层防"对端假死"，<br>
+第③层防"连一个不响应的 IP 时卡在三次握手"。缺任何一层都有对应的故障姿势。</p>
+<h3 id="36-sftp">3.6 SFTP 是独立子系统</h3>
+<pre class="plain"><code>SSH 连接
+ ├── channel(session)  → 交互式 shell / exec_command
+ ├── channel(session)  → sftp 子系统（ssh usr@host -s sftp）
+ └── channel(direct-tcpip) → 端口转发
+
+paramiko:  client.open_sftp()  ← 新开一个 channel 并请求 &quot;sftp&quot; 子系统
+           → 之后的 sftp.put/get/listdir 都是在这个 channel 上发
+             带二进制头的 SFTP 协议包（SSH_FXP_*）
+</code></pre>
+<p><strong>性能结论</strong>：SFTP 有<strong>每文件一次往返</strong>的开销（open/write/close）。<br>
+传 1000 个小文件时，往返延迟会主导总耗时 —— 这时应先用<br>
+<code>tar</code> + 一次上传，而不是 1000 次 <code>sftp.put</code>。</p>
+<h3 id="37-shelltrue">3.7 命令拼装：为什么 <code>shell=True</code> 式的拼接是灾难</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 危险</span>
+<span class="n">cmd</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;ls </span><span class="si">{</span><span class="n">user_input</span><span class="si">}</span><span class="s2">&quot;</span>        <span class="c1"># user_input = &quot;; rm -rf /&quot;  → 完蛋</span>
+<span class="n">cmd</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;grep </span><span class="si">{</span><span class="n">pattern</span><span class="si">}</span><span class="s2"> /var/log/app.log&quot;</span>   <span class="c1"># pattern 含空格/管道 → 命令被改写</span>
+
+<span class="c1"># ✅ 安全</span>
+<span class="kn">from</span> <span class="nn">shlex</span> <span class="kn">import</span> <span class="n">quote</span>
+<span class="n">cmd</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;ls </span><span class="si">{</span><span class="n">quote</span><span class="p">(</span><span class="n">user_input</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>          <span class="c1"># 转义成单个参数</span>
+<span class="c1"># 或者干脆把参数固定，不接受用户输入（白名单）</span>
+</code></pre></div>
+<p><strong>原理</strong>：<code>exec_command</code> 把字符串交给远端 <code>/bin/sh -c</code>，<br>
+远端 shell 会<strong>再次解释</strong>它。所以"转义一次"不够，要按远端 shell 的规则转义<br>
+（<code>shlex.quote</code> 就是干这个的）。这也是"命令注入"在生产运维脚本里最常见的原因。</p>
+<hr>
+<h2 id="4-api">4. 定义与使用方法（API 速查表）</h2>
+<h3 id="41-sshclient">4.1 <code>SSHClient</code> —— 最常用入口</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">方法</th>
+<th style="text-align: left;">作用</th>
+<th style="text-align: left;">关键参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>connect(hostname, port=22, username=None, password=None, pkey=None, key_filename=None, timeout=None, allow_agent=True, look_for_keys=True, compress=False, banner_timeout=None, auth_timeout=None)</code></td>
+<td style="text-align: left;">建立连接并认证</td>
+<td style="text-align: left;"><code>timeout</code> 只作用于 TCP 建连；<code>banner_timeout</code> 等 banner；<code>auth_timeout</code> 等认证</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>exec_command(command, bufsize=-1, timeout=None, get_pty=False, environment=None)</code></td>
+<td style="text-align: left;">执行命令</td>
+<td style="text-align: left;">返回 <code>(stdin, stdout, stderr)</code>，都是 <code>ChannelFile</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>open_sftp()</code></td>
+<td style="text-align: left;">打开 SFTP</td>
+<td style="text-align: left;">返回 <code>SFTPClient</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>get_transport()</code></td>
+<td style="text-align: left;">拿到底层 Transport</td>
+<td style="text-align: left;">用于设 keepalive</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>set_missing_host_key_policy(policy)</code></td>
+<td style="text-align: left;">未知主机策略</td>
+<td style="text-align: left;"><code>RejectPolicy</code>(默认) / <code>AutoAddPolicy</code> / <code>WarningPolicy</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>load_system_host_keys(filename=None)</code></td>
+<td style="text-align: left;">从文件加载受信主机密钥</td>
+<td style="text-align: left;">传路径才生效</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>close()</code></td>
+<td style="text-align: left;">关闭连接</td>
+<td style="text-align: left;">别忘了 <code>finally</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="42">4.2 命令执行三件套</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">stdin</span><span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="s2">&quot;uname -a&quot;</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;replace&quot;</span><span class="p">)</span>
+<span class="n">err</span> <span class="o">=</span> <span class="n">stderr</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="n">errors</span><span class="o">=</span><span class="s2">&quot;replace&quot;</span><span class="p">)</span>
+<span class="n">status</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">channel</span><span class="o">.</span><span class="n">recv_exit_status</span><span class="p">()</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">对象</th>
+<th style="text-align: left;">方法</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ChannelFile</code></td>
+<td style="text-align: left;"><code>read()</code> / <code>readline()</code> / <code>readlines()</code></td>
+<td style="text-align: left;"><strong>读到 EOF 才返回</strong>（远端进程结束）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Channel</code></td>
+<td style="text-align: left;"><code>recv_exit_status()</code></td>
+<td style="text-align: left;">阻塞式取退出码</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Channel</code></td>
+<td style="text-align: left;"><code>settimeout(sec)</code></td>
+<td style="text-align: left;">单次 IO 超时（超时抛 <code>socket.timeout</code>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Channel</code></td>
+<td style="text-align: left;"><code>get_pty()</code> 参数</td>
+<td style="text-align: left;">见 3.3</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Channel</code></td>
+<td style="text-align: left;"><code>shutdown_write()</code></td>
+<td style="text-align: left;">关掉 stdin，常用于让远端 <code>cat</code> 之类收尾</td>
+</tr>
+</tbody>
+</table>
+<h3 id="43-sftpclient">4.3 <code>SFTPClient</code> 速查</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">方法</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>put(localpath, remotepath, callback=None, confirm=True)</code></td>
+<td style="text-align: left;">上传；<code>confirm=True</code> 会额外 <code>stat</code> 一次校验</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>get(remotepath, localpath, callback=None)</code></td>
+<td style="text-align: left;">下载</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>putfo(fileobj, remotepath, file_size=None)</code></td>
+<td style="text-align: left;">从内存中的文件对象上传（省一次落盘）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>listdir(path)</code> / <code>listdir_attr(path)</code></td>
+<td style="text-align: left;">列目录；后者带属性、少一次往返</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>stat(path)</code> / <code>lstat(path)</code></td>
+<td style="text-align: left;">属性；<code>lstat</code> 不跟随软链</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>mkdir</code> / <code>rmdir</code> / <code>remove</code> / <code>rename</code> / <code>chmod</code> / <code>symlink</code></td>
+<td style="text-align: left;">文件系统操作</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>open(path, mode)</code></td>
+<td style="text-align: left;">返回远端文件对象，可 <code>seek</code>（断点续传基础）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sftp.get_channel().settimeout(sec)</code></td>
+<td style="text-align: left;">给 SFTP 设超时</td>
+</tr>
+</tbody>
+</table>
+<h3 id="44-transport">4.4 <code>Transport</code> 精细控制</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">方法/属性</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>set_keepalive(seconds)</code></td>
+<td style="text-align: left;">空闲保活；<code>0</code> 关闭</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>open_session()</code></td>
+<td style="text-align: left;">手动开 channel</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>is_active()</code></td>
+<td style="text-align: left;">连接是否还活着</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>use_compression()</code></td>
+<td style="text-align: left;">开压缩（CPU 换带宽，内网大文本传输有用）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>auth_publickey</code> / <code>auth_password</code> / <code>auth_none</code></td>
+<td style="text-align: left;">手动认证序列</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>get_security_options()</code></td>
+<td style="text-align: left;">查/改本端支持的算法列表</td>
+</tr>
+</tbody>
+</table>
+<h3 id="45">4.5 常用策略类</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">paramiko</span><span class="o">.</span><span class="n">RejectPolicy</span><span class="p">()</span>      <span class="c1"># 默认：未知主机 → SSHException</span>
+<span class="n">paramiko</span><span class="o">.</span><span class="n">AutoAddPolicy</span><span class="p">()</span>     <span class="c1"># 自动接受并写入（开发方便，生产慎用）</span>
+<span class="n">paramiko</span><span class="o">.</span><span class="n">WarningPolicy</span><span class="p">()</span>     <span class="c1"># 接受但打印警告</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 图解</h2>
+<h3 id="51-exec_command">5.1 一次 <code>exec_command</code> 的完整旅程</h3>
+<pre class="plain"><code> 你的脚本                paramiko                    TCP/加密隧道                远端 sshd
+    │                       │                             │                        │
+    │ exec_command(&quot;uptime&quot;)│                             │                        │
+    ├──────────────────────▶│                             │                        │
+    │                       │ open channel (session)       │                        │
+    │                       ├──── CHANNEL_OPEN ──────────▶│───────────────────────▶│
+    │                       │◀─── CHANNEL_OPEN_CONFIRM ───│◀───────────────────────┤
+    │                       │ exec 请求 &quot;uptime&quot;            │                        │
+    │                       ├──── CHANNEL_REQUEST(exec) ─▶│───────────────────────▶│
+    │                       │                             │       fork /bin/sh -c  │
+    │                       │◀──── CHANNEL_DATA(&quot;...&quot;) ───│◀───────────────────────┤
+    │  stdout.read()  ⏳    │◀──── CHANNEL_DATA ──────────│                        │
+    │                       │◀──── CHANNEL_EOF ───────────│◀──── 进程退出 ──────────┤
+    │                       │◀──── CHANNEL_REQUEST(exit-status=0)
+    │  recv_exit_status()=0 │                             │                        │
+    │◀──────────────────────┤                             │                        │
+</code></pre>
+<h3 id="52-api">5.2 三层 API 与"连接复用"的真实结构</h3>
+<pre class="plain"><code>一次 TCP 连接（一次 KEX、一次认证）
+│
+Transport
+├── channel#1  session  ── exec_command(&quot;uptime&quot;)        ← 用完就关
+├── channel#2  session  ── exec_command(&quot;df -h&quot;)
+├── channel#3  session  ── invoke_shell()（交互式）
+├── channel#4  session  ── sftp 子系统（open_sftp）
+└── channel#5  direct-tcpip ── 本地 8080 → 远端 80（端口转发）
+
+❌ 错误模式：每台机器每条命令都 SSHClient().connect()
+   → 200 台 × 5 条 = 1000 次密钥交换 + 1000 次认证
+   → 目标机 auth.log 刷屏，安全设备告警，自己也慢 10 倍
+
+✅ 正确模式：每台机器 1 条 Transport，命令都挂在它上面
+</code></pre>
+<h3 id="53-mermaid">5.3 Mermaid：批量运维的执行时序</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant M as 主控脚本
+    participant P as 线程池(16)
+    participant H as 目标主机 × 200
+
+    M-&gt;&gt;M: 读取 inventory（host/user/key）
+    loop 每台主机
+        M-&gt;&gt;P: submit(run_on_host, host)
+    end
+    P-&gt;&gt;H: connect(timeout=10) + 认证
+    Note over H: 建连失败的机器直接标记 unreachable
+    P-&gt;&gt;H: 执行命令（带 channel.settimeout）
+    H--&gt;&gt;P: stdout / stderr / exit_status
+    P-&gt;&gt;P: 收集结果（线程安全队列）
+    M-&gt;&gt;M: 汇总 → 表格 / JSON / 退出码
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant M as 主控脚本
+    participant P as 线程池(16)
+    participant H as 目标主机 × 200
+
+    M-&gt;&gt;M: 读取 inventory（host/user/key）
+    loop 每台主机
+        M-&gt;&gt;P: submit(run_on_host, host)
+    end
+    P-&gt;&gt;H: connect(timeout=10) + 认证
+    Note over H: 建连失败的机器直接标记 unreachable
+    P-&gt;&gt;H: 执行命令（带 channel.settimeout）
+    H--&gt;&gt;P: stdout / stderr / exit_status
+    P-&gt;&gt;P: 收集结果（线程安全队列）
+    M-&gt;&gt;M: 汇总 → 表格 / JSON / 退出码
+</code></pre></div>
+<h3 id="54-mermaidsftp">5.4 Mermaid：SFTP 上传与断点续传</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[本地文件 local] --&gt; B[远端 stat remotepath]
+    B --&gt;|不存在| C[put 全量上传]
+    B --&gt;|存在| D{大小是否一致?}
+    D --&gt;|一致| E[跳过：幂等]
+    D --&gt;|不一致| F[从末尾 offset 打开远端文件]
+    F --&gt; G[本地 seek offset]
+    G --&gt; H[分块读写续传]
+    H --&gt; I[chmod 0644 修复权限]
+    C --&gt; I
+    E --&gt; I
+    I --&gt; J[远端 md5/sha256sum 校验]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[本地文件 local] --&gt; B[远端 stat remotepath]
+    B --&gt;|不存在| C[put 全量上传]
+    B --&gt;|存在| D{大小是否一致?}
+    D --&gt;|一致| E[跳过：幂等]
+    D --&gt;|不一致| F[从末尾 offset 打开远端文件]
+    F --&gt; G[本地 seek offset]
+    G --&gt; H[分块读写续传]
+    H --&gt; I[chmod 0644 修复权限]
+    C --&gt; I
+    E --&gt; I
+    I --&gt; J[远端 md5/sha256sum 校验]
+</code></pre></div>
+<h3 id="55-rm-rf">5.5 命令注入：一次 <code>; rm -rf /</code> 的解构</h3>
+<pre class="plain"><code>  脚本拼接：cmd = f&quot;tar -czf /backup/{name}.tar.gz /data&quot;
+  攻击输入：name = &quot;x; rm -rf /&quot;
+  ────────────────────────────────────────────────
+  远端 /bin/sh -c 看到的：
+      tar -czf /backup/x; rm -rf /.tar.gz
+                            └── 分号把命令切成两条！第二条真的会跑
+
+  修法（二选一）：
+   ① shlex.quote(name) → &#x27;x; rm -rf /&#x27; 被包成单引号整体参数
+   ② 不接受用户输入，只接受白名单 ID → 查表得到固定命令
+</code></pre>
+<hr>
+<h2 id="6-top-8">6. 常见陷阱 Top 8</h2>
+<h3 id="1-paramiko-ssh-sshconfig">陷阱 1：把 paramiko 当 <code>ssh</code> 命令用，指望它读 <code>~/.ssh/config</code></h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 你在命令行 `ssh prod` 能通，是因为 ssh 命令读了 config</span>
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">&quot;prod&quot;</span><span class="p">)</span>           <span class="c1"># paramiko: 会去解析 DNS &quot;prod&quot; → 失败</span>
+
+<span class="c1"># ✅ 自己解析 config（04 实战里有 30 行实现），或显式传 host/port/user</span>
+</code></pre></div>
+<p><code>~/.ssh/config</code> 里的 <code>Host alias</code> / <code>ProxyJump</code> / <code>IdentityFile</code> paramiko <strong>一概不管</strong>。</p>
+<h3 id="2autoaddpolicy">陷阱 2：<code>AutoAddPolicy()</code> 一把梭</h3>
+<p>它等价于"任何主机我都信"。一旦你在中间有个 DNS 污染/ARP 欺骗的环境，<br>
+就是把自己的凭据交给攻击者。生产里改成加载受信 <code>known_hosts</code> + <code>RejectPolicy</code>。</p>
+<h3 id="3_1">陷阱 3：忘记超时 → 脚本永久挂起</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 三个超时全都没有</span>
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="o">=</span><span class="n">u</span><span class="p">,</span> <span class="n">key_filename</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
+<span class="n">stdin</span><span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="s2">&quot;tail -f /var/log/app.log&quot;</span><span class="p">)</span>  <span class="c1"># 永不返回</span>
+<span class="n">out</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+<span class="c1"># ✅ 建连超时 + channel 超时 + keepalive</span>
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="o">=</span><span class="n">u</span><span class="p">,</span> <span class="n">key_filename</span><span class="o">=</span><span class="n">k</span><span class="p">,</span>
+               <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">banner_timeout</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span> <span class="n">auth_timeout</span><span class="o">=</span><span class="mi">15</span><span class="p">)</span>
+<span class="n">tr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">get_transport</span><span class="p">();</span> <span class="n">tr</span><span class="o">.</span><span class="n">set_keepalive</span><span class="p">(</span><span class="mi">30</span><span class="p">)</span>
+<span class="n">stdin</span><span class="p">,</span> <span class="n">stdout</span><span class="p">,</span> <span class="n">stderr</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">exec_command</span><span class="p">(</span><span class="s2">&quot;tail -f ...&quot;</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">stdout</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+<span class="k">except</span> <span class="n">socket</span><span class="o">.</span><span class="n">timeout</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;读超时，放弃&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="4-stderr">陷阱 4：不读 <code>stderr</code> 导致"远端缓冲区写满 → 命令挂死"</h3>
+<pre class="plain"><code>远端进程往 stderr 写了很多（例如 100 MB 报错日志），
+你没读 stderr，TCP 接收窗口填满 → 远端进程 write() 阻塞
+→ 你的 stdout.read() 也永远读不到 EOF
+→ 双向死锁。
+</code></pre>
+<p><strong>修法</strong>：要么同时读两个流，要么用 <code>stdout.channel</code> 分别带超时读；<br>
+批量场景推荐"边执行边 drain"（<code>04</code> 里用 select/轮询读）。</p>
+<h3 id="5get_ptytrue-stdout-stderr">陷阱 5：<code>get_pty=True</code> 后 stdout 与 stderr 混在一起</h3>
+<p>开了 pty，<code>stderr</code> 通道永远为空，全部内容跑到 <code>stdout</code> 里，<br>
+还会多出 <code>\r</code> 和回显。除非远端强制要求 tty（sudo、部分交互命令），否则别开。</p>
+<h3 id="6">陷阱 6：把密码/私钥口令硬编码进代码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ Git 历史会永久保留</span>
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="o">=</span><span class="s2">&quot;root&quot;</span><span class="p">,</span> <span class="n">password</span><span class="o">=</span><span class="s2">&quot;P@ssw0rd!&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 从环境变量/密钥文件/ssh-agent 取</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="n">pkey</span> <span class="o">=</span> <span class="n">paramiko</span><span class="o">.</span><span class="n">Ed25519Key</span><span class="o">.</span><span class="n">from_private_key_file</span><span class="p">(</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">expanduser</span><span class="p">(</span><span class="s2">&quot;~/.ssh/id_ed25519&quot;</span><span class="p">),</span> <span class="n">password</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;KEY_PASSPHRASE&quot;</span><span class="p">))</span>
+<span class="n">client</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">username</span><span class="o">=</span><span class="s2">&quot;deploy&quot;</span><span class="p">,</span> <span class="n">pkey</span><span class="o">=</span><span class="n">pkey</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="7sftp">陷阱 7：SFTP 传完不校验，传了个"半个文件"上去</h3>
+<p>网络抖动/磁盘满会让 <code>put</code> 静默截断。<strong>必须</strong>在传完后校验：<br>
+- 小文件：远端 <code>md5sum</code> 比对<br>
+- 大文件：至少比对 <code>stat().st_size</code><br>
+- 关键发布：本地算 sha256 → 远端 <code>sha256sum</code></p>
+<h3 id="8">陷阱 8：并发度无上限 → 把目标机打死</h3>
+<p><code>ThreadPoolExecutor(max_workers=200)</code> 会在 1 秒内对 200 台机器发起认证。<br>
+<code>sshd_config</code> 的 <code>MaxStartups 10:30:100</code> 表示"超过 10 个未认证连接就开始随机丢弃"，<br>
+你的脚本会看到一堆 <code>Connection reset by peer</code>，还以为是网络问题。<br>
+<strong>默认 8~16，大集群也不要超过 32。</strong></p>
+<hr>
+<h2 id="7">7. 实战代码案例</h2>
+<p><code>code/</code> 下 4 个脚本，都与真实运维任务对齐：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">文件</th>
+<th style="text-align: left;">定位</th>
+<th style="text-align: left;">你会学到</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>01-basic-ssh.py</code></td>
+<td style="text-align: left;">基础</td>
+<td style="text-align: left;">connect/exec_command/SFTP 的最小正确写法 + <code>--self-test</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>02-pitfalls.py</code></td>
+<td style="text-align: left;">避坑</td>
+<td style="text-align: left;">离线复现 6 个坑（超时、stderr 死锁、注入、pty、并发上限、幂等）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>03-advanced-ssh.py</code></td>
+<td style="text-align: left;">进阶</td>
+<td style="text-align: left;">连接复用 + channel 池 + keepalive + 断点续传上传</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>04-batch-ops.py</code></td>
+<td style="text-align: left;">实战</td>
+<td style="text-align: left;"><strong>批量运维工具</strong>：inventory 解析 + 并发执行 + 审计 + JSON/表格报告</td>
+</tr>
+</tbody>
+</table>
+<h3 id="71">7.1 运行方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-168-ssh-远程管理/code
+pip<span class="w"> </span>install<span class="w"> </span>paramiko<span class="w">                 </span><span class="c1"># 唯一依赖</span>
+
+<span class="c1"># 离线自检（不需要真的 SSH 服务器）</span>
+python3<span class="w"> </span><span class="m">01</span>-basic-ssh.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">02</span>-pitfalls.py<span class="w"> </span>--self-test<span class="w">      </span><span class="c1"># 只演示&quot;正确解法&quot;，不真连</span>
+python3<span class="w"> </span><span class="m">03</span>-advanced-ssh.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">04</span>-batch-ops.py<span class="w"> </span>--self-test
+
+<span class="c1"># 真机联调（把 dev 换成你自己的主机）</span>
+python3<span class="w"> </span><span class="m">01</span>-basic-ssh.py<span class="w"> </span>--host<span class="w"> </span>dev<span class="w"> </span>--user<span class="w"> </span>deploy<span class="w"> </span>--key<span class="w"> </span>~/.ssh/id_ed25519<span class="w"> </span>--cmd<span class="w"> </span><span class="s2">&quot;uptime&quot;</span>
+python3<span class="w"> </span><span class="m">04</span>-batch-ops.py<span class="w"> </span>--inventory<span class="w"> </span>./inventory.ini<span class="w"> </span>--cmd<span class="w"> </span><span class="s2">&quot;df -h /&quot;</span><span class="w"> </span>--workers<span class="w"> </span><span class="m">8</span><span class="w"> </span>--out<span class="w"> </span>./reports
+</code></pre></div>
+<blockquote>
+<p>没有可用的 SSH 目标机时，可以在本机起一个：<br>
+<code>sudo apt install openssh-server &amp;&amp; sudo systemctl start ssh</code>，<br>
+然后 <code>ssh-keygen -t ed25519</code> + <code>ssh-copy-id localhost</code> 自连自测。</p>
+</blockquote>
+<h3 id="72">7.2 批量运维工具的"三条设计红线"</h3>
+<pre class="plain"><code>① 幂等优先：同一批命令重复执行 N 次，结果必须一致（跳过已完成的）
+   → 部署类任务里，先 stat/比对 hash，再决定要不要传
+
+② 结果必须可审计：每台机器、每条命令、开始时间、结束时间、退出码、输出摘要
+   → 落盘 JSONL，出问题能翻账
+
+③ 退出码必须能表达&quot;部分失败&quot;：
+   0 = 全部成功     1 = 全部/多数失败     2 = 部分失败（有告警）
+   → 让 CI/上游自动化能据此决策，而不是人去数日志
+</code></pre>
+<h3 id="73-04">7.3 实测输出样例（04 的表格报告）</h3>
+<pre class="plain"><code>================================================================================
+主机                 状态        耗时(s)  退出码  摘要
+--------------------------------------------------------------------------------
+web-01               ok             0.42       0  Filesystem      Size  Used Avail Use%
+web-02               ok             0.51       0  Filesystem      Size  Used Avail Use%
+db-01                unreachable   10.00     -1  connect timeout (timeout=10s)
+web-03               warn           0.63       2  /dev/sda1        98% full
+================================================================================
+汇总：成功 2 / 告警 1 / 失败 1 / 总计 4        退出码 = 2（部分失败）
+</code></pre>
+<hr>
+<h2 id="8_1">8. 思考题</h2>
+<ol>
+<li>
+<p><strong>为什么"公钥认证"能让私钥永不离开客户端？</strong><br>
+   请描述 challenge-response 的完整三步，并说明"服务端拿到的是签名而不是私钥"<br>
+   为什么在数学上是安全的（提示：签名的不可逆性与随机数的作用）。</p>
+</li>
+<li>
+<p><strong><code>timeout=10</code> 为什么不能阻止脚本永久挂起？</strong><br>
+   请分别说出"建连阶段"、"认证阶段"、"命令执行阶段"、"空闲等待阶段"<br>
+   四类阻塞各需要哪个参数/机制来兜底。</p>
+</li>
+<li>
+<p><strong>为什么批量运维脚本的并发上限不是越大越好？</strong><br>
+   从目标机 <code>sshd</code> 的 <code>MaxStartups</code>、防火墙的"连接速率触发"，以及<br>
+   你自己脚本的内存占用（每个线程栈 + socket 缓冲）三个角度量化说明。</p>
+</li>
+<li>
+<p><strong><code>recv_exit_status()</code> 和 <code>stdout.read()</code> 谁应该先调用？</strong><br>
+   给出两种顺序各自可能死锁的场景，并解释为什么"同时 drain stdout 与 stderr"<br>
+   能同时解决两个方向的死锁。</p>
+</li>
+<li>
+<p><strong>如果远端有 500 台机器、要分发一个 200 MB 的包，你会怎么设计？</strong><br>
+   提示：考虑"先推到几台中继机再 P2P"、"rsync 增量"、"压缩"、<br>
+   "并发上限"与"校验与回滚"这五个维度。</p>
+</li>
+<li>
+<p><strong>为什么 SFTP 上传 1000 个 1 KB 文件比上传 1 个 1 MB 文件慢得多？</strong><br>
+   请从"每文件至少几次协议往返"出发估算，并给出工程上的合并策略。</p>
+</li>
+</ol>
+<hr>
+<h2 id="9">9. 小结</h2>
+<pre class="plain"><code>  一句话记住 paramiko：
+    它是&quot;把加密隧道包装成 Python 对象&quot;的库；
+    Transport 是连接本体，Channel 是逻辑流，SSHClient 是便利门面。
+
+  四条铁律：
+    ① 连接要复用（一台机一条 Transport），并发要有上限（8~16）
+    ② 超时三层齐全（connect / channel / keepalive），否则必挂
+    ③ stdout 与 stderr 都要读，命令拼接一律 shlex.quote
+    ④ 结果落盘审计 + 退出码表达&quot;部分失败&quot;，让自动化能接力
+
+  三个最常见的生产事故：
+    · AutoAddPolicy + 硬编码密码  → 安全事故
+    · 没超时 + 不读 stderr        → 脚本永久挂起
+    · 并发 200 无上限             → 目标机不可用（自己造成 DDoS）
+</code></pre>
+<blockquote>
+<p>下一课 Day 169：<strong>Fabric 批量执行</strong> —— 把本课手写的"线程池 + 连接复用 + 审计"<br>
+换成更高层的声明式任务框架，并学会多服务器并行与错误处理。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-167/index.html">← Day 167 文件监控（watchdog）</a><a class="nav-next" href="../day-169/index.html">Day 169 Fabric 批量执行 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

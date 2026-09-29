@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 59 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 59 正文</a>
+  <h1>Day 59 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-059-c">Day 059 — C 扩展与性能优化 · 图解</h1>
+<h2 id="_1">性能优化路线图</h2>
+<pre class="plain"><code>                    ┌─────────────────┐
+                    │  Python 代码慢   │
+                    └────────┬────────┘
+                             │
+                    ┌────────▼────────┐
+                    │  能用 NumPy？    │
+                    └───┬─────────┬───┘
+                   是   │         │  否
+              ┌────────▼───┐  ┌──▼────────────┐
+              │ NumPy 向量化│  │ 需要 JIT 编译？│
+              │ (最省事)    │  └──┬─────────┬──┘
+              └────────────┘ 是   │         │ 否
+                   ┌────────▼───┐  │  ┌──────▼──────┐
+                   │   Numba    │  │  │ 有 C 代码？  │
+                   │ (装饰器)   │  │  └──┬───────┬──┘
+                   └────────────┘  │  是  │       │ 否
+                                  │ ┌────▼───┐ ┌─▼──────────┐
+                                  │ │ctypes/ │ │  Cython     │
+                                  │ │CFFI    │ │ (写 C 扩展) │
+                                  │ └────────┘ └─────────────┘
+                                  └──────────────┘
+</code></pre>
+<h2 id="cython">Cython 编译流程</h2>
+<pre class="plain"><code> .pyx 文件          Cython 编译器          gcc/clang           .so/.pyd
+(Python+C语法)  ─────────────────→  (.c 文件)  ──────────→  (共享库)
+                                        │
+                                   生成 C 代码
+                                   做类型优化
+</code></pre>
+<h2 id="ctypes-cffi">ctypes / CFFI 调用流程</h2>
+<pre class="plain"><code>Python 代码        ctypes/CFFI          C 共享库          系统调用
+     │               │                    │                 │
+     │  创建参数      │  类型转换           │  执行 C 函数     │
+     ├──────────────→├──────────────────→├────────────────→│
+     │               │                    │                  │
+     │  返回结果      │  类型转换回 Python  │  返回 C 值       │
+     │←──────────────│←──────────────────│←─────────────────│
+</code></pre>
+<h2 id="numba-jit">Numba JIT 编译流程</h2>
+<pre class="plain"><code>Python 函数          @jit 装饰器         LLVM 编译器          机器码
+   │                    │                   │                  │
+   │  首次调用           │  分析函数         │  生成 LLVM IR     │
+   ├───────────────────→├────────────────→├─────────────────→│
+   │                    │                   │                  │
+   │                    │                   │  编译为原生代码    │
+   │                    │                   ├─────────────────→│
+   │                    │                   │                  │
+   │  后续调用           │  直接执行          │                  │
+   │←────────────────────────────────────────────────────────│
+</code></pre>
+<h2 id="_2">方案对比雷达图</h2>
+<pre class="plain"><code>         安装难度
+            ▲
+            │
+     5 ─────┼─────
+            │
+   学习     │     性能
+   曲线 ◄───┼───► 加速比
+            │
+     5 ─────┼─────
+            │
+            ▼
+        适用范围
+
+  ── Numba (性能最高,学习最低)
+  ── Cython (范围最广,学习最高)
+  ── ctypes (安装最低,性能中等)
+  ── CFFI (比 ctypes 更现代)
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

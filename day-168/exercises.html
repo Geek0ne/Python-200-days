@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 168 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 168 正文</a>
+  <h1>Day 168 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-168-ssh-paramiko">Day 168 — SSH 远程管理（paramiko）· 完成清单与练习</h1>
+<blockquote>
+<p>建议顺序：先读 <code>README.md</code>（第 2、3 节是核心），再跑 <code>code/</code> 下 4 个脚本，
+最后做练习。<strong>每道练习都要能回答"为什么"</strong>，而不是"跑通了"。</p>
+</blockquote>
+<hr>
+<h2 id="_1">✅ 今日完成清单</h2>
+<h3 id="_2">一、环境与依赖</h3>
+<ul>
+<li>[ ] 已确认 Python ≥ 3.9：<code>python3 -V</code></li>
+<li>[ ] 已安装 paramiko：<code>pip install paramiko</code></li>
+<li>[ ] 已验证版本：<code>python3 -c "import paramiko; print(paramiko.__version__)"</code></li>
+<li>[ ] 已确认 <code>cryptography</code> 一并装好（paramiko 的加密后端）：
+      <code>python3 -c "import cryptography; print(cryptography.__version__)"</code></li>
+<li>[ ] 有一台可测的 SSH 目标机（任选其一）：<ul>
+<li>本机自测：<code>sudo apt install openssh-server &amp;&amp; sudo systemctl start ssh</code></li>
+<li>容器/虚机：<code>docker run -d -p 2222:22 --name sshd-test linuxserver/openssh-server</code></li>
+<li>云上跳板机（<strong>只读账号，别拿生产 root 练手</strong>）</li>
+</ul>
+</li>
+</ul>
+<h3 id="_3">二、跑通示例代码（先预测输出，再运行）</h3>
+<ul>
+<li>[ ] <code>cd days/day-168-ssh-远程管理/code</code></li>
+<li>[ ] <code>python3 01-basic-ssh.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 01-basic-ssh.py --target &lt;user&gt;@&lt;host&gt; --key ~/.ssh/id_ed25519 --cmd "uname -a"</code>
+      → 看到 <code>exit=0 (成功)</code> 与 stdout 摘要</li>
+<li>[ ] <code>python3 01-basic-ssh.py --target ... --cmd "echo o; echo e &gt;&amp;2; exit 3"</code>
+      → <strong>同时</strong>看到 stdout 与 stderr，退出码 3</li>
+<li>[ ] <code>python3 02-pitfalls.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 02-pitfalls.py</code> → 6 个陷阱逐个复现（陷阱 1 要看到"文件真被删了"）</li>
+<li>[ ] <code>python3 03-advanced-ssh.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 03-advanced-ssh.py --host &lt;h&gt; --user &lt;u&gt; --key &lt;k&gt; --cmd hostname --repeat 5</code>
+      → 观察"首次含握手 vs 之后平均毫秒数"的对比，以及 <strong>1 个 Transport 开了 6 个 channel</strong></li>
+<li>[ ] <code>python3 04-batch-ops.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 04-batch-ops.py --inventory ./inventory.ini --cmd "df -h /" --workers 8 --out ./reports</code>
+      → 退出码符合契约，<code>reports/</code> 下有 <code>batch-audit.jsonl</code> 与 <code>batch-report.json</code></li>
+</ul>
+<h3 id="_4">三、动手改造（"读懂了"的唯一证明）</h3>
+<ul>
+<li>[ ] 把 <code>01</code> 里的 <code>timeout=10</code> 改成 <code>timeout=0.001</code>，观察报错类型；
+      再改成 <code>None</code>，用 <code>timeout 20 python3 ...</code> 强制打断，记录它卡了多久</li>
+<li>[ ] 给 <code>01</code> 的 <code>run()</code> 加一个 <code>stdin_data</code> 参数，支持把内容喂给远端 <code>cat &gt; /tmp/x</code>
+      （提示：先 <code>write</code> 再 <code>shutdown_write()</code>）</li>
+<li>[ ] 把 <code>03</code> 的 <code>--repeat</code> 加到 200，观察"平均 ms/条"是否继续下降并趋于稳定
+      （如果不降了，说明瓶颈已经从握手变成网络 RTT 或远端进程启动）</li>
+<li>[ ] 给 <code>04</code> 增加 <code>--tag &lt;name&gt;</code>，过滤 inventory 里某一组（用别名前缀匹配即可）</li>
+<li>[ ] 把 <code>04</code> 的 <code>--workers</code> 从 8 改成 1，记录总耗时差异，算出本轮的真实并发加速比</li>
+</ul>
+<h3 id="readme">四、概念自检（不看 README）</h3>
+<ul>
+<li>[ ] 我能画出 SSH 四层结构，并说清每层解决什么</li>
+<li>[ ] 我能完整描述公钥认证的 challenge-response 三步，并解释为什么能防重放</li>
+<li>[ ] 我能解释"前向保密"（PFS）防止的是哪种攻击</li>
+<li>[ ] 我能说出 <code>SSHClient</code> / <code>Transport</code> / <code>Channel</code> 三层各自的所有权关系</li>
+<li>[ ] 我能解释为什么"不读 stderr"会导致死锁（提到管道缓冲区大小）</li>
+<li>[ ] 我能说出 <code>get_pty=True</code> 的两个副作用</li>
+<li>[ ] 我能解释 <code>recv_exit_status()</code> 为什么必须在读完流之后调用</li>
+<li>[ ] 我能说出 <code>timeout</code> / <code>banner_timeout</code> / <code>auth_timeout</code> / <code>channel.settimeout()</code> 各防什么</li>
+<li>[ ] 我能解释为什么并发度不是越大越好（<code>MaxStartups</code>）</li>
+<li>[ ] 我能说出退出码 0 / 2 / 1 的语义，以及"为什么 2 不是 1"</li>
+</ul>
+<hr>
+<h2 id="13">📝 基础练习题（1–3）</h2>
+<h3 id="1">练习 1：安全的目标解析与连接自检</h3>
+<p>扩展 <code>01-basic-ssh.py</code> 的 <code>parse_target()</code>，支持从 URL 风格写法解析：</p>
+<pre class="plain"><code>ssh://deploy@web-01:2222      → Target(deploy, web-01, 2222)
+deploy@web-01                 → Target(deploy, web-01, 22)
+web-01                        → 报错（缺少用户，不允许&quot;猜&quot;用户）
+</code></pre>
+<p>要求：</p>
+<ol>
+<li>为三种合法/非法输入各写一个 <code>--self-test</code> 断言</li>
+<li>端口必须是 1~65535，否则 <code>ValueError</code>（不是 <code>AssertionError</code>）</li>
+<li><strong>说明</strong>：为什么"不允许省略用户名"是个好设计？
+   （提示：想想脚本在多用户机器上以 root 运行会发生什么）</li>
+</ol>
+<details>
+<summary>💡 提示</summary>
+
+先剥掉 `ssh://` 前缀，再沿用现在的 `user@host[:port]` 逻辑。
+"不允许猜用户"的好处：避免脚本在不同的 `$USER` 环境下把命令发到错误的账号上
+（`root` 跑 cron 时 `$USER=root`，而你以为自己在操作 `deploy`）。
+</details>
+
+<hr>
+<h3 id="2">练习 2：退出码翻译器</h3>
+<p>写一个 <code>explain_status(code)</code>，把远端退出码翻译成中文，至少覆盖：</p>
+<pre class="plain"><code>0    成功
+1    通用错误
+2    用法错误 / 自定义告警（本课契约）
+126  权限不足（文件不可执行）
+127  命令不存在
+130  被 SIGINT（Ctrl+C）中断
+137  被 SIGKILL 杀死（常见于 OOM）
+143  被 SIGTERM 终止
+</code></pre>
+<p>要求：</p>
+<ol>
+<li>128 以上统一按"被信号 N 杀死"处理，并用 <code>signal.Signals(N-128).name</code> 取名字</li>
+<li>对未知信号号不能抛异常，要优雅降级</li>
+<li>写出 8 条 <code>--self-test</code> 断言</li>
+</ol>
+<hr>
+<h3 id="3sftp">练习 3：SFTP 上传后的强制校验</h3>
+<p>把 <code>01</code> 的 <code>send_file()</code> 升级成"上传 + 校验 + 失败即删"：</p>
+<ol>
+<li><code>put()</code> 之后用远端 <code>md5sum</code>/<code>sha256sum</code> 与本地哈希比对</li>
+<li>不一致时：<strong>删除远端文件</strong>并返回 <code>False</code>（避免留下半个文件被误用）</li>
+<li>远端没有 <code>sha256sum</code> 时，退化为"比对文件大小"，并在返回值里<strong>明确说明降级了</strong></li>
+<li>用一个 5 MB 文件测一次，再用 <code>truncate</code> 造一个"半成品"模拟不一致</li>
+</ol>
+<details>
+<summary>💡 提示</summary>
+
+远程取哈希：`client.exec_command(f"sha256sum {shlex.quote(path)}")`，
+输出第一列就是哈希。删除：`sftp.remove(path)`。
+"明确说明降级"很重要 —— 安全相关的能力降级必须**可见**，否则等于没有。
+</details>
+
+<hr>
+<h2 id="45">🚀 进阶挑战题（4–5）</h2>
+<h3 id="4">练习 4：把串行批处理改成"有背压的流水线"</h3>
+<p>现在 <code>04</code> 是"先全部提交给线程池，再等全部完成"。改成<strong>有背压</strong>的版本：</p>
+<ol>
+<li>并发上限 <code>workers</code></li>
+<li>但结果<strong>边完成边打印</strong>（不要等全部跑完才出表格）</li>
+<li>每完成一台，就把它的行追加写入 <code>batch-audit.jsonl</code>（流式落盘，进程被打断也不丢已完成的结果）</li>
+<li>增加 <code>--stop-on-fail &lt;n&gt;</code>：连续 n 台 unreachable 就<strong>停止派发新任务</strong>，
+   并打印"疑似网络/凭证问题，已中止"</li>
+</ol>
+<p><strong>思考并写下</strong>：为什么"流式落盘"比"最后一次性写"更适合运维脚本？
+（提示：想想你按下 Ctrl+C 的那一刻希望留下什么。）</p>
+<details>
+<summary>💡 提示</summary>
+
+用 `concurrent.futures.as_completed()` 而不是 `wait()`：前者每完成一个就 yield。
+"停止派发"用 `ThreadPoolExecutor.shutdown(cancel_futures=True)`（Python 3.9+）
+或自己维护一个 `threading.Event` 让未开始的任务立刻返回。
+</details>
+
+<hr>
+<h3 id="5">练习 5：写一个"声明式"的巡检任务</h3>
+<p>把"一堆命令"升级成"任务清单"，每条任务有自己的判定规则：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">CHECKS</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;磁盘使用率&quot;</span><span class="p">,</span> <span class="s2">&quot;cmd&quot;</span><span class="p">:</span> <span class="s2">&quot;df -P / | awk &#39;NR==2{print $5}&#39;&quot;</span><span class="p">,</span>
+     <span class="s2">&quot;ok&quot;</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">out</span><span class="p">:</span> <span class="nb">int</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">rstrip</span><span class="p">(</span><span class="s1">&#39;%&#39;</span><span class="p">))</span> <span class="o">&lt;</span> <span class="mi">85</span><span class="p">,</span>
+     <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;warn&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;负载&quot;</span><span class="p">,</span> <span class="s2">&quot;cmd&quot;</span><span class="p">:</span> <span class="s2">&quot;cat /proc/loadavg | awk &#39;{print $1}&#39;&quot;</span><span class="p">,</span>
+     <span class="s2">&quot;ok&quot;</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">out</span><span class="p">:</span> <span class="nb">float</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span> <span class="o">&lt;</span> <span class="n">os</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span><span class="p">,</span>
+     <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;warn&quot;</span><span class="p">},</span>
+    <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;服务存活&quot;</span><span class="p">,</span> <span class="s2">&quot;cmd&quot;</span><span class="p">:</span> <span class="s2">&quot;systemctl is-active nginx&quot;</span><span class="p">,</span> <span class="s2">&quot;ok&quot;</span><span class="p">:</span> <span class="k">lambda</span> <span class="n">o</span><span class="p">:</span> <span class="n">o</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="o">==</span> <span class="s2">&quot;active&quot;</span><span class="p">,</span>
+     <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;fail&quot;</span><span class="p">},</span>
+<span class="p">]</span>
+</code></pre></div>
+<p>要求：</p>
+<ol>
+<li>每台机器输出 <code>host × check</code> 的<strong>矩阵</strong>结果（用 ASCII 表格）</li>
+<li><code>fail</code> 级别的检查失败 → 该主机整体 status 变 <code>fail</code> 并让整批退出码变成 1（若全失败）或 2</li>
+<li>所有失败项汇总成一节"需要人工关注"的清单，放在报告最前面</li>
+<li>支持 <code>--only 磁盘使用率</code> 只跑指定检查</li>
+</ol>
+<p><strong>为什么值得做</strong>：运维的终点不是"把命令跑一遍"，而是"把<strong>期望状态</strong>表达出来，
+让机器告诉你哪台偏离了"。这就是从"脚本"走向"配置管理与可观测"的第一步。</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 139 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 139 正文</a>
+  <h1>Day 139 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-139-">Day 139 - 数据存储管道 图解</h1>
+<h2 id="1-ascii">1. 四层管道流水线（ASCII）</h2>
+<pre class="plain"><code> Spider ──yield item──▶ ┌────────────┐   ┌────────────┐   ┌────────────┐   ┌────────────┐
+                       │ P1 清洗层  │──▶│ P2 校验层  │──▶│ P3 去重层  │──▶│ P4 入库层  │
+                       │ strip/类型 │   │ 必填/范围  │   │ Redis SADD │   │ 批量缓冲   │
+                       └────────────┘   └─────┬──────┘   └─────┬──────┘   └─────┬──────┘
+                                               │ DropItem        │ DropItem        │ flush
+                                               ▼                 ▼                 ▼
+                                            丢弃+计数        丢弃+计数    MySQL/MongoDB 双写
+</code></pre>
+<h2 id="2-mermaid">2. 批量缓冲时间线（Mermaid）</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant S as Spider
+    participant B as Buffer(内存)
+    participant DB as 数据库
+    S-&gt;&gt;B: item 1..49 (攒批)
+    S-&gt;&gt;B: item 50 (达到 BATCH)
+    B-&gt;&gt;DB: executemany / insert_many (一次往返)
+    S-&gt;&gt;B: item 51..73
+    Note over B: ⚠️ 崩溃窗口：未 flush 数据丢失
+    S-&gt;&gt;DB: close_spider -&gt; flush 剩余 23 条（兜底）
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant S as Spider
+    participant B as Buffer(内存)
+    participant DB as 数据库
+    S-&gt;&gt;B: item 1..49 (攒批)
+    S-&gt;&gt;B: item 50 (达到 BATCH)
+    B-&gt;&gt;DB: executemany / insert_many (一次往返)
+    S-&gt;&gt;B: item 51..73
+    Note over B: ⚠️ 崩溃窗口：未 flush 数据丢失
+    S-&gt;&gt;DB: close_spider -&gt; flush 剩余 23 条（兜底）
+</code></pre></div>
+<h2 id="3">3. 存储选型决策树</h2>
+<pre class="plain"><code>要存的是什么？
+├── 去重/状态/热缓存 ──────────▶ Redis (SET/SADD/ZADD)
+├── 字段多变、嵌套深、原始留档 ─▶ MongoDB (唯一索引 + upsert)
+└── 结构稳定、要 JOIN/事务/报表 ▶ MySQL (唯一键 + ON DUPLICATE KEY UPDATE)
+        └── 大数据量？→ 原始层 Mongo，ETL 后进 MySQL，各取所长
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

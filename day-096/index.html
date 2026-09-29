@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 96 — AST 与代码分析</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 96 — AST 与代码分析</h1>
+  <div class="lmeta">
+    <span class="badge">进阶与性能优化</span>
+    <span class="badge">798 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-096-ast与代码分析" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#ast">一、抽象语法树（ast 模块）</a>
+<a class="toc-l3" href="#11-ast">1.1 什么是 AST？</a>
+<a class="toc-l3" href="#12-ast">1.2 ast 模块核心概念</a>
+<a class="toc-l3" href="#13">1.3 基本操作</a>
+<a class="toc-l3" href="#14-ast">1.4 遍历 AST 的三种方式</a>
+<a class="toc-l2" href="#_1">二、代码生成与变换</a>
+<a class="toc-l3" href="#21-astparse-astunparse">2.1 ast.parse 与 ast.unparse</a>
+<a class="toc-l3" href="#22-ast">2.2 手动构建 AST 节点</a>
+<a class="toc-l3" href="#23">2.3 代码变换实战：自动添加类型注解</a>
+<a class="toc-l2" href="#_2">三、静态分析工具实现</a>
+<a class="toc-l3" href="#31">3.1 什么是静态分析？</a>
+<a class="toc-l3" href="#32">3.2 常见分析维度</a>
+<a class="toc-l3" href="#33">3.3 实现一个函数复杂度分析器</a>
+<a class="toc-l3" href="#34">3.4 实现变量作用域分析器</a>
+<a class="toc-l2" href="#linter">四、实战：自定义 Linter</a>
+<a class="toc-l3" href="#41-linter">4.1 Linter 的工作流程</a>
+<a class="toc-l3" href="#42-linter">4.2 实现一个迷你 Linter</a>
+<a class="toc-l3" href="#43">4.3 进阶：实现多文件分析</a>
+<a class="toc-l2" href="#ast_1">五、AST 高级技巧</a>
+<a class="toc-l3" href="#51-exec-compile-ast">5.1 exec 与 compile 配合 AST</a>
+<a class="toc-l3" href="#52-astliteral_eval">5.2 ast.literal_eval 的安全求值</a>
+<a class="toc-l3" href="#53-ast">5.3 代码格式化的 AST 实现</a>
+<a class="toc-l3" href="#54">5.4 安全的动态代码执行流程</a>
+<a class="toc-l2" href="#mermaid">六、Mermaid 图解</a>
+<a class="toc-l3" href="#ast_2">AST 解析流程</a>
+<a class="toc-l3" href="#linter_1">Linter 分析流程</a>
+<a class="toc-l2" href="#_3">七、思考题</a>
+<a class="toc-l2" href="#_4">八、总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-096-ast">Day 096 — AST 与代码分析</h1>
+<blockquote>
+<p>抽象语法树是 Python 理解代码的"骨架"。掌握 AST，你就能让程序"读懂"并"改造"自身。</p>
+</blockquote>
+<hr>
+<h2 id="ast">一、抽象语法树（ast 模块）</h2>
+<h3 id="11-ast">1.1 什么是 AST？</h3>
+<p><strong>抽象语法树</strong>（Abstract Syntax Tree）是源代码的树状结构化表示。Python 解释器在执行代码前，会先把源码解析成 AST，再编译成字节码。</p>
+<pre class="plain"><code>源代码 → AST → 字节码 → 执行
+         ↑
+      我们要操作这一层
+</code></pre>
+<p><strong>为什么需要 AST？</strong></p>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>静态分析</td>
+<td>不运行代码就能检查语法和结构</td>
+</tr>
+<tr>
+<td>代码变换</td>
+<td>自动修改/生成代码</td>
+</tr>
+<tr>
+<td>Lint 工具</td>
+<td>实现自定义代码规范检查</td>
+</tr>
+<tr>
+<td>代码生成</td>
+<td>从数据或 DSL 生成 Python 代码</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12-ast">1.2 ast 模块核心概念</h3>
+<p><strong>Node 类型层级</strong>（继承关系）：</p>
+<pre class="plain"><code>AST (base)
+├── stmt (语句)
+│   ├── FunctionDef    # def foo():
+│   ├── ClassDef       # class Foo:
+│   ├── Return         # return x
+│   ├── Assign         # x = 1
+│   ├── If             # if ...:
+│   ├── For            # for x in ...:
+│   ├── While          # while ...:
+│   ├── Import         # import os
+│   ├── With           # with open(...) as f:
+│   └── Expr           # expression as statement
+├── expr (表达式)
+│   ├── Name           # 变量名
+│   ├── Constant       # 字面量（3.8+）
+│   ├── BinOp          # a + b
+│   ├── Call           # func()
+│   ├── Attribute      # obj.attr
+│   ├── IfExp          # a if cond else b
+│   ├── ListComp       # [x for x in ...]
+│   └── Lambda         # lambda x: ...
+├── operator (运算符)
+│   ├── Add, Sub, Mult, Div, Mod, Pow
+│   └── LShift, RShift, BitOr, BitXor, BitAnd
+└── keyword (关键字参数)
+</code></pre>
+<h3 id="13">1.3 基本操作</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="c1"># 解析源代码为 AST</span>
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;x = 1 + 2&quot;</span><span class="p">)</span>
+
+<span class="c1"># 将 AST 转回源代码</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">unparse</span><span class="p">(</span><span class="n">tree</span><span class="p">))</span>  <span class="c1"># &quot;x = 1 + 2&quot;（Python 3.9+）</span>
+
+<span class="c1"># 查看 AST 结构</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">tree</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span>
+</code></pre></div>
+<p><strong>ast.dump 输出解读</strong>：</p>
+<pre class="plain"><code>Module(
+  body=[
+    Assign(
+      targets=[Name(id=&#x27;x&#x27;, ctx=Store())],
+      value=BinOp(
+        left=Constant(value=1),
+        op=Add(),
+        right=Constant(value=2)
+      )
+    )
+  ]
+)
+</code></pre>
+<p><strong>关键字段含义</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ctx</code></td>
+<td>上下文：<code>Load()</code>=读取，<code>Store()</code>=赋值，<code>Del()</code>=删除</td>
+</tr>
+<tr>
+<td><code>op</code></td>
+<td>运算符类型（<code>Add()</code>, <code>Sub()</code>, <code>Mult()</code> 等）</td>
+</tr>
+<tr>
+<td><code>id</code></td>
+<td>标识符名称</td>
+</tr>
+<tr>
+<td><code>value</code></td>
+<td>字面量的值</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14-ast">1.4 遍历 AST 的三种方式</h3>
+<h4 id="astnodevisitor">方式一：ast.NodeVisitor（推荐）</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="k">class</span> <span class="nc">NameFinder</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">NodeVisitor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;收集所有变量名&quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">names</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">visit_Name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">names</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">id</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>  <span class="c1"># 继续遍历子节点</span>
+
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;x = a + b; print(x)&quot;</span><span class="p">)</span>
+<span class="n">finder</span> <span class="o">=</span> <span class="n">NameFinder</span><span class="p">()</span>
+<span class="n">finder</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">finder</span><span class="o">.</span><span class="n">names</span><span class="p">)</span>  <span class="c1"># [&#39;x&#39;, &#39;a&#39;, &#39;b&#39;, &#39;x&#39;]</span>
+</code></pre></div>
+<h4 id="astwalk">方式二：ast.walk（递归遍历）</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;x = 1 + 2&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">tree</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">node</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot; &quot;</span><span class="p">)</span>
+<span class="c1"># Module Assign Name Constant BinOp Add Constant</span>
+</code></pre></div>
+<h4 id="astnodetransformer-ast">方式三：ast.NodeTransformer（修改 AST）</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="k">class</span> <span class="nc">NumAdder</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">NodeTransformer</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;把所有数字加 1&quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="nf">visit_Constant</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">)):</span>
+            <span class="k">return</span> <span class="n">ast</span><span class="o">.</span><span class="n">Constant</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">value</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">node</span>
+
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;x = 10 + 20&quot;</span><span class="p">)</span>
+<span class="n">new_tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">NodeTransformer</span><span class="p">()</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span>
+<span class="n">ast</span><span class="o">.</span><span class="n">fix_missing_locations</span><span class="p">(</span><span class="n">new_tree</span><span class="p">)</span>  <span class="c1"># 补全行号信息</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">unparse</span><span class="p">(</span><span class="n">new_tree</span><span class="p">))</span>  <span class="c1"># &quot;x = 11 + 21&quot;</span>
+</code></pre></div>
+<hr>
+<h2 id="_1">二、代码生成与变换</h2>
+<h3 id="21-astparse-astunparse">2.1 ast.parse 与 ast.unparse</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="c1"># 解析</span>
+<span class="n">source</span> <span class="o">=</span> <span class="s2">&quot;result = sum([i**2 for i in range(10)])&quot;</span>
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>
+
+<span class="c1"># 代码变换（在 AST 上操作）</span>
+<span class="c1"># ...（中间变换逻辑）...</span>
+
+<span class="c1"># 还原为代码</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">unparse</span><span class="p">(</span><span class="n">tree</span><span class="p">))</span>  <span class="c1"># Python 3.9+</span>
+</code></pre></div>
+<p><strong>⚠️ Python 版本注意</strong>：<br>
+- <code>ast.unparse()</code> 需要 <strong>Python 3.9+</strong><br>
+- 3.8 可用 <code>astor</code> 库：<code>pip install astor</code> → <code>astor.to_source(tree)</code><br>
+- 3.7 可用 <code>astunparse</code>：<code>pip install astunparse</code></p>
+<h3 id="22-ast">2.2 手动构建 AST 节点</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="c1"># 构建：print(&quot;Hello, AST!&quot;)</span>
+<span class="n">node</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">Expr</span><span class="p">(</span>
+    <span class="n">value</span><span class="o">=</span><span class="n">ast</span><span class="o">.</span><span class="n">Call</span><span class="p">(</span>
+        <span class="n">func</span><span class="o">=</span><span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">(</span><span class="nb">id</span><span class="o">=</span><span class="s1">&#39;print&#39;</span><span class="p">,</span> <span class="n">ctx</span><span class="o">=</span><span class="n">ast</span><span class="o">.</span><span class="n">Load</span><span class="p">()),</span>
+        <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">ast</span><span class="o">.</span><span class="n">Constant</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;Hello, AST!&#39;</span><span class="p">)],</span>
+        <span class="n">keywords</span><span class="o">=</span><span class="p">[]</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">Module</span><span class="p">(</span><span class="n">body</span><span class="o">=</span><span class="p">[</span><span class="n">node</span><span class="p">],</span> <span class="n">type_ignores</span><span class="o">=</span><span class="p">[])</span>
+<span class="n">ast</span><span class="o">.</span><span class="n">fix_missing_locations</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span>
+<span class="n">code</span> <span class="o">=</span> <span class="nb">compile</span><span class="p">(</span><span class="n">tree</span><span class="p">,</span> <span class="s1">&#39;&lt;ast&gt;&#39;</span><span class="p">,</span> <span class="s1">&#39;exec&#39;</span><span class="p">)</span>
+<span class="n">exec</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>  <span class="c1"># 输出: Hello, AST!</span>
+</code></pre></div>
+<p><strong>构建节点的速查表</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>目标代码</th>
+<th>AST 构造</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>x = 1</code></td>
+<td><code>Assign(targets=[Name('x', Store())], value=Constant(1))</code></td>
+</tr>
+<tr>
+<td><code>return x</code></td>
+<td><code>Return(value=Name('x', Load()))</code></td>
+</tr>
+<tr>
+<td><code>if x: pass</code></td>
+<td><code>If(test=Name('x', Load()), body=[Pass()], orelse=[])</code></td>
+</tr>
+<tr>
+<td><code>def f(): pass</code></td>
+<td><code>FunctionDef(name='f', args=arguments(...), body=[Pass()])</code></td>
+</tr>
+<tr>
+<td><code>import os</code></td>
+<td><code>Import(names=[alias(name='os')])</code></td>
+</tr>
+<tr>
+<td><code>a + b</code></td>
+<td><code>BinOp(left=Name('a'), op=Add(), right=Name('b'))</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="23">2.3 代码变换实战：自动添加类型注解</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="k">class</span> <span class="nc">TypeAnnotator</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">NodeTransformer</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;给函数参数添加类型注解&quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">annotations</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+        <span class="c1"># annotations: {&quot;x&quot;: &quot;int&quot;, &quot;y&quot;: &quot;str&quot;}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">annotations</span> <span class="o">=</span> <span class="n">annotations</span>
+
+    <span class="k">def</span> <span class="nf">visit_FunctionDef</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">args</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">arg</span><span class="o">.</span><span class="n">arg</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">annotations</span> <span class="ow">and</span> <span class="n">arg</span><span class="o">.</span><span class="n">annotation</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">arg</span><span class="o">.</span><span class="n">annotation</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">(</span>
+                    <span class="nb">id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">annotations</span><span class="p">[</span><span class="n">arg</span><span class="o">.</span><span class="n">arg</span><span class="p">],</span>
+                    <span class="n">ctx</span><span class="o">=</span><span class="n">ast</span><span class="o">.</span><span class="n">Load</span><span class="p">()</span>
+                <span class="p">)</span>
+        <span class="k">return</span> <span class="n">node</span>
+
+<span class="n">source</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">def greet(name, age):</span>
+<span class="s2">    return f&quot;Hello </span><span class="si">{name}</span><span class="s2">, you are </span><span class="si">{age}</span><span class="s2">&quot;</span>
+<span class="s2">&quot;&quot;&quot;</span>
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>
+<span class="n">annotator</span> <span class="o">=</span> <span class="n">TypeAnnotator</span><span class="p">({</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;str&quot;</span><span class="p">,</span> <span class="s2">&quot;age&quot;</span><span class="p">:</span> <span class="s2">&quot;int&quot;</span><span class="p">})</span>
+<span class="n">new_tree</span> <span class="o">=</span> <span class="n">annotator</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span>
+<span class="n">ast</span><span class="o">.</span><span class="n">fix_missing_locations</span><span class="p">(</span><span class="n">new_tree</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">unparse</span><span class="p">(</span><span class="n">new_tree</span><span class="p">))</span>
+</code></pre></div>
+<hr>
+<h2 id="_2">三、静态分析工具实现</h2>
+<h3 id="31">3.1 什么是静态分析？</h3>
+<p><strong>静态分析</strong>是指<strong>不运行程序</strong>的情况下，通过分析源代码的结构和内容来发现潜在问题。</p>
+<pre class="plain"><code>源代码 → 解析器 → AST → 分析器 → 报告
+                            ↑
+                        规则在这里执行
+</code></pre>
+<h3 id="32">3.2 常见分析维度</h3>
+<table>
+<thead>
+<tr>
+<th>分析类型</th>
+<th>检查内容</th>
+<th>典型工具</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>语法检查</td>
+<td>代码是否合法</td>
+<td>ast.parse 直接报错</td>
+</tr>
+<tr>
+<td>命名规范</td>
+<td>变量/函数命名风格</td>
+<td>pylint, flake8</td>
+</tr>
+<tr>
+<td>复杂度分析</td>
+<td>函数复杂度、嵌套深度</td>
+<td>radon</td>
+</tr>
+<tr>
+<td>安全检查</td>
+<td>危险函数调用、SQL 注入</td>
+<td>bandit</td>
+</tr>
+<tr>
+<td>类型检查</td>
+<td>类型注解一致性</td>
+<td>mypy</td>
+</tr>
+<tr>
+<td>死代码检测</td>
+<td>未使用的变量/导入</td>
+<td>vulture</td>
+</tr>
+<tr>
+<td>依赖分析</td>
+<td>函数间调用关系</td>
+<td>自定义</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 实现一个函数复杂度分析器</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="k">class</span> <span class="nc">ComplexityAnalyzer</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">NodeVisitor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;计算函数的圈复杂度（Cyclomatic Complexity）&quot;&quot;&quot;</span>
+    <span class="c1"># 复杂度 = 分支数 + 1</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">_calc</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;计算单个函数的复杂度&quot;&quot;&quot;</span>
+        <span class="n">complexity</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># 基础复杂度</span>
+
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">node</span><span class="p">):</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">If</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">While</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">For</span><span class="p">,</span>
+                                  <span class="n">ast</span><span class="o">.</span><span class="n">ExceptHandler</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">With</span><span class="p">)):</span>
+                <span class="n">complexity</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">BoolOp</span><span class="p">):</span>
+                <span class="c1"># and/or 每个操作数 +1</span>
+                <span class="n">complexity</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">child</span><span class="o">.</span><span class="n">values</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Assert</span><span class="p">):</span>
+                <span class="n">complexity</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="k">return</span> <span class="n">complexity</span>
+
+    <span class="k">def</span> <span class="nf">visit_FunctionDef</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="n">cc</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_calc</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">cc</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+<span class="n">source</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">def risky_function(a, b):</span>
+<span class="s2">    if a &gt; 0:</span>
+<span class="s2">        if b &gt; 0:</span>
+<span class="s2">            return a + b</span>
+<span class="s2">    elif a &lt; 0:</span>
+<span class="s2">        for i in range(b):</span>
+<span class="s2">            if i % 2 == 0:</span>
+<span class="s2">                print(i)</span>
+<span class="s2">    else:</span>
+<span class="s2">        try:</span>
+<span class="s2">            result = a / b</span>
+<span class="s2">        except ZeroDivisionError:</span>
+<span class="s2">            result = 0</span>
+<span class="s2">    return result</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>
+<span class="n">analyzer</span> <span class="o">=</span> <span class="n">ComplexityAnalyzer</span><span class="p">()</span>
+<span class="n">analyzer</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">cc</span><span class="p">,</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">analyzer</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+    <span class="n">level</span> <span class="o">=</span> <span class="s2">&quot;🟢 简单&quot;</span> <span class="k">if</span> <span class="n">cc</span> <span class="o">&lt;=</span> <span class="mi">5</span> <span class="k">else</span> <span class="s2">&quot;🟡 中等&quot;</span> <span class="k">if</span> <span class="n">cc</span> <span class="o">&lt;=</span> <span class="mi">10</span> <span class="k">else</span> <span class="s2">&quot;🔴 复杂&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;函数 </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">（第</span><span class="si">{</span><span class="n">line</span><span class="si">}</span><span class="s2">行）: 圈复杂度 = </span><span class="si">{</span><span class="n">cc</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">level</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="34">3.4 实现变量作用域分析器</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="k">class</span> <span class="nc">ScopeAnalyzer</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">NodeVisitor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;分析函数内变量的定义和使用&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">definitions</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># name -&gt; [line]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">usages</span> <span class="o">=</span> <span class="p">{}</span>       <span class="c1"># name -&gt; [line]</span>
+
+    <span class="k">def</span> <span class="nf">visit_FunctionDef</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="c1"># 分析函数体</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_analyze_body</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_analyze_body</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func_node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;分析函数体中的变量&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">func_node</span><span class="p">):</span>
+            <span class="c1"># 赋值 = 定义</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Assign</span><span class="p">):</span>
+                <span class="k">for</span> <span class="n">target</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">targets</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">):</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_add_def</span><span class="p">(</span><span class="n">target</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">)</span>
+                <span class="c1"># 右侧是使用</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_check_value</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+            <span class="c1"># For 循环变量 = 定义</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">For</span><span class="p">):</span>
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">target</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">):</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_add_def</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">)</span>
+
+            <span class="c1"># 名称引用 = 使用</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">ctx</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Load</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_add_use</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_def</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">line</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">definitions</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_use</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">line</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">usages</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_check_value</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;检查表达式中的名称引用&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">node</span><span class="p">):</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">child</span><span class="o">.</span><span class="n">ctx</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Load</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_add_use</span><span class="p">(</span><span class="n">child</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">child</span><span class="o">.</span><span class="n">lineno</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">report</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># 未使用的变量</span>
+        <span class="n">unused</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">definitions</span><span class="p">)</span> <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">usages</span><span class="p">)</span>
+        <span class="c1"># 未定义的变量（可能是全局变量）</span>
+        <span class="n">undefined</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">usages</span><span class="p">)</span> <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">definitions</span><span class="p">)</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=== 变量分析报告 ===&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">unused</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;未使用的变量: </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">unused</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;所有变量均被使用 ✓&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">undefined</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;可能的外部变量: </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">undefined</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">source</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">def analyze(x, y):</span>
+<span class="s2">    temp = x + y</span>
+<span class="s2">    unused_var = 42</span>
+<span class="s2">    result = temp * 2</span>
+<span class="s2">    print(result)</span>
+<span class="s2">    return result</span>
+<span class="s2">&quot;&quot;&quot;</span>
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">tree</span><span class="p">):</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">FunctionDef</span><span class="p">):</span>
+        <span class="n">analyzer</span> <span class="o">=</span> <span class="n">ScopeAnalyzer</span><span class="p">()</span>
+        <span class="n">analyzer</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="n">analyzer</span><span class="o">.</span><span class="n">report</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="linter">四、实战：自定义 Linter</h2>
+<h3 id="41-linter">4.1 Linter 的工作流程</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│              自定义 Linter                    │
+├─────────────────────────────────────────────┤
+│                                             │
+│  1. 读取源文件                               │
+│     ↓                                       │
+│  2. ast.parse() 解析为 AST                  │
+│     ↓                                       │
+│  3. 遍历 AST，运行规则检查器                  │
+│     ↓                                       │
+│  4. 收集所有告警                              │
+│     ↓                                       │
+│  5. 格式化输出报告                            │
+│                                             │
+└─────────────────────────────────────────────┘
+</code></pre>
+<h3 id="42-linter">4.2 实现一个迷你 Linter</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">LintWarning</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;一条 Lint 告警&quot;&quot;&quot;</span>
+    <span class="n">line</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">col</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">code</span><span class="p">:</span> <span class="nb">str</span>       <span class="c1"># e.g. &quot;W001&quot;</span>
+    <span class="n">message</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">severity</span><span class="p">:</span> <span class="nb">str</span>   <span class="c1"># &quot;warning&quot; | &quot;error&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;  L</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">line</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">col</span><span class="si">}</span><span class="s2"> [</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">severity</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">code</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">Linter</span><span class="p">(</span><span class="n">ast</span><span class="o">.</span><span class="n">NodeVisitor</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;自定义 Linter：检查常见代码问题&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">LintWarning</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="c1"># ===== 规则集合 =====</span>
+
+    <span class="k">def</span> <span class="nf">visit_FunctionDef</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_func_name</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_func_length</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_func_args</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">visit_Assign</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_var_name</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">visit_Call</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_bare_except</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">visit_ClassDef</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_check_class_name</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">generic_visit</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+
+    <span class="c1"># ===== 具体规则 =====</span>
+
+    <span class="k">def</span> <span class="nf">_check_func_name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;规则 W001：函数名应使用 snake_case&quot;&quot;&quot;</span>
+        <span class="kn">import</span> <span class="nn">re</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;^[a-z_][a-z0-9_]*$&#39;</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">LintWarning</span><span class="p">(</span>
+                <span class="n">line</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">,</span>
+                <span class="n">col</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">col_offset</span><span class="p">,</span>
+                <span class="n">code</span><span class="o">=</span><span class="s2">&quot;W001&quot;</span><span class="p">,</span>
+                <span class="n">message</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;函数名 &#39;</span><span class="si">{</span><span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; 应使用 snake_case 命名&quot;</span><span class="p">,</span>
+                <span class="n">severity</span><span class="o">=</span><span class="s2">&quot;warning&quot;</span>
+            <span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">_check_func_length</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;规则 W002：函数不应超过 50 行&quot;&quot;&quot;</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="s1">&#39;end_lineno&#39;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">end</span><span class="p">:</span>
+            <span class="n">length</span> <span class="o">=</span> <span class="n">end</span> <span class="o">-</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">length</span> <span class="o">&gt;</span> <span class="mi">50</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">LintWarning</span><span class="p">(</span>
+                    <span class="n">line</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">,</span>
+                    <span class="n">col</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">col_offset</span><span class="p">,</span>
+                    <span class="n">code</span><span class="o">=</span><span class="s2">&quot;W002&quot;</span><span class="p">,</span>
+                    <span class="n">message</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;函数 &#39;</span><span class="si">{</span><span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; 有 </span><span class="si">{</span><span class="n">length</span><span class="si">}</span><span class="s2"> 行，建议不超过 50 行&quot;</span><span class="p">,</span>
+                    <span class="n">severity</span><span class="o">=</span><span class="s2">&quot;warning&quot;</span>
+                <span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">_check_func_args</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;规则 W003：函数参数不应超过 5 个&quot;&quot;&quot;</span>
+        <span class="n">arg_count</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">args</span><span class="o">.</span><span class="n">args</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">arg_count</span> <span class="o">&gt;</span> <span class="mi">5</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">LintWarning</span><span class="p">(</span>
+                <span class="n">line</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">,</span>
+                <span class="n">col</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">col_offset</span><span class="p">,</span>
+                <span class="n">code</span><span class="o">=</span><span class="s2">&quot;W003&quot;</span><span class="p">,</span>
+                <span class="n">message</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;函数 &#39;</span><span class="si">{</span><span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; 有 </span><span class="si">{</span><span class="n">arg_count</span><span class="si">}</span><span class="s2"> 个参数，建议不超过 5 个&quot;</span><span class="p">,</span>
+                <span class="n">severity</span><span class="o">=</span><span class="s2">&quot;warning&quot;</span>
+            <span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">_check_var_name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;规则 W004：变量名应使用 snake_case&quot;&quot;&quot;</span>
+        <span class="kn">import</span> <span class="nn">re</span>
+        <span class="k">for</span> <span class="n">target</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">targets</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;^[a-z_][a-z0-9_]*$&#39;</span><span class="p">,</span> <span class="n">target</span><span class="o">.</span><span class="n">id</span><span class="p">):</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">target</span><span class="o">.</span><span class="n">id</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;_&#39;</span><span class="p">):</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">LintWarning</span><span class="p">(</span>
+                        <span class="n">line</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">,</span>
+                        <span class="n">col</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">col_offset</span><span class="p">,</span>
+                        <span class="n">code</span><span class="o">=</span><span class="s2">&quot;W004&quot;</span><span class="p">,</span>
+                        <span class="n">message</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;变量名 &#39;</span><span class="si">{</span><span class="n">target</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2">&#39; 应使用 snake_case&quot;</span><span class="p">,</span>
+                        <span class="n">severity</span><span class="o">=</span><span class="s2">&quot;warning&quot;</span>
+                    <span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">_check_class_name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;规则 W005：类名应使用 PascalCase&quot;&quot;&quot;</span>
+        <span class="kn">import</span> <span class="nn">re</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;^[A-Z][a-zA-Z0-9]*$&#39;</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">LintWarning</span><span class="p">(</span>
+                <span class="n">line</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">lineno</span><span class="p">,</span>
+                <span class="n">col</span><span class="o">=</span><span class="n">node</span><span class="o">.</span><span class="n">col_offset</span><span class="p">,</span>
+                <span class="n">code</span><span class="o">=</span><span class="s2">&quot;W005&quot;</span><span class="p">,</span>
+                <span class="n">message</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;类名 &#39;</span><span class="si">{</span><span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; 应使用 PascalCase&quot;</span><span class="p">,</span>
+                <span class="n">severity</span><span class="o">=</span><span class="s2">&quot;warning&quot;</span>
+            <span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">_check_bare_except</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;规则 E001：不应使用裸 except&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">func</span><span class="p">,</span> <span class="n">ast</span><span class="o">.</span><span class="n">Name</span><span class="p">)</span> <span class="ow">and</span> <span class="n">node</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="n">id</span> <span class="o">==</span> <span class="s1">&#39;raise&#39;</span><span class="p">:</span>
+            <span class="k">pass</span>  <span class="c1"># skip raise</span>
+        <span class="c1"># 注意：bare except 检查在 ExceptionHandler 节点</span>
+
+    <span class="k">def</span> <span class="nf">report</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;✅ 未发现问题！&quot;</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;发现 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个问题：</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">warnings</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="o">.</span><span class="n">line</span><span class="p">):</span>
+            <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">w</span><span class="p">))</span>
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">lint_file</span><span class="p">(</span><span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;对单个文件运行 Linter&quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="s1">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">source</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+    <span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="n">filepath</span><span class="p">)</span>
+    <span class="n">linter</span> <span class="o">=</span> <span class="n">Linter</span><span class="p">()</span>
+    <span class="n">linter</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📄 </span><span class="si">{</span><span class="n">filepath</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">linter</span><span class="o">.</span><span class="n">report</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">linter</span><span class="o">.</span><span class="n">warnings</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;用法: python linter.py &lt;file.py&gt;&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+    <span class="n">all_warnings</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="n">sys</span><span class="o">.</span><span class="n">argv</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+        <span class="n">all_warnings</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">lint_file</span><span class="p">(</span><span class="n">path</span><span class="p">))</span>
+
+    <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span> <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">severity</span> <span class="o">==</span> <span class="s2">&quot;error&quot;</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">all_warnings</span><span class="p">)</span> <span class="k">else</span> <span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="43">4.3 进阶：实现多文件分析</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+
+<span class="k">class</span> <span class="nc">ProjectLinter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;项目级别的 Linter&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">root_dir</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">root_dir</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span> <span class="nf">find_python_files</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;递归查找所有 .py 文件&quot;&quot;&quot;</span>
+        <span class="n">files</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">path</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span><span class="o">.</span><span class="n">rglob</span><span class="p">(</span><span class="s2">&quot;*.py&quot;</span><span class="p">):</span>
+            <span class="c1"># 跳过常见的不需要检查的目录</span>
+            <span class="n">parts</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">parts</span>
+            <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">skip</span> <span class="ow">in</span> <span class="n">parts</span> <span class="k">for</span> <span class="n">skip</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;venv&#39;</span><span class="p">,</span> <span class="s1">&#39;.venv&#39;</span><span class="p">,</span> <span class="s1">&#39;node_modules&#39;</span><span class="p">,</span> <span class="s1">&#39;__pycache__&#39;</span><span class="p">]):</span>
+                <span class="k">continue</span>
+            <span class="n">files</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">files</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">lint_file</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filepath</span><span class="p">:</span> <span class="n">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;分析单个文件&quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">source</span> <span class="o">=</span> <span class="n">filepath</span><span class="o">.</span><span class="n">read_text</span><span class="p">(</span><span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)</span>
+            <span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">filename</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">filepath</span><span class="p">))</span>
+
+            <span class="c1"># 自定义分析器</span>
+            <span class="n">linter</span> <span class="o">=</span> <span class="n">Linter</span><span class="p">()</span>
+            <span class="n">linter</span><span class="o">.</span><span class="n">visit</span><span class="p">(</span><span class="n">tree</span><span class="p">)</span>
+
+            <span class="k">return</span> <span class="n">linter</span><span class="o">.</span><span class="n">warnings</span>
+        <span class="k">except</span> <span class="ne">SyntaxError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[</span><span class="n">LintWarning</span><span class="p">(</span>
+                <span class="n">line</span><span class="o">=</span><span class="n">e</span><span class="o">.</span><span class="n">lineno</span> <span class="ow">or</span> <span class="mi">1</span><span class="p">,</span>
+                <span class="n">col</span><span class="o">=</span><span class="n">e</span><span class="o">.</span><span class="n">offset</span> <span class="ow">or</span> <span class="mi">0</span><span class="p">,</span>
+                <span class="n">code</span><span class="o">=</span><span class="s2">&quot;E999&quot;</span><span class="p">,</span>
+                <span class="n">message</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;语法错误: </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="n">severity</span><span class="o">=</span><span class="s2">&quot;error&quot;</span>
+            <span class="p">)]</span>
+
+    <span class="k">def</span> <span class="nf">lint_project</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;分析整个项目&quot;&quot;&quot;</span>
+        <span class="n">files</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">find_python_files</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;🔍 扫描 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">files</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个 Python 文件...</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">total_warnings</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">total_errors</span> <span class="o">=</span> <span class="mi">0</span>
+
+        <span class="k">for</span> <span class="n">filepath</span> <span class="ow">in</span> <span class="n">files</span><span class="p">:</span>
+            <span class="n">warnings</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lint_file</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">warnings</span><span class="p">:</span>
+                <span class="n">rel</span> <span class="o">=</span> <span class="n">filepath</span><span class="o">.</span><span class="n">relative_to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">root_dir</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📄 </span><span class="si">{</span><span class="n">rel</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">warnings</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;   L</span><span class="si">{</span><span class="n">w</span><span class="o">.</span><span class="n">line</span><span class="si">}</span><span class="s2"> [</span><span class="si">{</span><span class="n">w</span><span class="o">.</span><span class="n">severity</span><span class="o">.</span><span class="n">upper</span><span class="p">()</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="n">w</span><span class="o">.</span><span class="n">code</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">w</span><span class="o">.</span><span class="n">message</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+                <span class="nb">print</span><span class="p">()</span>
+                <span class="n">total_warnings</span> <span class="o">+=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">warnings</span> <span class="k">if</span> <span class="n">w</span><span class="o">.</span><span class="n">severity</span> <span class="o">==</span> <span class="s2">&quot;warning&quot;</span><span class="p">)</span>
+                <span class="n">total_errors</span> <span class="o">+=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">warnings</span> <span class="k">if</span> <span class="n">w</span><span class="o">.</span><span class="n">severity</span> <span class="o">==</span> <span class="s2">&quot;error&quot;</span><span class="p">)</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📊 总计: </span><span class="si">{</span><span class="n">total_errors</span><span class="si">}</span><span class="s2"> 个错误, </span><span class="si">{</span><span class="n">total_warnings</span><span class="si">}</span><span class="s2"> 个警告&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">total_errors</span><span class="p">,</span> <span class="n">total_warnings</span>
+</code></pre></div>
+<hr>
+<h2 id="ast_1">五、AST 高级技巧</h2>
+<h3 id="51-exec-compile-ast">5.1 exec 与 compile 配合 AST</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="c1"># 从 AST 生成可执行代码</span>
+<span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">def fibonacci(n):</span>
+<span class="s2">    if n &lt;= 1:</span>
+<span class="s2">        return n</span>
+<span class="s2">    return fibonacci(n-1) + fibonacci(n-2)</span>
+
+<span class="s2">print(fibonacci(10))</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">)</span>
+
+<span class="c1"># 编译</span>
+<span class="n">code</span> <span class="o">=</span> <span class="nb">compile</span><span class="p">(</span><span class="n">tree</span><span class="p">,</span> <span class="s1">&#39;&lt;fib&gt;&#39;</span><span class="p">,</span> <span class="s1">&#39;exec&#39;</span><span class="p">)</span>
+
+<span class="c1"># 执行</span>
+<span class="n">exec</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>  <span class="c1"># 输出: 55</span>
+</code></pre></div>
+<h3 id="52-astliteral_eval">5.2 ast.literal_eval 的安全求值</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="c1"># 安全地解析 Python 字面量（不执行任意代码）</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">literal_eval</span><span class="p">(</span><span class="s2">&quot;{&#39;name&#39;: &#39;聂董&#39;, &#39;age&#39;: 30, &#39;scores&#39;: [95, 88, 72]}&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="c1"># {&#39;name&#39;: &#39;聂董&#39;, &#39;age&#39;: 30, &#39;scores&#39;: [95, 88, 72]}</span>
+
+<span class="c1"># 对比 eval（危险！不要用）</span>
+<span class="c1"># eval(&quot;__import__(&#39;os&#39;).system(&#39;rm -rf /&#39;)&quot;)  # ❌ 绝对不要</span>
+</code></pre></div>
+<p><strong>为什么 <code>ast.literal_eval</code> 安全？</strong></p>
+<pre class="plain"><code>eval()     → 可执行任意代码（函数调用、导入等）
+ast.literal_eval() → 只接受字面量：
+  ✓ 数字、字符串、布尔、None
+  ✓ 列表、元组、字典、集合
+  ✗ 函数调用、变量引用、import
+</code></pre>
+<h3 id="53-ast">5.3 代码格式化的 AST 实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">ast</span>
+
+<span class="k">class</span> <span class="nc">CodeFormatter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;基于 AST 的简单代码格式化器&quot;&quot;&quot;</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">indent_code</span><span class="p">(</span><span class="n">source</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">indent_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;规范化缩进&quot;&quot;&quot;</span>
+        <span class="n">tree</span> <span class="o">=</span> <span class="n">ast</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">)</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="n">source</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">ast</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">tree</span><span class="p">):</span>
+            <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="s1">&#39;lineno&#39;</span><span class="p">):</span>
+                <span class="c1"># 简单的缩进规范化</span>
+                <span class="n">line</span> <span class="o">=</span> <span class="n">lines</span><span class="p">[</span><span class="n">node</span><span class="o">.</span><span class="n">lineno</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">lineno</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+                <span class="k">if</span> <span class="n">line</span><span class="p">:</span>
+                    <span class="c1"># 去掉前导空格，按层级重新缩进</span>
+                    <span class="n">stripped</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">lstrip</span><span class="p">()</span>
+                    <span class="n">indent</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span> <span class="o">*</span> <span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">col_offset</span><span class="p">)</span>
+                    <span class="n">result</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">indent</span> <span class="o">+</span> <span class="n">stripped</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">result</span><span class="p">)</span> <span class="k">if</span> <span class="n">result</span> <span class="k">else</span> <span class="n">source</span>
+</code></pre></div>
+<h3 id="54">5.4 安全的动态代码执行流程</h3>
+<pre class="plain"><code>用户输入 → ast.literal_eval / ast.parse
+              ↓
+         是否安全？
+         ├─ 是 → compile() → exec() / eval()
+         └─ 否 → 拒绝执行，返回错误
+</code></pre>
+<hr>
+<h2 id="mermaid">六、Mermaid 图解</h2>
+<h3 id="ast_2">AST 解析流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[Python 源代码] --&gt; B[Tokenizer 词法分析]
+    B --&gt; C[Tokens 流]
+    C --&gt; D[Parser 语法分析]
+    D --&gt; E[AST 抽象语法树]
+    E --&gt; F[Compiler 编译器]
+    F --&gt; G[字节码 .pyc]
+    G --&gt; H[Python 虚拟机执行]
+    
+    style E fill:#ff9,stroke:#333,stroke-width:2px
+    style A fill:#9f9,stroke:#333
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[Python 源代码] --&gt; B[Tokenizer 词法分析]
+    B --&gt; C[Tokens 流]
+    C --&gt; D[Parser 语法分析]
+    D --&gt; E[AST 抽象语法树]
+    E --&gt; F[Compiler 编译器]
+    F --&gt; G[字节码 .pyc]
+    G --&gt; H[Python 虚拟机执行]
+    
+    style E fill:#ff9,stroke:#333,stroke-width:2px
+    style A fill:#9f9,stroke:#333
+</code></pre></div>
+<h3 id="linter_1">Linter 分析流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[源文件] --&gt; B[ast.parse]
+    B --&gt; C[AST]
+    C --&gt; D[规则 1: 命名检查]
+    C --&gt; E[规则 2: 复杂度检查]
+    C --&gt; F[规则 3: 安全检查]
+    D --&gt; G[告警收集]
+    E --&gt; G
+    F --&gt; G
+    G --&gt; H[格式化输出]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[源文件] --&gt; B[ast.parse]
+    B --&gt; C[AST]
+    C --&gt; D[规则 1: 命名检查]
+    C --&gt; E[规则 2: 复杂度检查]
+    C --&gt; F[规则 3: 安全检查]
+    D --&gt; G[告警收集]
+    E --&gt; G
+    F --&gt; G
+    G --&gt; H[格式化输出]
+</code></pre></div>
+<hr>
+<h2 id="_3">七、思考题</h2>
+<ol>
+<li>
+<p><strong>AST 与正则表达式的区别</strong>：为什么不能用正则表达式来解析 Python 代码？用 AST 做代码分析相比正则有什么优势？</p>
+</li>
+<li>
+<p><strong>安全执行</strong>：<code>ast.literal_eval</code> 为什么比 <code>eval</code> 安全？如果要设计一个安全的在线 Python 执行环境，需要做哪些防护措施？</p>
+</li>
+<li>
+<p><strong>代码变换的局限性</strong>：使用 <code>ast.NodeTransformer</code> 修改 AST 时，为什么需要调用 <code>ast.fix_missing_locations()</code>？如果省略会发生什么？</p>
+</li>
+<li>
+<p><strong>性能考虑</strong>：在一个大型项目（10万行代码）中运行自定义 Linter，你会选择哪种遍历方式（NodeVisitor / walk / 手动递归）？为什么？</p>
+</li>
+<li>
+<p><strong>扩展性</strong>：如何让自定义 Linter 支持通过配置文件（如 <code>.lintrc</code>）来启用/禁用规则？设计一个简单的插件机制。</p>
+</li>
+</ol>
+<hr>
+<h2 id="_4">八、总结</h2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>核心要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AST 结构</td>
+<td>语句(stmt) + 表达式(expr) + 运算符(operator)</td>
+</tr>
+<tr>
+<td>遍历方式</td>
+<td>NodeVisitor（安全）、walk（简单）、NodeTransformer（可修改）</td>
+</tr>
+<tr>
+<td>代码变换</td>
+<td>parse → 修改 AST → fix_missing_locations → unparse/compile</td>
+</tr>
+<tr>
+<td>静态分析</td>
+<td>不运行代码就能发现问题</td>
+</tr>
+<tr>
+<td>安全执行</td>
+<td><code>ast.literal_eval</code> 只解析字面量，<code>eval/exec</code> 有安全风险</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>明日预告</strong>：Day 097 — 领域特定语言（DSL），用 Python 元编程构建自己的 DSL！</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-095/index.html">← Day 95 函数式编程深入</a><a class="nav-next" href="../day-097/index.html">Day 97 领域特定语言（DSL） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

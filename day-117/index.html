@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 117 — 迁移学习 (Transfer Learning)</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 117 — 迁移学习 (Transfer Learning)</h1>
+  <div class="lmeta">
+    <span class="badge">数据分析与AI/ML</span>
+    <span class="badge">270 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-117-迁移学习" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、什么是迁移学习？</a>
+<a class="toc-l3" href="#11">1.1 核心思想</a>
+<a class="toc-l3" href="#12">1.2 类比理解</a>
+<a class="toc-l2" href="#_2">二、预训练模型</a>
+<a class="toc-l3" href="#21">2.1 常见预训练模型</a>
+<a class="toc-l3" href="#22-pytorch">2.2 PyTorch 中使用预训练模型</a>
+<a class="toc-l3" href="#23-resnet-50">2.3 模型结构解析（以 ResNet-50 为例）</a>
+<a class="toc-l2" href="#_3">三、迁移学习的两种核心策略</a>
+<a class="toc-l3" href="#31">3.1 策略对比</a>
+<a class="toc-l3" href="#32">3.2 如何选择？</a>
+<a class="toc-l2" href="#fine-tuning">四、微调（Fine-tuning）详解</a>
+<a class="toc-l3" href="#41">4.1 微调的关键技巧</a>
+<a class="toc-l3" href="#42">4.2 微调流程图</a>
+<a class="toc-l2" href="#api">五、API 速查表</a>
+<a class="toc-l3" href="#51-pytorch-api">5.1 PyTorch 迁移学习核心 API</a>
+<a class="toc-l3" href="#52">5.2 常用预训练权重</a>
+<a class="toc-l2" href="#_4">六、实战：自定义图片分类</a>
+<a class="toc-l3" href="#61">6.1 任务描述</a>
+<a class="toc-l3" href="#62">6.2 完整代码</a>
+<a class="toc-l2" href="#_5">七、图解</a>
+<a class="toc-l3" href="#71">7.1 迁移学习的特征层级</a>
+<a class="toc-l2" href="#_6">八、思考题</a>
+<a class="toc-l2" href="#_7">参考资料</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-117-transfer-learning">Day 117 — 迁移学习 (Transfer Learning)</h1>
+<blockquote>
+<p>🎯 <strong>今日目标</strong>：掌握迁移学习的核心思想，学会使用预训练模型进行微调，实现自定义图片分类</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、什么是迁移学习？</h2>
+<h3 id="11">1.1 核心思想</h3>
+<p>迁移学习（Transfer Learning）是指将在<strong>大规模数据集</strong>上训练好的模型，迁移到<strong>目标任务</strong>上使用。</p>
+<p><strong>为什么需要迁移学习？</strong></p>
+<ul>
+<li>从头训练一个深度学习模型需要<strong>海量数据</strong>和<strong>大量计算资源</strong></li>
+<li>真实场景中，我们往往只有<strong>少量标注数据</strong></li>
+<li>预训练模型已经在 ImageNet（1400万张图片，1000个类别）上学到了通用的视觉特征</li>
+<li>我们可以<strong>复用这些通用特征</strong>，只需要针对目标任务微调</li>
+</ul>
+<h3 id="12">1.2 类比理解</h3>
+<pre class="plain"><code>人类学习 vs 迁移学习
+─────────────────────────────────────
+人类：学了英语 → 学法语更容易（语言知识迁移）
+模型：在 ImageNet 训练 → 识别医学影像更容易（视觉特征迁移）
+
+关键点：底层特征（边缘、纹理）是通用的
+</code></pre>
+<hr>
+<h2 id="_2">二、预训练模型</h2>
+<h3 id="21">2.1 常见预训练模型</h3>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>参数量</th>
+<th>Top-1 准确率</th>
+<th>特点</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ResNet-18</td>
+<td>11.7M</td>
+<td>69.8%</td>
+<td>轻量级，残差连接</td>
+<td>快速实验、移动端</td>
+</tr>
+<tr>
+<td>ResNet-50</td>
+<td>25.6M</td>
+<td>76.1%</td>
+<td>平衡性能与效率</td>
+<td>通用任务首选</td>
+</tr>
+<tr>
+<td>ResNet-152</td>
+<td>60.2M</td>
+<td>78.3%</td>
+<td>深层网络</td>
+<td>高精度要求</td>
+</tr>
+<tr>
+<td>VGG-16</td>
+<td>138M</td>
+<td>71.6%</td>
+<td>结构简单，参数多</td>
+<td>特征提取、风格迁移</td>
+</tr>
+<tr>
+<td>EfficientNet-B0</td>
+<td>5.3M</td>
+<td>77.1%</td>
+<td>高效，可缩放</td>
+<td>资源受限场景</td>
+</tr>
+<tr>
+<td>EfficientNet-B4</td>
+<td>19M</td>
+<td>82.9%</td>
+<td>高效+高精度</td>
+<td>通用高精度任务</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-pytorch">2.2 PyTorch 中使用预训练模型</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">torchvision.models</span> <span class="k">as</span> <span class="nn">models</span>
+
+<span class="c1"># 加载预训练的 ResNet-50（权重在 ImageNet 上预训练）</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">models</span><span class="o">.</span><span class="n">resnet50</span><span class="p">(</span><span class="n">weights</span><span class="o">=</span><span class="s1">&#39;IMAGENET1K_V2&#39;</span><span class="p">)</span>
+
+<span class="c1"># 查看模型结构</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">model</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="23-resnet-50">2.3 模型结构解析（以 ResNet-50 为例）</h3>
+<pre class="plain"><code>ResNet-50 结构
+═══════════════════════════════════════════════════════
+Input (224×224×3)
+    │
+    ├── conv1 (7×7, 64) + BN + ReLU + MaxPool
+    │
+    ├── layer1 (3 blocks) ──── 256 channels
+    │   └── BasicBlock: conv → BN → ReLU → conv → BN + shortcut
+    │
+    ├── layer2 (4 blocks) ──── 512 channels
+    │
+    ├── layer3 (6 blocks) ──── 1024 channels
+    │
+    ├── layer4 (3 blocks) ──── 2048 channels
+    │
+    ├── AdaptiveAvgPool2d (1×1)
+    │
+    └── fc (2048 → 1000)  ← ImageNet 的 1000 类
+═══════════════════════════════════════════════════════
+</code></pre>
+<hr>
+<h2 id="_3">三、迁移学习的两种核心策略</h2>
+<h3 id="31">3.1 策略对比</h3>
+<pre class="plain"><code>策略一：特征提取（Feature Extraction）
+═══════════════════════════════════════════
+┌─────────────────────────┐
+│   冻结预训练模型的卷积层  │  ← 不更新权重
+│   只训练最后的分类层      │  ← 只更新这一部分
+└─────────────────────────┘
+优点：训练快、数据需求少
+缺点：特征可能不匹配
+
+策略二：微调（Fine-tuning）
+═══════════════════════════════════════════
+┌─────────────────────────┐
+│   解冻部分/全部预训练层   │  ← 用小学习率更新
+│   用更小的学习率训练      │  ← 避免破坏已有特征
+│   同时训练新的分类层      │
+└─────────────────────────┘
+优点：效果更好、适应性更强
+缺点：需要更多数据、训练更慢
+</code></pre>
+<h3 id="32">3.2 如何选择？</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐策略</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数据量 &lt; 1000 张</td>
+<td>特征提取</td>
+<td>数据太少，微调容易过拟合</td>
+</tr>
+<tr>
+<td>数据量 1000~10000 张</td>
+<td>微调（冻结前几层）</td>
+<td>平衡效果与稳定性</td>
+</tr>
+<tr>
+<td>数据量 &gt; 10000 张</td>
+<td>全量微调</td>
+<td>数据充足，可以充分训练</td>
+</tr>
+<tr>
+<td>目标任务与源任务相似</td>
+<td>特征提取</td>
+<td>通用特征已经很有效</td>
+</tr>
+<tr>
+<td>目标任务与源任务差异大</td>
+<td>全量微调</td>
+<td>需要调整更多层的特征</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="fine-tuning">四、微调（Fine-tuning）详解</h2>
+<h3 id="41">4.1 微调的关键技巧</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 技巧 1：分层学习率（Layer-wise Learning Rate）</span>
+<span class="c1"># 底层特征更通用 → 学习率更小</span>
+<span class="c1"># 高层特征更任务相关 → 学习率更大</span>
+
+<span class="c1"># 技巧 2：渐进式解冻（Gradual Unfreezing）</span>
+<span class="c1"># 先训练分类头 → 冻结 → 解冻最后几层 → 逐步解冻更多层</span>
+
+<span class="c1"># 技巧 3：差分学习率（Discriminative Learning Rates）</span>
+<span class="c1"># 不同层使用不同的学习率</span>
+</code></pre></div>
+<h3 id="42">4.2 微调流程图</h3>
+<pre class="plain"><code>微调流程
+═══════════════════════════════════════════════════════════
+
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │ 加载预训练模型 │ →  │ 修改分类头    │ →  │ 冻结卷积层    │
+  │ (ImageNet)   │    │ (适配任务)    │    │              │
+  └──────────────┘    └──────────────┘    └──────────────┘
+         │                                        │
+         ▼                                        ▼
+  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+  │ 训练分类头    │ →  │ 解冻部分层    │ →  │ 全量微调      │
+  │ (冻结卷积层)  │    │ (小学习率)    │    │ (更小学习率)  │
+  └──────────────┘    └──────────────┘    └──────────────┘
+</code></pre>
+<hr>
+<h2 id="api">五、API 速查表</h2>
+<h3 id="51-pytorch-api">5.1 PyTorch 迁移学习核心 API</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1. 加载预训练模型</span>
+<span class="kn">import</span> <span class="nn">torchvision.models</span> <span class="k">as</span> <span class="nn">models</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">models</span><span class="o">.</span><span class="n">resnet50</span><span class="p">(</span><span class="n">weights</span><span class="o">=</span><span class="s1">&#39;IMAGENET1K_V2&#39;</span><span class="p">)</span>
+
+<span class="c1"># 2. 冻结所有参数</span>
+<span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+    <span class="n">param</span><span class="o">.</span><span class="n">requires_grad</span> <span class="o">=</span> <span class="kc">False</span>
+
+<span class="c1"># 3. 修改分类头（替换最后的全连接层）</span>
+<span class="n">model</span><span class="o">.</span><span class="n">fc</span> <span class="o">=</span> <span class="n">nn</span><span class="o">.</span><span class="n">Linear</span><span class="p">(</span><span class="n">model</span><span class="o">.</span><span class="n">fc</span><span class="o">.</span><span class="n">in_features</span><span class="p">,</span> <span class="n">num_classes</span><span class="p">)</span>
+
+<span class="c1"># 4. 只训练分类头的参数</span>
+<span class="n">trainable_params</span> <span class="o">=</span> <span class="nb">filter</span><span class="p">(</span><span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">p</span><span class="o">.</span><span class="n">requires_grad</span><span class="p">,</span> <span class="n">model</span><span class="o">.</span><span class="n">parameters</span><span class="p">())</span>
+
+<span class="c1"># 5. 差分学习率</span>
+<span class="n">optimizer</span> <span class="o">=</span> <span class="n">Adam</span><span class="p">([</span>
+    <span class="p">{</span><span class="s1">&#39;params&#39;</span><span class="p">:</span> <span class="n">model</span><span class="o">.</span><span class="n">layer4</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="s1">&#39;lr&#39;</span><span class="p">:</span> <span class="mf">1e-4</span><span class="p">},</span>
+    <span class="p">{</span><span class="s1">&#39;params&#39;</span><span class="p">:</span> <span class="n">model</span><span class="o">.</span><span class="n">fc</span><span class="o">.</span><span class="n">parameters</span><span class="p">(),</span> <span class="s1">&#39;lr&#39;</span><span class="p">:</span> <span class="mf">1e-3</span><span class="p">},</span>
+<span class="p">])</span>
+
+<span class="c1"># 6. 解冻指定层</span>
+<span class="k">for</span> <span class="n">param</span> <span class="ow">in</span> <span class="n">model</span><span class="o">.</span><span class="n">layer4</span><span class="o">.</span><span class="n">parameters</span><span class="p">():</span>
+    <span class="n">param</span><span class="o">.</span><span class="n">requires_grad</span> <span class="o">=</span> <span class="kc">True</span>
+</code></pre></div>
+<h3 id="52">5.2 常用预训练权重</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># PyTorch 支持的权重</span>
+<span class="n">weights</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;IMAGENET1K_V1&#39;</span><span class="p">:</span>    <span class="s1">&#39;标准权重&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;IMAGENET1K_V2&#39;</span><span class="p">:</span>    <span class="s1">&#39;改进权重（推荐）&#39;</span><span class="p">,</span>
+    <span class="s1">&#39;IMAGENET1K_V1_OLD&#39;</span><span class="p">:</span> <span class="s1">&#39;旧版权重&#39;</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="c1"># 加载方式</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">models</span><span class="o">.</span><span class="n">resnet50</span><span class="p">(</span><span class="n">weights</span><span class="o">=</span><span class="s1">&#39;IMAGENET1K_V2&#39;</span><span class="p">)</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">models</span><span class="o">.</span><span class="n">resnet50</span><span class="p">(</span><span class="n">weights</span><span class="o">=</span><span class="n">models</span><span class="o">.</span><span class="n">ResNet50_Weights</span><span class="o">.</span><span class="n">IMAGENET1K_V2</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_4">六、实战：自定义图片分类</h2>
+<h3 id="61">6.1 任务描述</h3>
+<p>使用 ResNet-50 进行迁移学习，对<strong>自定义数据集</strong>进行分类。我们使用 <code>torchvision.datasets</code> 自带的数据集作为演示。</p>
+<h3 id="62">6.2 完整代码</h3>
+<p>见 <code>code/</code> 目录下的代码文件。</p>
+<hr>
+<h2 id="_5">七、图解</h2>
+<h3 id="71">7.1 迁移学习的特征层级</h3>
+<pre class="plain"><code>深度网络的特征层级
+═══════════════════════════════════════════════════════════
+
+输入图像: 🐱 猫的照片
+
+Layer 1-2 (浅层):     检测边缘、颜色、纹理
+    ┌─────────────┐
+    │ ─ │ ╱ │ ╲  │  → 边缘检测器
+    └─────────────┘
+
+Layer 3-4 (中层):     检测局部形状、纹理组合
+    ┌─────────────┐
+    │ ◯ │ △ │ □  │  → 形状检测器
+    └─────────────┘
+
+Layer 5+ (深层):      检测高级语义特征
+    ┌─────────────┐
+    │ 👁 │ 👂 │ 🐾 │  → 语义特征
+    └─────────────┘
+
+分类头:              最终分类决策
+    ┌─────────────┐
+    │ 猫 95% │     │  → 输出概率
+    │ 狗  3% │     │
+    └─────────────┘
+
+迁移学习：复用浅层和中层，微调深层和分类头
+</code></pre>
+<hr>
+<h2 id="_6">八、思考题</h2>
+<ol>
+<li>
+<p><strong>为什么迁移学习有效？</strong> 从特征复用的角度思考，预训练模型的浅层和深层分别学到了什么？</p>
+</li>
+<li>
+<p><strong>学习率的选择</strong>：在微调预训练模型时，为什么底层的学习率要小于顶层？如果所有层用相同的学习率会怎样？</p>
+</li>
+<li>
+<p><strong>数据增强策略</strong>：当目标任务的数据量很小时，除了迁移学习，还有哪些数据增强策略可以提升效果？</p>
+</li>
+<li>
+<p><strong>模型选择</strong>：在资源受限的移动端设备上部署图像分类模型，你会选择 ResNet-18、EfficientNet-B0 还是 MobileNet？为什么？</p>
+</li>
+<li>
+<p><strong>负迁移（Negative Transfer）</strong>：在什么情况下迁移学习可能比从头训练效果更差？如何避免？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_7">参考资料</h2>
+<ul>
+<li><a href="https://pytorch.org/tutorials/beginner/transfer_learning_tutorial.html">PyTorch 官方迁移学习教程</a></li>
+<li><a href="https://cs231n.github.io/transfer-learning/">CS231n: Transfer Learning</a></li>
+<li><a href="https://arxiv.org/abs/0911.0735">A Survey on Transfer Learning</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-116/index.html">← Day 116 CNN 卷积神经网络</a><a class="nav-next" href="../day-118/index.html">Day 118 NLP 基础 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

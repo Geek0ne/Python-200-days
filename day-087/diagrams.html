@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 87 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 87 正文</a>
+  <h1>Day 87 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-087">Day 087 — 状态机对话管理 · 图解</h1>
+<h2 id="1">1. 客服机器人状态流转图</h2>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; WelcomeState : 用户首次进入
+
+    WelcomeState --&gt; WelcomeState : 问候/寒暄
+    WelcomeState --&gt; CollectingState : 预订/投诉意图
+    WelcomeState --&gt; QueryState : 查询意图
+    WelcomeState --&gt; CancelState : 取消意图
+    WelcomeState --&gt; ByeState : 告别意图
+
+    CollectingState --&gt; CollectingState : 填充槽位
+    CollectingState --&gt; ProcessingState : 所有槽位已满
+    CollectingState --&gt; WelcomeState : 取消操作
+    CollectingState --&gt; ByeState : 告别
+
+    ProcessingState --&gt; WelcomeState : 处理完成
+
+    QueryState --&gt; WelcomeState : 查询完毕
+
+    CancelState --&gt; WelcomeState : 取消完成
+
+    ByeState --&gt; [*]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; WelcomeState : 用户首次进入
+
+    WelcomeState --&gt; WelcomeState : 问候/寒暄
+    WelcomeState --&gt; CollectingState : 预订/投诉意图
+    WelcomeState --&gt; QueryState : 查询意图
+    WelcomeState --&gt; CancelState : 取消意图
+    WelcomeState --&gt; ByeState : 告别意图
+
+    CollectingState --&gt; CollectingState : 填充槽位
+    CollectingState --&gt; ProcessingState : 所有槽位已满
+    CollectingState --&gt; WelcomeState : 取消操作
+    CollectingState --&gt; ByeState : 告别
+
+    ProcessingState --&gt; WelcomeState : 处理完成
+
+    QueryState --&gt; WelcomeState : 查询完毕
+
+    CancelState --&gt; WelcomeState : 取消完成
+
+    ByeState --&gt; [*]
+</code></pre></div>
+<h2 id="2">2. 槽位填充流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[用户输入] --&gt; B{意图识别}
+    B --&gt;|预订| C[初始化预订槽位]
+    B --&gt;|投诉| D[初始化投诉槽位]
+    B --&gt;|其他| E[对应处理]
+
+    C --&gt; F{获取下一个空槽位}
+    D --&gt; F
+
+    F --&gt;|有空槽位| G[提问: 请提供xxx]
+    G --&gt; H[用户回答]
+    H --&gt; I{验证通过?}
+    I --&gt;|是| J[填充槽位]
+    I --&gt;|否| K[提示格式错误, 重新提问]
+    K --&gt; G
+
+    J --&gt; L{所有槽位已满?}
+    L --&gt;|否| F
+    L --&gt;|是| M[执行业务逻辑]
+    M --&gt; N[返回结果, 重置状态]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[用户输入] --&gt; B{意图识别}
+    B --&gt;|预订| C[初始化预订槽位]
+    B --&gt;|投诉| D[初始化投诉槽位]
+    B --&gt;|其他| E[对应处理]
+
+    C --&gt; F{获取下一个空槽位}
+    D --&gt; F
+
+    F --&gt;|有空槽位| G[提问: 请提供xxx]
+    G --&gt; H[用户回答]
+    H --&gt; I{验证通过?}
+    I --&gt;|是| J[填充槽位]
+    I --&gt;|否| K[提示格式错误, 重新提问]
+    K --&gt; G
+
+    J --&gt; L{所有槽位已满?}
+    L --&gt;|否| F
+    L --&gt;|是| M[执行业务逻辑]
+    M --&gt; N[返回结果, 重置状态]
+</code></pre></div>
+<h2 id="3">3. 对话上下文数据结构</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class DialogueContext {
+        +str user_id
+        +Intent intent
+        +Dict slots
+        +List~SlotDef~ slot_defs
+        +List~Dict~ history
+        +int turn_count
+        +fill_slot(name, value) bool
+        +get_next_slot() SlotDef
+        +all_slots_filled() bool
+        +add_message(role, text)
+        +reset()
+    }
+
+    class SlotDef {
+        +str name
+        +str question
+        +bool required
+        +Callable validator
+    }
+
+    class Intent {
+        &lt;&lt;enumeration&gt;&gt;
+        GREET
+        BOOK
+        QUERY
+        COMPLAINT
+        CANCEL
+        BYE
+        UNKNOWN
+    }
+
+    DialogueContext &quot;1&quot; --&gt; &quot;*&quot; SlotDef : slot_defs
+    DialogueContext --&gt; Intent : intent
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class DialogueContext {
+        +str user_id
+        +Intent intent
+        +Dict slots
+        +List~SlotDef~ slot_defs
+        +List~Dict~ history
+        +int turn_count
+        +fill_slot(name, value) bool
+        +get_next_slot() SlotDef
+        +all_slots_filled() bool
+        +add_message(role, text)
+        +reset()
+    }
+
+    class SlotDef {
+        +str name
+        +str question
+        +bool required
+        +Callable validator
+    }
+
+    class Intent {
+        &lt;&lt;enumeration&gt;&gt;
+        GREET
+        BOOK
+        QUERY
+        COMPLAINT
+        CANCEL
+        BYE
+        UNKNOWN
+    }
+
+    DialogueContext &quot;1&quot; --&gt; &quot;*&quot; SlotDef : slot_defs
+    DialogueContext --&gt; Intent : intent
+</code></pre></div>
+<h2 id="4-uml">4. 状态模式 UML 类图</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class State {
+        &lt;&lt;abstract&gt;&gt;
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class WelcomeState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class CollectingState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class ProcessingState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class QueryState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class CancelState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class ByeState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    State &lt;|-- WelcomeState
+    State &lt;|-- CollectingState
+    State &lt;|-- ProcessingState
+    State &lt;|-- QueryState
+    State &lt;|-- CancelState
+    State &lt;|-- ByeState
+
+    class ChatbotEngine {
+        +Dict sessions
+        +get_context(user_id) DialogueContext
+        +chat(user_id, message) str
+        +get_history(user_id) List
+    }
+
+    ChatbotEngine --&gt; DialogueContext
+    DialogueContext --&gt; State : _state
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class State {
+        &lt;&lt;abstract&gt;&gt;
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class WelcomeState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class CollectingState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class ProcessingState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class QueryState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class CancelState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    class ByeState {
+        +handle(ctx, input) State
+        +get_response(ctx) str
+    }
+
+    State &lt;|-- WelcomeState
+    State &lt;|-- CollectingState
+    State &lt;|-- ProcessingState
+    State &lt;|-- QueryState
+    State &lt;|-- CancelState
+    State &lt;|-- ByeState
+
+    class ChatbotEngine {
+        +Dict sessions
+        +get_context(user_id) DialogueContext
+        +chat(user_id, message) str
+        +get_history(user_id) List
+    }
+
+    ChatbotEngine --&gt; DialogueContext
+    DialogueContext --&gt; State : _state
+</code></pre></div>
+<h2 id="5">5. 预订流程时序图</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    actor U as 用户
+    participant B as ChatbotEngine
+    participant S as WelcomeState
+    participant C as CollectingState
+    participant P as ProcessingState
+
+    U-&gt;&gt;B: &quot;我要订机票&quot;
+    B-&gt;&gt;S: handle(ctx, &quot;我要订机票&quot;)
+    S--&gt;&gt;B: 返回 CollectingState
+    B--&gt;&gt;U: &quot;请问出发城市？&quot;
+
+    U-&gt;&gt;B: &quot;北京&quot;
+    B-&gt;&gt;C: handle(ctx, &quot;北京&quot;)
+    C--&gt;&gt;B: 填充 departure
+    B--&gt;&gt;U: &quot;请问目的地？&quot;
+
+    U-&gt;&gt;B: &quot;上海&quot;
+    B-&gt;&gt;C: handle(ctx, &quot;上海&quot;)
+    C--&gt;&gt;B: 填充 destination
+    B--&gt;&gt;U: &quot;请问日期？&quot;
+
+    U-&gt;&gt;B: &quot;明天&quot;
+    B-&gt;&gt;C: handle(ctx, &quot;明天&quot;)
+    C--&gt;&gt;B: 填充 date, 所有槽位已满
+    C--&gt;&gt;B: 返回 ProcessingState
+
+    B-&gt;&gt;P: handle(ctx, &quot;明天&quot;)
+    P--&gt;&gt;B: 生成订单
+    B--&gt;&gt;U: &quot;✅ 预订成功！订单号: BK2026...&quot;
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    actor U as 用户
+    participant B as ChatbotEngine
+    participant S as WelcomeState
+    participant C as CollectingState
+    participant P as ProcessingState
+
+    U-&gt;&gt;B: &quot;我要订机票&quot;
+    B-&gt;&gt;S: handle(ctx, &quot;我要订机票&quot;)
+    S--&gt;&gt;B: 返回 CollectingState
+    B--&gt;&gt;U: &quot;请问出发城市？&quot;
+
+    U-&gt;&gt;B: &quot;北京&quot;
+    B-&gt;&gt;C: handle(ctx, &quot;北京&quot;)
+    C--&gt;&gt;B: 填充 departure
+    B--&gt;&gt;U: &quot;请问目的地？&quot;
+
+    U-&gt;&gt;B: &quot;上海&quot;
+    B-&gt;&gt;C: handle(ctx, &quot;上海&quot;)
+    C--&gt;&gt;B: 填充 destination
+    B--&gt;&gt;U: &quot;请问日期？&quot;
+
+    U-&gt;&gt;B: &quot;明天&quot;
+    B-&gt;&gt;C: handle(ctx, &quot;明天&quot;)
+    C--&gt;&gt;B: 填充 date, 所有槽位已满
+    C--&gt;&gt;B: 返回 ProcessingState
+
+    B-&gt;&gt;P: handle(ctx, &quot;明天&quot;)
+    P--&gt;&gt;B: 生成订单
+    B--&gt;&gt;U: &quot;✅ 预订成功！订单号: BK2026...&quot;
+</code></pre></div>
+<h2 id="6-ascii">6. 红绿灯状态转换（ASCII）</h2>
+<pre class="plain"><code>    ┌─────────┐
+    │  红灯 🔴  │
+    │  停止    │
+    └────┬────┘
+         │ timer
+         ▼
+    ┌─────────┐
+    │  绿灯 🟢  │
+    │  通行    │
+    └────┬────┘
+         │ timer
+         ▼
+    ┌─────────┐
+    │  黄灯 🟡  │
+    │  警示    │
+    └────┬────┘
+         │ timer
+         └──────→ 回到红灯
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

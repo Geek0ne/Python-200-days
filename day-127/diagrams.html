@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 127 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 127 正文</a>
+  <h1>Day 127 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-127-beautifulsoup-lxml">Day 127 — BeautifulSoup / lxml 解析：图解</h1>
+<h2 id="1">1. 解析流程</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│                    HTML 解析流程                              │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐               │
+│  │ 原始HTML  │───▶│ 解析器选择│───▶│ 构建DOM树 │               │
+│  │ 字符串    │    │ BS4/lxml │    │          │               │
+│  └──────────┘    └──────────┘    └────┬─────┘               │
+│                                       │                      │
+│                                       ▼                      │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐               │
+│  │ 提取数据  │◀───│ 查找元素  │◀───│ 遍历DOM树│               │
+│  │ text/attr│    │ find/xpath│    │          │               │
+│  └────┬─────┘    └──────────┘    └──────────┘               │
+│       │                                                      │
+│       ▼                                                      │
+│  ┌──────────┐    ┌──────────┐                                │
+│  │ 清洗数据  │───▶│ 存储数据  │                                │
+│  │ 去空格    │    │ JSON/CSV │                                │
+│  └──────────┘    └──────────┘                                │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="2-beautifulsoup">2. BeautifulSoup 查找方法对比</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│              BeautifulSoup 查找方法对比                       │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  find() — 返回第一个匹配                                      │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ soup.find(&quot;h1&quot;)          → &lt;h1&gt;标题&lt;/h1&gt;              │   │
+│  │ soup.find(&quot;h1&quot;, class_=&quot;main&quot;)                        │   │
+│  │ soup.find(&quot;a&quot;, href=&quot;/about&quot;)                         │   │
+│  │ soup.find(&quot;div&quot;, attrs={&quot;id&quot;: &quot;content&quot;})            │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  find_all() — 返回所有匹配                                    │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ soup.find_all(&quot;a&quot;)        → [&lt;a&gt;, &lt;a&gt;, &lt;a&gt;]          │   │
+│  │ soup.find_all(&quot;a&quot;, limit=3)  → 最多3个                │   │
+│  │ soup.find_all([&quot;h1&quot;, &quot;h2&quot;])  → 所有h1和h2             │   │
+│  │ soup.find_all(&quot;p&quot;, class_=re.compile(&quot;post&quot;))        │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  CSS 选择器 — 更简洁的语法                                    │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ soup.select(&quot;h1&quot;)         → [&lt;h1&gt;]                   │   │
+│  │ soup.select(&quot;.main&quot;)      → [&lt;h1 class=&quot;main&quot;&gt;]      │   │
+│  │ soup.select(&quot;div &gt; p&quot;)    → div 的直接子 p             │   │
+│  │ soup.select(&quot;div p&quot;)      → div 的所有后代 p           │   │
+│  │ soup.select(&quot;a[href]&quot;)    → 有 href 的所有 a          │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="3-xpath">3. XPath 语法速查</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│                    XPath 语法速查                              │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  路径表达式                                                   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ //div           → 所有 div 元素                        │   │
+│  │ /html/body      → 绝对路径                             │   │
+│  │ //div/p         → div 的直接子 p                       │   │
+│  │ //div//p        → div 的所有后代 p                     │   │
+│  │ ..              → 父元素                               │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  谓语（条件）                                                 │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ //div[@class=&quot;main&quot;]      → class=&quot;main&quot; 的 div       │   │
+│  │ //a[@href]                → 有 href 的 a               │   │
+│  │ //p[contains(text(),&quot;Python&quot;)] → 包含 &quot;Python&quot; 的 p   │   │
+│  │ //li[1]                   → 第一个 li                  │   │
+│  │ //li[last()]              → 最后一个 li                │   │
+│  │ //li[position()&lt;3]        → 前两个 li                  │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  提取                                                        │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ //h1/text()       → h1 的文本内容                     │   │
+│  │ //a/@href         → 所有 a 的 href 属性               │   │
+│  │ //div/@class      → 所有 div 的 class 属性            │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+│  组合                                                        │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │ //h1 | //h2       → h1 或 h2                         │   │
+│  │ //div[p]          → 包含 p 的 div                     │   │
+│  │ //div[p and a]    → 同时包含 p 和 a 的 div             │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="4">4. 解析器选择决策树</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│              解析器选择决策树                                  │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  需要解析 HTML？                                              │
+│       │                                                      │
+│       ├── 需要最高性能？                                       │
+│       │       │                                              │
+│       │       ├── 是 → 使用 lxml XPath                       │
+│       │       │                                              │
+│       │       └── 否 → 需要简单 API？                         │
+│       │               │                                      │
+│       │               ├── 是 → 使用 BeautifulSoup            │
+│       │               │                                      │
+│       │               └── 否 → 使用 lxml                    │
+│       │                                                      │
+│       ├── HTML 很脏（未闭合标签等）？                           │
+│       │       │                                              │
+│       │       ├── 是 → 使用 html5lib 或 BeautifulSoup       │
+│       │       │                                              │
+│       │       └── 否 → lxml 或 html.parser 都可以            │
+│       │                                                      │
+│       ├── 需要提取文本节点？                                   │
+│       │       │                                              │
+│       │       ├── 是 → 使用 lxml XPath                      │
+│       │       │    (XPath 的 /text() 是独有能力)              │
+│       │       │                                              │
+│       │       └── 否 → BeautifulSoup 也支持                  │
+│       │                                                      │
+│       └── 不能安装第三方库？                                   │
+│               │                                              │
+│               └── 使用 html.parser (Python 内置)              │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="5-mermaid">5. Mermaid 流程图</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[获取 HTML 内容] --&gt; B{选择解析器}
+
+    B --&gt;|简单场景| C[html.parser]
+    B --&gt;|性能优先| D[lxml]
+    B --&gt;|脏HTML| E[html5lib]
+
+    C --&gt; F[构建 DOM 树]
+    D --&gt; F
+    E --&gt; F
+
+    F --&gt; G{查找方式}
+
+    G --&gt;|CSS 选择器| H[select / select_one]
+    G --&gt;|方法调用| I[find / find_all]
+    G --&gt;|XPath| J[xpath]
+
+    H --&gt; K[提取数据]
+    I --&gt; K
+    J --&gt; K
+
+    K --&gt; L{数据类型}
+
+    L --&gt;|文本| M[.text / text()]
+    L --&gt;|属性| N[.get / @attr]
+    L --&gt;|HTML| O[.prettify]
+
+    M --&gt; P[清洗数据]
+    N --&gt; P
+    O --&gt; P
+
+    P --&gt; Q[存储数据]
+    Q --&gt; R[JSON / CSV / 数据库]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[获取 HTML 内容] --&gt; B{选择解析器}
+
+    B --&gt;|简单场景| C[html.parser]
+    B --&gt;|性能优先| D[lxml]
+    B --&gt;|脏HTML| E[html5lib]
+
+    C --&gt; F[构建 DOM 树]
+    D --&gt; F
+    E --&gt; F
+
+    F --&gt; G{查找方式}
+
+    G --&gt;|CSS 选择器| H[select / select_one]
+    G --&gt;|方法调用| I[find / find_all]
+    G --&gt;|XPath| J[xpath]
+
+    H --&gt; K[提取数据]
+    I --&gt; K
+    J --&gt; K
+
+    K --&gt; L{数据类型}
+
+    L --&gt;|文本| M[.text / text()]
+    L --&gt;|属性| N[.get / @attr]
+    L --&gt;|HTML| O[.prettify]
+
+    M --&gt; P[清洗数据]
+    N --&gt; P
+    O --&gt; P
+
+    P --&gt; Q[存储数据]
+    Q --&gt; R[JSON / CSV / 数据库]
+</code></pre></div>
+<h2 id="6-css-vs-xpath">6. CSS 选择器 vs XPath 对比</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│              CSS 选择器 vs XPath 对比                          │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  操作              CSS 选择器           XPath                  │
+│  ──────────────────────────────────────────────────────────  │
+│  选择所有 h1       h1                   //h1                  │
+│                                                              │
+│  按类查找          .classname           //*[@class=&quot;c&quot;]       │
+│                                                              │
+│  按 ID 查找        #id                  //*[@id=&quot;id&quot;]         │
+│                                                              │
+│  直接子元素        div &gt; p              //div/p               │
+│                                                              │
+│  后代元素          div p                //div//p              │
+│                                                              │
+│  属性选择          a[href]              //a[@href]            │
+│                                                              │
+│  属性值匹配        [href=&quot;url&quot;]         //a[@href=&quot;url&quot;]      │
+│                                                              │
+│  模糊匹配          [class*=&quot;part&quot;]      //*[contains(@c,&quot;p&quot;)] │
+│                                                              │
+│  索引选择          :nth-child(2)        //li[2]               │
+│                                                              │
+│  最后一个          :last-child          //*[last()]           │
+│                                                              │
+│  提取文本          N/A (需 .text)       //a/text()            │
+│                                                              │
+│  提取属性          N/A (需 .get)        //a/@href             │
+│                                                              │
+│  父元素            N/A (不支持)         //a/..                │
+│                                                              │
+│  兄弟选择          + (相邻)             following-sibling::   │
+│                                                              │
+│  组合查询          .a, .b               //a | //b             │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

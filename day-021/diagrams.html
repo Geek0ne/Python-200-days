@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 21 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 21 正文</a>
+  <h1>Day 21 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-021">Day 021 — 迭代器与可迭代对象原理图解</h1>
+<h2 id="1">1. 迭代器协议流程图</h2>
+<h3 id="_1">完整的协议交互</h3>
+<pre class="plain"><code>┌──────────────────────────────────────────────────┐
+│                  可迭代对象                        │
+│  ┌────────────────────────────────────────────┐  │
+│  │  __iter__(self) → 返回迭代器对象            │  │
+│  │  或 __getitem__(self, index) → 按索引取值   │  │
+│  └────────────────────────────────────────────┘  │
+└──────────────────────┬───────────────────────────┘
+                       │  iter()
+                       ▼
+┌──────────────────────────────────────────────────┐
+│                   迭代器                           │
+│  ┌────────────────────────────────────────────┐  │
+│  │  __iter__(self) → return self              │  │
+│  │  __next__(self) → return value             │  │
+│  │                 → raise StopIteration      │  │
+│  └────────────────────────────────────────────┘  │
+└──────────────────────┬───────────────────────────┘
+                       │  next()
+                       ▼
+              ┌─────────────────┐
+              │    返回值        │
+              │  或 StopIteration│
+              └─────────────────┘
+</code></pre>
+<h2 id="2-for">2. for 循环底层实现拆解</h2>
+<pre class="plain"><code>Python 代码:
+    for x in iterable:
+        print(x)
+
+底层展开:
+                         ┌──────────────────┐
+                         │  开始 for 循环    │
+                         └────────┬─────────┘
+                                  │
+                                  ▼
+                     ┌────────────────────────┐
+                     │  _it = iter(iterable)  │
+                     │  # 调用 __iter__()     │
+                     └────────┬───────────────┘
+                              │
+                              ▼
+                     ┌────────────────────────┐
+                     │  while True:           │
+                     └────────┬───────────────┘
+                              │
+                              ▼
+                     ┌────────────────────────┐
+                     │  try:                  │
+                     │    x = next(_it)       │
+                     │    # 调用 __next__()   │
+                     └────────┬───────────────┘
+                              │
+                    ┌─────────┴─────────┐
+                    ▼                   ▼
+           ┌────────────────┐  ┌──────────────────┐
+           │ 没有异常        │  │ StopIteration    │
+           │ 执行循环体      │  │ 跳出循环          │
+           └───────┬────────┘  └────────┬─────────┘
+                   │                    │
+                   └──── 继续 ──────────┘
+                                        │
+                                        ▼
+                              ┌──────────────────┐
+                              │  del _it         │
+                              │  # 清理迭代器    │
+                              └──────────────────┘
+</code></pre>
+<h2 id="3-vs">3. 可迭代对象 vs 迭代器 关系</h2>
+<pre class="plain"><code>                    ┌─────────────────────┐
+                    │   可迭代对象         │
+                    │   Iterable          │
+                    │                     │
+                    │   可以 for 循环      │
+                    │   有 __iter__()      │
+                    │   iter(obj) 返回     │
+                    └──────────┬──────────┘
+                               │
+             ┌─────────────────┼─────────────────┐
+             │                 │                  │
+             ▼                 ▼                  ▼
+     ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+     │    列表      │  │    字符串    │  │    字典      │
+     │ [1, 2, 3]    │  │   &quot;hello&quot;    │  │  {&quot;a&quot;: 1}    │
+     │ list_iterator│  │  str_iterator│  │  dict_keys   │
+     └──────────────┘  └──────────────┘  └──────────────┘
+
+                    ┌─────────────────────┐
+                    │     迭代器           │
+                    │   Iterator          │
+                    │                     │
+                    │  有 __iter__() = self│
+                    │  有 __next__()      │
+                    │  只能用一次          │
+                    │  惰性求值            │
+                    └─────────────────────┘
+</code></pre>
+<h2 id="4">4. 迭代器状态机</h2>
+<pre class="plain"><code>                    ┌─────────────────┐
+                    │   初始状态       │
+                    │  (还未取值)      │
+                    └────────┬────────┘
+                             │  __next__()
+                             ▼
+                    ┌─────────────────┐
+                    │   激活状态       │◄────┐
+                    │  (有值可取)      │     │
+                    └────────┬────────┘     │
+                             │  __next__()  │  __next__()
+                             ▼              │
+                    ┌─────────────────┐     │
+                    │   激活状态       │─────┘
+                    │  (下一个值)      │
+                    └────────┬────────┘
+                             │  __next__() → StopIteration
+                             ▼
+                    ┌─────────────────┐
+                    │   耗尽状态       │
+                    │  (无法再取值)    │
+                    └─────────────────┘
+</code></pre>
+<h2 id="5-vs">5. 迭代器 vs 列表 内存对比</h2>
+<pre class="plain"><code>列表方式（立即求值）:
+    range(1000000) → [0, 1, 2, ..., 999999]
+                     ┌───────────────────────────────┐
+                     │  ↓ 立即分配                    │
+                     │  约 8MB 内存                   │
+                     └───────────────────────────────┘
+
+迭代器方式（惰性求值）:
+    iter(range(1000000)) → &lt;range_iterator&gt;
+                     ┌───────────────────────────────┐
+                     │  ↓ 几乎不占内存                │
+                     │  56 字节                      │
+                     │  ↓ 逐个生成                    │
+                     │  0 → 1 → 2 → ... → 999999    │
+                     │  ↓ 用完即弃                    │
+                     └───────────────────────────────┘
+</code></pre>
+<h2 id="6-itertools">6. itertools 工具集关系图</h2>
+<pre class="plain"><code>                         itertools
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+   无限生成              拼接操作             筛选操作
+        │                   │                   │
+   ┌────┴────┐        ┌────┴────┐        ┌────┴────┐
+   │ count   │        │ chain   │        │ islice  │
+   │ cycle   │        │ zip_long│        │ takewhil│
+   │ repeat  │        │         │        │ dropwhil│
+   └─────────┘        └─────────┘        └─────────┘
+                             │
+                        ┌────┴────┐
+                        │ 排列组合 │
+                        │ product │
+                        │ permu   │
+                        │ comb    │
+                        └─────────┘
+</code></pre>
+<h2 id="7">7. 迭代器对象生命周期</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Python as Python 代码
+    participant Iterable as 列表 [1,2,3]
+    participant Iterator as list_iterator
+    participant Value as 值
+
+    Python-&gt;&gt;Iterable: iter([1,2,3])
+    Iterable-&gt;&gt;Iterator: 创建 list_iterator
+    Iterator--&gt;&gt;Python: 返回迭代器
+
+    loop 遍历元素
+        Python-&gt;&gt;Iterator: next(it)
+        Iterator--&gt;&gt;Value: 检查是否耗尽
+        alt 还有元素
+            Value--&gt;&gt;Iterator: 返回当前值
+            Iterator--&gt;&gt;Python: 返回值 (1, 2, 3)
+        else 已耗尽
+            Value--&gt;&gt;Iterator: StopIteration
+            Iterator--&gt;&gt;Python: 抛出 StopIteration
+        end
+    end
+
+    Python-&gt;&gt;Iterator: for 循环结束
+    Python-&gt;&gt;Iterator: del it（自动）
+    Note over Iterator: 迭代器对象被回收
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Python as Python 代码
+    participant Iterable as 列表 [1,2,3]
+    participant Iterator as list_iterator
+    participant Value as 值
+
+    Python-&gt;&gt;Iterable: iter([1,2,3])
+    Iterable-&gt;&gt;Iterator: 创建 list_iterator
+    Iterator--&gt;&gt;Python: 返回迭代器
+
+    loop 遍历元素
+        Python-&gt;&gt;Iterator: next(it)
+        Iterator--&gt;&gt;Value: 检查是否耗尽
+        alt 还有元素
+            Value--&gt;&gt;Iterator: 返回当前值
+            Iterator--&gt;&gt;Python: 返回值 (1, 2, 3)
+        else 已耗尽
+            Value--&gt;&gt;Iterator: StopIteration
+            Iterator--&gt;&gt;Python: 抛出 StopIteration
+        end
+    end
+
+    Python-&gt;&gt;Iterator: for 循环结束
+    Python-&gt;&gt;Iterator: del it（自动）
+    Note over Iterator: 迭代器对象被回收
+</code></pre></div>
+<h2 id="8">8. 迭代器协议接口图</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class Iterable {
+        +__iter__() Iterator
+        +__getitem__(index) Any
+    }
+    class Iterator {
+        +__iter__() Iterator
+        +__next__() Any
+    }
+    class Generator {
+        +__iter__() Iterator
+        +__next__() Any
+        +send(value) Any
+        +throw(exc_type) Any
+        +close() None
+    }
+
+    Iterable &lt;|-- Iterator : extends
+    Iterator &lt;|-- Generator : extends
+
+    class List {
+        +__iter__() list_iterator
+    }
+    class Str {
+        +__iter__() str_iterator
+    }
+    class Dict {
+        +__iter__() dict_keyiterator
+    }
+
+    Iterable &lt;|-- List
+    Iterable &lt;|-- Str
+    Iterable &lt;|-- Dict
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class Iterable {
+        +__iter__() Iterator
+        +__getitem__(index) Any
+    }
+    class Iterator {
+        +__iter__() Iterator
+        +__next__() Any
+    }
+    class Generator {
+        +__iter__() Iterator
+        +__next__() Any
+        +send(value) Any
+        +throw(exc_type) Any
+        +close() None
+    }
+
+    Iterable &lt;|-- Iterator : extends
+    Iterator &lt;|-- Generator : extends
+
+    class List {
+        +__iter__() list_iterator
+    }
+    class Str {
+        +__iter__() str_iterator
+    }
+    class Dict {
+        +__iter__() dict_keyiterator
+    }
+
+    Iterable &lt;|-- List
+    Iterable &lt;|-- Str
+    Iterable &lt;|-- Dict
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

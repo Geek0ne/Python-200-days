@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 14 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 14 正文</a>
+  <h1>Day 14 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="_1">模块与包图解</h1>
+<blockquote>
+<p>本文档包含 Day 014 内容的 ASCII 图和 Mermaid 图。</p>
+</blockquote>
+<hr>
+<h2 id="1-import">1. import 搜索路径流程图</h2>
+<h3 id="mermaid">Mermaid 流程图</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    START([&quot;执行 import mymodule&quot;]) 
+    --&gt; CHECK_CACHE{&quot;sys.modules 中\n是否已缓存？&quot;}
+    
+    CHECK_CACHE --&gt;|&quot;是（已导入过）&quot;| DONE[&quot;✅ 直接使用缓存对象\n不重新执行&quot;]
+    CHECK_CACHE --&gt;|&quot;否&quot;| SEARCH[&quot;在 sys.path 中遍历查找&quot;]
+    
+    SEARCH --&gt; FOUND{&quot;找到 mymodule.py\n或 mymodule/ 包？&quot;}
+    
+    FOUND --&gt;|&quot;是&quot;| COMPILE[&quot;编译 .py → .pyc 字节码\n（若已存在且版本匹配则跳过）&quot;]
+    FOUND --&gt;|&quot;否&quot;| MODULE_NAME{&quot;模块名是否含\n点号（子模块）？&quot;}
+    
+    MODULE_NAME --&gt;|&quot;是&quot;| PARENT_CHECK{&quot;父包已导入？&quot;}
+    MODULE_NAME --&gt;|&quot;否&quot;| NOT_FOUND[&quot;❌ ModuleNotFoundError&quot;]
+    
+    PARENT_CHECK --&gt;|&quot;否&quot;| SEARCH
+    PARENT_CHECK --&gt;|&quot;是&quot;| COMPILE
+    
+    COMPILE --&gt; EXECUTE[&quot;创建新 module 对象\n在模块命名空间中执行代码&quot;]
+    EXECUTE --&gt; INSERT_CACHE[&quot;将模块存入 sys.modules&quot;]
+    INSERT_CACHE --&gt; BIND[&quot;将模块名绑定到当前作用域&quot;]
+    BIND --&gt; DONE
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    START([&quot;执行 import mymodule&quot;]) 
+    --&gt; CHECK_CACHE{&quot;sys.modules 中\n是否已缓存？&quot;}
+    
+    CHECK_CACHE --&gt;|&quot;是（已导入过）&quot;| DONE[&quot;✅ 直接使用缓存对象\n不重新执行&quot;]
+    CHECK_CACHE --&gt;|&quot;否&quot;| SEARCH[&quot;在 sys.path 中遍历查找&quot;]
+    
+    SEARCH --&gt; FOUND{&quot;找到 mymodule.py\n或 mymodule/ 包？&quot;}
+    
+    FOUND --&gt;|&quot;是&quot;| COMPILE[&quot;编译 .py → .pyc 字节码\n（若已存在且版本匹配则跳过）&quot;]
+    FOUND --&gt;|&quot;否&quot;| MODULE_NAME{&quot;模块名是否含\n点号（子模块）？&quot;}
+    
+    MODULE_NAME --&gt;|&quot;是&quot;| PARENT_CHECK{&quot;父包已导入？&quot;}
+    MODULE_NAME --&gt;|&quot;否&quot;| NOT_FOUND[&quot;❌ ModuleNotFoundError&quot;]
+    
+    PARENT_CHECK --&gt;|&quot;否&quot;| SEARCH
+    PARENT_CHECK --&gt;|&quot;是&quot;| COMPILE
+    
+    COMPILE --&gt; EXECUTE[&quot;创建新 module 对象\n在模块命名空间中执行代码&quot;]
+    EXECUTE --&gt; INSERT_CACHE[&quot;将模块存入 sys.modules&quot;]
+    INSERT_CACHE --&gt; BIND[&quot;将模块名绑定到当前作用域&quot;]
+    BIND --&gt; DONE
+</code></pre></div>
+<h3 id="ascii">ASCII 搜索路径</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────┐
+│              Python 模块搜索路径 (sys.path)           │
+├─────────────────────────────────────────────────────┤
+│                                                      │
+│  ① 当前脚本所在目录 (入口脚本)                         │
+│     sys.path[0]  = /home/user/myproject               │
+│                                                      │
+│  ② PYTHONPATH 环境变量 (如有设置)                     │
+│     export PYTHONPATH=/custom/libs:$PYTHONPATH        │
+│                                                      │
+│  ③ 标准库路径                                        │
+│     /usr/lib/python3.12/                              │
+│     /usr/lib/python3.12/lib-dynload/                  │
+│                                                      │
+│  ④ site-packages (第三方包)                           │
+│     /usr/lib/python3.12/site-packages/                │
+│                                                      │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="2-name">2. <strong>name</strong> 值变化示意</h2>
+<h3 id="name-vs"><strong>name</strong> 在直接运行 vs 被导入时的值</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────┐
+│                                                          │
+│  python3 mymodule.py                    import mymodule  │
+│                                                          │
+│  ┌─────────────────┐                  ┌───────────────┐  │
+│  │  __name__ 被赋值  │                  │ __name__ 被赋值│  │
+│  │  &#x27;__main__&#x27;      │                  │ &#x27;mymodule&#x27;    │  │
+│  └────────┬────────┘                  └──────┬────────┘  │
+│           │                                   │           │
+│           ▼                                   ▼           │
+│  ┌─────────────────┐                  ┌───────────────┐  │
+│  │ 执行全部代码     │                  │ 执行全部代码   │  │
+│  │                  │                  │               │  │
+│  │ if __name__ ==   │                  │ if __name__   │  │
+│  │    &#x27;__main__&#x27;:   │                  │    ==         │  │
+│  │    → True        │                  │    &#x27;__main__&#x27;:│  │
+│  │    → 执行测试代码 │                  │    → False    │  │
+│  │    → 交互演示     │                  │    → 跳过     │  │
+│  └─────────────────┘                  └───────────────┘  │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="name">不同场景下的 <strong>name</strong> 值</h3>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>运行方式</th>
+<th><code>__name__</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>main.py</code></td>
+<td><code>python3 main.py</code></td>
+<td><code>'__main__'</code></td>
+</tr>
+<tr>
+<td><code>mymodule.py</code></td>
+<td><code>python3 mymodule.py</code></td>
+<td><code>'__main__'</code></td>
+</tr>
+<tr>
+<td><code>mymodule.py</code></td>
+<td><code>import mymodule</code></td>
+<td><code>'mymodule'</code></td>
+</tr>
+<tr>
+<td><code>package/module.py</code></td>
+<td><code>import package.module</code></td>
+<td><code>'package.module'</code></td>
+</tr>
+<tr>
+<td><code>__main__.py</code></td>
+<td><code>python3 -m package</code></td>
+<td><code>'__main__'</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="mermaid_1">Mermaid 状态图</h3>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    state &quot;python3 script.py&quot; as DirectRun
+    state &quot;import script&quot; as Import
+    
+    DirectRun --&gt; SetMain: 解释器赋值
+    SetMain: __name__ = &#x27;__main__&#x27;
+    SetMain --&gt; ExecuteAll: 执行所有代码
+    ExecuteAll --&gt; TestCode: if __name__ == &#x27;__main__&#x27; → True
+    TestCode --&gt; RunTest: ✅ 运行测试/演示代码
+    
+    Import --&gt; SetName: 解释器赋值
+    SetName: __name__ = &#x27;script&#x27;
+    SetName --&gt; ExecuteCode: 执行模块代码
+    ExecuteCode --&gt; SkipTest: if __name__ == &#x27;__main__&#x27; → False
+    SkipTest --&gt; ReturnModule: 跳过测试代码
+    
+    ReturnModule --&gt; UserCode: 返回模块对象给调用方
+    RunTest --&gt; Output: 打印结果/执行交互
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    state &quot;python3 script.py&quot; as DirectRun
+    state &quot;import script&quot; as Import
+    
+    DirectRun --&gt; SetMain: 解释器赋值
+    SetMain: __name__ = &#x27;__main__&#x27;
+    SetMain --&gt; ExecuteAll: 执行所有代码
+    ExecuteAll --&gt; TestCode: if __name__ == &#x27;__main__&#x27; → True
+    TestCode --&gt; RunTest: ✅ 运行测试/演示代码
+    
+    Import --&gt; SetName: 解释器赋值
+    SetName: __name__ = &#x27;script&#x27;
+    SetName --&gt; ExecuteCode: 执行模块代码
+    ExecuteCode --&gt; SkipTest: if __name__ == &#x27;__main__&#x27; → False
+    SkipTest --&gt; ReturnModule: 跳过测试代码
+    
+    ReturnModule --&gt; UserCode: 返回模块对象给调用方
+    RunTest --&gt; Output: 打印结果/执行交互
+</code></pre></div>
+<hr>
+<h2 id="3">3. 包目录结构图</h2>
+<h3 id="_2">完整包结构</h3>
+<pre class="plain"><code>project/
+├── main.py                          ← 入口文件
+│
+├── strutils/                        ← 字符串工具包
+│   ├── __init__.py                  ← 包初始化，集中导入/重导出
+│   ├── manipulation.py              ← 字符串操作：reverse, truncate
+│   ├── validation.py                ← 字符串验证：is_email, is_phone
+│   └── formatting.py                ← 字符串格式化：to_title_case
+│
+├── mathutils/                       ← 数学工具包
+│   ├── __init__.py                  ← 包初始化，集中导入/重导出
+│   ├── basic.py                     ← 基础运算：add, subtract
+│   ├── statistics.py                ← 统计计算：mean, median, variance
+│   └── conversion.py                ← 单位转换：celsius_to_fahrenheit
+│
+├── config.py                        ← 配置文件
+│
+└── tests/                           ← 测试目录
+    └── test_strutils.py
+</code></pre>
+<h3 id="mermaid_2">Mermaid 树状结构</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    main[&quot;main.py&lt;br/&gt;(入口文件，绝对导入)&quot;]
+    
+    subgraph strutils_pkg[&quot;strutils/&quot;]
+        strutils_init[&quot;__init__.py&lt;br/&gt;🎯 导入并重导出&quot;]
+        strutils_manip[&quot;manipulation.py&lt;br/&gt;reverse, truncate&quot;]
+        strutils_vali[&quot;validation.py&lt;br/&gt;is_email, is_phone&lt;br/&gt;📍 相对导入 .formatting&quot;]
+        strutils_form[&quot;formatting.py&lt;br/&gt;to_title_case, to_snake_case&quot;]
+    end
+    
+    subgraph mathutils_pkg[&quot;mathutils/&quot;]
+        mathutils_init[&quot;__init__.py&lt;br/&gt;🎯 导入并重导出&quot;]
+        mathutils_basic[&quot;basic.py&lt;br/&gt;add, subtract, factorial&lt;br/&gt;gcd, lcm&quot;]
+        mathutils_stat[&quot;statistics.py&lt;br/&gt;mean, median, variance&lt;br/&gt;📍 相对导入 .basic&quot;]
+        mathutils_conv[&quot;conversion.py&lt;br/&gt;celsius_to_fahrenheit&lt;br/&gt;kg_to_lbs&quot;]
+    end
+    
+    config[&quot;config.py&quot;]
+    
+    main --&gt; strutils_pkg
+    main --&gt; mathutils_pkg
+    main --&gt; config
+    
+    strutils_vali -.-&gt;|from .formatting| strutils_form
+    mathutils_stat -.-&gt;|from .basic| mathutils_basic
+    
+    style main fill:#ffd43b
+    style strutils_pkg fill:#e1f5fe
+    style mathutils_pkg fill:#fce4ec
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    main[&quot;main.py&lt;br/&gt;(入口文件，绝对导入)&quot;]
+    
+    subgraph strutils_pkg[&quot;strutils/&quot;]
+        strutils_init[&quot;__init__.py&lt;br/&gt;🎯 导入并重导出&quot;]
+        strutils_manip[&quot;manipulation.py&lt;br/&gt;reverse, truncate&quot;]
+        strutils_vali[&quot;validation.py&lt;br/&gt;is_email, is_phone&lt;br/&gt;📍 相对导入 .formatting&quot;]
+        strutils_form[&quot;formatting.py&lt;br/&gt;to_title_case, to_snake_case&quot;]
+    end
+    
+    subgraph mathutils_pkg[&quot;mathutils/&quot;]
+        mathutils_init[&quot;__init__.py&lt;br/&gt;🎯 导入并重导出&quot;]
+        mathutils_basic[&quot;basic.py&lt;br/&gt;add, subtract, factorial&lt;br/&gt;gcd, lcm&quot;]
+        mathutils_stat[&quot;statistics.py&lt;br/&gt;mean, median, variance&lt;br/&gt;📍 相对导入 .basic&quot;]
+        mathutils_conv[&quot;conversion.py&lt;br/&gt;celsius_to_fahrenheit&lt;br/&gt;kg_to_lbs&quot;]
+    end
+    
+    config[&quot;config.py&quot;]
+    
+    main --&gt; strutils_pkg
+    main --&gt; mathutils_pkg
+    main --&gt; config
+    
+    strutils_vali -.-&gt;|from .formatting| strutils_form
+    mathutils_stat -.-&gt;|from .basic| mathutils_basic
+    
+    style main fill:#ffd43b
+    style strutils_pkg fill:#e1f5fe
+    style mathutils_pkg fill:#fce4ec
+</code></pre></div>
+<hr>
+<h2 id="4-import">4. import 语句各种写法的关系</h2>
+<pre class="plain"><code>                    import 语句的分类
+                    ┌─────────────────────────────────┐
+                    │                                 │
+    ┌───────────────┴───────────────┐                 │
+    │                               │                 │
+绝对导入                           相对导入            │
+(absolute import)                 (relative import)  │
+    │                               │                 │
+    ▼                               ▼                 │
+┌─────────┐                    ┌──────────┐          │
+│明确指定│                    │基于当前 │          │
+│完整路径│                    │模块位置 │          │
+└────┬────┘                    └────┬─────┘          │
+     │                              │                 │
+     ▼                              ▼                 │
+┌─────────────────┐        ┌─────────────────┐       │
+│ import os        │        │ from . import x  │       │
+│ from os import   │        │ from .. import y │       │
+│   path           │        │ from .module    │       │
+│ from package    │        │   import z      │       │
+│   import module  │        └─────────────────┘       │
+│ import numpy as │                                   │
+│   np             │        ⚠ 不能在 __main__ 使用    │
+└─────────────────┘                                   │
+                                                      │
+        ★ PEP 8 推荐优先使用绝对导入 ★               │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="5-sysmodules">5. sys.modules 缓存机制</h2>
+<pre class="plain"><code>第一次 import mymodule:
+
+    import mymodule
+         │
+         ▼
+    ┌──────────────────┐    未命中      ┌──────────────────┐
+    │  sys.modules     │ ──────────→   │  在 sys.path     │
+    │  检查 &#x27;mymodule&#x27; │                │  中搜索文件       │
+    └──────────────────┘               └────────┬─────────┘
+                                               │
+                                               ▼
+                                        ┌──────────────────┐
+                                        │  找到并编译 .py   │
+                                        └────────┬─────────┘
+                                               │
+                                               ▼
+                                        ┌──────────────────┐
+                                        │  创建 module 对象 │
+                                        │  执行模块代码     │
+                                        └────────┬─────────┘
+                                               │
+                                               ▼
+                                        ┌──────────────────┐
+                                        │  sys.modules     │
+                                        │  [&#x27;mymodule&#x27;]    │
+                                        │  存入缓存        │
+                                        └──────────────────┘
+
+第二次 import mymodule:
+
+    import mymodule
+         │
+         ▼
+    ┌──────────────────┐    命中!
+    │  sys.modules     │ ──────────→   ✅ 直接返回缓存的对象
+    │  检查 &#x27;mymodule&#x27; │
+    └──────────────────┘
+</code></pre>
+<hr>
+<h2 id="6">6. 模块生命周期</h2>
+<pre class="plain"><code>时间线 ──────────────────────────────────────────────────────→
+
+模块源文件 (.py)     ██████████████████████████████████████
+                     │（创建）                   （修改/删除）
+
+字节码缓存 (.pyc)    ██████████████████████████████████████
+                     │（首次导入生成）        （重新编译更新）
+
+模块对象 (内存)      ────████████████████████──────────────
+                        │                    │
+                   (第一次导入)          (所有引用释放
+                                         或 del sys.modules)
+
+命名空间绑定         ──████████████████████████────────────
+                     │                                  │
+                (import 语句)                  (函数返回/作用域结束)
+
+模块作用域中的变量   ██████████████████████████████████████
+                     只要模块对象在 sys.modules 中，变量就存活
+</code></pre>
+<hr>
+<h2 id="7">7. 实战工具包架构图</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph User[&quot;用户代码&quot;]
+        U1[&quot;import strutils&quot;]
+        U2[&quot;from mathutils import mean&quot;]
+        U3[&quot;from strutils.manipulation import truncate&quot;]
+    end
+    
+    subgraph strutils_pkg[&quot;strutils 包&quot;]
+        S1[&quot;__init__.py&lt;br/&gt;重导出核心函数&quot;]
+        S2[&quot;manipulation.py&quot;]
+        S3[&quot;validation.py&quot;]
+        S4[&quot;formatting.py&quot;]
+    end
+    
+    subgraph mathutils_pkg[&quot;mathutils 包&quot;]
+        M1[&quot;__init__.py&lt;br/&gt;重导出核心函数&quot;]
+        M2[&quot;basic.py&quot;]
+        M3[&quot;statistics.py&quot;]
+        M4[&quot;conversion.py&quot;]
+    end
+    
+    U1 --&gt; S1
+    S1 --&gt; S2
+    S1 --&gt; S3
+    S1 --&gt; S4
+    S3 -.-&gt;|相对导入| S4
+    
+    U2 --&gt; M1
+    U3 --&gt; S2
+    
+    M1 --&gt; M2
+    M1 --&gt; M3
+    M1 --&gt; M4
+    M3 -.-&gt;|相对导入| M2
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph User[&quot;用户代码&quot;]
+        U1[&quot;import strutils&quot;]
+        U2[&quot;from mathutils import mean&quot;]
+        U3[&quot;from strutils.manipulation import truncate&quot;]
+    end
+    
+    subgraph strutils_pkg[&quot;strutils 包&quot;]
+        S1[&quot;__init__.py&lt;br/&gt;重导出核心函数&quot;]
+        S2[&quot;manipulation.py&quot;]
+        S3[&quot;validation.py&quot;]
+        S4[&quot;formatting.py&quot;]
+    end
+    
+    subgraph mathutils_pkg[&quot;mathutils 包&quot;]
+        M1[&quot;__init__.py&lt;br/&gt;重导出核心函数&quot;]
+        M2[&quot;basic.py&quot;]
+        M3[&quot;statistics.py&quot;]
+        M4[&quot;conversion.py&quot;]
+    end
+    
+    U1 --&gt; S1
+    S1 --&gt; S2
+    S1 --&gt; S3
+    S1 --&gt; S4
+    S3 -.-&gt;|相对导入| S4
+    
+    U2 --&gt; M1
+    U3 --&gt; S2
+    
+    M1 --&gt; M2
+    M1 --&gt; M3
+    M1 --&gt; M4
+    M3 -.-&gt;|相对导入| M2
+</code></pre></div>
+<hr>
+<h2 id="8-name-main">8. <strong>name</strong> 与 <strong>main</strong> 的关系总结</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│                                                               │
+│  每个 .py 文件在运行时都有一个 __name__ 变量                    │
+│                                                               │
+│       ┌───────────────┐                                        │
+│       │  运行方式      │                                        │
+│       └───────┬───────┘                                        │
+│               │                                                │
+│     ┌─────────┴─────────┐                                      │
+│     ▼                   ▼                                      │
+│ ┌──────────┐      ┌──────────┐                                 │
+│ │直接运行   │      │ 被导入    │                                 │
+│ │python3 x │      │ import x │                                 │
+│ └─────┬────┘      └─────┬────┘                                 │
+│       │                 │                                       │
+│       ▼                 ▼                                       │
+│ ┌──────────┐      ┌──────────┐                                 │
+│ │__name__  │      │__name__  │                                 │
+│ │=         │      │= &#x27;x&#x27;     │                                 │
+│ │&#x27;__main__&#x27;│      │          │                                 │
+│ └──────────┘      └──────────┘                                 │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="9">9. 循环导入示意图</h2>
+<pre class="plain"><code>❌ 循环导入问题：
+
+    module_a.py              module_b.py
+    ┌────────────────┐       ┌────────────────┐
+    │ from module_b  │       │ from module_a  │
+    │   import func_b│◄─────►│   import func_a│
+    │                │       │                │
+    │ def func_a():  │       │ def func_b():  │
+    │   return       │       │   return       │
+    │   func_b()     │       │   func_a()     │
+    └────────────────┘       └────────────────┘
+              │                      │
+              └──────────────────────┘
+        互相引用，造成循环依赖！
+        
+✅ 解决方案 1：延迟导入（在函数体内部导入）
+
+    module_a.py              module_b.py
+    ┌────────────────┐       ┌────────────────┐
+    │ def func_a():  │       │ def func_b():  │
+    │   from module_b│       │   from module_a│
+    │     import     │       │     import     │
+    │     func_b     │       │     func_a     │
+    │   return       │       │   return       │
+    │   func_b()     │       │   func_a()     │
+    └────────────────┘       └────────────────┘
+
+✅ 解决方案 2：提取公共模块
+
+    module_a.py ──→ common.py ←── module_b.py
+                      │
+                  共享的函数/变量
+</code></pre>
+<hr>
+<h2 id="10-syspath">10. sys.path 构成与修改</h2>
+<pre class="plain"><code>sys.path 是一个列表，决定了 Python 去哪里找模块：
+
+&gt;&gt;&gt; import sys
+&gt;&gt;&gt; sys.path
+[
+    &#x27;/home/user/project&#x27;,               # ① 脚本所在目录
+    &#x27;/usr/lib/python3.12&#x27;,               # ② 标准库
+    &#x27;/usr/lib/python3.12/lib-dynload&#x27;,   # ③ C 扩展
+    &#x27;/usr/lib/python3.12/site-packages&#x27;,  # ④ 第三方包
+]
+
+可以动态修改（但谨慎！）：
+&gt;&gt;&gt; sys.path.append(&#x27;/my/custom/libs&#x27;)   # 临时添加
+&gt;&gt;&gt; sys.path.insert(0, &#x27;/override/first&#x27;) # 插入到最前面（优先级最高）
+&gt;&gt;&gt; sys.path.remove(&#x27;/my/custom/libs&#x27;)    # 移除
+
+影响 sys.path 的来源：
+┌────────────────┐
+│ ① __file__ 的    │── 自动设置 sys.path[0] 为入口文件目录
+│    所在目录      │
+├────────────────┤
+│ ② PYTHONPATH    │── 环境变量，多个路径用 : 分隔
+│    环境变量      │
+├────────────────┤
+│ ③ .pth 文件     │── site-packages 中的文本文件
+│                 │   每个路径一行，自动追加到 sys.path
+├────────────────┤
+│ ④ site 模块     │── 启动时自动执行，初始化 site-packages
+│    自动初始化    │
+└────────────────┘
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

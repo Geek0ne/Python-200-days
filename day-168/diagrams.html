@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 168 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 168 正文</a>
+  <h1>Day 168 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-168-ssh-paramiko">Day 168 — SSH 远程管理（paramiko）· 图解</h1>
+<blockquote>
+<p>图都可用纯文本阅读。Mermaid 代码块可直接粘到支持 Mermaid 的渲染器里看效果。</p>
+</blockquote>
+<hr>
+<h2 id="1ssh">图 1：SSH 协议分层与"保护了什么"</h2>
+<pre class="plain"><code>        ┌──────────────────────────────────────────────────┐
+        │ 你的脚本 / 运维动作                                │
+        └───────────────────────┬──────────────────────────┘
+                                │
+┌───────────────────────────────▼────────────────────────────────┐
+│ ④ 连接层 Connection (RFC 4254)                                  │
+│    channel 多路复用：session / direct-tcpip / sftp / x11        │
+│    解决：一条隧道跑很多事                                        │
+├────────────────────────────────────────────────────────────────┤
+│ ③ 用户认证 UserAuth (RFC 4252)                                  │
+│    publickey / password / keyboard-interactive                  │
+│    解决：你是谁                                                  │
+├────────────────────────────────────────────────────────────────┤
+│ ② 密钥交换 KEX (RFC 4253)                                       │
+│    curve25519 / ecdh / DH → 派生会话密钥 → 前向保密(PFS)          │
+│    解决：密钥怎么安全地&quot;当场产生&quot;                                │
+├────────────────────────────────────────────────────────────────┤
+│ ① 传输层 Transport (RFC 4253)                                   │
+│    AES-GCM / chacha20-poly1305 + MAC + 压缩                     │
+│    解决：机密性 + 完整性                                         │
+└───────────────────────────────┬────────────────────────────────┘
+                                │
+                        TCP :22（明文之外再无明文）
+</code></pre>
+<p><strong>读法</strong>：从下往上是"先建安全管道，再认证身份，最后开多路通道"。
+版本串 <code>SSH-2.0-OpenSSH_x.y</code> 是唯一明文交换，别在那里塞敏感信息。</p>
+<hr>
+<h2 id="2-challenge-response">图 2：公钥认证的 challenge-response</h2>
+<pre class="plain"><code>        client（持有私钥）                        server（持有公钥）
+              │                                        │
+              │ ① &quot;我要用 key 指纹 SHA256:ab.. 登录&quot;     │
+              ├───────────────────────────────────────▶│
+              │                                        │ 检查 authorized_keys
+              │ ② challenge = 随机数 R（每次不同）       │
+              │◀───────────────────────────────────────┤
+              │                                        │
+              │ ③ signature = sign(私钥, R)             │
+              ├───────────────────────────────────────▶│
+              │                                        │ verify(公钥, R, signature)?
+              │ ④ &quot;OK / FAIL&quot;                          │
+              │◀───────────────────────────────────────┤
+
+关键：R 只有本次有效 → 录下 ③ 也无法重放
+      私钥从未离开 client → 服务端被拖库也拿不到你的私钥
+</code></pre>
+<hr>
+<h2 id="3-api">图 3：三层 API 与连接复用</h2>
+<pre class="plain"><code>    ❌ 反模式：每命令一次连接                 ✅ 正模式：一机一连接
+
+  SSHClient ─TCP─▶ 主机A                    Transport ──┬─ channel#1 exec(&quot;uptime&quot;)
+  SSHClient ─TCP─▶ 主机A  (第 2 次认证)                  ├─ channel#2 exec(&quot;df -h&quot;)
+  SSHClient ─TCP─▶ 主机A  (第 3 次认证)                  ├─ channel#3 sftp 子系统
+  ...                                                    └─ channel#4 direct-tcpip
+  5 条命令 = 5 次 KEX + 5 次认证                5 条命令 = 1 次 KEX + 1 次认证
+
+  开销对比（局域网，单机 5 条命令）：
+    反模式 ≈ 5 × (KEX 80ms + 认证 30ms) ≈ 550ms
+    正模式 ≈ 110ms + 5 × 2ms             ≈ 120ms
+</code></pre>
+<hr>
+<h2 id="4exec_command-4">图 4：<code>exec_command</code> 的双向死锁（陷阱 4）</h2>
+<pre class="plain"><code>   远端 /bin/sh                                       你的 Python
+   ┌──────────────┐                                  ┌──────────────┐
+   │ 写 stdout ───┼──────────▶ TCP 窗口 ─────────────▶│ stdout buffer │
+   │ 写 stderr ───┼──────────▶ 窗口满了 → write()    │  （你没读）   │
+   │              │            阻塞 ⛔               │ stderr buffer │
+   └──────────────┘                                  └──────────────┘
+            ▲                                                 │
+            │              你还在等 stdout.read() 的 EOF ◀─────┘
+            └──────────── 双向等待 → 永久挂起 ──────────────────┘
+
+   修法：两条流都要 drain；或给 channel 设 settimeout 并循环读。
+</code></pre>
+<hr>
+<h2 id="5mermaid">图 5：Mermaid — 批量运维全流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[读取 inventory.ini] --&gt; B[解析 Host 段/别名]
+    B --&gt; C{目标机数量}
+    C --&gt;|1| D[直接执行]
+    C --&gt;|N| E[ThreadPoolExecutor workers=8~16]
+    E --&gt; F[每台机器: connect timeout=10]
+    F --&gt;|失败| G[标记 unreachable]
+    F --&gt;|成功| H[get_transport.set_keepalive 30]
+    H --&gt; I[exec_command + channel.settimeout]
+    I --&gt; J[drain stdout/stderr]
+    J --&gt; K[recv_exit_status]
+    K --&gt; L[结果入线程安全队列]
+    G --&gt; L
+    L --&gt; M[汇总: 成功/告警/失败]
+    M --&gt; N[输出表格 + JSONL 审计]
+    N --&gt; O{失败数}
+    O --&gt;|0| P[退出码 0]
+    O --&gt;|部分| Q[退出码 2]
+    O --&gt;|全部| R[退出码 1]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[读取 inventory.ini] --&gt; B[解析 Host 段/别名]
+    B --&gt; C{目标机数量}
+    C --&gt;|1| D[直接执行]
+    C --&gt;|N| E[ThreadPoolExecutor workers=8~16]
+    E --&gt; F[每台机器: connect timeout=10]
+    F --&gt;|失败| G[标记 unreachable]
+    F --&gt;|成功| H[get_transport.set_keepalive 30]
+    H --&gt; I[exec_command + channel.settimeout]
+    I --&gt; J[drain stdout/stderr]
+    J --&gt; K[recv_exit_status]
+    K --&gt; L[结果入线程安全队列]
+    G --&gt; L
+    L --&gt; M[汇总: 成功/告警/失败]
+    M --&gt; N[输出表格 + JSONL 审计]
+    N --&gt; O{失败数}
+    O --&gt;|0| P[退出码 0]
+    O --&gt;|部分| Q[退出码 2]
+    O --&gt;|全部| R[退出码 1]
+</code></pre></div>
+<hr>
+<h2 id="6mermaid">图 6：Mermaid — 幂等上传（断点续传 + 校验）</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant L as 本地
+    participant S as 远端 SFTP
+    L-&gt;&gt;S: stat(remotepath)
+    alt 文件不存在
+        L-&gt;&gt;S: put(local, remote)
+    else 大小一致
+        L-&gt;&gt;L: 跳过（幂等）
+    else 大小不一致
+        L-&gt;&gt;S: open(remote, &quot;r+b&quot;) + seek(remote_size)
+        L-&gt;&gt;L: local.seek(remote_size)
+        L-&gt;&gt;S: 分块续传
+    end
+    L-&gt;&gt;S: sha256sum 校验
+    S--&gt;&gt;L: 哈希一致 ✅
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant L as 本地
+    participant S as 远端 SFTP
+    L-&gt;&gt;S: stat(remotepath)
+    alt 文件不存在
+        L-&gt;&gt;S: put(local, remote)
+    else 大小一致
+        L-&gt;&gt;L: 跳过（幂等）
+    else 大小不一致
+        L-&gt;&gt;S: open(remote, &quot;r+b&quot;) + seek(remote_size)
+        L-&gt;&gt;L: local.seek(remote_size)
+        L-&gt;&gt;S: 分块续传
+    end
+    L-&gt;&gt;S: sha256sum 校验
+    S--&gt;&gt;L: 哈希一致 ✅
+</code></pre></div>
+<hr>
+<h2 id="7">图 7：并发度与"自伤"曲线</h2>
+<pre class="plain"><code>  总耗时(s)                          失败率
+  240 │●                            100% │                    ● 200
+      │  ●                                │                ● 100
+      │    ●                              │            ● 32
+   16 │      ●────●────●                 10% │      ● 16
+      │                       ●             │  ● 8
+    0 │━━━━━━━━━━━━━━━━━━━━━━▶           0% │●──────────────▶
+      1   4   8   16  32  200              8   16  32  100 200
+              并发度                                并发度
+       ▲ 总耗时随并发指数下降              ▲ 失败率随并发陡升
+                              ┌──────────────────────────┐
+                              │ 甜蜜点：8~16             │
+                              │ 原因：sshd MaxStartups   │
+                              │       防火墙连接速率      │
+                              └──────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="8">图 8：平台/工具能力对照</h2>
+<pre class="plain"><code>                     SSHClient   Transport   SFTPClient   外部命令 ssh/scp
+  执行单条命令           ✅          ✅(手动)      ❌           ✅
+  多路复用              部分         ✅           ✅           ✅(ControlMaster)
+  精细超时/保活          部分         ✅          部分          ❌
+  读 ~/.ssh/config       ❌          ❌           ❌           ✅
+  端口转发               ✅          ✅           ❌           ✅(-L/-R)
+  纯 Python 无子进程      ✅          ✅           ✅           ❌
+
+  结论：自动化脚本用 paramiko（可编程、可并发、可审计）；
+        人工交互、临时排障用系统 ssh 命令（省事，且懂你的 config）。
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 56 — 异步编程（asyncio）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 56 — 异步编程（asyncio）</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">746 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-056-asyncio" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、为什么需要异步编程？</a>
+<a class="toc-l3" href="#11">1.1 同步编程的瓶颈</a>
+<a class="toc-l3" href="#12">1.2 异步编程的核心思想</a>
+<a class="toc-l3" href="#13-asyncio">1.3 asyncio 的定位</a>
+<a class="toc-l2" href="#event-loop-asyncio">二、事件循环（Event Loop）—— asyncio 的心脏</a>
+<a class="toc-l3" href="#21">2.1 什么是事件循环？</a>
+<a class="toc-l3" href="#22">2.2 事件循环的工作流程</a>
+<a class="toc-l3" href="#23">2.3 手动管理事件循环（了解即可）</a>
+<a class="toc-l2" href="#asyncawait">三、async/await 关键字</a>
+<a class="toc-l3" href="#31-vs">3.1 协程函数 vs 协程对象</a>
+<a class="toc-l3" href="#32-await">3.2 await 的本质</a>
+<a class="toc-l3" href="#33-await">3.3 await 的使用限制</a>
+<a class="toc-l2" href="#gather-task">四、并发执行：gather 与 Task</a>
+<a class="toc-l3" href="#41-await">4.1 问题：await 会阻塞</a>
+<a class="toc-l3" href="#42-asynciogather">4.2 asyncio.gather() —— 并发执行多个协程</a>
+<a class="toc-l3" href="#43-asynciocreate_task">4.3 asyncio.create_task() —— 手动创建任务</a>
+<a class="toc-l3" href="#44-task-vs-gather">4.4 Task vs gather 对比</a>
+<a class="toc-l2" href="#future-task">五、Future 与 Task</a>
+<a class="toc-l3" href="#51-future">5.1 Future 是什么？</a>
+<a class="toc-l3" href="#52-task-future">5.2 Task 是 Future 的子类</a>
+<a class="toc-l3" href="#53-task">5.3 Task 的生命周期</a>
+<a class="toc-l3" href="#54-task">5.4 常用 Task 方法</a>
+<a class="toc-l2" href="#_2">六、错误处理</a>
+<a class="toc-l3" href="#61">6.1 单个协程的异常</a>
+<a class="toc-l3" href="#62-task">6.2 Task 的异常</a>
+<a class="toc-l3" href="#63-gather">6.3 gather 的错误处理</a>
+<a class="toc-l2" href="#asyncio">七、asyncio 的内部机制</a>
+<a class="toc-l3" href="#71">7.1 基于生成器的协程（历史）</a>
+<a class="toc-l3" href="#72">7.2 协程的挂起与恢复</a>
+<a class="toc-l3" href="#73-selector-io">7.3 选择器（Selector）—— I/O 多路复用</a>
+<a class="toc-l2" href="#web">八、实战：异步 Web 爬虫</a>
+<a class="toc-l3" href="#81-url">8.1 场景：并发请求多个 URL</a>
+<a class="toc-l3" href="#82">8.2 带限流的爬虫</a>
+<a class="toc-l3" href="#83">8.3 超时控制</a>
+<a class="toc-l2" href="#_3">九、常见陷阱与最佳实践</a>
+<a class="toc-l3" href="#91">9.1 ❌ 在异步函数中使用同步阻塞</a>
+<a class="toc-l3" href="#92-await">9.2 ❌ 忘记 await</a>
+<a class="toc-l3" href="#93-task">9.3 ❌ 创建 Task 后不等待</a>
+<a class="toc-l3" href="#94">9.4 ✅ 最佳实践清单</a>
+<a class="toc-l2" href="#api">十、API 速查表</a>
+<a class="toc-l3" href="#_4">核心函数</a>
+<a class="toc-l3" href="#semaphore">Semaphore</a>
+<a class="toc-l3" href="#task">Task 方法</a>
+<a class="toc-l2" href="#_5">十一、思考题</a>
+<a class="toc-l2" href="#_6">十二、总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-056-asyncio">Day 056 — 异步编程（asyncio）</h1>
+<blockquote>
+<p>🎯 <strong>今日目标</strong>：掌握 Python 异步编程核心概念，理解事件循环原理，学会用 <code>async/await</code> 编写高效并发程序。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、为什么需要异步编程？</h2>
+<h3 id="11">1.1 同步编程的瓶颈</h3>
+<p>在传统同步模型中，程序是<strong>顺序执行</strong>的：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+
+<span class="k">def</span> <span class="nf">fetch_data</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;开始请求数据...&quot;</span><span class="p">)</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># 模拟网络请求，阻塞 2 秒</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;数据获取完成&quot;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">process_data</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;开始处理数据...&quot;</span><span class="p">)</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># 模拟处理，阻塞 1 秒</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;数据处理完成&quot;</span><span class="p">)</span>
+
+<span class="c1"># 同步执行：总耗时 = 2 + 1 = 3 秒</span>
+<span class="n">fetch_data</span><span class="p">()</span>
+<span class="n">process_data</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>问题</strong>：当 <code>fetch_data()</code> 等待网络响应时，CPU 空闲但无法做其他事。如果有 100 个请求，同步方式需要等待 <code>100 × 2 = 200</code> 秒。</p>
+<h3 id="12">1.2 异步编程的核心思想</h3>
+<p>异步编程的核心是：<strong>在等待 I/O 的时候切换去做别的事</strong>。</p>
+<pre class="plain"><code>同步模型（阻塞）：
+时间 ──────────────────────────────────►
+[请求1 等待中......][请求1完成][请求2 等待中......][请求2完成]
+                     ↑ CPU空闲
+
+异步模型（非阻塞）：
+时间 ──────────────────────────────────►
+[请求1 发起][请求2 发起][请求3 发起]...[请求1完成][请求2完成][请求3完成]
+             ↑ CPU不闲着，继续发请求
+</code></pre>
+<h3 id="13-asyncio">1.3 asyncio 的定位</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐方案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU 密集型（数学计算、图像处理）</td>
+<td>多进程 <code>multiprocessing</code></td>
+</tr>
+<tr>
+<td>I/O 密集型（网络请求、文件读写）</td>
+<td>异步 <code>asyncio</code></td>
+</tr>
+<tr>
+<td>混合场景</td>
+<td>asyncio + ProcessPoolExecutor</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>asyncio 的优势</strong>：比线程更轻量（无上下文切换开销），单线程即可实现高并发。</p>
+</blockquote>
+<hr>
+<h2 id="event-loop-asyncio">二、事件循环（Event Loop）—— asyncio 的心脏</h2>
+<h3 id="21">2.1 什么是事件循环？</h3>
+<p>事件循环是 asyncio 的核心调度器。它的工作原理就像一个<strong>无限循环的调度中心</strong>：</p>
+<pre class="plain"><code>┌──────────────────────────────────────────────────┐
+│                  事件循环 (Event Loop)              │
+│                                                    │
+│   ┌─────────┐  ┌─────────┐  ┌─────────┐          │
+│   │ Task 1  │  │ Task 2  │  │ Task 3  │  ...      │
+│   └────┬────┘  └────┬────┘  └────┬────┘          │
+│        │            │            │                 │
+│        ▼            ▼            ▼                 │
+│   ┌─────────────────────────────────────┐         │
+│   │        就绪队列 (Ready Queue)        │         │
+│   └─────────────────────────────────────┘         │
+│        │                                          │
+│        ▼                                          │
+│   ┌─────────────────────────────────────┐         │
+│   │     I/O 监听器 (Selector/Poller)     │         │
+│   │   - 网络 socket 就绪？               │         │
+│   │   - 文件描述符就绪？                  │         │
+│   │   - 子进程完成？                      │         │
+│   └─────────────────────────────────────┘         │
+│        │                                          │
+│        ▼                                          │
+│   ┌─────────────────────────────────────┐         │
+│   │      定时器 (Timer/Callback)         │         │
+│   │   - sleep 到期？                     │         │
+│   │   - 超时检测？                       │         │
+│   └─────────────────────────────────────┘         │
+└──────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="22">2.2 事件循环的工作流程</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># 挂起，让出控制权</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;World&quot;</span><span class="p">)</span>
+
+<span class="c1"># asyncio.run() 做了以下事情：</span>
+<span class="c1"># 1. 创建事件循环</span>
+<span class="c1"># 2. 运行 main() 协程</span>
+<span class="c1"># 3. 关闭事件循环</span>
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<p><strong>事件循环的每一步</strong>：<br>
+1. 从就绪队列取出一个协程<br>
+2. 执行协程直到遇到 <code>await</code>（挂起点）<br>
+3. 如果 <code>await</code> 的是 I/O 操作，注册到 I/O 监听器<br>
+4. 继续处理下一个就绪的协程<br>
+5. 当 I/O 完成时，将对应的协程放回就绪队列<br>
+6. 重复步骤 1-5 直到所有协程完成</p>
+<h3 id="23">2.3 手动管理事件循环（了解即可）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">hello</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;World&quot;</span><span class="p">)</span>
+
+<span class="c1"># Python 3.10+ 之前常用的方式</span>
+<span class="n">loop</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">get_event_loop</span><span class="p">()</span>
+<span class="n">loop</span><span class="o">.</span><span class="n">run_until_complete</span><span class="p">(</span><span class="n">hello</span><span class="p">())</span>
+<span class="n">loop</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+<span class="c1"># Python 3.10+ 推荐使用 asyncio.run()</span>
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">hello</span><span class="p">())</span>
+</code></pre></div>
+<hr>
+<h2 id="asyncawait">三、async/await 关键字</h2>
+<h3 id="31-vs">3.1 协程函数 vs 协程对象</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="c1"># 协程函数：用 async def 定义的函数</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">my_coroutine</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;我是协程&quot;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">42</span>
+
+<span class="c1"># 注意：调用协程函数不会执行函数体！</span>
+<span class="c1"># 只是返回一个协程对象（coroutine object）</span>
+<span class="n">coro</span> <span class="o">=</span> <span class="n">my_coroutine</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">coro</span><span class="p">))</span>  <span class="c1"># &lt;class &#39;coroutine&#39;&gt;</span>
+
+<span class="c1"># 必须通过事件循环来执行协程</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">coro</span><span class="p">)</span>  <span class="c1"># 打印&quot;我是协程&quot;，返回 42</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># 42</span>
+</code></pre></div>
+<h3 id="32-await">3.2 await 的本质</h3>
+<p><code>await</code> 是一个<strong>挂起点</strong>（yield point）。当执行到 <code>await</code> 时：</p>
+<ol>
+<li>协程暂停执行</li>
+<li>事件循环可以去执行其他协程</li>
+<li>当 <code>await</code> 的操作完成后，协程恢复执行</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;开始请求 </span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># 这里是挂起点：事件循环可以去处理其他任务</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>  <span class="c1"># 模拟网络延迟</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2"> 请求完成&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2"> 的数据&quot;</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># 顺序执行（总耗时 4 秒）</span>
+    <span class="n">result1</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_url</span><span class="p">(</span><span class="s2">&quot;http://a.com&quot;</span><span class="p">)</span>
+    <span class="n">result2</span> <span class="o">=</span> <span class="k">await</span> <span class="n">fetch_url</span><span class="p">(</span><span class="s2">&quot;http://b.com&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result1</span><span class="p">,</span> <span class="n">result2</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="33-await">3.3 await 的使用限制</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="c1"># ✅ 正确：在 async def 中 await 协程</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">good</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># ❌ 错误：在普通函数中 await 会报 SyntaxError</span>
+<span class="k">def</span> <span class="nf">bad</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># SyntaxError</span>
+
+<span class="c1"># ✅ 正确：用 asyncio.run() 启动</span>
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">good</span><span class="p">())</span>
+</code></pre></div>
+<hr>
+<h2 id="gather-task">四、并发执行：gather 与 Task</h2>
+<h3 id="41-await">4.1 问题：await 会阻塞</h3>
+<p>上面的例子中，<code>await fetch_url("http://a.com")</code> 必须等它完成才能执行下一个。这并不是真正的并发！</p>
+<h3 id="42-asynciogather">4.2 asyncio.gather() —— 并发执行多个协程</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_url</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;开始请求 </span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2"> 完成&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2"> 数据&quot;</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    
+    <span class="c1"># gather 会并发执行所有协程</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+        <span class="n">fetch_url</span><span class="p">(</span><span class="s2">&quot;http://a.com&quot;</span><span class="p">),</span>
+        <span class="n">fetch_url</span><span class="p">(</span><span class="s2">&quot;http://b.com&quot;</span><span class="p">),</span>
+        <span class="n">fetch_url</span><span class="p">(</span><span class="s2">&quot;http://c.com&quot;</span><span class="p">),</span>
+    <span class="p">)</span>
+    
+    <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;总耗时: </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>  <span class="c1"># 约 2 秒，不是 6 秒</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;结果: </span><span class="si">{</span><span class="n">results</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<p><strong>gather 的工作原理</strong>：</p>
+<pre class="plain"><code>时间 ──────────────────────────────────►
+[fetch_url(a) 发起][fetch_url(b) 发起][fetch_url(c) 发起]
+                    ── 等待中 ──
+[a完成] [b完成] [c完成]
+        gather 返回 [结果a, 结果b, 结果c]
+</code></pre>
+<h3 id="43-asynciocreate_task">4.3 asyncio.create_task() —— 手动创建任务</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">worker</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">delay</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">] 开始工作&quot;</span><span class="p">)</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">delay</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">] 完成工作&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> 的结果&quot;</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># 创建 Task 对象（立即调度执行）</span>
+    <span class="n">task1</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">worker</span><span class="p">(</span><span class="s2">&quot;A&quot;</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+    <span class="n">task2</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">worker</span><span class="p">(</span><span class="s2">&quot;B&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+    <span class="n">task3</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">worker</span><span class="p">(</span><span class="s2">&quot;C&quot;</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
+    
+    <span class="c1"># 等待所有任务完成</span>
+    <span class="n">result1</span> <span class="o">=</span> <span class="k">await</span> <span class="n">task1</span>
+    <span class="n">result2</span> <span class="o">=</span> <span class="k">await</span> <span class="n">task2</span>
+    <span class="n">result3</span> <span class="o">=</span> <span class="k">await</span> <span class="n">task3</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;结果: </span><span class="si">{</span><span class="n">result1</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">result2</span><span class="si">}</span><span class="s2">, </span><span class="si">{</span><span class="n">result3</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="44-task-vs-gather">4.4 Task vs gather 对比</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th><code>asyncio.create_task()</code></th>
+<th><code>asyncio.gather()</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>返回值</td>
+<td>单个 <code>Task</code> 对象</td>
+<td>结果列表</td>
+</tr>
+<tr>
+<td>错误处理</td>
+<td>需单独处理</td>
+<td>自动传播</td>
+</tr>
+<tr>
+<td>取消</td>
+<td>可单独取消</td>
+<td>需要 <code>return_exceptions</code></td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>需要精细控制单个任务</td>
+<td>批量并发执行</td>
+</tr>
+<tr>
+<td>调度时机</td>
+<td>创建时立即调度</td>
+<td><code>await</code> 时开始执行</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="future-task">五、Future 与 Task</h2>
+<h3 id="51-future">5.1 Future 是什么？</h3>
+<p><code>Future</code> 是一个<strong>代表异步操作最终结果</strong>的对象。它是一个"承诺"——现在没有结果，将来会有。</p>
+<pre class="plain"><code>┌─────────────────────────────────┐
+│           Future                 │
+│                                  │
+│  状态: pending → done            │
+│  结果: None → result            │
+│  回调: callbacks[]              │
+│                                  │
+│  ┌─────────────────────────┐    │
+│  │ 当 Future 完成时：        │    │
+│  │ 1. 设置 result           │    │
+│  │ 2. 调用所有 callbacks    │    │
+│  │ 3. 唤醒等待的协程        │    │
+│  └─────────────────────────┘    │
+└─────────────────────────────────┘
+</code></pre>
+<h3 id="52-task-future">5.2 Task 是 Future 的子类</h3>
+<p><code>Task</code> 继承自 <code>Future</code>，额外包装了一个协程：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">compute</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">42</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">task</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">compute</span><span class="p">())</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">done</span><span class="p">())</span>  <span class="c1"># False — 还在执行</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">task</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">done</span><span class="p">())</span>  <span class="c1"># True — 已完成</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">result</span><span class="p">())</span>  <span class="c1"># 42</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="53-task">5.3 Task 的生命周期</h3>
+<pre class="plain"><code>创建 Task → Pending → Running → Done (result/exception/cancelled)
+              │         │         │
+              │         │         └─ task.result() / task.exception()
+              │         └─ 协程正在执行
+              └─ 已加入事件循环，等待调度
+</code></pre>
+<h3 id="54-task">5.4 常用 Task 方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">work</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;done&quot;</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">task</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">work</span><span class="p">())</span>
+    
+    <span class="c1"># 状态查询</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">done</span><span class="p">())</span>       <span class="c1"># False</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">cancelled</span><span class="p">())</span>  <span class="c1"># False</span>
+    
+    <span class="c1"># 取消任务</span>
+    <span class="n">task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">task</span>
+    <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;任务被取消了&quot;</span><span class="p">)</span>
+    
+    <span class="c1"># 带超时的等待</span>
+    <span class="n">task2</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">work</span><span class="p">())</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span><span class="n">task2</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">TimeoutError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;任务超时了&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<hr>
+<h2 id="_2">六、错误处理</h2>
+<h3 id="61">6.1 单个协程的异常</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">risky_operation</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;出错了！&quot;</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">risky_operation</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;捕获到错误: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="62-task">6.2 Task 的异常</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">failing_task</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Task 失败&quot;</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">task</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">failing_task</span><span class="p">())</span>
+    
+    <span class="c1"># 异常会被&quot;存储&quot;在 Task 中</span>
+    <span class="c1"># 如果不 await 或不处理，Python 会发出警告</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">task</span>
+    <span class="k">except</span> <span class="ne">RuntimeError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Task 错误: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="63-gather">6.3 gather 的错误处理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">ok_task</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;成功&quot;</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">fail_task</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;失败&quot;</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># 默认：第一个异常会抛出，其他任务被取消</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">ok_task</span><span class="p">(),</span> <span class="n">fail_task</span><span class="p">())</span>
+    <span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;错误: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 使用 return_exceptions=True 收集所有结果（含异常）</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span>
+        <span class="n">ok_task</span><span class="p">(),</span> <span class="n">fail_task</span><span class="p">(),</span>
+        <span class="n">return_exceptions</span><span class="o">=</span><span class="kc">True</span>  <span class="c1"># 异常作为结果返回，不抛出</span>
+    <span class="p">)</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;异常: </span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;成功: </span><span class="si">{</span><span class="n">r</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<hr>
+<h2 id="asyncio">七、asyncio 的内部机制</h2>
+<h3 id="71">7.1 基于生成器的协程（历史）</h3>
+<p>早期的 asyncio（Python 3.4）使用 <code>@asyncio.coroutine</code> 装饰器和 <code>yield from</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># Python 3.4 风格（已废弃）</span>
+<span class="nd">@asyncio</span><span class="o">.</span><span class="n">coroutine</span>
+<span class="k">def</span> <span class="nf">old_style</span><span class="p">():</span>
+    <span class="k">yield from</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">42</span>
+
+<span class="c1"># Python 3.5+ 风格（推荐）</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">new_style</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+    <span class="k">return</span> <span class="mi">42</span>
+</code></pre></div>
+<h3 id="72">7.2 协程的挂起与恢复</h3>
+<pre class="plain"><code>async def example():
+    x = 1              ← 执行
+    await something()  ← 挂起点（保存当前状态）
+    y = 2              ← 恢复执行（从挂起点继续）
+</code></pre>
+<p>底层实现：<br>
+- 协程对象内部维护一个 <strong>字节码指令指针</strong> 和 <strong>局部变量表</strong><br>
+- 遇到 <code>await</code> 时，保存这些状态，将控制权交还事件循环<br>
+- 事件循环在合适时机恢复协程，从中断点继续执行</p>
+<h3 id="73-selector-io">7.3 选择器（Selector）—— I/O 多路复用</h3>
+<p>事件循环底层使用操作系统的 I/O 多路复用机制：</p>
+<table>
+<thead>
+<tr>
+<th>操作系统</th>
+<th>底层机制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux</td>
+<td><code>epoll</code></td>
+</tr>
+<tr>
+<td>macOS</td>
+<td><code>kqueue</code></td>
+</tr>
+<tr>
+<td>Windows</td>
+<td><code>IOCP</code> (Proactor)</td>
+</tr>
+<tr>
+<td>通用</td>
+<td><code>selectors</code> 模块（自动选择最优方案）</td>
+</tr>
+</tbody>
+</table>
+<pre class="plain"><code>事件循环
+    │
+    ├── select/kqueue/epoll 监听 socket 可读/可写
+    ├── 回调注册到 selector
+    ├── selector.select(timeout) 等待事件
+    └── 触发回调，恢复对应协程
+</code></pre>
+<hr>
+<h2 id="web">八、实战：异步 Web 爬虫</h2>
+<h3 id="81-url">8.1 场景：并发请求多个 URL</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+<span class="kn">import</span> <span class="nn">aiohttp</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="n">URLS</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">fetch</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;异步获取单个 URL&quot;&quot;&quot;</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+        <span class="k">return</span> <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    
+    <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+        <span class="c1"># 并发请求所有 URL</span>
+        <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">fetch</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">)</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">URLS</span><span class="p">]</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+    
+    <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;请求了 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">URLS</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个 URL&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;总耗时: </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>  <span class="c1"># 约 1 秒，不是 5 秒</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">results</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  URL </span><span class="si">{</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">: delay=</span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;args&#39;</span><span class="p">,</span><span class="w"> </span><span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;delay&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;?&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="82">8.2 带限流的爬虫</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+<span class="kn">import</span> <span class="nn">aiohttp</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_with_limit</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">,</span> <span class="n">semaphore</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;使用信号量限制并发数&quot;&quot;&quot;</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">semaphore</span><span class="p">:</span>  <span class="c1"># 同时最多 5 个请求</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  请求 </span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2">: 状态 </span><span class="si">{</span><span class="n">response</span><span class="o">.</span><span class="n">status</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">()</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># 限制同时最多 5 个并发请求</span>
+    <span class="n">semaphore</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Semaphore</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>
+    
+    <span class="n">urls</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;https://httpbin.org/delay/1?id=</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">20</span><span class="p">)]</span>
+    
+    <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+        <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">fetch_with_limit</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">,</span> <span class="n">semaphore</span><span class="p">)</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">]</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;完成 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个请求&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="83">8.3 超时控制</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+<span class="kn">import</span> <span class="nn">aiohttp</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">fetch_with_timeout</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;带超时控制的请求&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">timeout</span><span class="p">(</span><span class="n">timeout_seconds</span><span class="p">):</span>  <span class="c1"># Python 3.11+</span>
+            <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+                <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span> <span class="k">as</span> <span class="n">response</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="k">await</span> <span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">TimeoutError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2"> 请求超时&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">urls</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>  <span class="c1"># 1秒延迟</span>
+        <span class="s2">&quot;https://httpbin.org/delay/10&quot;</span><span class="p">,</span>  <span class="c1"># 10秒延迟，会超时</span>
+    <span class="p">]</span>
+    
+    <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">fetch_with_timeout</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">timeout_seconds</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">]</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">)</span>
+    
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">r</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">results</span><span class="p">):</span>
+        <span class="n">status</span> <span class="o">=</span> <span class="s2">&quot;成功&quot;</span> <span class="k">if</span> <span class="n">r</span> <span class="k">else</span> <span class="s2">&quot;超时&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;URL </span><span class="si">{</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">status</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">九、常见陷阱与最佳实践</h2>
+<h3 id="91">9.1 ❌ 在异步函数中使用同步阻塞</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">bad_example</span><span class="p">():</span>
+    <span class="c1"># 这会阻塞整个事件循环！其他协程也无法执行</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>  <span class="c1"># ❌ 不要用 time.sleep</span>
+    <span class="k">return</span> <span class="s2">&quot;done&quot;</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">good_example</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>  <span class="c1"># ✅ 使用 asyncio.sleep</span>
+    <span class="k">return</span> <span class="s2">&quot;done&quot;</span>
+</code></pre></div>
+<h3 id="92-await">9.2 ❌ 忘记 await</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">compute</span><span class="p">():</span>
+    <span class="k">return</span> <span class="mi">42</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">compute</span><span class="p">()</span>  <span class="c1"># ❌ 忘记 await，result 是协程对象不是数字！</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># &lt;coroutine object compute at 0x...&gt;</span>
+    
+    <span class="n">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">compute</span><span class="p">()</span>  <span class="c1"># ✅ 正确</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># 42</span>
+</code></pre></div>
+<h3 id="93-task">9.3 ❌ 创建 Task 后不等待</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">background_work</span><span class="p">():</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;后台工作完成&quot;</span><span class="p">)</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># ❌ 创建了 Task 但不 await，可能程序退出时任务还没执行完</span>
+    <span class="n">task</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">background_work</span><span class="p">())</span>
+    <span class="c1"># 程序可能在这里退出</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main_correct</span><span class="p">():</span>
+    <span class="c1"># ✅ 创建 Task 后要等待</span>
+    <span class="n">task</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">create_task</span><span class="p">(</span><span class="n">background_work</span><span class="p">())</span>
+    <span class="k">await</span> <span class="n">task</span>  <span class="c1"># 或者使用 asyncio.gather</span>
+</code></pre></div>
+<h3 id="94">9.4 ✅ 最佳实践清单</h3>
+<ol>
+<li><strong>始终使用 <code>asyncio.run()</code> 启动</strong>（Python 3.7+）</li>
+<li><strong>I/O 操作用 <code>await</code>，不要用同步版本</strong></li>
+<li><strong>用 <code>asyncio.gather()</code> 或 <code>create_task()</code> 实现并发</strong></li>
+<li><strong>用 <code>Semaphore</code> 控制并发数</strong>，避免过多连接</li>
+<li><strong>用 <code>asyncio.timeout()</code> 设置超时</strong></li>
+<li><strong>不要在异步代码中混用同步阻塞操作</strong></li>
+<li><strong>Task 创建后一定要 <code>await</code> 或 <code>gather</code></strong></li>
+</ol>
+<hr>
+<h2 id="api">十、API 速查表</h2>
+<h3 id="_4">核心函数</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>asyncio.run(coro)</code></td>
+<td>运行协程，关闭事件循环</td>
+</tr>
+<tr>
+<td><code>asyncio.gather(*coros)</code></td>
+<td>并发运行多个协程，返回结果列表</td>
+</tr>
+<tr>
+<td><code>asyncio.create_task(coro)</code></td>
+<td>创建 Task 并调度执行</td>
+</tr>
+<tr>
+<td><code>asyncio.wait(tasks)</code></td>
+<td>等待多个 Task，返回 (done, pending)</td>
+</tr>
+<tr>
+<td><code>asyncio.wait_for(coro, timeout)</code></td>
+<td>带超时等待协程</td>
+</tr>
+<tr>
+<td><code>asyncio.sleep(seconds)</code></td>
+<td>异步休眠</td>
+</tr>
+<tr>
+<td><code>asyncio.current_task()</code></td>
+<td>获取当前运行的 Task</td>
+</tr>
+<tr>
+<td><code>asyncio.all_tasks()</code></td>
+<td>获取所有未完成的 Task</td>
+</tr>
+</tbody>
+</table>
+<h3 id="semaphore">Semaphore</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>asyncio.Semaphore(n)</code></td>
+<td>创建信号量，限制并发数为 n</td>
+</tr>
+<tr>
+<td><code>semaphore.acquire()</code></td>
+<td>获取信号量（异步）</td>
+</tr>
+<tr>
+<td><code>semaphore.release()</code></td>
+<td>释放信号量</td>
+</tr>
+</tbody>
+</table>
+<h3 id="task">Task 方法</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>task.done()</code></td>
+<td>是否已完成</td>
+</tr>
+<tr>
+<td><code>task.result()</code></td>
+<td>获取结果（未完成会阻塞）</td>
+</tr>
+<tr>
+<td><code>task.exception()</code></td>
+<td>获取异常</td>
+</tr>
+<tr>
+<td><code>task.cancel()</code></td>
+<td>请求取消</td>
+</tr>
+<tr>
+<td><code>task.cancelled()</code></td>
+<td>是否已取消</td>
+</tr>
+<tr>
+<td><code>task.add_done_callback(fn)</code></td>
+<td>添加完成回调</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_5">十一、思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 asyncio 是单线程的，却能实现高并发？</strong> 它和多线程的本质区别是什么？</p>
+</li>
+<li>
+<p><strong>如果一个协程中调用了 <code>time.sleep(5)</code> 而不是 <code>await asyncio.sleep(5)</code>，会发生什么？</strong> 如何检测这类问题？</p>
+</li>
+<li>
+<p><strong><code>asyncio.gather()</code> 和 <code>asyncio.create_task()</code> + <code>await task</code> 有什么区别？</strong> 在什么场景下选择哪个？</p>
+</li>
+<li>
+<p><strong>如何实现一个异步的生产者-消费者模型？</strong> 提示：使用 <code>asyncio.Queue</code>。</p>
+</li>
+<li>
+<p><strong>事件循环在不同操作系统上使用不同的 I/O 多路复用机制（epoll/kqueue/IOCP），这些机制的本质区别是什么？</strong></p>
+</li>
+</ol>
+<hr>
+<h2 id="_6">十二、总结</h2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>事件循环</strong></td>
+<td>asyncio 的心脏，调度所有协程和 I/O 事件</td>
+</tr>
+<tr>
+<td><strong>async/await</strong></td>
+<td>定义和使用协程的关键字，<code>await</code> 是挂起点</td>
+</tr>
+<tr>
+<td><strong>Task</strong></td>
+<td>Future 的子类，包装协程，可并发执行</td>
+</tr>
+<tr>
+<td><strong>gather</strong></td>
+<td>并发运行多个协程，收集结果</td>
+</tr>
+<tr>
+<td><strong>Semaphore</strong></td>
+<td>控制并发数量，避免资源耗尽</td>
+</tr>
+<tr>
+<td><strong>核心原则</strong></td>
+<td>I/O 操作用 <code>await</code>，避免同步阻塞，Task 创建后要等待</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>💡 <strong>下一步</strong>：Day 057 将深入学习 asyncio 的进阶特性——异步上下文管理器、异步迭代器和 aiohttp 实战。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-055/index.html">← Day 55 并发进阶：进程</a><a class="nav-next" href="../day-057/index.html">Day 57 asyncio 进阶 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

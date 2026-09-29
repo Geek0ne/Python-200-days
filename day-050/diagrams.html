@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 50 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 50 正文</a>
+  <h1>Day 50 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-050-slots">Day 050 — 槽（<strong>slots</strong>）图解</h1>
+<h2 id="_1">内存布局对比</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph &quot;普通类实例 (PointNormal)&quot;
+        A1[&quot;PyObject_HEAD (16 bytes)&quot;]
+        B1[&quot;__dict__ pointer&quot;]
+        C1[&quot;dict object (~232 bytes)&quot;]
+        D1[&quot;&#x27;x&#x27;: 1.0&quot;]
+        E1[&quot;&#x27;y&#x27;: 2.0&quot;]
+        F1[&quot;&#x27;z&#x27;: 3.0&quot;]
+        A1 --&gt; B1
+        B1 --&gt; C1
+        C1 --&gt; D1
+        C1 --&gt; E1
+        C1 --&gt; F1
+    end
+
+    subgraph &quot;__slots__ 类实例 (PointSlots)&quot;
+        A2[&quot;PyObject_HEAD (16 bytes)&quot;]
+        B2[&quot;slot[0]: x (8 bytes)&quot;]
+        C2[&quot;slot[1]: y (8 bytes)&quot;]
+        D2[&quot;slot[2]: z (8 bytes)&quot;]
+        A2 --&gt; B2
+        A2 --&gt; C2
+        A2 --&gt; D2
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph &quot;普通类实例 (PointNormal)&quot;
+        A1[&quot;PyObject_HEAD (16 bytes)&quot;]
+        B1[&quot;__dict__ pointer&quot;]
+        C1[&quot;dict object (~232 bytes)&quot;]
+        D1[&quot;&#x27;x&#x27;: 1.0&quot;]
+        E1[&quot;&#x27;y&#x27;: 2.0&quot;]
+        F1[&quot;&#x27;z&#x27;: 3.0&quot;]
+        A1 --&gt; B1
+        B1 --&gt; C1
+        C1 --&gt; D1
+        C1 --&gt; E1
+        C1 --&gt; F1
+    end
+
+    subgraph &quot;__slots__ 类实例 (PointSlots)&quot;
+        A2[&quot;PyObject_HEAD (16 bytes)&quot;]
+        B2[&quot;slot[0]: x (8 bytes)&quot;]
+        C2[&quot;slot[1]: y (8 bytes)&quot;]
+        D2[&quot;slot[2]: z (8 bytes)&quot;]
+        A2 --&gt; B2
+        A2 --&gt; C2
+        A2 --&gt; D2
+    end
+</code></pre></div>
+<h2 id="_2">内存节省对比</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│        100,000 个对象内存对比                 │
+├─────────────────────────────────────────────┤
+│                                             │
+│  普通类:                                     │
+│  ├─ 对象本身: ~64 bytes × 100,000 = 6.4 MB  │
+│  ├─ __dict__: ~232 bytes × 100,000 = 23.2 MB│
+│  └─ 总计: ~29.6 MB                          │
+│                                             │
+│  __slots__ 类:                               │
+│  ├─ 对象本身: ~32 bytes × 100,000 = 3.2 MB  │
+│  ├─ 无 __dict__                              │
+│  └─ 总计: ~3.2 MB                           │
+│                                             │
+│  节省: ~26.4 MB (89.2%)                     │
+│                                             │
+└─────────────────────────────────────────────┘
+</code></pre>
+<h2 id="_3">属性访问性能</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│         属性访问性能对比                      │
+├───────────────────────┬─────────────────────┤
+│  普通类                │  __slots__ 类        │
+├───────────────────────┼─────────────────────┤
+│  obj.x → dict lookup  │  obj.x → slot load  │
+│  ~100 ns              │  ~90 ns             │
+├───────────────────────┼─────────────────────┤
+│  obj.x = val          │  obj.x = val        │
+│  ~120 ns              │  ~95 ns             │
+├───────────────────────┼─────────────────────┤
+│  支持动态属性          │  不支持动态属性       │
+│  有 __dict__           │  无 __dict__         │
+└───────────────────────┴─────────────────────┘
+</code></pre>
+<h2 id="_4">继承规则</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│            __slots__ 继承规则                 │
+├─────────────────────────────────────────────┤
+│                                             │
+│  class Base:                                │
+│      __slots__ = (&#x27;x&#x27;, &#x27;y&#x27;)                 │
+│                                             │
+│  class Child(Base):                         │
+│      __slots__ = (&#x27;z&#x27;,)  ✅ 声明新槽位       │
+│      # x, y 继承自 Base                     │
+│      # z 是自己的新槽位                       │
+│                                             │
+│  class BadChild(Base):                      │
+│      # ❌ 忘记声明 __slots__                 │
+│      # 会恢复 __dict__，失去优化效果          │
+│                                             │
+└─────────────────────────────────────────────┘
+</code></pre>
+<h2 id="_5">常见陷阱</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;使用 __slots__&quot;] --&gt; B{需要弱引用?}
+    B --&gt;|是| C[&quot;添加 &#x27;__weakref__&#x27;&quot;]
+    B --&gt;|否| D{需要 pickle?}
+    D --&gt;|是| E[&quot;实现 __getstate__/__setstate__&quot;]
+    D --&gt;|否| F{子类也需要?}
+    F --&gt;|是| G[&quot;子类声明 __slots__&quot;]
+    F --&gt;|否| H[&quot;⚠️ 会恢复 __dict__&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;使用 __slots__&quot;] --&gt; B{需要弱引用?}
+    B --&gt;|是| C[&quot;添加 &#x27;__weakref__&#x27;&quot;]
+    B --&gt;|否| D{需要 pickle?}
+    D --&gt;|是| E[&quot;实现 __getstate__/__setstate__&quot;]
+    D --&gt;|否| F{子类也需要?}
+    F --&gt;|是| G[&quot;子类声明 __slots__&quot;]
+    F --&gt;|否| H[&quot;⚠️ 会恢复 __dict__&quot;]
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 12 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 12 正文</a>
+  <h1>Day 12 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-012">Day 012 — 函数进阶：图解</h1>
+<blockquote>
+<p>本章图的 ASCII 示意图和 Mermaid 流程图，帮助理解函数进阶的核心概念。</p>
+</blockquote>
+<hr>
+<h2 id="_1">目录</h2>
+<ol>
+<li><a href="#1-默认参数陷阱内存示意图-ascii">默认参数陷阱内存示意图</a></li>
+<li><a href="#2-args-kwargs-数据流向图-mermaid"><em>args/</em>*kwargs 数据流向图</a></li>
+<li><a href="#3-函数注解存储机制图解-ascii">函数注解存储机制图解</a></li>
+<li><a href="#4-通用数据处理器流程图-mermaid">通用数据处理器流程图</a></li>
+</ol>
+<hr>
+<h2 id="1-ascii">1. 默认参数陷阱内存示意图 (ASCII)</h2>
+<h3 id="11">1.1 陷阱版本：共享同一个可变对象</h3>
+<pre class="plain"><code>                      ┌─────────────────────┐
+                      │   函数对象 (add_item) │
+                      │                     │
+                      │  __defaults__ = ([]) │
+                      │         │           │
+                      │         ▼           │
+                      │    ┌─────────────────┐
+                      │    │ 空列表 []       │ ← 唯一的列表对象
+                      │    └─────────────────┘
+                      └─────────────────────┘
+
+
+第一次调用: add_item(&quot;a&quot;)
+  参数: item = &quot;a&quot;
+  items ──── 指向默认列表 ────→ ┌─┬─┬─┐
+                                │a│ │ │   ← 在默认列表上 .append(&quot;a&quot;)
+                                └─┴─┴─┘
+  调用后默认列表永久变为 [&#x27;a&#x27;]
+
+
+第二次调用: add_item(&quot;b&quot;)
+  参数: item = &quot;b&quot;
+  items ──── 仍然指向同一个 ──→ ┌─┬─┬─┐
+                                │a│b│ │   ← 继续在同一个列表上 .append(&quot;b&quot;)
+                                └─┴─┴─┘
+  调用后默认列表变为 [&#x27;a&#x27;, &#x27;b&#x27;] ← 上个调用的结果还在！
+
+
+第三次调用: add_item(&quot;c&quot;)
+  参数: item = &quot;c&quot;
+  items ──── 还是同一个 ──────→ ┌─┬─┬─┐
+                                │a│b│c│   ← 越积越多
+                                └─┴─┴─┘
+  调用后默认列表变为 [&#x27;a&#x27;, &#x27;b&#x27;, &#x27;c&#x27;]
+</code></pre>
+<h3 id="12-none">1.2 正确版本：None 模式 + 每次创建新对象</h3>
+<pre class="plain"><code>                      ┌─────────────────────┐
+                      │   函数对象            │
+                      │  (add_item_correct)  │
+                      │                     │
+                      │  __defaults__ = (None)│ ← None 是不可变对象
+                      │                    │
+                      ＋─────────────────────＋
+
+
+第一次调用: add_item_correct(&quot;a&quot;)
+  参数: item = &quot;a&quot;
+  items ──── 指向 None ──────────────────────→ None (单例)
+  if items is None: items = []
+  
+  创建新的独立列表: ┌─┬─┬─┐
+                    │a│ │ │
+                    └─┴─┴─┘
+  调用结束后，这个列表被返回，默认参数不受影响。
+
+
+第二次调用: add_item_correct(&quot;b&quot;)
+  参数: item = &quot;b&quot;
+  items ──── 仍然指向 None ──────────────────→ None (还是那个单例)
+  if items is None: items = []
+
+  创建另一个新的独立列表: ┌─┬─┬─┐
+                          │b│ │ │  ← 干净的新列表！
+                          └─┴─┴─┘
+  调用结束后，这个列表被返回，默认参数不受影响。
+</code></pre>
+<h3 id="13-vs">1.3 对比：陷阱 vs 正确</h3>
+<pre class="plain"><code>陷阱版本 (共享):
+                                            
+  ┌────────┐   ┌────────┐   ┌────────┐     
+  │ 第1次   │   │ 第2次   │   │ 第3次   │     
+  │ 调用    │   │ 调用    │   │ 调用    │     
+  └───┬────┘   └───┬────┘   └───┬────┘     
+      │            │            │           
+      └──────┬─────┴─────┬──────┘           
+             │           │                  
+             ▼           ▼                  
+        ┌─────────────────────┐             
+        │   同一个列表         │             
+        │   [&#x27;a&#x27;, &#x27;b&#x27;, &#x27;c&#x27;]   │  ← 被累加修改
+        └─────────────────────┘             
+
+正确版本 (独立):
+
+  ┌────────┐     ┌────────┐     ┌────────┐  
+  │ 第1次   │     │ 第2次   │     │ 第3次   │  
+  │ 调用    │     │ 调用    │     │ 调用    │  
+  └───┬────┘     └───┬────┘     └───┬────┘  
+      │              │              │       
+      ▼              ▼              ▼       
+  ┌────────┐    ┌────────┐    ┌────────┐    
+  │ [&#x27;a&#x27;]  │    │ [&#x27;b&#x27;]  │    │ [&#x27;c&#x27;]  │  ← 每次独立
+  └────────┘    └────────┘    └────────┘    
+</code></pre>
+<hr>
+<h2 id="2-argskwargs-mermaid">2. <em>args/</em>*kwargs 数据流向图 (Mermaid)</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    subgraph 定义时_打包
+        A1[&quot;def func(*args):&quot;] --&gt; B1[&quot;*args 收集所有位置参数&quot;]
+        B1 --&gt; C1[&quot;打包成 tuple&quot;]
+        C1 --&gt; D1[&quot;args = (1, 2, 3, 4, 5)&quot;]
+        
+        A2[&quot;def func(**kwargs):&quot;] --&gt; B2[&quot;**kwargs 收集所有关键字参数&quot;]
+        B2 --&gt; C2[&quot;打包成 dict&quot;]
+        C2 --&gt; D2[&quot;kwargs = {&#x27;a&#x27;: 1, &#x27;b&#x27;: 2}&quot;]
+    end
+    
+    subgraph 调用时_解包
+        E1[&quot;func(*[1, 2, 3])&quot;] --&gt; F1[&quot;* 解包列表&quot;]
+        F1 --&gt; G1[&quot;相当于 func(1, 2, 3)&quot;]
+        
+        E2[&quot;func(**{&#x27;x&#x27;: 10, &#x27;y&#x27;: 20})&quot;] --&gt; F2[&quot;** 解包字典&quot;]
+        F2 --&gt; G2[&quot;相当于 func(x=10, y=20)&quot;]
+    end
+
+    subgraph 参数顺序
+        H1[&quot;def f(pos1, pos2, *args, kw_only, **kwargs):&quot;]
+        H2[&quot;     ↑定位参数↑  ↑*args打包↑   ↑仅限关键字↑  ↑**kwargs打包↑&quot;]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    subgraph 定义时_打包
+        A1[&quot;def func(*args):&quot;] --&gt; B1[&quot;*args 收集所有位置参数&quot;]
+        B1 --&gt; C1[&quot;打包成 tuple&quot;]
+        C1 --&gt; D1[&quot;args = (1, 2, 3, 4, 5)&quot;]
+        
+        A2[&quot;def func(**kwargs):&quot;] --&gt; B2[&quot;**kwargs 收集所有关键字参数&quot;]
+        B2 --&gt; C2[&quot;打包成 dict&quot;]
+        C2 --&gt; D2[&quot;kwargs = {&#x27;a&#x27;: 1, &#x27;b&#x27;: 2}&quot;]
+    end
+    
+    subgraph 调用时_解包
+        E1[&quot;func(*[1, 2, 3])&quot;] --&gt; F1[&quot;* 解包列表&quot;]
+        F1 --&gt; G1[&quot;相当于 func(1, 2, 3)&quot;]
+        
+        E2[&quot;func(**{&#x27;x&#x27;: 10, &#x27;y&#x27;: 20})&quot;] --&gt; F2[&quot;** 解包字典&quot;]
+        F2 --&gt; G2[&quot;相当于 func(x=10, y=20)&quot;]
+    end
+
+    subgraph 参数顺序
+        H1[&quot;def f(pos1, pos2, *args, kw_only, **kwargs):&quot;]
+        H2[&quot;     ↑定位参数↑  ↑*args打包↑   ↑仅限关键字↑  ↑**kwargs打包↑&quot;]
+    end
+</code></pre></div>
+<h3 id="args">*args 数据流详细图</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Caller as 调用者
+    participant Func as 函数 f(a, b, *args)
+    participant Args as args 元组
+    
+    Caller-&gt;&gt;Func: f(1, 2, 3, 4, 5)
+    Note over Func: 参数解析开始
+    Func-&gt;&gt;Func: a = 1 (第一个位置参数)
+    Func-&gt;&gt;Func: b = 2 (第二个位置参数)
+    Func-&gt;&gt;Args: 剩余参数 (3, 4, 5) 打包
+    Note over Args: args = (3, 4, 5)&lt;br/&gt;类型: tuple
+    Args--&gt;&gt;Func: 函数体内可使用 args[0], args[1], ...
+    Func--&gt;&gt;Caller: 返回结果
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Caller as 调用者
+    participant Func as 函数 f(a, b, *args)
+    participant Args as args 元组
+    
+    Caller-&gt;&gt;Func: f(1, 2, 3, 4, 5)
+    Note over Func: 参数解析开始
+    Func-&gt;&gt;Func: a = 1 (第一个位置参数)
+    Func-&gt;&gt;Func: b = 2 (第二个位置参数)
+    Func-&gt;&gt;Args: 剩余参数 (3, 4, 5) 打包
+    Note over Args: args = (3, 4, 5)&lt;br/&gt;类型: tuple
+    Args--&gt;&gt;Func: 函数体内可使用 args[0], args[1], ...
+    Func--&gt;&gt;Caller: 返回结果
+</code></pre></div>
+<h3 id="kwargs">**kwargs 数据流详细图</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Caller as 调用者
+    participant Func as 函数 g(**kwargs)
+    participant KWArgs as kwargs 字典
+    
+    Caller-&gt;&gt;Func: g(name=&quot;张三&quot;, age=25, city=&quot;北京&quot;)
+    Note over Func: 参数解析开始
+    Func-&gt;&gt;KWArgs: 打包所有关键字参数
+    Note over KWArgs: kwargs = {&quot;name&quot;: &quot;张三&quot;, &lt;br/&gt;            &quot;age&quot;: 25, &lt;br/&gt;            &quot;city&quot;: &quot;北京&quot;}&lt;br/&gt;类型: dict
+    KWArgs--&gt;&gt;Func: 函数体内可用&lt;br/&gt;kwargs[&quot;name&quot;],&lt;br/&gt;kwargs.get(&quot;age&quot;)
+    Func--&gt;&gt;Caller: 返回结果
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Caller as 调用者
+    participant Func as 函数 g(**kwargs)
+    participant KWArgs as kwargs 字典
+    
+    Caller-&gt;&gt;Func: g(name=&quot;张三&quot;, age=25, city=&quot;北京&quot;)
+    Note over Func: 参数解析开始
+    Func-&gt;&gt;KWArgs: 打包所有关键字参数
+    Note over KWArgs: kwargs = {&quot;name&quot;: &quot;张三&quot;, &lt;br/&gt;            &quot;age&quot;: 25, &lt;br/&gt;            &quot;city&quot;: &quot;北京&quot;}&lt;br/&gt;类型: dict
+    KWArgs--&gt;&gt;Func: 函数体内可用&lt;br/&gt;kwargs[&quot;name&quot;],&lt;br/&gt;kwargs.get(&quot;age&quot;)
+    Func--&gt;&gt;Caller: 返回结果
+</code></pre></div>
+<h3 id="_2">参数传递完整流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 传入参数
+        P1[&quot;1&quot;] 
+        P2[&quot;2&quot;]
+        P3[&quot;3&quot;]
+        P4[&quot;c=100&quot;]
+        P5[&quot;x=&#x27;hello&#x27;&quot;]
+    end
+
+    subgraph 参数解析
+        direction TB
+        R1[&quot;普通位置参数&lt;br/&gt;a=1, b=2&quot;]
+        R2[&quot;*args (打包)&lt;br/&gt;args=(3, )&quot;]
+        R3[&quot;默认关键字参数&lt;br/&gt;c=10 -&gt; 被 100 覆盖&quot;]
+        R4[&quot;**kwargs (打包)&lt;br/&gt;kwargs={&#x27;x&#x27;:&#x27;hello&#x27;}&quot;]
+    end
+
+    P1 --&gt; R1
+    P2 --&gt; R1
+    P3 --&gt; R2
+    P4 --&gt; R3
+    P5 --&gt; R4
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 传入参数
+        P1[&quot;1&quot;] 
+        P2[&quot;2&quot;]
+        P3[&quot;3&quot;]
+        P4[&quot;c=100&quot;]
+        P5[&quot;x=&#x27;hello&#x27;&quot;]
+    end
+
+    subgraph 参数解析
+        direction TB
+        R1[&quot;普通位置参数&lt;br/&gt;a=1, b=2&quot;]
+        R2[&quot;*args (打包)&lt;br/&gt;args=(3, )&quot;]
+        R3[&quot;默认关键字参数&lt;br/&gt;c=10 -&gt; 被 100 覆盖&quot;]
+        R4[&quot;**kwargs (打包)&lt;br/&gt;kwargs={&#x27;x&#x27;:&#x27;hello&#x27;}&quot;]
+    end
+
+    P1 --&gt; R1
+    P2 --&gt; R1
+    P3 --&gt; R2
+    P4 --&gt; R3
+    P5 --&gt; R4
+</code></pre></div>
+<hr>
+<h2 id="3-ascii">3. 函数注解存储机制图解 (ASCII)</h2>
+<h3 id="annotations"><strong>annotations</strong> 字典结构</h3>
+<pre class="plain"><code>def add(x: int, y: int) -&gt; float:
+    return x + y
+
+                    ┌─────────────────────────────────┐
+                    │      add.__annotations__          │
+                    │  (函数对象的 __annotations__ 属性)  │
+                    ├─────────────────────────────────┤
+                    │  ┌─────────────────────────────┐ │
+                    │  │  &quot;x&quot;      →  &lt;class &#x27;int&#x27;&gt;  │ │
+                    │  │  &quot;y&quot;      →  &lt;class &#x27;int&#x27;&gt;  │ │
+                    │  │  &quot;return&quot; →  &lt;class &#x27;float&#x27;&gt;│ │
+                    │  └─────────────────────────────┘ │
+                    │                                   │
+                    │  字典的键: 参数名 (字符串)          │
+                    │           &quot;return&quot; 代表返回值      │
+                    │  字典的值: 类型对象 (任何表达式)     │
+                    └─────────────────────────────────┘
+
+Python 运行时不检查类型:
+    add(&quot;hello&quot;, &quot;world&quot;)  → 不会报错！
+    TypeError 只在执行时出现（字符串不支持 + 操作）
+
+静态检查工具 (mypy):
+    mypy 在运行前分析 __annotations__ 
+    → 发现 &quot;hello&quot; 不是 int → 报类型错误
+</code></pre>
+<h3 id="python">Python 为什么不强制检查？</h3>
+<pre class="plain"><code>动态类型 (Duck Typing):
+
+    def double(x):
+        return x * 2
+
+    print(double(5))     → 10      (int * 2)
+    print(double(&quot;Hi&quot;))  → &quot;HiHi&quot;  (str * 2)
+    print(double([1]))   → [1, 1]  (list * 2)
+
+    同一个函数、无类型约束 — 三种不同类型都能正确工作！
+    这就是「鸭子类型」的灵活性。
+
+Type Hints + mypy 的平衡:
+
+    灵活性                              安全性
+    ┌─────────────────────────────────────┐
+    │                                     │
+    │  纯 Duck    有 Type     有 Type     │
+    │  Typing    Hints       Hints       │
+    │            无 mypy      + mypy     │
+    │                                     │
+    │  灵活      ⬆ 更可读    ⬆ 安全     │
+    │  但易错    仍易错      CI 捕获错误  │
+    │                                     │
+    └─────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="4-mermaid">4. 通用数据处理器流程图 (Mermaid)</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    Start([&quot;用户调用 processor.process()&quot;]) --&gt; Input[&quot;传入 *data 数据&quot;]
+    Input --&gt; Preprocess{&quot;有 preprocess 回调?&quot;}
+    
+    Preprocess --&gt;|&quot;有&quot;| ApplyPreprocess[&quot;对每个元素执行预处理&lt;br/&gt;square / cube / normalize / clip...&quot;]
+    Preprocess --&gt;|&quot;无&quot;| RawData[&quot;直接使用原始数据&quot;]
+    
+    ApplyPreprocess --&gt; Cache
+    RawData --&gt; Cache
+    
+    Cache{&quot;use_cache=True?&lt;br/&gt;且缓存中有结果?&quot;}
+    Cache --&gt;|&quot;是&quot;| Hit[&quot;✅ 从 cache 字典中直接返回&lt;br/&gt;(性能优化, 避免重复计算)&quot;]
+    Cache --&gt;|&quot;否&quot;| Aggregate[&quot;选择聚合方法:&lt;br/&gt;sum / mean / max / min / product / std&quot;]
+    
+    Aggregate --&gt; Calc[&quot;执行聚合计算&quot;]
+    Calc --&gt; SaveCache{&quot;use_cache=True?&quot;}
+    SaveCache --&gt;|&quot;是&quot;| Store[&quot;将结果存入 cache&lt;br/&gt;key: hash(数据+方法)&quot;]
+    SaveCache --&gt;|&quot;否&quot;| Options
+    
+    Store --&gt; Options[&quot;处理 **options 配置&lt;br/&gt;verbose → 打印日志&lt;br/&gt;format_result → 格式化&quot;]
+    Options --&gt; Result[&quot;返回结果字典&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    Start([&quot;用户调用 processor.process()&quot;]) --&gt; Input[&quot;传入 *data 数据&quot;]
+    Input --&gt; Preprocess{&quot;有 preprocess 回调?&quot;}
+    
+    Preprocess --&gt;|&quot;有&quot;| ApplyPreprocess[&quot;对每个元素执行预处理&lt;br/&gt;square / cube / normalize / clip...&quot;]
+    Preprocess --&gt;|&quot;无&quot;| RawData[&quot;直接使用原始数据&quot;]
+    
+    ApplyPreprocess --&gt; Cache
+    RawData --&gt; Cache
+    
+    Cache{&quot;use_cache=True?&lt;br/&gt;且缓存中有结果?&quot;}
+    Cache --&gt;|&quot;是&quot;| Hit[&quot;✅ 从 cache 字典中直接返回&lt;br/&gt;(性能优化, 避免重复计算)&quot;]
+    Cache --&gt;|&quot;否&quot;| Aggregate[&quot;选择聚合方法:&lt;br/&gt;sum / mean / max / min / product / std&quot;]
+    
+    Aggregate --&gt; Calc[&quot;执行聚合计算&quot;]
+    Calc --&gt; SaveCache{&quot;use_cache=True?&quot;}
+    SaveCache --&gt;|&quot;是&quot;| Store[&quot;将结果存入 cache&lt;br/&gt;key: hash(数据+方法)&quot;]
+    SaveCache --&gt;|&quot;否&quot;| Options
+    
+    Store --&gt; Options[&quot;处理 **options 配置&lt;br/&gt;verbose → 打印日志&lt;br/&gt;format_result → 格式化&quot;]
+    Options --&gt; Result[&quot;返回结果字典&quot;]
+</code></pre></div>
+<h3 id="_3">处理器类架构</h3>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class DataProcessor {
+        -name: str
+        -_cache: Dict[str, Any]
+        -_call_count: int
+        +process(*data, preprocess, agg_method, use_cache, **options) Dict
+        +batch_process(datasets, *, preprocess, agg_methods, verbose) Dict
+        +clear_cache() None
+        +get_stats() Dict
+        -_make_cache_key(data, method) str
+        -_aggregate(data, method) Union[int, float]
+        -_format_result(value, fmt) str
+    }
+    
+    class PreprocessFunctions {
+        +square(x) int
+        +cube(x) int
+        +normalize(x) float
+        +clip(min_val, max_val) Callable
+        +log_transform(x) float
+    }
+    
+    DataProcessor --&gt; PreprocessFunctions : 使用回调
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class DataProcessor {
+        -name: str
+        -_cache: Dict[str, Any]
+        -_call_count: int
+        +process(*data, preprocess, agg_method, use_cache, **options) Dict
+        +batch_process(datasets, *, preprocess, agg_methods, verbose) Dict
+        +clear_cache() None
+        +get_stats() Dict
+        -_make_cache_key(data, method) str
+        -_aggregate(data, method) Union[int, float]
+        -_format_result(value, fmt) str
+    }
+    
+    class PreprocessFunctions {
+        +square(x) int
+        +cube(x) int
+        +normalize(x) float
+        +clip(min_val, max_val) Callable
+        +log_transform(x) float
+    }
+    
+    DataProcessor --&gt; PreprocessFunctions : 使用回调
+</code></pre></div>
+<hr>
+<h2 id="_4">快速参考</h2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>图解位置</th>
+<th>核心要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>默认参数陷阱</td>
+<td>第 1 节</td>
+<td>def 执行时创建默认参数，所有调用共享同一可变对象</td>
+</tr>
+<tr>
+<td>None 模式</td>
+<td>第 1 节</td>
+<td>用 None 代替可变默认值，函数体内创建新对象</td>
+</tr>
+<tr>
+<td>*args 打包</td>
+<td>第 2 节 Mermaid</td>
+<td>位置参数 → 元组</td>
+</tr>
+<tr>
+<td>**kwargs 打包</td>
+<td>第 2 节 Mermaid</td>
+<td>关键字参数 → 字典</td>
+</tr>
+<tr>
+<td>函数注解</td>
+<td>第 3 节</td>
+<td>存储在 <code>__annotations__</code>，不强制检查</td>
+</tr>
+<tr>
+<td>数据处理器</td>
+<td>第 4 节 Mermaid</td>
+<td>综合运用所有概念</td>
+</tr>
+</tbody>
+</table></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

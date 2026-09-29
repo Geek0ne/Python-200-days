@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 3 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 3 正文</a>
+  <h1>Day 3 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-003">Day 003 — 字符串深入：图解</h1>
+<blockquote>
+<p>ASCII 图和 Mermaid 示意图，帮助你直观理解字符串的底层原理</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 字符串不可变性示意</h2>
+<pre class="plain"><code>创建 s = &quot;Python&quot;:
+─────────────────────────────────────
+    s ───▶ ┌──────────────────┐
+           │ str object       │
+           │ value: &quot;Python&quot;  │
+           │ refcount: 1      │
+           └──────────────────┘
+           Address: 0x1000
+
+执行 s += &quot; 3&quot;:
+─────────────────────────────────────
+    ① 计算 &quot;Python 3&quot; 的长度（9 字节）
+    ② 分配新内存 ───────────▶ ┌──────────────────┐
+                              │ str object       │
+    s ───▶ ┌──────────────────┐ │ value: &quot;Python 3&quot; │
+           │ str object       │ │ refcount: 1      │
+           │ value: &quot;Python&quot;  │ └──────────────────┘
+           │ refcount: 0  ← GC 回收   Address: 0x2000
+           └──────────────────┘
+           Address: 0x1000
+</code></pre>
+<h2 id="2-interning">2. 字符串驻留（Interning）</h2>
+<pre class="plain"><code>Python 的字符串驻留池（interned dict）:
+
+      驻留池
+    ┌─────────────────────┐
+    │ &quot;hello&quot; ────────────┼──▶ 同一对象
+    │ &quot;python&quot;            │
+    │ &quot;world&quot;             │
+    └─────────────────────┘
+              ▲               ▲
+              │               │
+             a                b
+        a = &quot;hello&quot;      b = &quot;hello&quot;
+        a is b → True（相同对象）
+
+非驻留字符串（运行时创建）:
+    
+    c = &quot;&quot;.join([&quot;h&quot;,&quot;e&quot;,&quot;l&quot;,&quot;l&quot;,&quot;o&quot;])
+    
+    &quot;hello&quot; (驻留池)     &quot;hello&quot; (新创建)
+    ┌──────────────┐    ┌──────────────┐
+    │ refcount: 2  │    │ refcount: 1  │
+    │ a→, b→       │    │ c→           │
+    └──────────────┘    └──────────────┘
+    a is c → False（不同对象）
+</code></pre>
+<h2 id="3">3. 切片操作原理</h2>
+<pre class="plain"><code>Python 字符串切片 s[start:stop:step]:
+
+s = &quot;Python Programming&quot;
+
+索引: 0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17
+      P   y   t   h   o   n       P   r   o   g   r   a   m   m   i   n   g
+
+s[0:6]   →  ┌───┬───┬───┬───┬───┬───┐
+            │ P │ y │ t │ h │ o │ n │  → &quot;Python&quot;
+            └───┴───┴───┴───┴───┴───┘
+
+s[7:]    →  ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐
+            │ P │ r │ o │ g │ r │ a │ m │ m │ i │ n │ g │  → &quot;Programming&quot;
+            └───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┘
+
+s[::-1]  →  取反序:
+            g   n   i   m   m   a   r   g   o   r   P       n   o   h   t   y   P
+            └───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┴───┘
+
+s[::2]   →  步长为 2:
+            P   t   o       r   g   a   m   n
+            └───┴───┴───┴───┴───┴───┴───┴───┴───┘  → &quot;Pto rgamn&quot;
+</code></pre>
+<h2 id="4-f-string-mermaid">4. f-string 编译时优化（Mermaid）</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Source as 源码
+    participant Parser as Python 解析器
+    participant Compiler as 编译器
+    participant VM as 虚拟机
+    
+    Source-&gt;&gt;Parser: f&quot;Hello {name}, age {age}&quot;
+    Parser-&gt;&gt;Compiler: ast.JoinedStr 节点
+    Compiler-&gt;&gt;Compiler: 拆分为常量与表达式
+    Compiler-&gt;&gt;Compiler: 生成 BUILD_STRING 字节码
+    Compiler-&gt;&gt;VM: 编译后的字节码
+    VM-&gt;&gt;VM: 运行时依次求值表达式
+    VM-&gt;&gt;VM: 用 BUILD_STRING 高效拼接
+    VM--&gt;&gt;Result: &quot;Hello Alice, age 25&quot;
+    
+    Note over Compiler: f-string 在编译时已确定&lt;br/&gt;哪些部分要运行时计算
+    Note over VM: BUILD_STRING 一次分配&lt;br/&gt;避免多次拼接
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Source as 源码
+    participant Parser as Python 解析器
+    participant Compiler as 编译器
+    participant VM as 虚拟机
+    
+    Source-&gt;&gt;Parser: f&quot;Hello {name}, age {age}&quot;
+    Parser-&gt;&gt;Compiler: ast.JoinedStr 节点
+    Compiler-&gt;&gt;Compiler: 拆分为常量与表达式
+    Compiler-&gt;&gt;Compiler: 生成 BUILD_STRING 字节码
+    Compiler-&gt;&gt;VM: 编译后的字节码
+    VM-&gt;&gt;VM: 运行时依次求值表达式
+    VM-&gt;&gt;VM: 用 BUILD_STRING 高效拼接
+    VM--&gt;&gt;Result: &quot;Hello Alice, age 25&quot;
+    
+    Note over Compiler: f-string 在编译时已确定&lt;br/&gt;哪些部分要运行时计算
+    Note over VM: BUILD_STRING 一次分配&lt;br/&gt;避免多次拼接
+</code></pre></div>
+<h2 id="5">5. 字符串拼接性能对比</h2>
+<pre class="plain"><code>使用 + 拼接 n 个字符串:
+─────────────────────────────────────
+循环 1:  &quot;0&quot;              (1 次分配, 1 字符)
+循环 2:  &quot;0&quot; + &quot;1&quot;        → &quot;01&quot;              (1 次分配, 2 字符)
+循环 3:  &quot;01&quot; + &quot;2&quot;       → &quot;012&quot;             (1 次分配, 3 字符)
+循环 4:  &quot;012&quot; + &quot;3&quot;      → &quot;0123&quot;            (1 次分配, 4 字符)
+...
+循环 n:  &quot;012...n-1&quot; + n  → &quot;012...n&quot;         (1 次分配, n 字符)
+
+总分配次数: n
+总复制字符数: 1 + 2 + 3 + ... + n = n(n+1)/2 ≈ O(n²)
+
+使用 &quot;&quot;.join(list) 拼接:
+─────────────────────────────────────
+第 1 步: 计算总长度 = n 字符
+第 2 步: 一次分配 n+1 字节内存
+第 3 步: 将所有字符逐段复制到新内存
+
+总分配次数: 1
+总复制字符数: n ≈ O(n)
+
+可视化对比 (n=10000):
+                    + 拼接
+    ┌────────────────────────────────┐
+    │                                │
+    │      ████████████████████      │  ~5000万次字符复制
+    │      ████████████████████      │
+    └────────────────────────────────┘
+                    
+                    join 拼接
+    ┌────────────────────────────────┐
+    │                                │
+    │              ██                │  ~10000次字符复制
+    │              ██                │
+    └────────────────────────────────┘
+
+结论: join 比 + 快约 5000 倍 (n=10000)
+</code></pre>
+<h2 id="6">6. 模板引擎渲染流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    Input[&quot;模板字符串&lt;br/&gt;+ 上下文数据&quot;] --&gt; Parser[&quot;解析器&quot;]
+    Parser --&gt; Loop[&quot;{% for %} ... {% endfor %}&quot;]
+    Loop --&gt; Cond[&quot;{% if %} ... {% endif %}&quot;]
+    Cond --&gt; Var[&quot;{{ variable }}&quot;]
+    Var --&gt; Output[&quot;渲染结果&quot;]
+    
+    subgraph 解析过程
+        Parser -.-&gt; |第1步| Loop
+        Loop -.-&gt; |第2步| Cond
+        Cond -.-&gt; |第3步| Var
+    end
+    
+    subgraph 上下文
+        C[&quot;{&#x27;name&#x27;: &#x27;Alice&#x27;,&lt;br/&gt;&#x27;items&#x27;: [...],&lt;br/&gt;&#x27;score&#x27;: 95}&quot;]
+    end
+    
+    C -.-&gt; Loop
+    C -.-&gt; Cond
+    C -.-&gt; Var
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    Input[&quot;模板字符串&lt;br/&gt;+ 上下文数据&quot;] --&gt; Parser[&quot;解析器&quot;]
+    Parser --&gt; Loop[&quot;{% for %} ... {% endfor %}&quot;]
+    Loop --&gt; Cond[&quot;{% if %} ... {% endif %}&quot;]
+    Cond --&gt; Var[&quot;{{ variable }}&quot;]
+    Var --&gt; Output[&quot;渲染结果&quot;]
+    
+    subgraph 解析过程
+        Parser -.-&gt; |第1步| Loop
+        Loop -.-&gt; |第2步| Cond
+        Cond -.-&gt; |第3步| Var
+    end
+    
+    subgraph 上下文
+        C[&quot;{&#x27;name&#x27;: &#x27;Alice&#x27;,&lt;br/&gt;&#x27;items&#x27;: [...],&lt;br/&gt;&#x27;score&#x27;: 95}&quot;]
+    end
+    
+    C -.-&gt; Loop
+    C -.-&gt; Cond
+    C -.-&gt; Var
+</code></pre></div>
+<h2 id="7">7. 字符串方法分类脑图</h2>
+<div class="mermaid-wrap"><div class="mermaid">mindmap
+  root((字符串方法))
+    转换
+      upper
+      lower
+      capitalize
+      title
+      swapcase
+      casefold
+    查找
+      find / rfind
+      index / rindex
+      startswith
+      endswith
+      count
+    拆分拼接
+      split / rsplit
+      splitlines
+      partition / rpartition
+      join
+    空白处理
+      strip / lstrip / rstrip
+      center / ljust / rjust
+      zfill
+      expandtabs
+    判断
+      isalpha
+      isdigit
+      isalnum
+      isspace
+      isupper / islower
+      istitle
+      isdecimal / isnumeric
+    替换
+      replace
+      translate / maketrans
+      removeprefix / removesuffix
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>mindmap
+  root((字符串方法))
+    转换
+      upper
+      lower
+      capitalize
+      title
+      swapcase
+      casefold
+    查找
+      find / rfind
+      index / rindex
+      startswith
+      endswith
+      count
+    拆分拼接
+      split / rsplit
+      splitlines
+      partition / rpartition
+      join
+    空白处理
+      strip / lstrip / rstrip
+      center / ljust / rjust
+      zfill
+      expandtabs
+    判断
+      isalpha
+      isdigit
+      isalnum
+      isspace
+      isupper / islower
+      istitle
+      isdecimal / isnumeric
+    替换
+      replace
+      translate / maketrans
+      removeprefix / removesuffix
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

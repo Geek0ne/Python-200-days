@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 54 — 并发入门：线程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 54 — 并发入门：线程</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">648 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-054-concurrency-threads" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">目录</a>
+<a class="toc-l2" href="#1">1. 为什么需要并发？</a>
+<a class="toc-l3" href="#11-vs">1.1 同步 vs 并发</a>
+<a class="toc-l3" href="#12">1.2 并发的两种形态</a>
+<a class="toc-l3" href="#13-python">1.3 Python 的并发工具箱</a>
+<a class="toc-l2" href="#2-gil">2. GIL 原理与影响</a>
+<a class="toc-l3" href="#21-gil">2.1 什么是 GIL？</a>
+<a class="toc-l3" href="#22-gil">2.2 为什么要有 GIL？</a>
+<a class="toc-l3" href="#23-gil">2.3 GIL 的影响</a>
+<a class="toc-l3" href="#24-gil">2.4 释放 GIL 的场景</a>
+<a class="toc-l3" href="#25-gil">2.5 GIL 替代方案</a>
+<a class="toc-l2" href="#3-threading">3. threading 模块</a>
+<a class="toc-l3" href="#31">3.1 创建线程</a>
+<a class="toc-l3" href="#32-threadingthread-api">3.2 threading.Thread API 速查</a>
+<a class="toc-l3" href="#33-vs">3.3 守护线程 vs 非守护线程</a>
+<a class="toc-l3" href="#34-daemon">3.4 daemon 的设计原理</a>
+<a class="toc-l2" href="#4">4. 线程安全与锁</a>
+<a class="toc-l3" href="#41">4.1 为什么需要线程安全？</a>
+<a class="toc-l3" href="#42-counter-1">4.2 counter += 1 的隐患</a>
+<a class="toc-l3" href="#43-lock">4.3 Lock — 基本锁</a>
+<a class="toc-l3" href="#44-lock-api">4.4 Lock API 速查</a>
+<a class="toc-l3" href="#45-rlock">4.5 RLock — 可重入锁</a>
+<a class="toc-l3" href="#46-condition">4.6 条件变量 (Condition)</a>
+<a class="toc-l3" href="#47-semaphore">4.7 信号量 (Semaphore)</a>
+<a class="toc-l3" href="#48-event">4.8 事件 (Event)</a>
+<a class="toc-l3" href="#49">4.9 同步原语对比</a>
+<a class="toc-l2" href="#5">5. 实战：并发下载器</a>
+<a class="toc-l3" href="#51-vs">5.1 同步下载 vs 多线程下载</a>
+<a class="toc-l3" href="#52">5.2 多线程版本</a>
+<a class="toc-l3" href="#53">5.3 线程池版本（最佳实践）</a>
+<a class="toc-l3" href="#54">5.4 带进度条的并发下载器</a>
+<a class="toc-l2" href="#6">6. 思考题</a>
+<a class="toc-l2" href="#_2">今日总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-054">Day 054 — 并发入门：线程</h1>
+<blockquote>
+<p>📅 学习日期：2026-07-06<br>
+🎯 学习目标：理解 Python 线程机制，掌握 GIL 原理，学会线程安全与锁的使用</p>
+</blockquote>
+<hr>
+<h2 id="_1">目录</h2>
+<ol>
+<li><a href="#1-为什么需要并发">为什么需要并发？</a></li>
+<li><a href="#2-gil-原理与影响">GIL 原理与影响</a></li>
+<li><a href="#3-threading-模块">threading 模块</a></li>
+<li><a href="#4-线程安全与锁">线程安全与锁</a></li>
+<li><a href="#5-实战并发下载器">实战：并发下载器</a></li>
+<li><a href="#6-思考题">思考题</a></li>
+</ol>
+<hr>
+<h2 id="1">1. 为什么需要并发？</h2>
+<h3 id="11-vs">1.1 同步 vs 并发</h3>
+<p>在同步编程中，代码按顺序逐行执行——上一行没执行完，下一行就不会开始。但很多场景下，我们需要同时做多件事：</p>
+<ul>
+<li><strong>I/O 密集型任务</strong>：读写文件、网络请求、数据库查询（CPU 在等待 I/O，大部分时间在空闲）</li>
+<li><strong>多用户服务</strong>：Web 服务器需要同时处理多个用户请求</li>
+<li><strong>定时任务</strong>：后台监控、心跳检测等需要与主逻辑并行</li>
+</ul>
+<h3 id="12">1.2 并发的两种形态</h3>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>定义</th>
+<th>Python 实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>并发 (Concurrency)</strong></td>
+<td>任务交替执行，逻辑上同时进行</td>
+<td>threading, asyncio</td>
+</tr>
+<tr>
+<td><strong>并行 (Parallelism)</strong></td>
+<td>任务物理上同时执行（多核 CPU）</td>
+<td>multiprocessing</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>💡 关键区别：并发是"看起来同时"，并行是"真的同时"。单核 CPU 只能并发，不能并行。</p>
+</blockquote>
+<h3 id="13-python">1.3 Python 的并发工具箱</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────┐
+│              Python 并发方案                      │
+├──────────┬──────────┬──────────┬────────────────┤
+│ threading│  multiprocessing│ asyncio  │ concurrent.futures│
+│ 线程并发  │  多进程并行     │ 异步协程 │ 线程/进程池    │
+│ I/O 密集 │  CPU 密集     │ I/O 密集 │ 统一接口     │
+└──────────┴──────────┴──────────┴────────────────┘
+</code></pre>
+<p>今天先攻克 <strong>threading 模块</strong>，这是 Python 并发编程的第一课。</p>
+<hr>
+<h2 id="2-gil">2. GIL 原理与影响</h2>
+<h3 id="21-gil">2.1 什么是 GIL？</h3>
+<p><strong>GIL（Global Interpreter Lock）</strong> 是 CPython 解释器中的一把全局互斥锁。它保证同一时刻只有一个线程执行 Python 字节码。</p>
+<pre class="plain"><code>  线程 A 执行中          线程 B 等待          线程 A I/O 阻塞
+  ┌──────────┐         ┌──────────┐         ┌──────────┐
+  │ 执行字节码 │ ──────▶│ 等待 GIL  │         │ 执行字节码 │
+  │ ...      │         │ ...      │         │ ...      │
+  └──────────┘         └──────────┘         └──────────┘
+        │                                        │
+        │          释放 GIL（遇到 I/O）            │
+        └────────────────────────────────────────┘
+                    线程 B 获得 GIL 执行
+</code></pre>
+<h3 id="22-gil">2.2 为什么要有 GIL？</h3>
+<ol>
+<li><strong>简化内存管理</strong>：CPython 使用引用计数，GIL 保证引用计数操作的线程安全</li>
+<li><strong>简化 C 扩展开发</strong>：大多数 C 扩展假设单线程环境，GIL 让它们不用考虑并发</li>
+<li><strong>历史原因</strong>：Python 诞生于 1991 年，当时多核 CPU 还不常见</li>
+</ol>
+<h3 id="23-gil">2.3 GIL 的影响</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>GIL 影响</th>
+<th>推荐方案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU 密集型</td>
+<td>❌ 有害 — 多线程反而更慢</td>
+<td>multiprocessing</td>
+</tr>
+<tr>
+<td>I/O 密集型</td>
+<td>✅ 有益 — I/O 时释放 GIL</td>
+<td>threading / asyncio</td>
+</tr>
+<tr>
+<td>混合型</td>
+<td>⚠️ 部分有益</td>
+<td>视情况而定</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span><span class="o">,</span> <span class="nn">time</span>
+
+<span class="k">def</span> <span class="nf">cpu_bound</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;CPU 密集型任务 — GIL 导致多线程无法加速&quot;&quot;&quot;</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10_000_000</span><span class="p">):</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">i</span>
+    <span class="k">return</span> <span class="n">total</span>
+
+<span class="c1"># 单线程</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">cpu_bound</span><span class="p">()</span>
+<span class="n">cpu_bound</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;单线程: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>  <span class="c1"># ~2.1s</span>
+
+<span class="c1"># 多线程 — 注意：并不会更快！</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">t1</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">cpu_bound</span><span class="p">)</span>
+<span class="n">t2</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">cpu_bound</span><span class="p">)</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">start</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">join</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;多线程: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>  <span class="c1"># ~2.3s（可能更慢）</span>
+</code></pre></div>
+<blockquote>
+<p>⚠️ GIL 的存在意味着：<strong>对于 CPU 密集型任务，多线程无法利用多核 CPU 加速</strong>。</p>
+</blockquote>
+<h3 id="24-gil">2.4 释放 GIL 的场景</h3>
+<p>Python 中这些操作会释放 GIL：</p>
+<ul>
+<li><strong>文件 I/O</strong>：<code>open()</code>, <code>read()</code>, <code>write()</code></li>
+<li><strong>网络 I/O</strong>：<code>socket.recv()</code>, <code>urllib.request.urlopen()</code></li>
+<li><strong><code>time.sleep()</code></strong></li>
+<li><strong><code>os.system()</code></strong></li>
+<li><strong>C 扩展</strong>：NumPy、PIL 等在计算时会释放 GIL</li>
+<li><strong><code>ctypes</code> 调用</strong></li>
+</ul>
+<h3 id="25-gil">2.5 GIL 替代方案</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>PEP 703 (Python 3.13+)</strong></td>
+<td>可选 GIL — <code>python3.13t</code> 构建</td>
+</tr>
+<tr>
+<td><strong>PyPy</strong></td>
+<td>使用 JIT 的替代解释器，GIL 实现不同</td>
+</tr>
+<tr>
+<td><strong>Cython</strong></td>
+<td>可在 C 代码中释放 GIL</td>
+</tr>
+<tr>
+<td><strong>multiprocessing</strong></td>
+<td>绕过 GIL，使用独立进程</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-threading">3. threading 模块</h2>
+<h3 id="31">3.1 创建线程</h3>
+<p>Python 的 <code>threading</code> 模块提供了两种创建线程的方式：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span>
+
+<span class="c1"># 方式 1：传入 callable（推荐用于简单任务）</span>
+<span class="k">def</span> <span class="nf">worker</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Worker </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> is running&quot;</span><span class="p">)</span>
+
+<span class="n">t</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">worker</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">,))</span>
+<span class="n">t</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">t</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+
+<span class="c1"># 方式 2：继承 Thread 类（推荐用于复杂任务）</span>
+<span class="k">class</span> <span class="nc">MyThread</span><span class="p">(</span><span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+    
+    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;MyThread </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> is running&quot;</span><span class="p">)</span>
+
+<span class="n">t</span> <span class="o">=</span> <span class="n">MyThread</span><span class="p">(</span><span class="s2">&quot;Bob&quot;</span><span class="p">)</span>
+<span class="n">t</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">t</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="32-threadingthread-api">3.2 threading.Thread API 速查</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>target</code></td>
+<td>callable</td>
+<td>线程要执行的函数</td>
+</tr>
+<tr>
+<td><code>args</code></td>
+<td>tuple</td>
+<td>target 的位置参数</td>
+</tr>
+<tr>
+<td><code>kwargs</code></td>
+<td>dict</td>
+<td>target 的关键字参数</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>str</td>
+<td>线程名称（默认 Thread-N）</td>
+</tr>
+<tr>
+<td><code>daemon</code></td>
+<td>bool</td>
+<td>是否为守护线程</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>start()</code></td>
+<td>启动线程</td>
+</tr>
+<tr>
+<td><code>join(timeout)</code></td>
+<td>等待线程结束</td>
+</tr>
+<tr>
+<td><code>is_alive()</code></td>
+<td>检查线程是否仍在运行</td>
+</tr>
+<tr>
+<td><code>name</code></td>
+<td>线程名称（读写）</td>
+</tr>
+<tr>
+<td><code>ident</code></td>
+<td>线程 ID（整数）</td>
+</tr>
+<tr>
+<td><code>daemon</code></td>
+<td>是否守护线程（读写）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-vs">3.3 守护线程 vs 非守护线程</h3>
+<p>先看代码，再按运行顺序一步步推演：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span><span class="o">,</span> <span class="nn">time</span>
+
+<span class="k">def</span> <span class="nf">daemon_worker</span><span class="p">():</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>                     <span class="c1"># 死循环：设计成随进程退出而被终止</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;守护线程运行中...&quot;</span><span class="p">)</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">normal_worker</span><span class="p">():</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;普通线程 </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="n">d</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">daemon_worker</span><span class="p">,</span> <span class="n">daemon</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># 守护线程</span>
+<span class="n">d</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">n</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">normal_worker</span><span class="p">)</span>                <span class="c1"># 非守护线程</span>
+<span class="n">n</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;主线程到这里就返回了&quot;</span><span class="p">)</span>   <span class="c1"># 主线程结束，但进程不会退出</span>
+</code></pre></div>
+<p>运行顺序推演：</p>
+<ol>
+<li><code>d.start()</code> 后，<code>daemon_worker</code> 进入 <code>while True</code> 死循环，不停打印。</li>
+<li><code>n.start()</code> 后，<code>normal_worker</code> 开始跑 3 秒的任务。</li>
+<li>主线程执行到最后一行 <code>print</code> 就<strong>返回了</strong>——但进程没有退出，因为普通线程 <code>n</code> 还在运行。</li>
+<li>注意这一步：守护线程 <code>d</code> <strong>没有停</strong>，它继续打印。主线程"先走了"并没有把它带走。</li>
+<li>直到 <code>n</code> 跑满 3 次，<strong>所有非守护线程都结束</strong>，Python 进程才终止。</li>
+<li>进程终止的一瞬间，守护线程 <code>d</code> 才被<strong>直接终结</strong>——它的死循环永远不会自己结束，是进程退出把它带走的。</li>
+</ol>
+<p>结论：</p>
+<ul>
+<li>守护线程不是"主线程一退出就自杀"，而是<strong>等其他非守护线程全部结束后，进程退出时把它终止</strong>。</li>
+<li>决定退出时机的关键点是<strong>最后一个非守护线程</strong>，不是主线程。</li>
+<li>守护线程适合后台监控、定时心跳、日志刷写这类丢了也无所谓的任务。</li>
+<li>需要保证完成的任务（写文件、提交数据库）要用普通线程并 <code>join()</code> 等待。</li>
+</ul>
+<h3 id="34-daemon">3.4 daemon 的设计原理</h3>
+<p><strong>进程什么时候退出？</strong> 当所有非守护线程都结束后，进程才会退出。主线程本身就是非守护线程。</p>
+<p><strong>守护线程扮演什么角色？</strong> 它是被设计成"进程退出时可以被丢弃"的后台任务。进程决定退出时，<strong>不会等待守护线程</strong>，直接把它结束。</p>
+<p><strong>这带来什么后果？</strong> 守护线程可能在任意时刻、工作做到一半时被终止，连 <code>finally</code> 都不会执行。所以不要在守护线程里放"退出前必须完成"的收尾逻辑——这类逻辑应该用普通线程加 <code>join()</code> 来保证。</p>
+<p>机制图：</p>
+<pre class="plain"><code>时刻 A：主线程已返回，普通线程 n 还在跑
+┌─────────┐   ┌─────────────┐   ┌──────────────┐
+│ 主线程(已返回) │   │ 普通线程 n   │   │ 守护线程 d   │
+│          │   │ 仍在运行     │   │ 仍在运行      │
+└─────────┘   └─────────────┘   └──────────────┘
+               ↑ 非守护没结束 → 进程还活着 → d 也活着
+
+时刻 B：n 跑完最后一圈，所有非守护线程结束
+┌──────────────────┐   ┌──────────────────────┐
+│ 非守护线程全部结束 │   │ 进程终止             │
+└──────────────────┘──▶│ 不等待 d，d 被直接结束 │
+                        │ （不清理，finally 不执行）│
+                        └──────────────────────┘
+</code></pre>
+<p>一句话理解：守护线程像扫地阿姨，普通线程像留在工位的员工。只要还有员工在加班，阿姨就继续扫；最后一个员工离开，楼断电，阿姨也被强制清场——关键开关在"最后一个非守护线程"，而不是"老板（主线程）先走"。</p>
+<hr>
+<h2 id="4">4. 线程安全与锁</h2>
+<h3 id="41">4.1 为什么需要线程安全？</h3>
+<p>当多个线程同时访问共享资源时，可能产生<strong>竞态条件（Race Condition）</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span>
+
+<span class="n">counter</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="k">def</span> <span class="nf">increment</span><span class="p">():</span>
+    <span class="k">global</span> <span class="n">counter</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1_000_000</span><span class="p">):</span>
+        <span class="n">counter</span> <span class="o">+=</span> <span class="mi">1</span>  <span class="c1"># 这不是原子操作！</span>
+
+<span class="c1"># 两个线程同时 increment</span>
+<span class="n">t1</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">increment</span><span class="p">)</span>
+<span class="n">t2</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">increment</span><span class="p">)</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">start</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">join</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;期望: 2000000, 实际: </span><span class="si">{</span><span class="n">counter</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: 期望: 2000000, 实际: 1234567（每次不同）</span>
+</code></pre></div>
+<h3 id="42-counter-1">4.2 <code>counter += 1</code> 的隐患</h3>
+<p><code>counter += 1</code> 看似简单，实际上是三步操作：</p>
+<pre class="plain"><code>  线程 A                    线程 B
+  ──────                    ──────
+  1. 读取 counter (5)       1. 读取 counter (5)
+  2. 计算 counter+1 (6)     2. 计算 counter+1 (6)
+  3. 写入 counter (6)       3. 写入 counter (6)
+  
+  结果: counter = 6（期望 7！）
+</code></pre>
+<p>这就是经典的"读-改-写"竞态条件。</p>
+<h3 id="43-lock">4.3 Lock — 基本锁</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span>
+
+<span class="n">counter</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="n">lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+
+<span class="k">def</span> <span class="nf">safe_increment</span><span class="p">():</span>
+    <span class="k">global</span> <span class="n">counter</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1_000_000</span><span class="p">):</span>
+        <span class="k">with</span> <span class="n">lock</span><span class="p">:</span>  <span class="c1"># 获取锁，退出时自动释放</span>
+            <span class="n">counter</span> <span class="o">+=</span> <span class="mi">1</span>
+
+<span class="n">t1</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">safe_increment</span><span class="p">)</span>
+<span class="n">t2</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">safe_increment</span><span class="p">)</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">start</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">join</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;结果: </span><span class="si">{</span><span class="n">counter</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 期望: 2000000</span>
+</code></pre></div>
+<h3 id="44-lock-api">4.4 Lock API 速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>   <span class="c1"># 创建锁</span>
+
+<span class="n">lock</span><span class="o">.</span><span class="n">acquire</span><span class="p">()</span>            <span class="c1"># 获取锁（阻塞）</span>
+<span class="n">lock</span><span class="o">.</span><span class="n">acquire</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>   <span class="c1"># 超时获取（返回 True/False）</span>
+<span class="n">lock</span><span class="o">.</span><span class="n">release</span><span class="p">()</span>            <span class="c1"># 释放锁</span>
+
+<span class="c1"># 推荐使用 context manager</span>
+<span class="k">with</span> <span class="n">lock</span><span class="p">:</span>
+    <span class="c1"># 受保护的代码</span>
+    <span class="k">pass</span>
+
+<span class="c1"># 尝试非阻塞获取</span>
+<span class="k">if</span> <span class="n">lock</span><span class="o">.</span><span class="n">locked</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;锁已被占用&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="45-rlock">4.5 RLock — 可重入锁</h3>
+<p>普通 Lock 在同一线程中不能重复获取，否则会死锁。RLock 允许同一线程多次获取：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span>
+
+<span class="n">rlock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">RLock</span><span class="p">()</span>
+
+<span class="k">def</span> <span class="nf">recursive_task</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="k">with</span> <span class="n">rlock</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">n</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;递归层级: </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">recursive_task</span><span class="p">(</span><span class="n">n</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>  <span class="c1"># 同一线程再次获取锁</span>
+
+<span class="n">recursive_task</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<span class="c1"># 如果用 Lock，这里会死锁！</span>
+</code></pre></div>
+<h3 id="46-condition">4.6 条件变量 (Condition)</h3>
+<p>线程间的"通知-等待"机制：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span><span class="o">,</span> <span class="nn">time</span>
+
+<span class="n">items</span> <span class="o">=</span> <span class="p">[]</span>
+<span class="n">condition</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Condition</span><span class="p">()</span>
+
+<span class="k">def</span> <span class="nf">producer</span><span class="p">():</span>
+    <span class="k">with</span> <span class="n">condition</span><span class="p">:</span>
+        <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;item&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;生产了 item&quot;</span><span class="p">)</span>
+        <span class="n">condition</span><span class="o">.</span><span class="n">notify</span><span class="p">()</span>  <span class="c1"># 通知消费者</span>
+
+<span class="k">def</span> <span class="nf">consumer</span><span class="p">():</span>
+    <span class="k">with</span> <span class="n">condition</span><span class="p">:</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="n">items</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;等待产品...&quot;</span><span class="p">)</span>
+            <span class="n">condition</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>  <span class="c1"># 释放锁并等待通知</span>
+        <span class="n">item</span> <span class="o">=</span> <span class="n">items</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;消费了 </span><span class="si">{</span><span class="n">item</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">t1</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">consumer</span><span class="p">)</span>
+<span class="n">t2</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">producer</span><span class="p">)</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>  <span class="c1"># 确保 consumer 先运行</span>
+<span class="n">t2</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">join</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="47-semaphore">4.7 信号量 (Semaphore)</h3>
+<p>控制同时访问资源的线程数量：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span>
+
+<span class="n">semaphore</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Semaphore</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>  <span class="c1"># 最多 3 个线程同时访问</span>
+
+<span class="k">def</span> <span class="nf">access_resource</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+    <span class="k">with</span> <span class="n">semaphore</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> 进入资源区&quot;</span><span class="p">)</span>
+        <span class="c1"># 模拟处理</span>
+        <span class="kn">import</span> <span class="nn">time</span><span class="p">;</span> <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2"> 离开资源区&quot;</span><span class="p">)</span>
+
+<span class="n">threads</span> <span class="o">=</span> <span class="p">[</span><span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">access_resource</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;T</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,))</span> 
+           <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">6</span><span class="p">)]</span>
+<span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">threads</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">threads</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="48-event">4.8 事件 (Event)</h3>
+<p>简单的线程间同步信号：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span><span class="o">,</span> <span class="nn">time</span>
+
+<span class="n">event</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+
+<span class="k">def</span> <span class="nf">waiter</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;等待事件...&quot;</span><span class="p">)</span>
+    <span class="n">event</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>  <span class="c1"># 阻塞直到 event.set()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;事件已发生！&quot;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">setter</span><span class="p">():</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;触发事件！&quot;</span><span class="p">)</span>
+    <span class="n">event</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>
+
+<span class="n">t1</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">waiter</span><span class="p">)</span>
+<span class="n">t2</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">setter</span><span class="p">)</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">start</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">t1</span><span class="o">.</span><span class="n">join</span><span class="p">();</span> <span class="n">t2</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="49">4.9 同步原语对比</h3>
+<pre class="plain"><code>┌────────────┬────────────────────────────────────┐
+│   原语      │  用途                              │
+├────────────┼────────────────────────────────────┤
+│   Lock      │  互斥访问共享资源                   │
+│   RLock     │  可重入的互斥锁（递归场景）          │
+│   Condition │  生产者-消费者模型的等待/通知        │
+│   Semaphore │  限制并发数量（如数据库连接池）       │
+│   Event     │  简单的一次性信号通知                │
+│   Barrier   │  多线程同步到达某个点再继续           │
+└────────────┴────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="5">5. 实战：并发下载器</h2>
+<h3 id="51-vs">5.1 同步下载 vs 多线程下载</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">&quot;&quot;&quot;同步下载 — 串行等待，效率低&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">urllib.request</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="n">urls</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+    <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlopen</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;同步下载: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>  <span class="c1"># ~3s</span>
+</code></pre></div>
+<h3 id="52">5.2 多线程版本</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">&quot;&quot;&quot;多线程下载 — 并发执行，效率高&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">urllib.request</span>
+<span class="kn">import</span> <span class="nn">threading</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="n">urls</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="n">results</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+
+<span class="k">def</span> <span class="nf">download</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlopen</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">lock</span><span class="p">:</span>
+            <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">with</span> <span class="n">lock</span><span class="p">:</span>
+            <span class="n">results</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="n">threads</span> <span class="o">=</span> <span class="p">[</span><span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">download</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">url</span><span class="p">,))</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">]</span>
+<span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">threads</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">threads</span><span class="p">:</span> <span class="n">t</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;多线程下载: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>  <span class="c1"># ~1s</span>
+</code></pre></div>
+<h3 id="53">5.3 线程池版本（最佳实践）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">&quot;&quot;&quot;使用 concurrent.futures.ThreadPoolExecutor — 推荐方式&quot;&quot;&quot;</span>
+<span class="kn">from</span> <span class="nn">concurrent.futures</span> <span class="kn">import</span> <span class="n">ThreadPoolExecutor</span><span class="p">,</span> <span class="n">as_completed</span>
+<span class="kn">import</span> <span class="nn">urllib.request</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="n">urls</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="k">def</span> <span class="nf">download</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlopen</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">url</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+<span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">as</span> <span class="n">executor</span><span class="p">:</span>
+    <span class="n">futures</span> <span class="o">=</span> <span class="p">{</span><span class="n">executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">download</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span> <span class="n">url</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">}</span>
+    <span class="k">for</span> <span class="n">future</span> <span class="ow">in</span> <span class="n">as_completed</span><span class="p">(</span><span class="n">futures</span><span class="p">):</span>
+        <span class="n">url</span><span class="p">,</span> <span class="n">size</span> <span class="o">=</span> <span class="n">future</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;下载完成: </span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">size</span><span class="si">}</span><span class="s2"> bytes)&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;总耗时: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="54">5.4 带进度条的并发下载器</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">&quot;&quot;&quot;带进度显示的并发下载器&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">urllib.request</span>
+<span class="kn">import</span> <span class="nn">threading</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">concurrent.futures</span> <span class="kn">import</span> <span class="n">ThreadPoolExecutor</span><span class="p">,</span> <span class="n">as_completed</span>
+
+<span class="k">class</span> <span class="nc">ProgressDownloader</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_workers</span><span class="o">=</span><span class="mi">3</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span> <span class="o">=</span> <span class="n">max_workers</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">completed</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+    
+    <span class="k">def</span> <span class="nf">download_one</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;下载单个文件&quot;&quot;&quot;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">req</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">Request</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;User-Agent&#39;</span><span class="p">:</span> <span class="s1">&#39;Mozilla/5.0&#39;</span><span class="p">})</span>
+            <span class="n">response</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlopen</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+            
+            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">completed</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">progress</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">completed</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">total</span><span class="si">}</span><span class="s2">]&quot;</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">progress</span><span class="si">}</span><span class="s2"> ✓ </span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="si">}</span><span class="s2"> bytes)&quot;</span><span class="p">)</span>
+            
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span> <span class="s2">&quot;size&quot;</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;ok&quot;</span><span class="p">}</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">completed</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">completed</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">total</span><span class="si">}</span><span class="s2">] ✗ </span><span class="si">{</span><span class="n">url</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;url&quot;</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span> <span class="s2">&quot;size&quot;</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;error&quot;</span><span class="p">,</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)}</span>
+    
+    <span class="k">def</span> <span class="nf">download_all</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">urls</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;并发下载所有文件&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">total</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+        
+        <span class="k">with</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span><span class="p">)</span> <span class="k">as</span> <span class="n">executor</span><span class="p">:</span>
+            <span class="n">future_to_url</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="n">executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">download_one</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span> <span class="n">url</span> 
+                <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span>
+            <span class="p">}</span>
+            
+            <span class="k">for</span> <span class="n">future</span> <span class="ow">in</span> <span class="n">as_completed</span><span class="p">(</span><span class="n">future_to_url</span><span class="p">):</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="n">future</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+                <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+        
+        <span class="c1"># 统计</span>
+        <span class="n">ok</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="n">r</span><span class="p">[</span><span class="s2">&quot;status&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;ok&quot;</span><span class="p">)</span>
+        <span class="n">total_size</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s2">&quot;size&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">📊 完成: </span><span class="si">{</span><span class="n">ok</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">total</span><span class="si">}</span><span class="s2"> 成功, 总大小: </span><span class="si">{</span><span class="n">total_size</span><span class="si">:</span><span class="s2">,</span><span class="si">}</span><span class="s2"> bytes&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">results</span>
+
+<span class="c1"># 使用示例</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">urls</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s2">&quot;https://httpbin.org/delay/0.5&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;https://httpbin.org/delay/1&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;https://httpbin.org/delay/1.5&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;https://httpbin.org/status/200&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;https://httpbin.org/bytes/1024&quot;</span><span class="p">,</span>
+    <span class="p">]</span>
+    
+    <span class="n">downloader</span> <span class="o">=</span> <span class="n">ProgressDownloader</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="n">downloader</span><span class="o">.</span><span class="n">download_all</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;⏱️ 总耗时: </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="6">6. 思考题</h2>
+<ol>
+<li>
+<p><strong>GIL 与多线程</strong>：如果 GIL 阻止了多线程并行执行 Python 代码，为什么 Python 还要提供 threading 模块？它主要解决什么问题？</p>
+</li>
+<li>
+<p><strong>死锁场景</strong>：以下代码有什么问题？如何修复？</p>
+</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">   <span class="n">lock_a</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+   <span class="n">lock_b</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+   
+   <span class="k">def</span> <span class="nf">task1</span><span class="p">():</span>
+       <span class="k">with</span> <span class="n">lock_a</span><span class="p">:</span>
+           <span class="k">with</span> <span class="n">lock_b</span><span class="p">:</span>
+               <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;task1&quot;</span><span class="p">)</span>
+   
+   <span class="k">def</span> <span class="nf">task2</span><span class="p">():</span>
+       <span class="k">with</span> <span class="n">lock_b</span><span class="p">:</span>
+           <span class="k">with</span> <span class="n">lock_a</span><span class="p">:</span>
+               <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;task2&quot;</span><span class="p">)</span>
+</code></pre></div>
+<ol start="3">
+<li>
+<p><strong>线程 vs 进程</strong>：一个 Web 爬虫程序需要同时下载 100 个网页，应该用 threading 还是 multiprocessing？为什么？</p>
+</li>
+<li>
+<p><strong>锁的选择</strong>：什么场景下应该用 <code>threading.Lock()</code>？什么场景下应该用 <code>threading.RLock()</code>？</p>
+</li>
+<li>
+<p><strong>守护线程陷阱</strong>：如果一个守护线程正在写文件，主线程退出时守护线程被强制终止，可能导致什么问题？如何避免？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_2">今日总结</h2>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>核心要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>GIL</strong></td>
+<td>全局解释器锁，保证同一时刻只有一个线程执行字节码</td>
+</tr>
+<tr>
+<td><strong>threading</strong></td>
+<td>Python 标准库线程模块，适合 I/O 密集型任务</td>
+</tr>
+<tr>
+<td><strong>Lock/RLock</strong></td>
+<td>互斥锁，保护共享资源；RLock 可重入</td>
+</tr>
+<tr>
+<td><strong>Condition</strong></td>
+<td>条件变量，用于生产者-消费者模型</td>
+</tr>
+<tr>
+<td><strong>Semaphore</strong></td>
+<td>信号量，控制并发数量</td>
+</tr>
+<tr>
+<td><strong>ThreadPoolExecutor</strong></td>
+<td>线程池，推荐的并发下载方式</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>📌 明天预告：Day 055 — 并发进阶：进程（multiprocessing 模块）</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-053/index.html">← Day 53 内存管理与垃圾回收</a><a class="nav-next" href="../day-055/index.html">Day 55 并发进阶：进程 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

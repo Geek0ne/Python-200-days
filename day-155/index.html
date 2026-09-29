@@ -1,0 +1,1917 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 155 — mitmproxy 中间人：流量拦截、修改与 Addon 编程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 155 — mitmproxy 中间人：流量拦截、修改与 Addon 编程</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">1250 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-155-mitmproxy-interception" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">⚠️ 使用前必读：法律与伦理边界</a>
+<a class="toc-l2" href="#_2">一、概念解释</a>
+<a class="toc-l3" href="#11-mitmproxy">1.1 mitmproxy 是什么</a>
+<a class="toc-l3" href="#12-ca">1.2 为什么必须装 CA 证书</a>
+<a class="toc-l3" href="#13">1.3 三种代理模式</a>
+<a class="toc-l3" href="#14">1.4 拦截与修改：能改什么</a>
+<a class="toc-l3" href="#15-addon-python">1.5 Addon：用 Python 控制代理</a>
+<a class="toc-l3" href="#16">1.6 常见用途（正反两面）</a>
+<a class="toc-l3" href="#17">1.7 与其他方案的对比</a>
+<a class="toc-l2" href="#_3">二、原理解释（底层机制与设计动机）</a>
+<a class="toc-l3" href="#21-http-vs-connect">2.1 HTTP 代理的两种形态：普通请求 vs CONNECT 隧道</a>
+<a class="toc-l3" href="#22">2.2 证书&quot;现场签发&quot;意味着什么</a>
+<a class="toc-l3" href="#23-content-length">2.3 为什么修改响应体会破坏 Content-Length</a>
+<a class="toc-l3" href="#24-gzipbr">2.4 gzip/br压缩：改包前必须先解压</a>
+<a class="toc-l3" href="#25-addon">2.5 Addon 的执行顺序与&quot;响应改写&quot;的时机</a>
+<a class="toc-l3" href="#26-iptables">2.6 透明代理为什么要靠 iptables</a>
+<a class="toc-l3" href="#27-addon">2.7 为什么 Addon 里不能做&quot;长时间阻塞操作&quot;</a>
+<a class="toc-l3" href="#28-addonsysmodules-shim">2.8 为什么&quot;本地实验台&quot;能跑真 Addon：sys.modules 注入与 shim 的边界</a>
+<a class="toc-l3" href="#29">2.9 中间人的成本模型：延迟、内存与证书</a>
+<a class="toc-l2" href="#api">三、定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#31">3.1 安装与首次运行</a>
+<a class="toc-l3" href="#32">3.2 客户端配置</a>
+<a class="toc-l3" href="#33-mitmdump">3.3 mitmdump 常用参数速查</a>
+<a class="toc-l3" href="#34-mitmproxy-tui">3.4 mitmproxy TUI 快捷键速查</a>
+<a class="toc-l3" href="#35-addon-15">3.5 Addon 事件速查（最常用的 15 个）</a>
+<a class="toc-l3" href="#36-flow">3.6 flow 对象属性速查</a>
+<a class="toc-l3" href="#37-filter-f">3.7 常用 filter 表达式（-f / 搜索）</a>
+<a class="toc-l3" href="#38">3.8 常见排错速查</a>
+<a class="toc-l2" href="#_4">四、图解</a>
+<a class="toc-l3" href="#41-https-mermaid">4.1 HTTPS 中间人的证书拆分（Mermaid 时序图）</a>
+<a class="toc-l3" href="#42-addon-ascii">4.2 Addon 事件生命周期（ASCII）</a>
+<a class="toc-l2" href="#_5">五、完整可运行实战代码</a>
+<a class="toc-l3" href="#51-mitmproxy-vs">5.1 两条等价路径：真 mitmproxy vs 本地实验台</a>
+<a class="toc-l2" href="#_6">六、代码案例逐节说明</a>
+<a class="toc-l3" href="#61-00-local-labpy-api-shim">6.1 00-local-lab.py —— 三件套：假上游 + 真代理 + API shim</a>
+<a class="toc-l3" href="#62-01-addon-basicspy">6.2 01-addon-basics.py —— 最小可用观察器</a>
+<a class="toc-l3" href="#63-02-addon-pitfallspy-8-vs">6.3 02-addon-pitfalls.py —— 8 个坑的&quot;反例 vs 正解&quot;</a>
+<a class="toc-l3" href="#64-03-traffic-toolpy">6.4 03-traffic-tool.py —— 拦截 → 脱敏 → 落盘 → 报表</a>
+<a class="toc-l2" href="#_7">七、运行命令与预期输出示例</a>
+<a class="toc-l3" href="#71">7.1 起实验台（真实输出）</a>
+<a class="toc-l3" href="#72">7.2 走代理抓流量（真实输出）</a>
+<a class="toc-l3" href="#73-addon-01">7.3 Addon 01 的实时日志（观察器）</a>
+<a class="toc-l3" href="#74-addon-02-mock-gzip">7.4 Addon 02 的改包效果（mock / 注入 / gzip）</a>
+<a class="toc-l3" href="#75">7.5 四个脚本的离线自检（本日的可验证性证据）</a>
+<a class="toc-l2" href="#_8">八、被抓到怎么办：检测中间人的原理（防御方视角）</a>
+<a class="toc-l3" href="#81">8.1 证书层面：最直接的破绽</a>
+<a class="toc-l3" href="#82-pinning">8.2 pinning（证书固定）：为什么它能防住</a>
+<a class="toc-l3" href="#83-mtls-mitm">8.3 mTLS：唯一&quot;结构上&quot;防住 MITM 的办法</a>
+<a class="toc-l3" href="#84">8.4 传输层与行为层指纹</a>
+<a class="toc-l3" href="#85">8.5 在本地实验台上&quot;看到&quot;证据（安全、可复现）</a>
+<a class="toc-l2" href="#_9">九、防护与修复原理（客户端 / 服务端 / 组织）</a>
+<a class="toc-l3" href="#91-app">9.1 客户端侧（App / 桌面程序）</a>
+<a class="toc-l3" href="#92">9.2 服务端侧</a>
+<a class="toc-l3" href="#93">9.3 组织与合规（做内部抓包时的底线）</a>
+<a class="toc-l3" href="#94">9.4 常见误解（反面清单）</a>
+<a class="toc-l3" href="#95-sop">9.5 自己抓包的最小合规 SOP（照做即可）</a>
+<a class="toc-l2" href="#_10">十、思考题</a>
+<a class="toc-l2" href="#_11">附：本日文件清单</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-155-mitmproxy-addon">Day 155 — mitmproxy 中间人：流量拦截、修改与 Addon 编程</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化 · 主题：mitmproxy 中间人</p>
+<p>前置知识：Day 116 TCP/UDP、Day 146 HTTPS/TLS 分析、Day 151 SQL 注入（了解 HTTP 参数）、<br>
+Day 149 JWT 安全、Day 154 目录扫描与指纹识别。<br>
+昨天我们用"发请求 + 看响应"的方式观察 Web；今天换个位置——<br>
+<strong>把自己插到客户端和服务器中间</strong>，实时看到、改动、重放每一个包。</p>
+</blockquote>
+<hr>
+<h2 id="_1">⚠️ 使用前必读：法律与伦理边界</h2>
+<p>中间人（MITM）拦截在技术上就是<strong>解密别人的加密流量</strong>。它对 TLS 的信任模型<br>
+是一次"合法但危险"的破坏，因此法律与伦理要求极高：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>是否合法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>抓<strong>自己手机/自己浏览器</strong>的流量，且目的是调试自己的程序</td>
+<td>✅ 合法</td>
+</tr>
+<tr>
+<td>在自己的测试环境代理自己的 App ↔ 自己的服务器</td>
+<td>✅ 合法</td>
+</tr>
+<tr>
+<td>公司安全团队在<strong>书面授权 + 员工知情</strong>前提下做内部审计</td>
+<td>⚠️ 需严格合规流程</td>
+</tr>
+<tr>
+<td>抓同事、家人、陌生人的流量</td>
+<td>❌ 违法</td>
+</tr>
+<tr>
+<td>在公共 WiFi 上劫持他人流量</td>
+<td>❌ 刑事犯罪</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>法域</th>
+<th>相关法条</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>中国大陆</td>
+<td>《刑法》第 285 条（非法获取计算机信息系统数据）、第 253 条之一（侵犯公民个人信息）；《网络安全法》第 27 条</td>
+</tr>
+<tr>
+<td>美国</td>
+<td>CFAA 18 U.S.C. § 1030；Wiretap Act 18 U.S.C. § 2511</td>
+</tr>
+<tr>
+<td>英国</td>
+<td>Computer Misuse Act 1990；Investigatory Powers Act 2016</td>
+</tr>
+<tr>
+<td>欧盟</td>
+<td>GDPR（个人数据传输）；《网络犯罪公约》</td>
+</tr>
+</tbody>
+</table>
+<p><strong>本日所有示例的目标域都限制为 <code>127.0.0.1</code> / <code>localhost</code> / <code>example.com</code><br>
+等无害地址</strong>；示例 03 内置域名白名单校验。</p>
+<blockquote>
+<p>本系列定位是<strong>安全防御与教学</strong>：学 MITM 的目的是<br>
+①调试自己的程序、②理解"为什么证书校验这么重要"、③给自己做 App 抓包分析。<br>
+不是去截别人的密码。</p>
+</blockquote>
+<hr>
+<h2 id="_2">一、概念解释</h2>
+<h3 id="11-mitmproxy">1.1 mitmproxy 是什么</h3>
+<p>一组<strong>开源交互式 HTTPS 中间人代理</strong>工具，用 Python 编写：</p>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>形态</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mitmproxy</code></td>
+<td>交互式 TUI（终端界面）</td>
+<td>人工探索：翻请求、改包、重放</td>
+</tr>
+<tr>
+<td><code>mitmdump</code></td>
+<td>无界面，纯命令行</td>
+<td>脚本化 / 自动化 / 写进 CI</td>
+</tr>
+<tr>
+<td><code>mitmweb</code></td>
+<td>Web UI（浏览器界面）</td>
+<td>图形化查看，适合演示与团队协作</td>
+</tr>
+</tbody>
+</table>
+<p><strong>它与 Fiddler / Charles / Burp 是同类</strong>，区别在于：</p>
+<ol>
+<li><strong>完全开源、跨平台</strong>（Fiddler 偏 Windows，Charles 收费）；</li>
+<li><strong>Addon 用 Python 写</strong>——本系列已学完 154 天 Python，正好用得上；</li>
+<li><strong>可嵌入</strong>（<code>mitmproxy</code> 可以当 Python 库用，直接在代码里 in-process 起代理）。</li>
+</ol>
+<p><strong>为什么需要中间人代理？</strong> 因为 HTTPS 之后，流量是加密的：</p>
+<pre class="plain"><code>没有代理:
+  你的程序  ──TLS 加密隧道──►  服务器          ←  你只能看到&quot;长度和字节数&quot;
+
+有中间人代理:
+  你的程序  ──TLS①──►  mitmproxy  ──TLS②──►  服务器
+                       ↑ 明文在这里
+                       （对两段 TLS 各自解密/再加密，成为&quot;可信的中间人&quot;）
+</code></pre>
+<p>这里的关键点是：<strong>mitmproxy 对客户端伪装成服务器，对服务器伪装成客户端</strong>。<br>
+它能成功的前提是——<strong>客户端信任 mitmproxy 自己签发的 CA 证书</strong>。</p>
+<h3 id="12-ca">1.2 为什么必须装 CA 证书</h3>
+<p>TLS 的核心安全保证是<strong>证书链校验</strong>：客户端拿到服务器证书后，会验证<br>
+"它是否由我信任的 CA 签发"。mitmproxy 要解密流量，就必须用自己的 CA<br>
+<strong>现场签发一张"服务器名一模一样"的假证书</strong>给客户端：</p>
+<pre class="plain"><code>客户端  ──握手──►  mitmproxy
+                     │ &quot;我是 github.com&quot;
+                     │ (出示 mitmproxy 自签发的 github.com 证书)
+客户端  ←───────────┘
+   ↓ 校验：这张证书是谁签的？
+   ├─ 若客户端信任 mitmproxy CA  →  校验通过 → 建立 TLS①  →  明文到手 ✅
+   └─ 若客户端不信任            →  证书错误 → 连接失败 ❌
+</code></pre>
+<p>所以：<strong>你必须在客户端（浏览器/手机/App）里安装并信任 mitmproxy 的根证书</strong>，<br>
+否则只能看到一个加密的连接失败。</p>
+<p>这也正是<strong>防御要点</strong>：任何 App 只要做 <strong>certificate pinning（证书固定）</strong>，<br>
+就能识别出"签发者不是真服务器"，MITM 立即失效。</p>
+<h3 id="13">1.3 三种代理模式</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>客户端配置</th>
+<th>原理</th>
+<th>典型场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>正向代理（regular）</strong></td>
+<td>手动设置 HTTP 代理为 <code>127.0.0.1:8080</code></td>
+<td>客户端主动把请求发给代理</td>
+<td>浏览器插件、<code>curl -x</code>、<code>proxychains</code></td>
+</tr>
+<tr>
+<td><strong>透明代理（transparent）</strong></td>
+<td>无需配置</td>
+<td>由 iptables/路由把流量重定向到代理端口</td>
+<td>抓手机 App、抓 IoT 设备</td>
+</tr>
+<tr>
+<td><strong>反向代理（reverse）</strong></td>
+<td>目标指向代理端口</td>
+<td>代理作为服务器对外提供，转发到上游</td>
+<td>调试自己后端、测试证书问题</td>
+</tr>
+<tr>
+<td><strong>上游代理链（upstream）</strong></td>
+<td><code>--mode upstream:http://...</code></td>
+<td>代理再走一层代理</td>
+<td>穿透多层网络、Burp 联动</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么有这么多模式？</strong> 因为"把流量导到代理"这件事，在不同客户端上<br>
+能力完全不同：</p>
+<ul>
+<li>桌面浏览器：可以手动设代理 → 用正向；</li>
+<li>手机 App：很多 App 忽略系统代理 → 只能透明代理（需要 root 或路由器支持）；</li>
+<li>服务端程序：写死了目标地址 → 用反向代理改 DNS/hosts。</li>
+</ul>
+<h3 id="14">1.4 拦截与修改：能改什么</h3>
+<p>一次 HTTP 事务里，<strong>所有</strong>部分都可以改：</p>
+<table>
+<thead>
+<tr>
+<th>位置</th>
+<th>可改写的内容</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>请求行</td>
+<td>method / path / version</td>
+<td><code>GET /a</code> → <code>POST /admin</code></td>
+</tr>
+<tr>
+<td>请求头</td>
+<td>任意头</td>
+<td>加 <code>X-Forwarded-For</code>、改 <code>Cookie</code>、删 <code>Referer</code></td>
+</tr>
+<tr>
+<td>请求体</td>
+<td>JSON / form / 二进制</td>
+<td>把 <code>{"role":"user"}</code> 改成 <code>{"role":"admin"}</code></td>
+</tr>
+<tr>
+<td>响应行</td>
+<td>status code / reason</td>
+<td><code>403</code> → <code>200</code></td>
+</tr>
+<tr>
+<td>响应头</td>
+<td>任意头</td>
+<td>删 <code>Content-Security-Policy</code> 看页面会不会被注入</td>
+</tr>
+<tr>
+<td>响应体</td>
+<td>任意内容</td>
+<td>注入一段 JS 测试前端防御</td>
+</tr>
+</tbody>
+</table>
+<p><strong>这就是"越权测试"和"前端安全测试"的核心手法</strong>：<br>
+在代理层把自己伪装成管理员（改 <code>role</code>）、或伪装成攻击者（注入脚本），<br>
+看看<strong>服务端有没有真的做校验</strong>、<strong>前端有没有真的做防御</strong>。</p>
+<h3 id="15-addon-python">1.5 Addon：用 Python 控制代理</h3>
+<p>mitmproxy 的扩展机制叫 <strong>Addon</strong>：一个普通 Python 对象，实现若干<br>
+<strong>按事件名命名的方法</strong>，mitmproxy 在对应时机调用它们。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyAddon</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span>        <span class="c1"># 收到客户端请求、尚未转发时</span>
+        <span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">[</span><span class="s2">&quot;X-Test&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;1&quot;</span>
+
+    <span class="k">def</span> <span class="nf">response</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span>       <span class="c1"># 收到服务器响应、尚未回给客户端时</span>
+        <span class="k">if</span> <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">==</span> <span class="mi">404</span><span class="p">:</span>
+            <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">=</span> <span class="mi">200</span>
+</code></pre></div>
+<p><strong>为什么用"事件回调"而不是中间件链？</strong> 因为代理的生命周期事件<br>
+（连接建立、TLS 握手、请求、响应、WebSocket 帧、错误、断开）比<br>
+Web 框架的中间件丰富得多，事件模型更自然。</p>
+<p><strong>Addon 的事件全景（生命周期）：</strong></p>
+<pre class="plain"><code>     ┌─────────────┐
+     │  client     │
+     └──────┬──────┘
+            ▼
+     client_connected
+            ▼
+     tls_clienthello → tls_established_client
+            ▼
+     request  ←────────────────── 你能改请求
+            ▼
+     http_connect / requestheaders / request  (分阶段)
+            ▼
+     ┌─────────────┐
+     │  server     │
+     └──────┬──────┘
+            ▼
+     responseheaders → response ←── 你能改响应
+            ▼
+     websocket_*   (如果是 WebSocket)
+            ▼
+     client_disconnected / error
+</code></pre>
+<h3 id="16">1.6 常见用途（正反两面）</h3>
+<table>
+<thead>
+<tr>
+<th>用途</th>
+<th>说明</th>
+<th>立场</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>调试自己 App 的 API 调用</td>
+<td>看请求参数、响应结构、时序</td>
+<td>✅ 开发日常</td>
+</tr>
+<tr>
+<td>复现线上问题</td>
+<td>把生产响应抓下来，在本地重放</td>
+<td>✅ 开发日常</td>
+</tr>
+<tr>
+<td>弱网/异常注入测试</td>
+<td>注入延迟、丢包、错误码，测客户端的健壮性</td>
+<td>✅ 质量保障</td>
+</tr>
+<tr>
+<td>Mock 后端</td>
+<td>用 map_local / 脚本返回假数据，前端不阻塞</td>
+<td>✅ 前后端协作</td>
+</tr>
+<tr>
+<td>越权/认证测试</td>
+<td>改 role、改 JWT、改 Cookie 看服务端是否校验</td>
+<td>✅ 授权渗透测试</td>
+</tr>
+<tr>
+<td>屏蔽/篡改广告</td>
+<td>改写响应体去广告</td>
+<td>⚠️ 灰色</td>
+</tr>
+<tr>
+<td>抓取他人流量</td>
+<td>窃取凭据、cookie</td>
+<td>❌ 违法</td>
+</tr>
+</tbody>
+</table>
+<h3 id="17">1.7 与其他方案的对比</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>层次</th>
+<th>能看 HTTPS？</th>
+<th>上手难度</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>tcpdump / Wireshark</strong></td>
+<td>网络层（原始包）</td>
+<td>❌（只能看到密文）</td>
+<td>中</td>
+<td>协议分析、找网络问题</td>
+</tr>
+<tr>
+<td><strong>mitmproxy</strong></td>
+<td>应用层（HTTP 语义）</td>
+<td>✅（装 CA 后）</td>
+<td>低</td>
+<td>API 调试、改包、自动化</td>
+</tr>
+<tr>
+<td><strong>浏览器 DevTools</strong></td>
+<td>应用层（仅浏览器内）</td>
+<td>✅（浏览器自己的栈）</td>
+<td>极低</td>
+<td>前端调试，但抓不到 App</td>
+</tr>
+<tr>
+<td><strong>charles / fiddler</strong></td>
+<td>应用层</td>
+<td>✅</td>
+<td>低</td>
+<td>图形化，收费/平台限制</td>
+</tr>
+<tr>
+<td><strong>Burp Suite</strong></td>
+<td>应用层 + 主动扫描</td>
+<td>✅</td>
+<td>中高</td>
+<td>专业渗透，价格高</td>
+</tr>
+<tr>
+<td><strong>frida + 脱壳</strong></td>
+<td>进程内 hook</td>
+<td>✅（绕过 pinning）</td>
+<td>高</td>
+<td>逆向 App（Day 140 相关）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>选择原则：</strong> 只想看 API → DevTools/mitmproxy；要自动化 → mitmdump；<br>
+要跨设备/App → mitmproxy 透明代理；要主动扫描漏洞 → Burp。</p>
+<hr>
+<h2 id="_3">二、原理解释（底层机制与设计动机）</h2>
+<h3 id="21-http-vs-connect">2.1 HTTP 代理的两种形态：普通请求 vs CONNECT 隧道</h3>
+<p>客户端配置了 HTTP 代理后，行为分两种：</p>
+<p><strong>（1）目标是 HTTP（明文）：</strong></p>
+<pre class="plain"><code>GET http://example.com/a HTTP/1.1     ← 注意：请求行里是&quot;绝对 URL&quot;
+Host: example.com
+Proxy-Connection: keep-alive
+
+代理收到后，把请求行改成相对形式，转发给 example.com。
+</code></pre>
+<p><strong>（2）目标是 HTTPS：</strong></p>
+<pre class="plain"><code>CONNECT example.com:443 HTTP/1.1      ← 先建立隧道
+Host: example.com:443
+
+代理回复：
+HTTP/1.1 200 Connection established
+
+之后客户端在&quot;这条隧道&quot;里做 TLS 握手。
+</code></pre>
+<p><strong>关键理解点：</strong></p>
+<ul>
+<li>明文 HTTP 时，代理<strong>天然就能看到全部内容</strong>，不需要任何证书；</li>
+<li>HTTPS 时，<code>CONNECT</code> 只是请求开一条<strong>盲隧道</strong>。mitmproxy 要想看内容，<br>
+  必须<strong>不老实</strong>——它回复 <code>200 Connection established</code> 之后，<br>
+<strong>自己扮演服务器完成 TLS① 握手</strong>（出示自签证书），再<strong>扮演客户端</strong><br>
+  去和真服务器做 TLS②。这就是 MITM 的全部魔法。</li>
+</ul>
+<pre class="plain"><code>  客户端                      mitmproxy                      真服务器
+    │                             │                             │
+    │  CONNECT example.com:443    │                             │
+    │────────────────────────────►│                             │
+    │  200 Connection established │                             │
+    │◄────────────────────────────│                             │
+    │                             │                             │
+    │  ClientHello                │                             │
+    │────────────────────────────►│                             │
+    │                             │  ① 判断 SNI = example.com    │
+    │                             │  ② 用 CA 现场签一张          │
+    │                             │     example.com 证书         │
+    │  ServerHello + 自签证书      │                             │
+    │◄────────────────────────────│                             │
+    │  (若客户端信任 mitmproxy CA) │                             │
+    │  Finished  ────────────────►│                             │
+    │      ✅ TLS① 建立，明文可达   │                             │
+    │                             │  ── TLS② 握手（用真证书）──►  │
+    │                             │◄────────────────────────────│
+    │                             │      ✅ TLS② 建立            │
+    │  HTTP 明文请求 ─────────────►│  改写/记录后重新加密转发 ────►│
+    │  HTTP 明文响应 ◄────────────│  ◄── 解密并改写后回传 ───────│
+</code></pre>
+<h3 id="22">2.2 证书"现场签发"意味着什么</h3>
+<p>mitmproxy 内部维护一张 CA（<code>~/.mitmproxy/mitmproxy-ca-cert.pem</code>）。<br>
+每次遇到新的 SNI，它会：</p>
+<ol>
+<li>生成一对新的 <strong>临时私钥</strong>（或用缓存）；</li>
+<li>用 mitmproxy CA 的私钥<strong>签发</strong>一张 CN/SAN = 目标域名的证书；</li>
+<li>缓存这张证书（默认在内存 + <code>~/.mitmproxy/</code> 下）。</li>
+</ol>
+<p><strong>三个重要推论：</strong></p>
+<ol>
+<li><strong>不同域名得到不同证书</strong>——所以 SAN 校验会通过（域名对得上）；</li>
+<li><strong>签发者不同</strong>——所以防 pinning 的 App 会拒；</li>
+<li><strong>自签证书不受平台欢迎</strong>——Android 7+ 起，用户安装的 CA 默认<strong>不被<br>
+   应用信任</strong>（除非 App 显式开启 <code>networkSecurityConfig</code> 或系统 CA）。</li>
+</ol>
+<p><strong>这就是为什么"抓 Android App 的包"这么麻烦：</strong><br>
+需要 root + 把 CA 装到系统证书区，或者用 frida 绕过 pinning。</p>
+<h3 id="23-content-length">2.3 为什么修改响应体会破坏 <code>Content-Length</code></h3>
+<p>HTTP/1.1 里，响应体的长度有三种告知方式：</p>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>示例</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Content-Length: N</code></td>
+<td><code>Content-Length: 342</code></td>
+<td>定长，读 N 字节结束</td>
+</tr>
+<tr>
+<td><code>Transfer-Encoding: chunked</code></td>
+<td><code>chunked</code></td>
+<td>分块，<code>0\r\n\r\n</code> 结束</td>
+</tr>
+<tr>
+<td>无长度 + 连接关闭</td>
+<td>无</td>
+<td>读到 EOF 结束（HTTP/1.0 风格）</td>
+</tr>
+</tbody>
+</table>
+<p>如果你把响应体从 342 字节改成 400 字节，却<strong>不改 <code>Content-Length</code></strong>：</p>
+<pre class="plain"><code>客户端期待 342 字节 → 多出来的 58 字节被当作&quot;下一个响应&quot; → 协议错乱
+</code></pre>
+<p><strong>mitmproxy 的正确做法</strong>：用 <code>flow.response.text = "新内容"</code> 或<br>
+<code>flow.response.content = b"..."</code>，它<strong>自动</strong>重算 <code>Content-Length</code><br>
+并处理 <code>chunked</code>。<strong>不要</strong>手动去写 <code>flow.response.headers["Content-Length"]</code><br>
+（除非你很清楚自己在干什么）。</p>
+<h3 id="24-gzipbr">2.4 gzip/br压缩：改包前必须先解压</h3>
+<p>服务器常返回 <code>Content-Encoding: gzip</code>。此时 <code>flow.response.content</code><br>
+是<strong>压缩后的字节</strong>。你如果直接对压缩字节做字符串替换：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 错误：乱码 / 匹配不到</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;old&quot;</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;new&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 正确：用 text 属性，mitmproxy 自动解码/重编码</span>
+<span class="k">if</span> <span class="s2">&quot;old&quot;</span> <span class="ow">in</span> <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="p">:</span>
+    <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;old&quot;</span><span class="p">,</span> <span class="s2">&quot;new&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>注意 <code>flow.response.text</code> 的代价</strong>：它会把整个 body 解码成 <code>str</code><br>
+（UTF-8 解码失败会抛异常），大文件（&gt;几十 MB）会吃内存。<br>
+<strong>规则：小文本用 <code>.text</code>，大文件/二进制用 <code>.content</code> 或 <code>.raw_content</code>。</strong></p>
+<h3 id="25-addon">2.5 Addon 的执行顺序与"响应改写"的时机</h3>
+<p>Addon 支持<strong>注册顺序</strong>与 <code>@hook</code> 装饰器两种写法。默认按注册顺序执行。<br>
+重要事件顺序：</p>
+<pre class="plain"><code>requestheaders  →  request  →  [转发]  →  responseheaders  →  response
+   ↑ 此时只有头          ↑ 此时 body 已完整        ↑ 只有头        ↑ body 完整
+</code></pre>
+<p><strong>设计动机：</strong> 分阶段是为了<strong>流式</strong>处理——大文件上传时，<br>
+你不可能等整个 body 到齐才决定要不要拦截。分阶段让你能在<br>
+<strong>头阶段</strong>就做出决策（比如直接拒绝），而不用等 body。</p>
+<p><strong>两个常被误解的事实：</strong></p>
+<ol>
+<li><code>request</code> 事件触发时，body <strong>已经完整读入</strong>（除非开了 <code>stream_*</code> 系列事件）；</li>
+<li>在 <code>response</code> 里改 <code>flow.response</code> <strong>会</strong>生效，因为此时还没回给客户端。</li>
+</ol>
+<h3 id="26-iptables">2.6 透明代理为什么要靠 iptables</h3>
+<p>透明代理的目标是"客户端完全不知道有代理"。实现靠<strong>网络层重定向</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># Linux 上把 80/443 的流量重定向到 mitmproxy 的 8080</span>
+iptables<span class="w"> </span>-t<span class="w"> </span>nat<span class="w"> </span>-A<span class="w"> </span>PREROUTING<span class="w"> </span>-p<span class="w"> </span>tcp<span class="w"> </span>--dport<span class="w"> </span><span class="m">80</span><span class="w">  </span>-j<span class="w"> </span>REDIRECT<span class="w"> </span>--to-ports<span class="w"> </span><span class="m">8080</span>
+iptables<span class="w"> </span>-t<span class="w"> </span>nat<span class="w"> </span>-A<span class="w"> </span>PREROUTING<span class="w"> </span>-p<span class="w"> </span>tcp<span class="w"> </span>--dport<span class="w"> </span><span class="m">443</span><span class="w"> </span>-j<span class="w"> </span>REDIRECT<span class="w"> </span>--to-ports<span class="w"> </span><span class="m">8080</span>
+<span class="c1"># 原目标地址会丢失，所以需要 SO_ORIGINAL_DST 找回</span>
+</code></pre></div>
+<p><strong>关键问题：目标地址被 NAT 改掉了。</strong> 代理必须通过 <code>getsockopt(SO_ORIGINAL_DST)</code><br>
+把"客户端原本想访问谁"找回来，否则不知道要连哪里。<br>
+mitmproxy 的 <code>--mode transparent</code> 会自动处理这一步。</p>
+<p><strong>为什么这在 macOS/Windows 上麻烦？</strong> 因为那是 Linux 的 netfilter 特性，<br>
+其它系统要用 pf（macOS）/ WinDivert（Windows）。</p>
+<h3 id="27-addon">2.7 为什么 Addon 里不能做"长时间阻塞操作"</h3>
+<p>mitmproxy 的事件循环（asyncio）是<strong>单线程</strong>的。你在 <code>request</code> 里写：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>          <span class="c1"># ❌ 整个代理卡住 10 秒，所有连接都停</span>
+<span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>       <span class="c1"># ❌ 同步请求阻塞事件循环</span>
+</code></pre></div>
+<p>正确做法：</p>
+<ul>
+<li>用 <code>mitmproxy</code> 提供的异步 API（如 <code>flow.request</code> 的 <code>await</code> 变体）；</li>
+<li>或者把重活丢到 <code>ThreadPoolExecutor</code> / <code>asyncio.to_thread</code>；</li>
+<li>需要"挂起请求稍后继续"时，用 <code>flow.intercept()</code> + <code>flow.resume()</code>。</li>
+</ul>
+<p><strong>这就是"代理为什么突然变慢"的最常见原因。</strong></p>
+<h3 id="28-addonsysmodules-shim">2.8 为什么"本地实验台"能跑真 Addon：<code>sys.modules</code> 注入与 shim 的边界</h3>
+<p>本日的 <code>code/00-local-lab.py</code> 是一个<strong>纯标准库</strong>的 MITM 实验台：<br>
+它起一个假上游站点 + 一个真正的 HTTP 正向代理，并且在加载你的 Addon 之前，<br>
+把三个<strong>模块对象</strong>塞进 <code>sys.modules</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">sys</span><span class="o">.</span><span class="n">modules</span><span class="p">[</span><span class="s2">&quot;mitmproxy&quot;</span><span class="p">]</span>       <span class="o">=</span> <span class="o">&lt;</span><span class="n">shim</span> <span class="n">模块</span><span class="o">&gt;</span>     <span class="c1"># 有 .http / .ctx 属性</span>
+<span class="n">sys</span><span class="o">.</span><span class="n">modules</span><span class="p">[</span><span class="s2">&quot;mitmproxy.http&quot;</span><span class="p">]</span>  <span class="o">=</span> <span class="o">&lt;</span><span class="n">HTTPFlow</span><span class="o">/</span><span class="n">Request</span><span class="o">/</span><span class="n">Response</span><span class="o">/</span><span class="n">Headers</span><span class="o">/</span><span class="n">Response</span><span class="o">.</span><span class="n">make</span><span class="o">&gt;</span>
+<span class="n">sys</span><span class="o">.</span><span class="n">modules</span><span class="p">[</span><span class="s2">&quot;mitmproxy.ctx&quot;</span><span class="p">]</span>   <span class="o">=</span> <span class="o">&lt;</span><span class="n">ctx</span><span class="o">.</span><span class="n">log</span> <span class="o">/</span> <span class="n">ctx</span><span class="o">.</span><span class="n">options</span><span class="o">&gt;</span>
+</code></pre></div>
+<p>于是 Addon 里那句 <code>from mitmproxy import ctx, http</code> <strong>会成功导入 shim</strong> ——<br>
+这就是"一行都不用改就能换内核"的原理（Python 的导入系统按 <code>sys.modules</code><br>
+命中，命中就不再去文件系统找）。</p>
+<p><strong>shim 刻意对齐的语义（都是 mitmproxy 里最容易踩坑的地方）：</strong></p>
+<table>
+<thead>
+<tr>
+<th>语义</th>
+<th>shim 的行为</th>
+<th>对应本日的坑</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>flow.response.text</code> 读取</td>
+<td>按 <code>Content-Encoding</code> 自动 gunzip + 解码</td>
+<td>坑 2</td>
+</tr>
+<tr>
+<td><code>flow.response.text = ...</code> 赋值</td>
+<td>按原编码重新压缩，并<strong>自动重算 <code>Content-Length</code></strong></td>
+<td>坑 1、坑 2</td>
+</tr>
+<tr>
+<td><code>flow.request.content</code> / <code>.text</code></td>
+<td>原始字节 / 解码文本分离</td>
+<td>坑 3</td>
+</tr>
+<tr>
+<td><code>flow.response.headers</code></td>
+<td>大小写不敏感、保留重复头（<code>Set-Cookie</code>）</td>
+<td>坑 4</td>
+</tr>
+<tr>
+<td><code>http.Response.make(...)</code></td>
+<td>直接造响应，可跳过上游</td>
+<td>坑 6</td>
+</tr>
+<tr>
+<td><code>flow.request.path</code> vs <code>.url</code></td>
+<td>前者只改路径，后者会改 host/port</td>
+<td>坑 7</td>
+</tr>
+<tr>
+<td><code>ctx.log</code> / <code>ctx.options</code>（<code>loader.add_option</code>）</td>
+<td>有记录、可断言、支持 <code>--set</code></td>
+<td>坑 5、坑 8</td>
+</tr>
+</tbody>
+</table>
+<p><strong>必须知道的边界（它不能验证什么）：</strong></p>
+<ul>
+<li>❌ <strong>不支持 CONNECT/HTTPS</strong>：本实验台没有 CA 体系，<code>CONNECT</code> 直接返回 501。<br>
+  想练 HTTPS 拦截必须用真 mitmproxy + 安装 CA 证书；</li>
+<li>❌ 不支持 HTTP/2、WebSocket、TCP/UDP 流、<code>stream_*</code> 系列事件；</li>
+<li>❌ 不模拟真实网络（延迟/丢包/连接池），所以<strong>性能结论必须用真 mitmproxy 复核</strong>；</li>
+<li>✅ 能验证的是<strong>事件时序、请求/响应改写语义、脱敏与落盘逻辑、白名单护栏</strong> ——<br>
+  这些恰好是 Addon 里最容易写错的部分。</li>
+</ul>
+<blockquote>
+<p>这里的工程方法论值得记住：<strong>把"能离线验证的部分"和"必须真环境验证的部分"分开</strong>。<br>
+前者做成自检（每次改代码都跑），后者写成手工验收步骤（发版前跑一次）。</p>
+</blockquote>
+<h3 id="29">2.9 中间人的成本模型：延迟、内存与证书</h3>
+<p>抓包看似"看一眼"，实际每一步都有代价：</p>
+<table>
+<thead>
+<tr>
+<th>环节</th>
+<th>成本</th>
+<th>量级</th>
+<th>优化手段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>多一次 TLS 握手（TLS①+TLS②）</td>
+<td>每个新域名 +1~2 RTT</td>
+<td>十毫秒级</td>
+<td>证书与连接缓存（mitmproxy 默认开）</td>
+</tr>
+<tr>
+<td>现场签发证书（RSA/ECDSA 生成）</td>
+<td>CPU 密集，<strong>每个新 SNI 一次</strong></td>
+<td>首次几十毫秒</td>
+<td>用 ECDSA、开证书缓存、预生成</td>
+</tr>
+<tr>
+<td>读取完整 body</td>
+<td>内存 = 并发 × body 大小</td>
+<td>大文件场景可达 GB</td>
+<td><code>stream_large_bodies</code>、<code>responseheaders</code> 阶段决策</td>
+</tr>
+<tr>
+<td>Python 回调</td>
+<td>每个流 2 次（request/response）</td>
+<td>微秒~毫秒</td>
+<td>回调里<strong>绝不做</strong>阻塞 IO/大计算</td>
+</tr>
+<tr>
+<td>日志落盘</td>
+<td>磁盘 I/O，可能成为瓶颈</td>
+<td>—</td>
+<td>缓冲写 + 轮转；只记需要的字段</td>
+</tr>
+</tbody>
+</table>
+<p><strong>推论（写 Addon 的三条硬规则）：</strong></p>
+<ol>
+<li><strong>回调要短</strong>：<code>time.sleep</code>、同步 HTTP、大 JSON 解析都是"把代理变成串行器"；</li>
+<li><strong>大 body 别用 <code>.text</code></strong>：解码+解压会把整个 body 放进内存（并且可能抛 <code>UnicodeDecodeError</code>）；</li>
+<li><strong>只在需要时读 body</strong>：能在 <code>responseheaders</code> 阶段决定的事，别等到 <code>response</code>。</li>
+</ol>
+<hr>
+<h2 id="api">三、定义与使用方法（API 速查表）</h2>
+<h3 id="31">3.1 安装与首次运行</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 方式 1：pip（推荐，与本系列 Python 环境一致）</span>
+pip<span class="w"> </span>install<span class="w"> </span>mitmproxy
+mitmdump<span class="w"> </span>--version
+
+<span class="c1"># 方式 2：pipx（隔离环境，不污染项目）</span>
+pipx<span class="w"> </span>install<span class="w"> </span>mitmproxy
+
+<span class="c1"># 方式 3：系统包（Ubuntu）</span>
+<span class="c1"># sudo apt install mitmproxy</span>
+
+<span class="c1"># 启动（默认监听 127.0.0.1:8080）</span>
+mitmproxy<span class="w">                 </span><span class="c1"># TUI</span>
+mitmdump<span class="w">                  </span><span class="c1"># 无界面</span>
+mitmweb<span class="w">                   </span><span class="c1"># Web UI，默认 http://127.0.0.1:8081</span>
+</code></pre></div>
+<p><strong>首次运行会生成 CA：</strong></p>
+<pre class="plain"><code>~/.mitmproxy/
+├── mitmproxy-ca-cert.pem      ← 给 Firefox/curl 用（PEM）
+├── mitmproxy-ca-cert.cer      ← 给 Windows/Android 用
+├── mitmproxy-ca-cert.p12      ← 给 iOS/macOS 用（双击导入）
+└── mitmproxy-ca.pem           ← CA 私钥（⚠️ 绝不要外泄！）
+</code></pre>
+<blockquote>
+<p>⚠️ <strong><code>mitmproxy-ca.pem</code> 是私钥</strong>。谁拿到它，就能伪造任何 HTTPS 站点。<br>
+不要提交到 git，不要发到聊天里，用完及时 <code>mitmproxy --set confdir=...</code> 隔离。</p>
+</blockquote>
+<h3 id="32">3.2 客户端配置</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># curl</span>
+curl<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>https://example.com
+curl<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--cacert<span class="w"> </span>~/.mitmproxy/mitmproxy-ca-cert.pem<span class="w"> </span>https://example.com
+
+<span class="c1"># 环境变量（大多数 CLI 工具认这两个）</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">HTTP_PROXY</span><span class="o">=</span>http://127.0.0.1:8080
+<span class="nb">export</span><span class="w"> </span><span class="nv">HTTPS_PROXY</span><span class="o">=</span>http://127.0.0.1:8080
+<span class="c1"># ⚠️ 别忘 NO_PROXY，否则本机请求也会被代理</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">NO_PROXY</span><span class="o">=</span><span class="m">127</span>.0.0.1,localhost
+
+<span class="c1"># Python requests</span>
+<span class="nv">proxies</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">{</span><span class="s2">&quot;http&quot;</span>:<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:8080&quot;</span>,<span class="w"> </span><span class="s2">&quot;https&quot;</span>:<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:8080&quot;</span><span class="o">}</span>
+requests.get<span class="o">(</span>url,<span class="w"> </span><span class="nv">proxies</span><span class="o">=</span>proxies,<span class="w"> </span><span class="nv">verify</span><span class="o">=</span><span class="s2">&quot;~/.mitmproxy/mitmproxy-ca-cert.pem&quot;</span><span class="o">)</span>
+
+<span class="c1"># 浏览器：设置 → 网络 → 代理 → 手动 http/https = 127.0.0.1:8080</span>
+<span class="c1"># 然后访问 http://mitm.it 下载对应平台的 CA 并安装信任</span>
+</code></pre></div>
+<h3 id="33-mitmdump">3.3 <code>mitmdump</code> 常用参数速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ── 监听 ──</span>
+mitmdump<span class="w"> </span>-p<span class="w"> </span><span class="m">8080</span><span class="w">                       </span><span class="c1"># 端口</span>
+mitmdump<span class="w"> </span>--listen-host<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w">         </span><span class="c1"># 对外监听（⚠️ 危险，仅内网授权场景）</span>
+
+<span class="c1"># ── 模式 ──</span>
+mitmdump<span class="w"> </span>--mode<span class="w"> </span>regular<span class="w">                </span><span class="c1"># 正向（默认）</span>
+mitmdump<span class="w"> </span>--mode<span class="w"> </span>transparent<span class="w">            </span><span class="c1"># 透明（需 iptables）</span>
+mitmdump<span class="w"> </span>--mode<span class="w"> </span>reverse:http://127.0.0.1:3000<span class="w">   </span><span class="c1"># 反向代理到本地上游</span>
+mitmdump<span class="w"> </span>--mode<span class="w"> </span>upstream:http://127.0.0.1:8081<span class="w">  </span><span class="c1"># 走上游代理</span>
+
+<span class="c1"># ── 流量控制（关键：只抓你想抓的）──</span>
+mitmdump<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;~u example\.com&quot;</span><span class="w">          </span><span class="c1"># 只看这个域</span>
+mitmdump<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;~m POST&quot;</span><span class="w">                  </span><span class="c1"># 只看 POST</span>
+mitmdump<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;~s&quot;</span><span class="w">                       </span><span class="c1"># 只看响应</span>
+mitmdump<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;~u api&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>mitmdump<span class="w"> </span>--ignore-hosts<span class="w"> </span><span class="s2">&quot;.*\.png&quot;</span>
+
+<span class="c1"># ── 输出 ──</span>
+mitmdump<span class="w"> </span>-w<span class="w"> </span>flows.mitm<span class="w">                 </span><span class="c1"># 保存为 mitm 格式（可回放/重分析）</span>
+mitmdump<span class="w"> </span>-r<span class="w"> </span>flows.mitm<span class="w">                 </span><span class="c1"># 读取并重新处理</span>
+mitmdump<span class="w"> </span>--set<span class="w"> </span><span class="nv">save_stream_file</span><span class="o">=</span>all.mitm
+mitmdump<span class="w"> </span>-n<span class="w">                            </span><span class="c1"># 不加载任何 addon（纯净模式，排查问题用）</span>
+
+<span class="c1"># ── 加载脚本（核心用法）──</span>
+mitmdump<span class="w"> </span>-s<span class="w"> </span>my_addon.py
+mitmdump<span class="w"> </span>-s<span class="w"> </span>my_addon.py<span class="w"> </span>--set<span class="w"> </span><span class="nv">my_option</span><span class="o">=</span><span class="m">1</span>
+
+<span class="c1"># ── 常用 set 项 ──</span>
+--set<span class="w"> </span><span class="nv">confdir</span><span class="o">=</span>./mitmconf<span class="w">               </span><span class="c1"># 隔离配置目录（含 CA）</span>
+--set<span class="w"> </span><span class="nv">block_global</span><span class="o">=</span><span class="nb">false</span><span class="w">               </span><span class="c1"># 允许非本机客户端连进来</span>
+--set<span class="w"> </span><span class="nv">connection_strategy</span><span class="o">=</span>lazy<span class="w">         </span><span class="c1"># 延迟连接上游（配合 map_local 有用）</span>
+--set<span class="w"> </span><span class="nv">upstream_cert</span><span class="o">=</span><span class="nb">false</span><span class="w">              </span><span class="c1"># 不校验上游证书（⚠️ 仅测试环境）</span>
+--set<span class="w"> </span><span class="nv">ssl_insecure</span><span class="o">=</span><span class="nb">true</span><span class="w">                </span><span class="c1"># 同上，跳过 TLS 校验</span>
+--set<span class="w"> </span><span class="nv">stream_large_bodies</span><span class="o">=</span>10m<span class="w">          </span><span class="c1"># 大 body 流式处理阈值</span>
+--set<span class="w"> </span><span class="nv">termlog_verbosity</span><span class="o">=</span>info
+</code></pre></div>
+<h3 id="34-mitmproxy-tui">3.4 <code>mitmproxy</code> TUI 快捷键速查</h3>
+<pre class="plain"><code>┌─ 三个主页面 ───────────────────────────────────────┐
+│  q        返回上一级 / 退出                          │
+│  ?        帮助（所有快捷键）                          │
+│  Enter    进入选中的 flow                            │
+│  Tab      在 Request / Response / Detail 间切换      │
+│  /        搜索（正则）                                │
+│  f        过滤（输入 filter 表达式，如 ~u api）        │
+│  z        清空当前视图                                │
+└────────────────────────────────────────────────────┘
+
+┌─ 编辑与重放 ───────────────────────────────────────┐
+│  e        编辑（按类型选：headers / body / method）   │
+│  r        重放（replay）该请求                        │
+│  R        重放并编辑后重放                            │
+│  d        删除                                       │
+│  i        设置 interception 断点（拦截并暂停）         │
+│  a        恢复被拦截的 flow                           │
+│  A        恢复全部                                    │
+│  m        标记 / 取消标记                             │
+│  w        保存 body 到文件                            │
+│  |        用外部命令处理 body（如 |jq）                │
+└────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="35-addon-15">3.5 Addon 事件速查（最常用的 15 个）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Addon</span><span class="p">:</span>
+    <span class="c1"># ─── 连接层 ───</span>
+    <span class="k">def</span> <span class="nf">client_connected</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span> <span class="nf">client_disconnected</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">client</span><span class="p">):</span> <span class="o">...</span>
+
+    <span class="c1"># ─── TLS 层 ───</span>
+    <span class="k">def</span> <span class="nf">tls_clienthello</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span> <span class="o">...</span>          <span class="c1"># 客户端 ClientHello（看 SNI）</span>
+    <span class="k">def</span> <span class="nf">tls_established_client</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tls</span><span class="p">):</span> <span class="o">...</span>
+
+    <span class="c1"># ─── HTTP 请求 ───</span>
+    <span class="k">def</span> <span class="nf">http_connect</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>             <span class="c1"># CONNECT 请求</span>
+    <span class="k">def</span> <span class="nf">requestheaders</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>           <span class="c1"># 只有头，body 未读</span>
+    <span class="k">def</span> <span class="nf">request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>                  <span class="c1"># ✅ 最常用：请求完整</span>
+    <span class="k">def</span> <span class="nf">request_error</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>
+
+    <span class="c1"># ─── HTTP 响应 ───</span>
+    <span class="k">def</span> <span class="nf">responseheaders</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>          <span class="c1"># 只有头</span>
+    <span class="k">def</span> <span class="nf">response</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>                 <span class="c1"># ✅ 最常用：响应完整</span>
+    <span class="k">def</span> <span class="nf">error</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>                    <span class="c1"># 上游出错</span>
+
+    <span class="c1"># ─── WebSocket / TCP / UDP ───</span>
+    <span class="k">def</span> <span class="nf">websocket_start</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span> <span class="nf">websocket_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span> <span class="nf">tcp_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span> <span class="nf">udp_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">flow</span><span class="p">):</span> <span class="o">...</span>
+
+    <span class="c1"># ─── 生命周期 ───</span>
+    <span class="k">def</span> <span class="nf">running</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span> <span class="nf">done</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="o">...</span>
+    <span class="k">def</span> <span class="nf">load</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">loader</span><span class="p">):</span> <span class="o">...</span>                   <span class="c1"># 注册自定义 --set 选项</span>
+</code></pre></div>
+<h3 id="36-flow">3.6 <code>flow</code> 对象属性速查</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">flow</span><span class="o">.</span><span class="n">id</span>                      <span class="c1"># 唯一 ID（str）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">client_conn</span>             <span class="c1"># 客户端连接对象（.peername, .tls_setup ...）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">server_conn</span>             <span class="c1"># 服务器连接对象（.peername, .address, .sni）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span>                 <span class="c1"># HTTPFlow.request</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">response</span>                <span class="c1"># HTTPFlow.response（可能为 None）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">error</span>                   <span class="c1"># 如果出错</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">type</span>                    <span class="c1"># &quot;http&quot; / &quot;websocket&quot; / &quot;tcp&quot; / &quot;udp&quot;</span>
+
+<span class="c1"># ── request / response 共有属性 ──</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">method</span>          <span class="c1"># &quot;GET&quot;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">scheme</span>          <span class="c1"># &quot;https&quot;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">host</span>            <span class="c1"># &quot;example.com&quot;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">host_header</span>     <span class="c1"># 可以单独改（vhost 测试用）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">port</span>            <span class="c1"># 443</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">path</span>            <span class="c1"># &quot;/api/v1/users?page=2&quot;（含 query）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">url</span>             <span class="c1"># 完整 URL</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span>         <span class="c1"># Headers 对象（大小写不敏感）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">content</span>         <span class="c1"># bytes（原始字节）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">text</span>            <span class="c1"># str（自动解码，gzip 自动解）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">query</span>           <span class="c1"># MultiDictView（可直接改 query 参数）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlencoded_form</span> <span class="c1"># MultiDictView（表单）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">cookies</span>         <span class="c1"># MultiDictView</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>          <span class="c1"># 若 body 是 JSON → dict</span>
+
+<span class="c1"># ── 常用改写操作 ──</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="p">[</span><span class="s2">&quot;Authorization&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;Bearer xxx&quot;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;Cookie&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>          <span class="c1"># 删除头（注意用 pop）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">url</span> <span class="o">=</span> <span class="s2">&quot;http://127.0.0.1/admin&quot;</span>       <span class="c1"># 改 URL（谨慎，会改 host）</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">path</span> <span class="o">=</span> <span class="s2">&quot;/admin?x=1&quot;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">query</span><span class="p">[</span><span class="s2">&quot;page&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;1&quot;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">json</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="s2">&quot;admin&quot;</span><span class="p">}</span>             <span class="c1"># 自动重算 Content-Length</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="s1">&#39;{&quot;role&quot;:&quot;admin&quot;}&#39;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;raw bytes&quot;</span>
+
+<span class="c1"># ── 响应改写 ──</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">status_code</span> <span class="o">=</span> <span class="mi">200</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">reason</span> <span class="o">=</span> <span class="s2">&quot;OK&quot;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">headers</span><span class="p">[</span><span class="s2">&quot;X-Debug&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;1&quot;</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">text</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;old&quot;</span><span class="p">,</span> <span class="s2">&quot;new&quot;</span><span class="p">)</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">response</span><span class="o">.</span><span class="n">content</span> <span class="o">=</span> <span class="sa">b</span><span class="s2">&quot;&lt;html&gt;fake&lt;/html&gt;&quot;</span>
+
+<span class="c1"># ── 直接构造响应（不发到上游）──</span>
+<span class="kn">from</span> <span class="nn">mitmproxy</span> <span class="kn">import</span> <span class="n">http</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">response</span> <span class="o">=</span> <span class="n">http</span><span class="o">.</span><span class="n">Response</span><span class="o">.</span><span class="n">make</span><span class="p">(</span>
+    <span class="mi">200</span><span class="p">,</span>
+    <span class="sa">b</span><span class="s1">&#39;{&quot;mock&quot;: true}&#39;</span><span class="p">,</span>
+    <span class="p">{</span><span class="s2">&quot;Content-Type&quot;</span><span class="p">:</span> <span class="s2">&quot;application/json&quot;</span><span class="p">},</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="37-filter-f">3.7 常用 filter 表达式（<code>-f</code> / 搜索）</h3>
+<pre class="plain"><code>~u pattern        URL 包含
+~u ^https://      URL 以此开头
+~h pattern        请求头包含
+~hq pattern       请求头（仅请求）
+~hs pattern       响应头
+~b pattern        请求体包含
+~bs pattern       响应体包含
+~m POST           method 匹配
+~c 200            状态码匹配
+~d example.com    域名匹配
+~s                是响应（而非请求）
+~q                是请求
+~t regex          content-type 匹配
+!~u example      取反
+~u api &amp; ~m POST 组合（&amp; = and, | = or）
+</code></pre>
+<h3 id="38">3.8 常见排错速查</h3>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>原因</th>
+<th>解决</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>浏览器提示 <code>NET::ERR_CERT_AUTHORITY_INVALID</code></td>
+<td>CA 没装/没信任</td>
+<td>访问 <code>http://mitm.it</code> 安装并信任</td>
+</tr>
+<tr>
+<td>所有请求都 <code>502</code></td>
+<td>上游连不上 / DNS 问题</td>
+<td><code>--set upstream_cert=false</code>、检查网络</td>
+</tr>
+<tr>
+<td>只看到 <code>CONNECT</code> 看不到内容</td>
+<td>客户端没信任 CA（或 App pinning）</td>
+<td>装 CA / 处理 pinning</td>
+</tr>
+<tr>
+<td>改 body 后页面白屏</td>
+<td>忘了重算 <code>Content-Length</code></td>
+<td>用 <code>.text</code> / <code>.content</code> 赋值</td>
+</tr>
+<tr>
+<td>代理越来越慢</td>
+<td>事件循环被阻塞</td>
+<td>别用 <code>time.sleep</code> / 同步 IO</td>
+</tr>
+<tr>
+<td>本机请求也被代理了</td>
+<td><code>NO_PROXY</code> 没设</td>
+<td><code>export NO_PROXY=127.0.0.1,localhost</code></td>
+</tr>
+<tr>
+<td>抓不到手机 App</td>
+<td>App 忽略系统代理</td>
+<td>透明代理 或 反向代理</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">四、图解</h2>
+<blockquote>
+<p>完整图解（6 张 Mermaid / ASCII 图）见 <a href="diagrams/README.md"><code>diagrams/README.md</code></a>。<br>
+核心两张如下。</p>
+</blockquote>
+<h3 id="41-https-mermaid">4.1 HTTPS 中间人的证书拆分（Mermaid 时序图）</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as 客户端
+    participant M as mitmproxy
+    participant S as 真服务器
+
+    C-&gt;&gt;M: CONNECT example.com:443
+    M--&gt;&gt;C: 200 Connection established
+    Note over C,M: 隧道建立，接下来是 TLS
+    C-&gt;&gt;M: ClientHello (SNI=example.com)
+    Note over M: 用 mitmproxy CA 现场签发&lt;br/&gt;example.com 假证书
+    M--&gt;&gt;C: ServerHello + 假证书
+    Note over C: 校验签发者
+    alt 客户端信任 mitmproxy CA
+        C-&gt;&gt;M: Finished
+        Note over C,M: TLS① 建立成功，明文可达 ✅
+    else 客户端不信任（或 App 做了 pinning）
+        C--xM: 证书错误，连接终止 ❌
+    end
+    M-&gt;&gt;S: ClientHello (TLS②)
+    S--&gt;&gt;M: ServerHello + 真证书
+    M-&gt;&gt;S: Finished
+    Note over M,S: TLS② 建立
+    C-&gt;&gt;M: GET /api/users (明文 HTTP)
+    M-&gt;&gt;S: GET /api/users (重新加密)
+    S--&gt;&gt;M: 200 OK (TLS②加密)
+    M--&gt;&gt;C: 200 OK (TLS①加密，可先改写)
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as 客户端
+    participant M as mitmproxy
+    participant S as 真服务器
+
+    C-&gt;&gt;M: CONNECT example.com:443
+    M--&gt;&gt;C: 200 Connection established
+    Note over C,M: 隧道建立，接下来是 TLS
+    C-&gt;&gt;M: ClientHello (SNI=example.com)
+    Note over M: 用 mitmproxy CA 现场签发&lt;br/&gt;example.com 假证书
+    M--&gt;&gt;C: ServerHello + 假证书
+    Note over C: 校验签发者
+    alt 客户端信任 mitmproxy CA
+        C-&gt;&gt;M: Finished
+        Note over C,M: TLS① 建立成功，明文可达 ✅
+    else 客户端不信任（或 App 做了 pinning）
+        C--xM: 证书错误，连接终止 ❌
+    end
+    M-&gt;&gt;S: ClientHello (TLS②)
+    S--&gt;&gt;M: ServerHello + 真证书
+    M-&gt;&gt;S: Finished
+    Note over M,S: TLS② 建立
+    C-&gt;&gt;M: GET /api/users (明文 HTTP)
+    M-&gt;&gt;S: GET /api/users (重新加密)
+    S--&gt;&gt;M: 200 OK (TLS②加密)
+    M--&gt;&gt;C: 200 OK (TLS①加密，可先改写)
+</code></pre></div>
+<h3 id="42-addon-ascii">4.2 Addon 事件生命周期（ASCII）</h3>
+<pre class="plain"><code> 客户端请求
+     │
+     ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │ client_connected          ← 新 TCP 连接                      │
+ │ tls_clienthello           ← 看到 SNI（判断要不要拦截）        │
+ │ http_connect              ← CONNECT 请求                     │
+ ├─────────────────────────────────────────────────────────────┤
+ │ requestheaders(flow)      ← 头已到，body 未读                │
+ │      │  可以在这里：改 URL / 改头 / 直接拒绝                  │
+ │ request(flow)             ← ✅ body 已完整，最常用            │
+ │      │  可以在这里：改 body / 加认证头 / 记日志               │
+ ├─────────────────────────────────────────────────────────────┤
+ │            ↓ 转发到上游 ↓                                     │
+ ├─────────────────────────────────────────────────────────────┤
+ │ responseheaders(flow)     ← 响应头已到                       │
+ │      │  可以在这里：根据 Content-Type 决定要不要读 body        │
+ │ response(flow)            ← ✅ body 已完整，最常用            │
+ │      │  可以在这里：改状态码 / 改 body / 注入 / 删安全头      │
+ ├─────────────────────────────────────────────────────────────┤
+ │ 回给客户端                                                   │
+ │ client_disconnected                                          │
+ └─────────────────────────────────────────────────────────────┘
+
+⚠️ 这些都是&quot;同步&quot;回调，跑在同一个事件循环里。
+   任何一个里写 time.sleep(10)，整个代理停 10 秒。
+</code></pre>
+<hr>
+<h2 id="_5">五、完整可运行实战代码</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>行数</th>
+<th>内容</th>
+<th>是否需要 mitmproxy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code/00-local-lab.py</code></td>
+<td>~1180</td>
+<td><strong>本地 MITM 实验台</strong>（纯标准库）：假上游站点 + 真正向代理 + <code>mitmproxy</code> API shim（可零改动加载下面三个 Addon）</td>
+<td>❌ 不需要</td>
+</tr>
+<tr>
+<td><code>code/01-addon-basics.py</code></td>
+<td>~410</td>
+<td>基础：最小 Addon、白名单、只读观察、事件配对</td>
+<td>❌ 可选（两条路径都能跑）</td>
+</tr>
+<tr>
+<td><code>code/02-addon-pitfalls.py</code></td>
+<td>~410</td>
+<td>进阶：改包 8 大坑（Content-Length / gzip / 阻塞 / mock / 串站 / 脱敏 …）</td>
+<td>❌ 可选</td>
+</tr>
+<tr>
+<td><code>code/03-traffic-tool.py</code></td>
+<td>~645</td>
+<td>实战：自动化流量处理工具（JSONL 落盘 + 三级脱敏 + HTML/MD 报表）</td>
+<td>❌ 可选</td>
+</tr>
+</tbody>
+</table>
+<h3 id="51-mitmproxy-vs">5.1 两条等价路径：真 mitmproxy vs 本地实验台</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>路径 A：真 mitmproxy</th>
+<th>路径 B：本地实验台（仓库自带）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>前置</td>
+<td><code>pip install mitmproxy</code>（要联网/编译）</td>
+<td>无（纯标准库）</td>
+</tr>
+<tr>
+<td>支持协议</td>
+<td>HTTP/HTTPS/HTTP2/WebSocket/TCP/UDP</td>
+<td><strong>仅明文 HTTP</strong></td>
+</tr>
+<tr>
+<td>HTTPS 拦截</td>
+<td>✅（需给客户端装 CA 证书）</td>
+<td>❌（<code>CONNECT</code> 返回 501，并提示你用真 mitmproxy）</td>
+</tr>
+<tr>
+<td>典型用途</td>
+<td>抓手机 App、抓真实站点、压测代理性能</td>
+<td>学 Addon 语义、验证改写/脱敏逻辑、离线自检</td>
+</tr>
+<tr>
+<td>命令</td>
+<td><code>mitmdump -s x.py -p 8080</code></td>
+<td><code>python3 00-local-lab.py --addon x.py</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>方式 A（真 mitmproxy）：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>mitmproxy
+mitmdump<span class="w"> </span>-s<span class="w"> </span>code/01-addon-basics.py<span class="w"> </span>-p<span class="w"> </span><span class="m">8080</span>
+<span class="c1"># 另开终端（HTTP 直连，无需 CA）：</span>
+curl<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>http://example.com/
+<span class="c1"># HTTPS 需要带上 mitmproxy 的 CA：</span>
+curl<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--cacert<span class="w"> </span>~/.mitmproxy/mitmproxy-ca-cert.pem<span class="w"> </span>https://example.com/
+
+<span class="c1"># 保存/回放（排查问题的利器）</span>
+mitmdump<span class="w"> </span>-w<span class="w"> </span>flows.mitm<span class="w">        </span><span class="c1"># 存</span>
+mitmdump<span class="w"> </span>-r<span class="w"> </span>flows.mitm<span class="w">        </span><span class="c1"># 读回来重新处理（可再挂 addon）</span>
+mitmdump<span class="w"> </span>-n<span class="w"> </span>-s<span class="w"> </span>code/01-addon-basics.py<span class="w">   </span><span class="c1"># -n：不加载任何默认 addon（排除干扰）</span>
+</code></pre></div>
+<p><strong>方式 B（本地实验台，不需要 mitmproxy；本仓库环境实测）：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-155-mitmproxy-interception/code
+
+<span class="c1"># 终端 1：起上游站点 + 正向代理 + 加载 Addon（端口自动分配，banner 里会打印）</span>
+python3<span class="w"> </span><span class="m">00</span>-local-lab.py<span class="w"> </span>--addon<span class="w"> </span><span class="m">01</span>-addon-basics.py
+python3<span class="w"> </span><span class="m">00</span>-local-lab.py<span class="w"> </span>--addon<span class="w"> </span><span class="m">02</span>-addon-pitfalls.py<span class="w"> </span>--set<span class="w"> </span><span class="nv">demo_rewrite</span><span class="o">=</span><span class="nb">true</span>
+python3<span class="w"> </span><span class="m">00</span>-local-lab.py<span class="w"> </span>--addon<span class="w"> </span><span class="m">03</span>-traffic-tool.py<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--set<span class="w"> </span><span class="nv">traffic_out_dir</span><span class="o">=</span>/tmp/traffic-out<span class="w"> </span>--set<span class="w"> </span><span class="nv">capture_domains</span><span class="o">=</span><span class="m">127</span>.0.0.1
+
+<span class="c1"># 终端 2：用 curl 走代理（把 banner 里的端口填进去）</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:&lt;代理端口&gt;<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/api/users
+curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:&lt;代理端口&gt;<span class="w"> </span>-i<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/login
+curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:&lt;代理端口&gt;<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/gzip<span class="w"> </span><span class="p">|</span><span class="w"> </span>gunzip
+curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:&lt;代理端口&gt;<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/mock/users
+</code></pre></div>
+<p><strong>离线自检（不联网、不装库、不写仓库）：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span>days/day-155-mitmproxy-interception/code/*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;== </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-2
+<span class="k">done</span>
+</code></pre></div>
+<p><strong>输出目录约定：</strong> <code>03-traffic-tool.py</code> 的默认输出目录是<br>
+<strong>系统临时目录</strong>（<code>&lt;tmp&gt;/day155-traffic-out</code>），不指定 <code>traffic_out_dir</code><br>
+时不会在当前工作目录里创建 <code>./traffic-out</code> —— 演示产物不该进 git 工作树。<br>
+要落到指定位置就显式 <code>--set traffic_out_dir=/tmp/traffic-out</code>。</p>
+<p><strong>护栏说明：</strong></p>
+<ul>
+<li>三个 Addon 都只处理<strong>白名单域</strong>（<code>127.0.0.1</code> / <code>localhost</code> / <code>example.com</code>），<br>
+  其它域直接透传、不记录 —— 白名单是<strong>最小权限原则</strong>在工具层的落地；</li>
+<li>落盘前自动<strong>脱敏</strong>：<code>Authorization</code> / <code>Cookie</code> / <code>Set-Cookie</code> /<br>
+<code>password</code> / <code>token</code> / JWT 等一律替换为 <code>***</code>；</li>
+<li>示例 02 的"危险改写"全部包在 <code>--set demo_rewrite=true</code> 后面，<br>
+  默认只<strong>打印</strong>不会真的改；</li>
+<li><code>00-local-lab.py</code> 的监听地址<strong>硬编码</strong> <code>127.0.0.1</code>，且代理只允许连<br>
+<code>127.0.0.1 / localhost / ::1</code> 作为上游（其它一律 403）——<br>
+  它不可能被当成"任意转发器"使用。</li>
+</ul>
+<hr>
+<h2 id="_6">六、代码案例逐节说明</h2>
+<blockquote>
+<p>三个 Addon 都是"能被真 mitmdump 直接加载"的独立文件；<code>00-local-lab.py</code> 是<br>
+让你<strong>不装 mitmproxy 也能跑它们</strong>的实验台。下面逐一说明每个部分为什么这么写。</p>
+</blockquote>
+<h3 id="61-00-local-labpy-api-shim">6.1 <code>00-local-lab.py</code> —— 三件套：假上游 + 真代理 + API shim</h3>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>关键设计</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OriginHandler</code> / <code>start_origin()</code></td>
+<td>假上游站点：<code>/api/users</code>、<code>/login</code>(302+Set-Cookie)、<code>/admin</code>(401)、<code>/gzip</code>(压缩正文)、<code>/slow</code>(0.5s)、<code>/</code>(HTML)</td>
+<td>让 Addon 有真实的"请求/响应"可改；<code>/gzip</code> 专门用来复现"压缩体不能直接替换"</td>
+</tr>
+<tr>
+<td><code>Headers</code></td>
+<td>大小写不敏感 + <strong>保留重复头</strong>（<code>get_all</code>/<code>items</code> 都保留）</td>
+<td>HTTP 头规范如此；<code>Set-Cookie</code> 必须能拿到多条</td>
+</tr>
+<tr>
+<td><code>Message.text</code> / <code>.content</code></td>
+<td><code>.text</code> 读取时自动解压；<strong>赋值时按原编码重新压缩并重算 <code>Content-Length</code></strong></td>
+<td>这就是坑 1/坑 2 的"正解"在 shim 里的实现</td>
+</tr>
+<tr>
+<td><code>Response.make()</code></td>
+<td>直接构造响应对象</td>
+<td>对应坑 6（mock）：不发上游也能给客户端一个响应</td>
+</tr>
+<tr>
+<td><code>_Loader.add_option()</code></td>
+<td>兼容 <code>("name", bool, False, "help")</code> 和 <code>name=..., typespec=..., default=...</code> 两种签名</td>
+<td>真实 mitmproxy 用的是关键字参数风格，而很多人照抄示例用位置参数 —— 两种都支持才不容易踩坑</td>
+</tr>
+<tr>
+<td><code>install_shim()</code> / <code>load_addon()</code></td>
+<td>注入 <code>sys.modules</code> → 按路径 exec Addon → 读模块级 <code>addons</code> → 依次 <code>load()</code> → <code>--set</code> 赋值 → <code>configure(changed)</code> → <code>running()</code></td>
+<td>复刻 mitmdump 的加载时序；顺序反了 Addon 就会拿到未初始化的选项</td>
+</tr>
+<tr>
+<td><code>run_addon_event()</code></td>
+<td>按列表顺序分发 <code>request</code> / <code>response</code> / <code>error</code></td>
+<td>与 mitmproxy 的注册顺序语义一致</td>
+</tr>
+<tr>
+<td><code>ProxyHandler._handle()</code></td>
+<td>解析请求行里的<strong>绝对 URI</strong> → 建 <code>flow</code> → <code>request</code> 事件 → 若 addon 造了响应就直接回；否则转发上游 → <code>response</code> 事件 → 回给客户端</td>
+<td>这就是代理的完整生命周期；"addon 造了响应就跳过上游"是 mock 的判定点</td>
+</tr>
+<tr>
+<td><code>_forward()</code></td>
+<td>去掉 hop-by-hop 头（<code>Connection</code>/<code>Proxy-Connection</code>/<code>TE</code>/<code>Transfer-Encoding</code>…），用 <code>getheaders()</code> 保留重复响应头</td>
+<td>RFC 7230 §6.1；用 dict 会把多条 <code>Set-Cookie</code> 丢掉</td>
+</tr>
+<tr>
+<td><code>_relay()</code></td>
+<td>用 <code>send_response_only()</code> 而不是 <code>send_response()</code>；<code>Content-Length</code> <strong>统一重算</strong></td>
+<td><code>send_response()</code> 会再塞一对 <code>Server</code>/<code>Date</code>，导致客户端收到重复头；长度重算是"改包后不协议错乱"的兜底</td>
+</tr>
+<tr>
+<td><code>do_CONNECT()</code></td>
+<td>返回 501 + 明确说明</td>
+<td>诚实标注能力边界：HTTPS 拦截需要 CA，本实验台不做假承诺</td>
+</tr>
+<tr>
+<td>安全设计</td>
+<td>监听 <code>127.0.0.1</code> 硬编码；上游白名单；不写任何文件；不读本机文件</td>
+<td>一个"能转发任意流量的实验台"本身就是风险源</td>
+</tr>
+<tr>
+<td><code>--self-test</code></td>
+<td>50 项断言：shim 语义（头/长度/gzip/URL）→ 代理转发（200/302/502/403）→ <strong>真的加载 01/02/03 三个 Addon 各抓一轮流量并断言结果</strong></td>
+<td>这是本日"可验证性"的核心：Addon 不是"看起来对"，而是"在真代理里跑出来是对的"</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-01-addon-basicspy">6.2 <code>01-addon-basics.py</code> —— 最小可用观察器</h3>
+<table>
+<thead>
+<tr>
+<th>小节</th>
+<th>为什么这么写</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>try: from mitmproxy import ctx, http / except ImportError</code></td>
+<td>同一个文件既能被 mitmdump 加载，也能在没装的机器上做自检；<code>HAVE_MITM</code> 决定日志走 <code>ctx.log</code> 还是 <code>print</code></td>
+</tr>
+<tr>
+<td><code>ALLOWED_HOSTS</code></td>
+<td>白名单必须<strong>精确枚举</strong>，不能写 <code>endswith(".example.com")</code> —— 否则 <code>attacker.example.com.evil.com</code> 会被绕过</td>
+</tr>
+<tr>
+<td><code>host_allowed()</code></td>
+<td>三个细节：剥端口（<code>split(":")[0]</code>）、忽略大小写（RFC 4343）、<code>None</code>/空串安全</td>
+</tr>
+<tr>
+<td><code>is_static()</code></td>
+<td>先 <code>split("?")[0]</code> 再比后缀；<strong>故意不含 <code>.js</code></strong> —— 很多接口把数据放在 <code>.js</code>/<code>.json</code> 里，一刀切会漏掉关键流量</td>
+</tr>
+<tr>
+<td><code>flow.metadata["observe_seq"]</code></td>
+<td>mitmproxy <strong>不保证</strong> request/response 相邻（并发流交错），用 metadata 做"私有口袋"把两者配对</td>
+</tr>
+<tr>
+<td><code>len(r.content)</code> 而不是 <code>len(r.text)</code></td>
+<td>不触发解压/解码，恒定安全（坑 3）</td>
+</tr>
+<tr>
+<td>只读性质</td>
+<td>全类不写 <code>flow.request.*</code> / <code>flow.response.*</code>，只写 <code>metadata</code>；自检里用"前后快照比对"断言这一点</td>
+</tr>
+<tr>
+<td><code>request</code> 里 <code>flow.request.json()</code></td>
+<td>⚠️ 是<strong>方法</strong>不是属性；自检里连"非法 JSON 不抛出"都覆盖了</td>
+</tr>
+<tr>
+<td><code>--self-test</code></td>
+<td>28 项：白名单边界（含子域）、静态资源、事件计数、<code>metadata</code> 配对、<strong>只读保证</strong>、JSON 解析容错、<code>error/websocket_start/done</code> 可调用、模块契约（<code>addons</code> 列表存在且实例正确）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="63-02-addon-pitfallspy-8-vs">6.3 <code>02-addon-pitfalls.py</code> —— 8 个坑的"反例 vs 正解"</h3>
+<table>
+<thead>
+<tr>
+<th>坑</th>
+<th>错误做法（会怎么炸）</th>
+<th>正确做法</th>
+<th>自检怎么证明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 改体不重算长度</td>
+<td>手工写死 <code>Content-Length</code> → 客户端把多出来的字节当成"下一个响应"</td>
+<td>给 <code>.text</code> / <code>.content</code> 赋值，让 mitmproxy 重算</td>
+<td>构造 <code>_MitmLikeResponse</code>，断言赋值后长度自动同步；同时断言"手写长度与真实长度不符"这个反例</td>
+</tr>
+<tr>
+<td>2 直接替换压缩字节</td>
+<td><code>r.content.replace(b"old", b"new")</code> → 匹配不到（压缩后没有明文）</td>
+<td><code>r.text</code>（自动解压），赋值时自动重压缩</td>
+<td>gzip 往返：压缩体搜不到明文 → 解压可见 → 替换后仍是 gzip 且 Content-Length 正确</td>
+</tr>
+<tr>
+<td>3 用 <code>.text</code> 统计大小</td>
+<td>大文件吃内存；非法字节抛 <code>UnicodeDecodeError</code></td>
+<td>统计用 <code>.content</code>；给人看才用 <code>.text</code></td>
+<td>非法字节实测抛异常；<code>errors="replace"</code> 兜底</td>
+</tr>
+<tr>
+<td>4 头大小写</td>
+<td><code>r.headers["Server"]</code> → 可能 <code>KeyError</code></td>
+<td>统一 <code>.get()</code>；shim 里用大小写不敏感的 <code>Headers</code></td>
+<td>三种写法都能取到（shim 断言）</td>
+</tr>
+<tr>
+<td>5 用 <code>print()</code></td>
+<td>stdout 与流量输出混在一起、无法分级/关闭</td>
+<td><code>ctx.log.*</code>（本文件封装成 <code>_log()</code>）</td>
+<td>断言 <code>_log</code> 是唯一出口；无 mitmproxy 时降级为 print</td>
+</tr>
+<tr>
+<td>6 mock 后忘了 return</td>
+<td>造了响应还会继续转发上游（或反之）</td>
+<td><code>flow.response = http.Response.make(...)</code> 后 <strong>立即 return</strong></td>
+<td>集成自检里断言 mock 响应带 <code>X-MiniProxy: mocked by addon</code>（说明确实没走上游）</td>
+</tr>
+<tr>
+<td>7 改 URL 改出串站</td>
+<td><code>flow.request.url = "http://other/"</code> → 请求发到别的站</td>
+<td>只改 <code>flow.request.path</code>（host 不变）</td>
+<td>断言 <code>/api/old → /api/new</code> 后仍是相对路径；集成自检里实测请求落到上游的 <code>/api/new</code></td>
+</tr>
+<tr>
+<td>8 不脱敏</td>
+<td>把 <code>Authorization</code>/<code>Cookie</code> 明文写进日志</td>
+<td><code>mask_headers()</code> + <code>mask()</code></td>
+<td>断言 5 类敏感头被打码、非敏感头保留、短值全打码、<code>len==8</code> 边界</td>
+</tr>
+</tbody>
+</table>
+<p><strong>两个实现细节：</strong></p>
+<ul>
+<li><code>configure(self, updated)</code> 必须判断 <code>"demo_rewrite" in updated</code>：<br>
+  多人/多选项共存时，不判断会把<strong>别人的</strong>选项变化当成自己的开关（经典 bug）；</li>
+<li><code>mask()</code> <strong>保留前 4 + 后 4</strong>：完全打码会失去可辨识性（排障时分不清是哪条凭据），<br>
+  保留首尾是"可调试"与"不泄露"的折中；长度 ≤ 8 全打码（否则保留首尾等于没脱敏）。</li>
+</ul>
+<h3 id="64-03-traffic-toolpy">6.4 <code>03-traffic-tool.py</code> —— 拦截 → 脱敏 → 落盘 → 报表</h3>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>load/configure/running</code></td>
+<td>注册两个自定义选项（<code>traffic_out_dir</code> / <code>capture_domains</code>），在 <code>running()</code> 里才打开文件（mitmproxy 的启动顺序保证此时目录可用）</td>
+</tr>
+<tr>
+<td><code>request()</code></td>
+<td>只做两件事：白名单过滤 + 记录起始时间（<code>pending[flow.id]</code>）。<strong>耗时只能在 response 里算</strong>，因为 mitmproxy 不直接给 duration</td>
+</tr>
+<tr>
+<td>三级脱敏</td>
+<td>① 头<strong>名</strong>匹配（<code>Authorization</code>/<code>Cookie</code>/<code>token</code>…）→ <code>***</code>；② 文本正则（<code>Bearer xxx</code>、<code>token=xxx</code>）；③ <strong>JWT 三段式</strong>整体替换</td>
+</tr>
+<tr>
+<td><code>clip_body()</code></td>
+<td>超过 8KB 截断并置 <code>body_truncated=True</code>；解码用 <code>errors="replace"</code>，二进制内容不会让工具崩</td>
+</tr>
+<tr>
+<td><code>response()</code></td>
+<td>组装一条 JSONL 记录；<code>flush()</code> 保证崩溃时不丢已抓到的流量</td>
+</tr>
+<tr>
+<td><code>load_jsonl()</code></td>
+<td>坏行跳过（日志文件常有被截断的最后一行），不让一条坏数据毁掉整份报表</td>
+</tr>
+<tr>
+<td><code>summarize()</code></td>
+<td>状态码/主机/路径/方法分布 + 慢请求 Top20 + 错误计数 + 字节总量</td>
+</tr>
+<tr>
+<td><code>build_html()</code></td>
+<td>内联 CSS，<strong>所有外部字符串都过 <code>html.escape</code></strong> —— 报表里出现 <code>&lt;script&gt;</code> 时不会被执行（自检里专门断言了这一点）</td>
+</tr>
+<tr>
+<td><code>generate_reports()</code></td>
+<td>输出 <code>report.html</code> + <code>report.md</code></td>
+</tr>
+<tr>
+<td><code>--self-test</code></td>
+<td>51 项：脱敏三层（含 JWT、边界长度、空值）、截断边界（恰好等于上限）、<strong>真写 JSONL 并逐条断言</strong>（含"文件里没有明文凭据"）、报表统计正确性、<strong>HTML 转义防 XSS</strong>、只读保证、模块契约。产物全部落 <code>tempfile</code> 临时目录</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>为什么这些"看起来像测试细节"的东西值得写进正文？<br>
+因为脱敏、截断、转义这三件事<strong>失败时是静默的</strong>：<br>
+日志照样能打开、报表照样能看，直到有人在报表里看到一串真实令牌。<br>
+只有测试能锁住它们。</p>
+</blockquote>
+<hr>
+<h2 id="_7">七、运行命令与预期输出示例</h2>
+<blockquote>
+<p>下面的输出都是本机实录。<strong>本仓库环境没有安装 mitmproxy</strong>，所以联机部分<br>
+用自带的实验台（<code>00-local-lab.py</code>）演示 —— 它加载的是<strong>同一份 Addon 代码</strong>，<br>
+事件语义与 mitmproxy 一致。端口号是随机分配的，以实际 banner 为准。</p>
+</blockquote>
+<h3 id="71">7.1 起实验台（真实输出）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">$<span class="w"> </span>python3<span class="w"> </span>-u<span class="w"> </span><span class="m">00</span>-local-lab.py<span class="w"> </span>--addon<span class="w"> </span><span class="m">03</span>-traffic-tool.py<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--set<span class="w"> </span><span class="nv">traffic_out_dir</span><span class="o">=</span>/tmp/traffic-out<span class="w"> </span>--set<span class="w"> </span><span class="nv">capture_domains</span><span class="o">=</span><span class="m">127</span>.0.0.1
+<span class="o">[</span>info<span class="o">]</span><span class="w"> </span><span class="o">[</span>traffic<span class="o">]</span><span class="w"> </span>开始捕获，白名单<span class="o">=[</span><span class="s1">&#39;127.0.0.1&#39;</span><span class="o">]</span>，输出<span class="o">=</span>/tmp/traffic-out/flows.jsonl
+✅<span class="w"> </span>已加载<span class="w"> </span>Addon:<span class="w"> </span>./03-traffic-tool.py（1<span class="w"> </span>个实例）<span class="w">  </span>选项:<span class="w"> </span><span class="o">{</span><span class="s1">&#39;traffic_out_dir&#39;</span>:<span class="w"> </span><span class="s1">&#39;/tmp/traffic-out&#39;</span>,<span class="w"> </span><span class="s1">&#39;capture_domains&#39;</span>:<span class="w"> </span><span class="s1">&#39;127.0.0.1&#39;</span><span class="o">}</span>
+<span class="o">======================================================================</span>
+🎯<span class="w"> </span>上游站点:<span class="w"> </span>http://127.0.0.1:40307
+🎯<span class="w"> </span>正向代理:<span class="w"> </span>http://127.0.0.1:44277
+<span class="o">======================================================================</span>
+用<span class="w"> </span>curl<span class="w"> </span>走代理（-x<span class="w"> </span>指定代理）：
+<span class="w">  </span>curl<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:44277<span class="w"> </span>http://127.0.0.1:40307/api/users
+<span class="w">  </span>curl<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:44277<span class="w"> </span>-i<span class="w"> </span>http://127.0.0.1:40307/login
+<span class="w">  </span>curl<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:44277<span class="w"> </span>http://127.0.0.1:40307/gzip<span class="w"> </span><span class="p">|</span><span class="w"> </span>gunzip
+<span class="w">  </span>curl<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:44277<span class="w"> </span>http://127.0.0.1:40307/mock/users
+</code></pre></div>
+<blockquote>
+<p>提示：用 <code>python3 -u</code>（或 <code>--quiet</code>）避免 stdout 被块缓冲，Banner 能立刻看到。</p>
+</blockquote>
+<h3 id="72">7.2 走代理抓流量（真实输出）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">$<span class="w"> </span>curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:44277<span class="w"> </span>http://127.0.0.1:40307/api/users<span class="w"> </span><span class="se">\</span>
+<span class="w">       </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer secret-abc&quot;</span>
+<span class="o">{</span><span class="s2">&quot;users&quot;</span>:<span class="w"> </span><span class="o">[{</span><span class="s2">&quot;id&quot;</span>:<span class="w"> </span><span class="m">1</span>,<span class="w"> </span><span class="s2">&quot;name&quot;</span>:<span class="w"> </span><span class="s2">&quot;nina&quot;</span><span class="o">}</span>,<span class="w"> </span><span class="o">{</span><span class="s2">&quot;id&quot;</span>:<span class="w"> </span><span class="m">2</span>,<span class="w"> </span><span class="s2">&quot;name&quot;</span>:<span class="w"> </span><span class="s2">&quot;leo&quot;</span><span class="o">}]}</span>
+
+$<span class="w"> </span>curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:44277<span class="w"> </span>http://127.0.0.1:40307/gzip<span class="w"> </span><span class="p">|</span><span class="w"> </span>gunzip
+&lt;!DOCTYPE<span class="w"> </span>html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Gzip<span class="w"> </span>Page&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;&lt;h1&gt;gzip<span class="w"> </span>demo&lt;/h1&gt;&lt;p&gt;token<span class="o">=</span>super-secret-token&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;
+</code></pre></div>
+<p><strong>Addon 03 落盘的结果（<code>flows.jsonl</code>，一行一条，已脱敏）：</strong></p>
+<pre class="plain"><code>GET /api/users -&gt; 200 | Authorization: ***   | size 64
+GET /login     -&gt; 302 | Authorization: None  | size 0
+GET /gzip      -&gt; 200 | Authorization: None  | size 121
+</code></pre>
+<p><strong>再由 JSONL 离线生成报表（不需要 mitmproxy）：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">$<span class="w"> </span>python3<span class="w"> </span><span class="m">03</span>-traffic-tool.py<span class="w"> </span>--report<span class="w"> </span>/tmp/traffic-out/flows.jsonl<span class="w"> </span>--out-dir<span class="w"> </span>/tmp/traffic-out
+✅<span class="w"> </span>解析<span class="w"> </span><span class="m">3</span><span class="w"> </span>条<span class="w"> </span><span class="p">|</span><span class="w"> </span>错误<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>字节<span class="w"> </span><span class="m">185</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>慢请求<span class="w"> </span><span class="m">0</span>
+<span class="w">   </span>HTML:<span class="w"> </span>/tmp/traffic-out/report.html
+<span class="w">   </span>MD<span class="w">  </span>:<span class="w"> </span>/tmp/traffic-out/report.md
+</code></pre></div>
+<h3 id="73-addon-01">7.3 Addon 01 的实时日志（观察器）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">$<span class="w"> </span>python3<span class="w"> </span>-u<span class="w"> </span><span class="m">00</span>-local-lab.py<span class="w"> </span>--addon<span class="w"> </span><span class="m">01</span>-addon-basics.py
+<span class="o">[</span>info<span class="o">]</span><span class="w"> </span><span class="o">[</span>observe<span class="o">]</span><span class="w"> </span>addon<span class="w"> </span>已加载，白名单<span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">[</span><span class="s1">&#39;127.0.0.1&#39;</span>,<span class="w"> </span><span class="s1">&#39;::1&#39;</span>,<span class="w"> </span><span class="s1">&#39;example.com&#39;</span>,<span class="w"> </span><span class="s1">&#39;httpbin.org&#39;</span>,<span class="w"> </span><span class="s1">&#39;localhost&#39;</span>,<span class="w"> </span><span class="s1">&#39;www.example.com&#39;</span><span class="o">]</span>
+<span class="o">[</span>info<span class="o">]</span><span class="w"> </span><span class="o">[</span>observe<span class="o">]</span><span class="w"> </span>代理就绪，开始记录。Ctrl-C<span class="w"> </span>退出。
+$<span class="w"> </span>curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:&lt;代理端口&gt;<span class="w"> </span>-i<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/login<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-5
+<span class="o">[</span>info<span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="c1">#1] → GET http://127.0.0.1:42899/login</span>
+<span class="o">[</span>info<span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="m">1</span><span class="o">]</span><span class="w"> </span>←<span class="w"> </span><span class="m">302</span><span class="w"> </span>0B<span class="w"> </span>?<span class="w"> </span><span class="o">(</span><span class="m">127</span>.0.0.1/login<span class="o">)</span>
+</code></pre></div>
+<p><strong>怎么读：</strong> <code>#1</code> 是 request 事件的序号，<code>[1] ←</code> 是同一个 flow 的 response<br>
+（靠 <code>flow.metadata</code> 配对）。<code>0B</code> 说明 302 没有正文，<code>?</code> 说明没有 <code>Content-Type</code>。</p>
+<h3 id="74-addon-02-mock-gzip">7.4 Addon 02 的改包效果（mock / 注入 / gzip）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># mock：/mock/ 前缀由 Addon 直接造响应，不上游</span>
+$<span class="w"> </span>curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:&lt;代理端口&gt;<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/mock/users
+<span class="o">{</span><span class="s2">&quot;mock&quot;</span>:<span class="w"> </span>true,<span class="w"> </span><span class="s2">&quot;path&quot;</span>:<span class="w"> </span><span class="s2">&quot;/mock/users&quot;</span>,<span class="w"> </span><span class="s2">&quot;ts&quot;</span>:<span class="w"> </span><span class="m">1758</span>...<span class="o">}</span>
+
+<span class="c1"># 注入：HTML 响应被插入一行 script，且 Content-Length 被正确重算</span>
+$<span class="w"> </span>curl<span class="w"> </span>-s<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:&lt;代理端口&gt;<span class="w"> </span>-D-<span class="w"> </span>-o/tmp/body.html<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/
+HTTP/1.1<span class="w"> </span><span class="m">200</span><span class="w"> </span>OK
+Content-Type:<span class="w"> </span>text/html<span class="p">;</span><span class="w"> </span><span class="nv">charset</span><span class="o">=</span>utf-8
+Content-Length:<span class="w"> </span><span class="m">179</span>
+X-MiniProxy:<span class="w"> </span>proxied
+$<span class="w"> </span>grep<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;injected by mitmproxy&quot;</span><span class="w"> </span>/tmp/body.html
+<span class="m">1</span>
+</code></pre></div>
+<p>集成自检里对这些点做了精确断言（真实输出）：</p>
+<pre class="plain"><code>✅ Addon02 坑6：mock 响应来源标记: True
+✅ Addon02 坑6：X-MiniProxy 说明未被上游覆盖: &#x27;mocked by addon&#x27;
+✅ Addon02 坑7：改 path 后请求落到上游的 /api/new（上游无此路径 → 404）: 404
+✅ Addon02 坑1：Content-Length 与真实 body 长度一致: 179
+✅ Addon02 坑2：Content-Encoding 保持 gzip: &#x27;gzip&#x27;
+✅ Addon02 坑2：gzip 页面上注入成功
+✅ Addon02 坑2：Content-Length 与压缩后长度一致: 160
+</code></pre>
+<h3 id="75">7.5 四个脚本的离线自检（<strong>本日的可验证性证据</strong>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">$<span class="w"> </span><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-155-mitmproxy-interception/code/00-local-lab.py<span class="w"> </span>--self-test
+✅<span class="w"> </span>Addon01：request<span class="o">()</span><span class="w"> </span>被调用过一次:<span class="w"> </span><span class="m">1</span>
+✅<span class="w"> </span>Addon03：Authorization<span class="w"> </span>已脱敏:<span class="w"> </span><span class="s1">&#39;***&#39;</span>
+✅<span class="w"> </span>全部<span class="w"> </span><span class="m">50</span><span class="w"> </span>项断言通过
+SELF-TEST<span class="w"> </span>OK
+
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-155-mitmproxy-interception/code/01-addon-basics.py<span class="w"> </span>--self-test
+✅<span class="w"> </span>只读保证：请求/响应完全未被修改
+✅<span class="w"> </span>全部<span class="w"> </span><span class="m">28</span><span class="w"> </span>项断言通过
+SELF-TEST<span class="w"> </span>OK
+
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-155-mitmproxy-interception/code/02-addon-pitfalls.py<span class="w"> </span>--self-test
+✅<span class="w"> </span>坑2:<span class="w"> </span>重新压缩后解压可见替换结果:<span class="w"> </span>b<span class="s1">&#39;{&quot;role&quot;:&quot;admin&quot;}&#39;</span>
+✅<span class="w"> </span>全部<span class="w"> </span><span class="m">37</span><span class="w"> </span>项断言通过
+SELF-TEST<span class="w"> </span>OK
+
+$<span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span>days/day-155-mitmproxy-interception/code/03-traffic-tool.py<span class="w"> </span>--self-test
+✅<span class="w"> </span>JSONL:<span class="w"> </span>整份文件里没有明文凭据
+✅<span class="w"> </span>报表安全:<span class="w"> </span>路径里的<span class="w"> </span>&lt;script&gt;<span class="w"> </span>被转义（不会在浏览器执行）
+✅<span class="w"> </span>全部<span class="w"> </span><span class="m">51</span><span class="w"> </span>项断言通过
+SELF-TEST<span class="w"> </span>OK
+</code></pre></div>
+<p><strong>这套自检证明了什么、没证明什么：</strong></p>
+<table>
+<thead>
+<tr>
+<th>证明了</th>
+<th>没证明（必须用真 mitmproxy）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Addon 的事件时序、请求/响应改写语义正确</td>
+<td>TLS 解密、CONNECT 隧道、CA 证书体系</td>
+</tr>
+<tr>
+<td>改包后 <code>Content-Length</code>/<code>Content-Encoding</code> 自洽，客户端能完整收到</td>
+<td>HTTP/2、WebSocket、TCP/UDP 流处理</td>
+</tr>
+<tr>
+<td>脱敏真的生效（含 JWT、body 内明文）</td>
+<td>真实网络下的性能与内存占用</td>
+</tr>
+<tr>
+<td>白名单/只读/403 等护栏在真实请求路径上生效</td>
+<td>各平台客户端的证书校验差异</td>
+</tr>
+<tr>
+<td>落盘、报表、HTML 转义等"静默失败"的部分</td>
+<td>——</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_8">八、被抓到怎么办：检测中间人的原理（防御方视角）</h2>
+<blockquote>
+<p>学 MITM 的一半价值在这里：<strong>知道它怎么被识破，才知道自己的流量为什么不该被随便代理</strong>。</p>
+</blockquote>
+<h3 id="81">8.1 证书层面：最直接的破绽</h3>
+<table>
+<thead>
+<tr>
+<th>破绽</th>
+<th>客户端能看到什么</th>
+<th>根因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>签发者不同</td>
+<td><code>NET::ERR_CERT_AUTHORITY_INVALID</code> / <code>unable to get local issuer certificate</code></td>
+<td>mitmproxy 用<strong>自己的 CA</strong> 现场签发，不在系统信任列表里</td>
+</tr>
+<tr>
+<td>证书链不完整</td>
+<td>某些客户端（严格校验）直接拒绝</td>
+<td>代理可能只发叶证书</td>
+</tr>
+<tr>
+<td>有效期异常短</td>
+<td>证书是<strong>当场生成</strong>的，notBefore 就是刚才</td>
+<td>现场签发的时间戳特征</td>
+</tr>
+<tr>
+<td>主体与 SNI 不符</td>
+<td><code>certificate verify failed: hostname mismatch</code></td>
+<td>代理按 SNI 造证书，SNI 缺失/不一致时会露馅</td>
+</tr>
+<tr>
+<td>指纹变化</td>
+<td>同一域名两次访问（直连 vs 代理）<strong>叶证书指纹不同</strong></td>
+<td>证书是临时的</td>
+</tr>
+</tbody>
+</table>
+<p><strong>一句话</strong>：只要有<strong>可信的参照指纹</strong>（pinning 或本地缓存），MITM 立刻暴露。</p>
+<h3 id="82-pinning">8.2 pinning（证书固定）：为什么它能防住</h3>
+<p><strong>原理</strong>：客户端不再"信任系统 CA"，而是<strong>只信任这一个站点预先指定的公钥/证书</strong>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># OkHttp（Android）示例：pin 到 SPKI 的 SHA-256</span>
+<span class="n">CertificatePinner</span> <span class="n">pinner</span> <span class="o">=</span> <span class="n">new</span> <span class="n">CertificatePinner</span><span class="o">.</span><span class="n">Builder</span><span class="p">()</span>
+    <span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;api.example.com&quot;</span><span class="p">,</span> <span class="s2">&quot;sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=&quot;</span><span class="p">)</span>
+    <span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="s2">&quot;api.example.com&quot;</span><span class="p">,</span> <span class="s2">&quot;sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=&quot;</span><span class="p">)</span> <span class="o">//</span> <span class="n">备选证书</span><span class="err">！</span>
+    <span class="o">.</span><span class="n">build</span><span class="p">();</span>
+</code></pre></div>
+<p><strong>为什么 MITM 过不了？</strong> 因为攻击者（哪怕持有一个被系统信任的 CA 私钥）<br>
+<strong>无法伪造</strong>叶证书里那个<strong>特定公钥</strong>的签名 —— pinning 校验的是"公钥哈希相等"，<br>
+不是"链能否走到某个 CA"。所以：</p>
+<ul>
+<li>pin <strong>叶证书/SPKI</strong> → 防御力最强，但<strong>证书轮换</strong>时要发版（必须准备 backup pin + 多 pin 并存策略）；</li>
+<li>pin <strong>根 CA</strong> → 轮换容易，但只要系统里那个 CA 被攻破/被用户安装，pinning 就失效（Android 上用户 CA 默认不被 App 信任，这算一个缓冲）；</li>
+<li>pin <strong>到多个备份证书</strong>（Google 的 CT-style 要求）：避免"轮换即全量客户端失联"。</li>
+</ul>
+<p><strong>绕过与反绕过（攻防实况，理解即可）：</strong></p>
+<table>
+<thead>
+<tr>
+<th>绕过思路</th>
+<th>说明</th>
+<th>防守方对策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Hook 掉校验函数（Frida）</td>
+<td>运行时把 <code>checkServerTrusted</code> / <code>CertificatePinner</code> 打桩</td>
+<td>代码混淆/完整性校验/RASP/多点多路径重复校验</td>
+</tr>
+<tr>
+<td>改包重签（去掉 pinning 代码）</td>
+<td>反编译 App → 删校验 → 重签名安装</td>
+<td>签名校验、服务端校验客户端完整性（App Attest / Play Integrity）</td>
+</tr>
+<tr>
+<td>把 CA 装进系统证书区</td>
+<td>Android 7+ 需 root；模拟器/越狱设备更容易</td>
+<td>检测 root/越狱/调试状态，拒绝服务或降级功能</td>
+</tr>
+<tr>
+<td>用系统证书库代理（企业 MDM）</td>
+<td>设备受管时合法途径</td>
+<td>与 MDM 策略绑定 + 审计</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>注意</strong>：这一节讲的是"攻防双方都在用的手段"，目的是让你<strong>设计更有韧性的客户端</strong>，<br>
+而不是教你去破解别人的 App。没有授权，上面的每一条都是违法的。</p>
+</blockquote>
+<h3 id="83-mtls-mitm">8.3 mTLS：唯一"结构上"防住 MITM 的办法</h3>
+<p>服务端要求客户端出示<strong>客户端证书</strong>并校验其私钥签名：</p>
+<pre class="plain"><code>客户端 ──TLS──► 服务端
+   ① 服务端要求客户端证书
+   ② 客户端用自己的私钥签名（证明身份）
+   ③ 服务端校验：这张客户端证书是否由**我的内部 CA** 签发
+</code></pre>
+<p><strong>为什么 MITM 失效？</strong> 代理没有客户端私钥，<strong>握手第二步就过不去</strong> ——<br>
+它无法伪造签名（这是密码学保证，不是"实现得比较难绕过"）。<br>
+代价是证书分发/轮换/吊销的运维复杂度（这也是很多公司"想上没上"的原因）。</p>
+<h3 id="84">8.4 传输层与行为层指纹</h3>
+<table>
+<thead>
+<tr>
+<th>指纹</th>
+<th>内容</th>
+<th>检测 MITM 的价值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>JA3</strong>（客户端）</td>
+<td>ClientHello 里的版本/密码套件/扩展/曲线顺序 → MD5</td>
+<td>代理与真实客户端的 TLS 栈不同 → JA3 变了；服务端可据此发现"有人在中间"</td>
+</tr>
+<tr>
+<td><strong>JA3S</strong>（服务端）</td>
+<td>ServerHello 指纹</td>
+<td>识别服务端是否换了实现</td>
+</tr>
+<tr>
+<td>HTTP/2 指纹</td>
+<td>SETTINGS 参数、窗口大小、伪头顺序</td>
+<td>用 Python 库实现的代理，指纹与移动端/浏览器不同</td>
+</tr>
+<tr>
+<td>头顺序与大小写</td>
+<td>很多库会<strong>重排/重写</strong>头</td>
+<td>与已知客户端基线对比即可发现</td>
+</tr>
+<tr>
+<td>网络层</td>
+<td>多一跳带来的 RTT 分布、TTL/MTU 变化</td>
+<td>粗粒度，但结合时序可以做统计判定</td>
+</tr>
+<tr>
+<td>证书透明度（CT）日志</td>
+<td>你的域名证书应该出现在 CT 日志里；代理签发的<strong>不会</strong></td>
+<td>强证据：客户端可结合 CT 校验</td>
+</tr>
+</tbody>
+</table>
+<h3 id="85">8.5 在本地实验台上"看到"证据（安全、可复现）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 直连：上游真实的响应头</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-D-<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/
+
+<span class="c1"># 走代理：多出一条 X-MiniProxy，说明流量确实被中间人处理过</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-D-<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-x<span class="w"> </span>http://127.0.0.1:&lt;代理端口&gt;<span class="w"> </span>http://127.0.0.1:&lt;上游端口&gt;/
+<span class="c1"># → X-MiniProxy: proxied</span>
+</code></pre></div>
+<p>真 mitmproxy 抓 HTTPS 时，同样的"证据"体现在：客户端看到的<strong>证书签发者</strong>变了、<br>
+<strong>叶证书指纹</strong>变了、RTT 多了几毫秒。把这三条记在你的验收清单里 ——<br>
+<strong>部署中间人代理之前，先确认你的客户端能不能接受它</strong>（这正是企业内网<br>
+强制代理时最容易翻车的地方）。</p>
+<hr>
+<h2 id="_9">九、防护与修复原理（客户端 / 服务端 / 组织）</h2>
+<h3 id="91-app">9.1 客户端侧（App / 桌面程序）</h3>
+<table>
+<thead>
+<tr>
+<th>措施</th>
+<th>效果</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>证书 pinning（SPKI hash + backup pin）</td>
+<td>直接挡掉伪造证书</td>
+<td>轮换要发版；必须准备多 pin</td>
+</tr>
+<tr>
+<td>mTLS 客户端证书</td>
+<td>结构性防御</td>
+<td>证书分发/吊销成本</td>
+</tr>
+<tr>
+<td>不信任用户安装的 CA（Android 7+ 默认行为）</td>
+<td>阻止"装个 CA 就能抓包"</td>
+<td>企业内网需要显式配置 <code>networkSecurityConfig</code></td>
+</tr>
+<tr>
+<td>完整性校验（Play Integrity / App Attest）</td>
+<td>识别改包/越狱环境</td>
+<td>依赖平台服务；隐私合规问题</td>
+</tr>
+<tr>
+<td>检测代理环境（环境变量/系统代理/调试器）</td>
+<td>提高门槛</td>
+<td>容易被绕过，只能当"提高成本"</td>
+</tr>
+<tr>
+<td>敏感操作二次校验（服务端侧配合）</td>
+<td>即使被解析也拿不到长期凭据</td>
+<td>用户体验</td>
+</tr>
+</tbody>
+</table>
+<h3 id="92">9.2 服务端侧</h3>
+<ul>
+<li><strong>短时令牌 + 绑定</strong>：把 access token 有效期压到分钟级，绑定设备/IP 指纹/客户端证书；</li>
+<li><strong>TLS 指纹基线</strong>：为你的 App 建立 JA3/JA3S 基线，出现明显偏离时告警（注意：企业代理/浏览器升级会造成误报，需要白名单）；</li>
+<li><strong>关键接口要求 mTLS</strong>，把"仅靠 TLS"升级为"双向认证"；</li>
+<li><strong>审计</strong>：登录/改密/转账这类动作，无论 TLS 是否完整，都要有服务端风控与二次确认；</li>
+<li><strong>不要</strong>把"客户端 pinning"当成服务端防护 —— 反编译改包面前它是概率性防线。</li>
+</ul>
+<h3 id="93">9.3 组织与合规（做内部抓包时的底线）</h3>
+<ol>
+<li><strong>书面授权 + 知会制度</strong>：抓包范围、时间窗、目标、数据留存期限写进授权；</li>
+<li><strong>只抓"自有/受管设备"</strong>：员工个人设备（BYOD）需要明确同意，且必须过法务/隐私评审；</li>
+<li><strong>脱敏与最小化</strong>：日志只留必要字段；<code>Authorization</code>/<code>Cookie</code>/口令一律 <code>***</code>（本日 <code>03</code> 就是模板）；</li>
+<li><strong>隔离运行环境</strong>：用独立 <code>--set confdir=</code> 存放 CA，用完删除；<br>
+<code>~/.mitmproxy/mitmproxy-ca.pem</code> 是<strong>私钥</strong>，泄露等于能伪造任意站点；</li>
+<li><strong>不做"生产常驻抓包"</strong>：需要证据时开、取证完关；常驻代理本身就是个高危资产。</li>
+</ol>
+<h3 id="94">9.4 常见误解（反面清单）</h3>
+<ul>
+<li>❌ "我用了 HTTPS，所以没人能看我的请求" —— 只要客户端信任了代理 CA，明文就在代理内存里；</li>
+<li>❌ "我装了 pinning，所以绝对安全" —— 改包/重签/root 设备面前它是<strong>提高成本</strong>，不是"不可能"；</li>
+<li>❌ "<code>--set ssl_insecure=true</code> / <code>verify=False</code> 反正能跑通，就这样上线" —— 这是"关掉安检"，生产环境必须恢复校验；</li>
+<li>❌ "抓同事/家人的流量看看" —— 《刑法》285/253 条之一、《网络安全法》27 条，这不是玩笑；</li>
+<li>❌ "把 CA 私钥发给同事方便他抓包" —— 私钥只应留在你自己机器上。</li>
+</ul>
+<h3 id="95-sop">9.5 自己抓包的最小合规 SOP（照做即可）</h3>
+<pre class="plain"><code>□ 1. 写清授权：目标（域名/App）、时间窗、速率、数据用途、留存期限
+□ 2. 只在**自己的设备**上安装 CA；用独立 confdir：--set confdir=/tmp/mitm-&lt;date&gt;
+□ 3. 只对白名单域开启记录（本日 Addon 默认就是白名单 + 透传）
+□ 4. 落盘前脱敏；产物放临时目录；不提交到 git、不发到聊天
+□ 5. 用完吊销/删除 CA（删除 confdir），检查有没有把 -ca-cert 装进受管设备
+□ 6. 复盘：把这次抓包得到的结论写成文档，而不是把原始流量留着
+</code></pre>
+<hr>
+<h2 id="_10">十、思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 HTTP 代理不需要装证书，而 HTTPS 需要？</strong><br>
+   请从「哪里能看到明文」和「信任链如何建立」两个角度回答。</p>
+</li>
+<li>
+<p>一个 App 做了 <strong>certificate pinning</strong>，你装上 mitmproxy 的 CA 后<br>
+   依然抓不到内容。<strong>为什么 pinning 能防住？</strong> 如果你是该 App 的开发者，<br>
+   你会怎么设计 pinning 策略（pin 什么？备选证书怎么办？过期怎么办？）？</p>
+</li>
+<li>
+<p><code>flow.response.text = flow.response.text.replace("a", "b")</code> 这行代码，<br>
+   mitmproxy 内部<strong>至少</strong>帮你做了哪 4 件事？<br>
+   （提示：解压、解码、长度、传输编码）</p>
+</li>
+<li>
+<p>你在 <code>request</code> 回调里写了一个同步 HTTP 请求去查数据库，结果代理<br>
+   在 100 并发下完全卡死。<strong>根因是什么？</strong> 三种改法分别是什么？</p>
+</li>
+<li>
+<p><strong>防御视角</strong>：作为后端开发者，你如何快速判断"我的接口正在被中间人分析"？<br>
+   （提示：TLS 指纹、JA3、证书透明度、客户端证书、</p>
+</li>
+</ol>
+<p>异常 User-Agent 与请求序列）</p>
+<ol start="6">
+<li>
+<p>为什么 <code>mitmdump -n -s script.py</code> 里的 <code>-n</code> 很重要？<br>
+   它在什么场景下会救你一命？（提示：加载顺序、官方 addon 干扰）</p>
+</li>
+<li>
+<p>透明代理在 Linux 上靠 iptables 重定向，但<strong>目标地址会丢</strong>。<br>
+   代理是靠什么找回原目标地址的？为什么 iOS/Android 上要 root 才能做？</p>
+</li>
+<li>
+<p><strong>实现题</strong>：本日的 <code>00-local-lab.py</code> 通过 <code>sys.modules</code> 注入实现"零改动加载 Addon"。<br>
+   请解释：Python 的导入系统为什么会命中你注入的模块？<br>
+   如果 Addon 里写的是 <code>import mitmproxy.http as mhttp</code>（而不是 <code>from mitmproxy import http</code>），<br>
+   你的 shim 还能工作吗？为什么？（提示：<code>sys.modules</code> 里需要有哪些键）</p>
+</li>
+<li>
+<p><strong>防御题</strong>：某 App 只做了"pin 叶证书公钥"，且只有一枚 pin。<br>
+   请列出<strong>至少三种</strong>会导致正常用户无法访问的场景（不必是攻击），<br>
+   并给出比"多加一枚 pin"更完备的轮换方案。</p>
+</li>
+<li>
+<p><strong>判断 题</strong>：服务端看到某客户端的 JA3 与 UA 严重不匹配（UA 声称是 iOS 原生 App，<br>
+    JA3 却是 Python 的 TLS 栈）。请给出 3 种可能解释，并说明你会怎么验证，<br>
+    以及为什么<strong>不能</strong>直接据此封禁。</p>
+</li>
+</ol>
+<hr>
+<h2 id="_11">附：本日文件清单</h2>
+<pre class="plain"><code>days/day-155-mitmproxy-interception/
+├── README.md                      ← 本文（概念/原理/Addon API/检测/防护/代码逐节/实测输出）
+├── code/
+│   ├── 00-local-lab.py            ← 本地 MITM 实验台（纯标准库：假上游 + 真代理 + mitmproxy API shim）
+│   ├── 01-addon-basics.py         ← 最小 Addon 与流量观察（28 项离线断言）
+│   ├── 02-addon-pitfalls.py       ← 改包 8 大坑（37 项离线断言）
+│   └── 03-traffic-tool.py         ← 实战：自动化流量处理工具（51 项离线断言）
+├── diagrams/
+│   └── README.md                  ← 6 张原理图
+└── exercises/
+    └── checklist.md               ← 完成清单 + 练习
+</code></pre>
+<p><strong>自检命令（全部离线、无第三方依赖、不写仓库）：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span>days/day-155-mitmproxy-interception/code/*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;== </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span>python3<span class="w"> </span>-B<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="p">|</span><span class="w"> </span>tail<span class="w"> </span>-2
+<span class="k">done</span>
+<span class="c1"># 每个脚本都必须以 SELF-TEST OK 结尾（退出码 0）</span>
+</code></pre></div>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-154/index.html">← Day 154 目录扫描与指纹识别：字典爆破、软 404 与资产发现</a><a class="nav-next" href="../day-156/index.html">Day 156 Scapy 数据包构造：从 IP/TCP 到自定义网络探测工具 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 147 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 147 正文</a>
+  <h1>Day 147 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-147">Day 147 图解 — 密码学基础</h1>
+<h2 id="1">1. 哈希函数定性图</h2>
+<pre class="plain"><code>任意长度输入                     固定长度输出
+&quot;hello world&quot;      ┌─────────┐
+10 GB 镜像文件  ──►│  SHA-256 │──► 64 个十六进制字符（256 bit）
+&quot;&quot;（空串）          └─────────┘
+     ▲                  │
+     │                  ▼
+ 单向箭头：只能正向算，无法从摘要还原输入（抗原像性）
+</code></pre>
+<h2 id="2-merkledamgard-md5sha-1sha-2">2. Merkle–Damgård 链式压缩（MD5/SHA-1/SHA-2 通用骨架）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    M[消息 M + padding + 长度] --&gt; B1[块1]
+    B1 --&gt; C1[压缩函数 f]
+    IV[初始向量 IV] --&gt; C1
+    C1 --&gt; C2[压缩函数 f]
+    B2[块2] --&gt; C2
+    C2 --&gt; C3[压缩函数 f]
+    B3[块N] --&gt; C3
+    C3 --&gt; D[摘要 digest]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    M[消息 M + padding + 长度] --&gt; B1[块1]
+    B1 --&gt; C1[压缩函数 f]
+    IV[初始向量 IV] --&gt; C1
+    C1 --&gt; C2[压缩函数 f]
+    B2[块2] --&gt; C2
+    C2 --&gt; C3[压缩函数 f]
+    B3[块N] --&gt; C3
+    C3 --&gt; D[摘要 digest]
+</code></pre></div>
+<h2 id="3-vs">3. 彩虹表攻击 vs 加盐</h2>
+<pre class="plain"><code>【无盐】
+  用户A 密码 &quot;123456&quot; ──sha256──► X9f2...
+  用户B 密码 &quot;123456&quot; ──sha256──► X9f2...   ← 两人摘要相同！
+  攻击者查预计算表: X9f2... → &quot;123456&quot;  💥 全军覆没
+
+【加盐（每用户随机 16 字节）】
+  用户A: sha256(&quot;123456&quot; + salt_A) → 7d1e...
+  用户B: sha256(&quot;123456&quot; + salt_B) → 0a3c...
+  攻击者的表只对应一个盐，必须为每个盐重算整张表  🛡️ 攻击成本 ×N
+</code></pre>
+<h2 id="4-hmac">4. HMAC 双层结构</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    K[密钥 K 补齐到块长] --&gt; KI[&quot;K&#x27; ⊕ ipad (0x36)&quot;]
+    K --&gt; KO[&quot;K&#x27; ⊕ opad (0x5c)&quot;]
+    M[消息 m] --&gt; INNER
+    KI --&gt; INNER[内层 SHA-256]
+    INNER --&gt; OUTER[外层 SHA-256]
+    KO --&gt; OUTER
+    OUTER --&gt; OUT[HMAC 输出]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    K[密钥 K 补齐到块长] --&gt; KI[&quot;K&#x27; ⊕ ipad (0x36)&quot;]
+    K --&gt; KO[&quot;K&#x27; ⊕ opad (0x5c)&quot;]
+    M[消息 m] --&gt; INNER
+    KI --&gt; INNER[内层 SHA-256]
+    INNER --&gt; OUTER[外层 SHA-256]
+    KO --&gt; OUTER
+    OUTER --&gt; OUT[HMAC 输出]
+</code></pre></div>
+<h2 id="5">5. 文件完整性校验信任链</h2>
+<pre class="plain"><code>发布方: file ──sha256──► digest ──HMAC(私钥)──► 签名
+          │                 │                      │
+          ▼ (下载)          ▼ (下载)               ▼ (可信渠道发布)
+验证方: 收到 file ──重算 sha256──► digest&#x27;
+        compare_digest(digest&#x27;, digest)  ✅ 文件完整
+        HMAC(公钥/共享密钥, digest) 验签  ✅ 摘要来源可信
+        两者都过 → 才能确认&quot;文件没被换且来自发布方&quot;
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

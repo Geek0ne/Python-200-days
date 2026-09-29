@@ -1,0 +1,1665 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 160 — 日志安全分析：格式标准化 · 异常登录 · 暴力破解识别</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 160 — 日志安全分析：格式标准化 · 异常登录 · 暴力破解识别</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">1164 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-160-日志安全分析" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 安全日志分析在做什么</a>
+<a class="toc-l3" href="#22-normalization">2.2 标准化（normalization）到底做了什么</a>
+<a class="toc-l3" href="#23">2.3 时间戳：不猜是纪律，不是洁癖</a>
+<a class="toc-l3" href="#24-vs">2.4 时间窗口：滑动窗口 vs 分桶</a>
+<a class="toc-l3" href="#25-day-159">2.5 严重度与置信度（沿用 Day 159 的模型）</a>
+<a class="toc-l3" href="#26-subject-key">2.6 主体键（subject key）：跨主机混淆</a>
+<a class="toc-l2" href="#3">3. 原理解释</a>
+<a class="toc-l3" href="#31">3.1 为什么&quot;去重&quot;必须做，而且不能去重过头</a>
+<a class="toc-l3" href="#32">3.2 为什么乱序必须统计，但不必阻止分析</a>
+<a class="toc-l3" href="#33">3.3 为什么&quot;分布式爆破&quot;是必须单独写的检测器</a>
+<a class="toc-l3" href="#34-host-user-ip">3.4 为什么&quot;失败后成功&quot;要限死 host + user + ip</a>
+<a class="toc-l3" href="#35">3.5 为什么报告要回显参数</a>
+<a class="toc-l3" href="#36-4-3">3.6 为什么覆盖缺口优先于告警（退出码 4 &amp;gt; 3）</a>
+<a class="toc-l3" href="#37">3.7 报告脱敏：日志比配置更敏感</a>
+<a class="toc-l2" href="#4">4. 攻击方式 · 手段 · 原理 → 检测原理</a>
+<a class="toc-l3" href="#40">4.0 总纲：从&quot;攻击行为&quot;到&quot;一条可检测的信号&quot;</a>
+<a class="toc-l3" href="#41-ssh">4.1 SSH 暴力破解（单源定向）</a>
+<a class="toc-l3" href="#42">4.2 分布式爆破 / 撞库（多来源同一账号）</a>
+<a class="toc-l3" href="#43">4.3 失败后成功（爆破得手 / 凭据有效）</a>
+<a class="toc-l3" href="#44">4.4 扫描探测（账号枚举 / 目录穿越 / 认证接口滥用）</a>
+<a class="toc-l3" href="#45">4.5 横向移动（意料之外的来源 / 新来源登录）</a>
+<a class="toc-l3" href="#46-off_hours_success">4.6 非工作时段活动（off_hours_success）</a>
+<a class="toc-l3" href="#47">4.7 日志清痕与日志侧规避（为什么&quot;零告警 ≠ 没攻击&quot;）</a>
+<a class="toc-l3" href="#48">4.8 阈值与时间窗口的完整推导（把七个检测器算一遍）</a>
+<a class="toc-l3" href="#49">4.9 攻击者规避 ↔ 检测对抗 总表</a>
+<a class="toc-l2" href="#5">5. 核心机制详解</a>
+<a class="toc-l3" href="#51">5.1 模块结构</a>
+<a class="toc-l3" href="#52">5.2 解析层：识别顺序与失败处理</a>
+<a class="toc-l3" href="#53">5.3 时间与派生字段</a>
+<a class="toc-l3" href="#54-7-8">5.4 检测器清单（7 个注册检测器 / 8 类告警）</a>
+<a class="toc-l3" href="#55">5.5 覆盖与可判定性</a>
+<a class="toc-l3" href="#56">5.6 门禁与报告渲染</a>
+<a class="toc-l3" href="#57">5.7 快速开始</a>
+<a class="toc-l2" href="#6-api">6. 定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#61">6.1 数据结构</a>
+<a class="toc-l3" href="#62">6.2 解析层函数</a>
+<a class="toc-l3" href="#63">6.3 检测器函数</a>
+<a class="toc-l3" href="#64-cli-03-log-analyzerpy">6.4 CLI 速查（03-log-analyzer.py）</a>
+<a class="toc-l3" href="#65-baseline">6.5 基线文件格式（--baseline）</a>
+<a class="toc-l2" href="#7">7. 运行命令 + 真实预期输出（实测）</a>
+<a class="toc-l3" href="#70">7.0 准备</a>
+<a class="toc-l3" href="#71-self-test-ok">7.1 三个脚本的自检（必跑，必须逐行输出 SELF-TEST OK）</a>
+<a class="toc-l3" href="#72">7.2 标准化：三种异构日志 → 统一事件模型</a>
+<a class="toc-l3" href="#73">7.3 七个检测器与七类踩坑演示</a>
+<a class="toc-l3" href="#74-lab-3">7.4 端到端演示：lab（合成日志 → 报告 → 退出码 3）</a>
+<a class="toc-l3" href="#75-lab-dirty-4">7.5 脏数据演示：lab --dirty（覆盖缺口优先 → 退出码 4）</a>
+<a class="toc-l3" href="#76-parse">7.6 parse：先看清日志本身，再谈检测</a>
+<a class="toc-l3" href="#77-analyze-json">7.7 analyze：检测 + 参数回显 + JSON</a>
+<a class="toc-l3" href="#78">7.8 退出码实测对照</a>
+<a class="toc-l2" href="#8">8. 实战流程（六步）</a>
+<a class="toc-l2" href="#9">9. 常见陷阱（对照表）</a>
+<a class="toc-l2" href="#10">10. 局限（必须写进报告，不能省略）</a>
+<a class="toc-l2" href="#11">11. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-160">Day 160 — 日志安全分析：格式标准化 · 异常登录 · 暴力破解识别</h1>
+<blockquote>
+<p><strong>Phase 10 — 网络安全开发（Day 146–165）</strong> · 主题：日志安全分析（实战）</p>
+<p><strong>使用边界（重要）</strong>：本课只分析<strong>你自己拥有或已获书面授权</strong>的日志。<br>
+分析器<strong>只读</strong>日志文件：不修改、不删除、不重写日志，<strong>不发起任何网络请求</strong>，<br>
+不构造任何攻击或验证请求（发现"目录穿越探测"时只记录日志事实）。<br>
+教材中的 IP 一律取自文档专用网段（203.0.113.0/24、198.51.100.0/24、192.0.2.0/24），<br>
+账号均为占位名。</p>
+</blockquote>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>把异构日志（sshd syslog / nginx combined / 应用 JSON）<strong>标准化</strong>成统一事件模型</li>
+<li>说清"为什么时间戳缺失 / 不可解析时不能猜时间"，以及它对结论的影响</li>
+<li>用<strong>滑动窗口</strong>识别单源暴力破解，并解释它为什么优于"按分钟分桶"</li>
+<li>识别<strong>分布式爆破</strong>（每个来源都低于单源阈值），并理解它的置信度为何只能是 medium</li>
+<li>用 <code>(host, user, src_ip)</code> 关联"失败后成功"，并说清跨主机/跨来源关联会造成什么误报</li>
+<li>明确"<strong>零告警 ≠ 没有攻击</strong>"：报告必须回显阈值、声明覆盖缺口、标注可判定性</li>
+<li>把日志分析接进 CI：退出码 0/2/3/4 的语义与优先级</li>
+</ul>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 安全日志分析在做什么</h3>
+<p>安全日志分析 = <strong>把"发生过什么"从异构文本里抽出来，再用行为模式找出可疑序列</strong>。</p>
+<p>它天然分三段，而且每段的失败模式完全不同：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>输入 → 输出</th>
+<th>典型失败模式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>解析 / 标准化</strong></td>
+<td>文本行 → <code>LogEvent</code></td>
+<td>格式变了、编码错了、时间戳没了 → 后续全部失真</td>
+</tr>
+<tr>
+<td><strong>检测</strong></td>
+<td>事件序列 → <code>Alert</code></td>
+<td>阈值太宽（漏报）/ 太窄（误报）、跨主体混淆</td>
+</tr>
+<tr>
+<td><strong>报告 / 判定</strong></td>
+<td><code>Alert</code> → 结论</td>
+<td>覆盖不全却写"未发现异常"、阈值不回显导致结论不可复核</td>
+</tr>
+</tbody>
+</table>
+<p><strong>把这三段混在一起写，是日志分析脚本最常见的结构问题</strong>：<br>
+一旦"某个格式解析失败"，你会误以为"检测逻辑有问题"，从而在错误的地方调参数。</p>
+<h3 id="22-normalization">2.2 标准化（normalization）到底做了什么</h3>
+<p>标准化不是"把日志读进来"，而是做四件事：</p>
+<ol>
+<li><strong>字段统一</strong>：<code>ip</code> / <code>src_ip</code> / <code>client_ip</code> → <code>LogEvent.src_ip</code></li>
+<li><strong>语义统一</strong>：<code>Failed password</code> / <code>Authentication failure</code> / <code>login_failed</code><br>
+   → <code>action="login_failed"</code>（动作词表）</li>
+<li><strong>时间统一</strong>：全部解析成<strong>带时区</strong>的 <code>datetime</code>，比较前统一到同一时区</li>
+<li><strong>来源统一</strong>：记录这条事件来自哪种日志（<code>source=sshd/nginx/app</code>），<br>
+   因为不同来源的可信度与解读方式不同</li>
+</ol>
+<p>为什么要做？因为<strong>检测逻辑只能写一遍</strong>。三种日志各写一套检测，<br>
+意味着三个地方会各自出 bug。</p>
+<h3 id="23">2.3 时间戳：不猜是纪律，不是洁癖</h3>
+<p>窗口类检测（"5 分钟内失败 10 次"）<strong>必须</strong>有时间。日志里常见的三种情况：</p>
+<pre class="plain"><code>Sep 19 06:12:01 ...        ← syslog：没有年份、没有时区（必须显式假设）
+19/Sep/2026:06:12:01 +0800 ← nginx：完整，带偏移
+{&quot;event&quot;: &quot;login_failed&quot;}  ← 应用日志：干脆没有时间字段
+</code></pre>
+<p>对第二种可以精确解析；第一种要提供一个显式的假设（年 + 时区）并在报告里说明；<br>
+第三种<strong>不能猜</strong>：把文件修改时间填进去，会让"攻击窗口"变成一个编造出来的数字，<br>
+比缺失更有害——因为它看起来像证据。</p>
+<p>所以本课实现的是：<code>ts=None</code> 保留事件（它的<strong>存在</strong>是事实），<br>
+但所有窗口类检测器通过 <code>_timed()</code> 过滤掉它，同时 <code>coverage.no_timestamp</code> 计数，<br>
+报告里必须声明"这部分无法参与判定"。</p>
+<h3 id="24-vs">2.4 时间窗口：滑动窗口 vs 分桶</h3>
+<p><strong>按分钟分桶</strong>（<code>00:59</code> 一个桶、<code>01:01</code> 一个桶）看起来更简单，但给攻击者<br>
+留了一个免费的规避手法：把 9 次尝试均摊到相邻两桶（各 4～5 次），<br>
+两桶都低于阈值，攻击完全隐形。</p>
+<p><strong>滑动窗口</strong>问的是"任意 W 秒内最多多少次"，无法靠对齐边界躲开：</p>
+<pre class="plain"><code>       ┌────────── W = 300s ──────────┐
+ ● ● ● ● ● ● ● ● ● ●  ...
+ ↑                                ↑
+ left                           right
+ 当 right 纳入新事件时，弹出所有 (right - left) &gt; W 的旧事件，窗口内计数即&quot;任意 W 秒内&quot;的次数
+</code></pre>
+<p>代价是：滑动窗口计算量更大（O(n) 均摊，用 <code>deque</code> 实现），<br>
+且同一批攻击可能在多个窗口位置被重复计数——所以本实现只取<strong>最大窗口</strong>，<br>
+每 <code>(host, src_ip)</code> 输出一条告警（而不是每个窗口一条）。</p>
+<h3 id="25-day-159">2.5 严重度与置信度（沿用 Day 159 的模型）</h3>
+<pre class="plain"><code>severity   = 这件事被确认为攻击后的影响
+confidence = 只看日志，我们有多确定它是攻击
+</code></pre>
+<p>日志检测的置信度天花板很实在：<strong>没有值班表、变更记录、来源情报，<br>
+任何检测器都上不了 high</strong>。例如：</p>
+<ul>
+<li><code>off_hours_success</code>（非工作时段成功登录）→ severity=low, confidence=low：<br>
+  运维值班、发布窗口、跨时区同事会产生大量正常夜间登录</li>
+<li><code>failed_then_success</code>（失败后成功）→ severity=high, confidence=medium：<br>
+  可能是本人连错口令后输对，也可能是爆破得手；<strong>必须人工确认</strong></li>
+<li><code>brute_force_single_source</code> → high/high：<br>
+  短窗口内高频失败，加上"成功登录"这一跳才是确定失陷；失败本身几乎不可能是正常行为</li>
+</ul>
+<p><code>priority = (severity+1) × (confidence+1)</code>，分档 <code>P0/P1/P2/P3</code>。</p>
+<h3 id="26-subject-key">2.6 主体键（subject key）：跨主机混淆</h3>
+<p>统计键必须是 <code>(host, src_ip)</code> / <code>(host, user)</code>，不能只用 <code>src_ip</code> 或 <code>user</code>：</p>
+<pre class="plain"><code>web01: admin ← 203.0.113.7  失败 6 次
+web02: admin ← 203.0.113.7  失败 6 次
+
+按 src_ip 聚合      → 12 次 → &quot;同一台机器被打 12 次&quot;（不存在的场景，假告警）
+按 (host, src_ip)   → 6 次 + 6 次 → 两条独立事实
+</code></pre>
+<p>同理 <code>admin@web01</code> 与 <code>admin@web02</code> 可能是完全不同的人（本地账号、不同域）。</p>
+<h2 id="3">3. 原理解释</h2>
+<h3 id="31">3.1 为什么"去重"必须做，而且不能去重过头</h3>
+<p>日志重采、轮转边界、多份拷贝合并都会产生<strong>完全相同的行</strong>。<br>
+不去重会让计数虚高（把阈值冲爆），产生假告警。所以去重键取<br>
+<code>(ts, host, action, user, src_ip, status, path)</code> —— 完全一致才算重复。</p>
+<p>但去重键<strong>不能</strong>放宽到"同一秒同一 IP 就算重复"：同一秒内来自同一 IP 的<br>
+两次失败是两条真实事实（并发爆破很常见）。宁可留着，也不能吞掉。</p>
+<h3 id="32">3.2 为什么乱序必须统计，但不必阻止分析</h3>
+<p>多主机日志合并后，文件顺序毫无意义（不同机器的时钟、采集器缓冲都会打乱顺序）。<br>
+正确做法是<strong>排序后再统计</strong>，所以乱序本身不会让检测出错。</p>
+<p>但它仍然值得报告：高比例乱序意味着"日志来源被清洗/拼接/时间被调整过"，<br>
+这在取证场景里是需要解释的事实。</p>
+<h3 id="33">3.3 为什么"分布式爆破"是必须单独写的检测器</h3>
+<p>单源规则抓的都是"一个来源很努力地打"。真实攻击常做的是<br>
+<strong>每个来源都很克制</strong>：</p>
+<pre class="plain"><code>198.51.100.{1..5} 各失败 3 次 → 单源规则（阈值 8）全部 ✗
+按 (host, user) 聚合：600s 内 15 次失败，5 个来源 → 命中
+</code></pre>
+<p>它的置信度只能是 medium，因为<strong>共享出口 IP / NAT / 代理池</strong>也会长成这样：<br>
+一个公司 100 个员工从同一个出口登录失败，看起来就像分布式爆破。</p>
+<p>这条规则真正的作用是：<strong>在报告里承认"我看见了这件事"</strong>，<br>
+而不是判定它是攻击。</p>
+<h3 id="34-host-user-ip">3.4 为什么"失败后成功"要限死 host + user + ip</h3>
+<p>如果把关联条件放宽成"同账号失败若干次 + 同账号成功"（忽略来源），<br>
+那么任何人在任何 IP 上连错 3 次，随后换个网络正常登录，都会变成 P0 告警。<br>
+把三个维度全部限死后，语义才准确：<strong>同一条链路上的同一个人/程序</strong>。</p>
+<p>这也是检测器的通用教训：<strong>关联条件每放宽一维，误报都会成倍增长</strong>。</p>
+<h3 id="35">3.5 为什么报告要回显参数</h3>
+<p>"没有告警"这句话，在下面两种情况下含义完全不同：</p>
+<pre class="plain"><code>brute_threshold = 8   → 300 秒内 8 次失败会告警；没告警 ≈ 确实很安静
+brute_threshold = 50  → 几乎不可能告警；没告警 ≈ 什么都不能说明
+</code></pre>
+<p>不写参数的报告，让读者无法区分"没攻击"与"阈值太宽"。<br>
+所以 <code>AlertReport.parameters</code> 会回显实际使用的每一个阈值，<br>
+Markdown 报告里还有专门的"检测参数"段，并标注"默认"还是"本次自定义"。</p>
+<h3 id="36-4-3">3.6 为什么覆盖缺口优先于告警（退出码 4 &gt; 3）</h3>
+<p>CI 门禁的价值是<strong>可信</strong>。当有 20% 的日志行无法解析、或有 500 条事件没有时间戳时，<br>
+"未发现异常"这句话本身不成立。此时先修采集/解析，再谈要不要处理告警。</p>
+<table>
+<thead>
+<tr>
+<th>退出码</th>
+<th>含义</th>
+<th>优先级</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2</td>
+<td>用法错误 / 无输入</td>
+<td>最高</td>
+</tr>
+<tr>
+<td>4</td>
+<td>覆盖不全（unparsed / no_timestamp / read_error / 空输入）</td>
+<td>高</td>
+</tr>
+<tr>
+<td>3</td>
+<td>存在严重度 ≥ <code>--fail-on</code> 的告警</td>
+<td>中</td>
+</tr>
+<tr>
+<td>0</td>
+<td>覆盖完整且无达标告警</td>
+<td>低</td>
+</tr>
+</tbody>
+</table>
+<h3 id="37">3.7 报告脱敏：日志比配置更敏感</h3>
+<p>日志里除了凭据片段，还有<strong>用户名、内部 IP、访问路径、时间规律</strong>——<br>
+这些组合起来就是一份内部资产与作息表。所以：</p>
+<ul>
+<li><code>LogEvent</code> <strong>不含原始行</strong>（需要溯源时用 <code>ref</code> 指向 <code>文件:行号</code>）</li>
+<li>报告中的主体 IP 默认<strong>末段掩码</strong>（<code>203.0.113.x</code>）</li>
+<li>每个主体附 <code>subject_sha</code> 指纹，用于<strong>跨报告关联同一对象</strong>（掩码后仍可追踪）</li>
+<li>报告只列输入文件名，不输出绝对路径</li>
+</ul>
+<h2 id="4">4. 攻击方式 · 手段 · 原理 → 检测原理</h2>
+<h3 id="40">4.0 总纲：从"攻击行为"到"一条可检测的信号"</h3>
+<p>日志检测的推导链条比 Day 159 更长，因为中间多了一层<strong>时间</strong>：</p>
+<pre class="plain"><code>攻击行为          观测痕迹                       特征（主体 + 时间 + 数量）        检测器
+口令猜测        「失败」集中出现在一个来源  →  300s 内同源失败 ≥ 8            →  brute_force_single_source
+</code></pre>
+<p>四个必须记住的前提：</p>
+<ol>
+<li><strong>痕迹是行为的影子，不是行为本身</strong>。一次成功的爆破，在 sshd 日志里留下的<strong>唯一</strong>痕迹就是"一堆失败 + 一次成功"；如果攻击者成功之后清了日志，你就什么都看不到（见 4.7）。</li>
+<li><strong>时间窗口是推导出来的，不是拍脑袋定的</strong>（见 4.8）。窗口 ≈ 攻击者达到目的所需时长；阈值 ≈ 正常行为的噪声上沿 × 安全系数。</li>
+<li><strong>主体键决定了你能看见什么</strong>。按 <code>src_ip</code> 聚合看得见"一台机器被打"，看不见"一个账号被多个来源打"；反过来也一样。<strong>每个检测器都在回答一个特定聚合维度上的问题</strong>（见 2.6）。</li>
+<li><strong>每个检测器都有一个"免费"的反制手法</strong>（攻击者改变形态即可绕过），所以检测器必须<strong>成对出现、互相补位</strong>（见 4.9）。</li>
+</ol>
+<p>本节按"<strong>攻击形态 → 痕迹 → 特征 → 窗口推导 → 攻击者如何规避 → 检测如何对抗</strong>"六段式展开。</p>
+<hr>
+<h3 id="41-ssh">4.1 SSH 暴力破解（单源定向）</h3>
+<p><strong>攻击形态</strong></p>
+<p>针对一个已知账号（<code>root</code>、<code>admin</code>、<code>deploy</code>、<code>oracle</code>、<code>test</code>）做口令字典攻击。工具化程度最高：<code>hydra -l root -P rockyou.txt ssh://target</code>、<code>medusa</code>、<code>ncrack</code>，或自己写 <code>paramiko</code> 脚本循环。</p>
+<p>真实环境里的形态是：<strong>持续几分钟到几十分钟、每秒数次到数十次</strong>，全是 <code>Failed password</code>，期间可能夹杂 <code>Invalid user</code>（说明账号名来自字典）。</p>
+<p><strong>观测痕迹（sshd 会留下什么）</strong></p>
+<pre class="plain"><code>Sep 19 07:00:00 web01 sshd[1234]: Failed password for invalid user admin from 203.0.113.7 port 51001 ssh2
+  │       │       │         │                          │                 │
+  │       │       │         │                          │                 └ 源端口（每次不同 → 不能用端口去重）
+  │       │       │         │                          └ 源 IP（统计主键之一）
+  │       │       │         └ 账号（可能是字典里的假账号）
+  │       │       └ 主机名（多主机合并时必须区分，见 2.6）
+  │       └ 时间（窗口统计的基础）
+  └ 固定前缀（syslog 无年份、无时区 → 需显式假设，见 2.3）
+</code></pre>
+<p>关键观测事实：</p>
+<ul>
+<li><code>Failed password</code> 是 sshd <strong>明确记录的安全事件</strong>，不是"日志噪声"；</li>
+<li>每次尝试<strong>源端口不同</strong>，所以同一秒内可以出现多次失败（并发爆破）——<strong>去重键既不能含端口，也不能放宽到"同秒同 IP 算重复"</strong>（见 3.1）；</li>
+<li><code>invalid user admin</code> 说明<strong>账号名来自字典</strong>（<code>admin</code> 在本机不存在），这本身就是强信号。</li>
+</ul>
+<p><strong>特征（检测器看什么）</strong></p>
+<pre class="plain"><code>主体键：   (host, src_ip)        ← 必须含 host（见 2.6）
+事件筛选： action == &quot;login_failed&quot;
+窗口：     任意 300s（滑动窗口，见 2.4）
+阈值：     ≥ 8 次
+</code></pre>
+<p><strong>窗口与阈值是怎么推导出来的</strong></p>
+<ul>
+<li>一个<strong>人</strong>输错口令：3–5 次就会去翻密码本或重置，<strong>不会</strong>在 5 分钟内连错 8 次；</li>
+<li>一个<strong>自动化脚本</strong>在 5 分钟内通常能打<strong>几百到几千</strong>次（受网络 RTT 与 sshd 的 <code>MaxStartups</code> 限流影响）；</li>
+<li>阈值放在 8 是刻意为"低慢速"留余量：<strong>宁可放过低慢速（由 4.2 兜底），也不要让正常的输错触发告警</strong>；</li>
+<li>300s 的选取理由：覆盖"手滑 + 重试"的典型节奏，同时短到让攻击者<strong>无法用"每小时 7 次"的节奏长期潜伏</strong>；</li>
+<li>严重度在 <code>count &gt;= threshold * 3</code>（即 ≥ 24 次）时升为 <code>critical</code>：<strong>强度本身就是证据</strong>——一个人不可能在 5 分钟内"不小心"输错 24 次。</li>
+</ul>
+<p><strong>攻击者如何规避</strong></p>
+<table>
+<thead>
+<tr>
+<th>规避手法</th>
+<th>效果</th>
+<th>代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>降低频率（每 10 分钟 7 次）</td>
+<td>低于任何 300s 窗口阈值</td>
+<td>攻击周期从分钟级变成月级</td>
+</tr>
+<tr>
+<td>换来源（每打 7 次换一个 IP）</td>
+<td>单源规则失效</td>
+<td>进入 4.2 的检测面</td>
+</tr>
+<tr>
+<td>打不同账号（每个账号 3 次）</td>
+<td>单账号维度不集中</td>
+<td>本课的单源规则<strong>恰好</strong>能看见（一个 IP 打多个账号 = 失败总数仍在同一 (host, ip) 上累积）</td>
+</tr>
+<tr>
+<td>改用密钥认证接口探测</td>
+<td>事件形态变为 <code>Failed publickey</code></td>
+<td>本课规则同时匹配 <code>Failed (?:password\|publickey)</code>，照样计数</td>
+</tr>
+</tbody>
+</table>
+<p><strong>检测如何对抗</strong></p>
+<ul>
+<li>主体键选 <code>(host, src_ip)</code>：来源维度上的集中<strong>换不掉</strong>——攻击者可以换 IP，但换 IP 就变成"每个 IP 都很安静"，即分布式形态；</li>
+<li><strong>滑动窗口而不是按分钟分桶</strong>（见 2.4）：让"对齐时间边界"这类规避手法无效，攻击者只能真正降频；</li>
+<li>与 <code>failed_then_success</code> 联动：高频失败本身还不是"失陷"，<strong>失败之后是否有成功</strong>才是关键一跳。</li>
+</ul>
+<hr>
+<h3 id="42">4.2 分布式爆破 / 撞库（多来源同一账号）</h3>
+<p><strong>攻击形态</strong></p>
+<p>口令喷洒（Password Spraying）+ 分布式：用 IP 池、代理链、云主机、被控终端，<strong>每个来源只试几次</strong>，把总量摊薄到任何单源阈值以下。Web 变体：用泄露库里的账号口令组合对登录接口批量尝试（撞库）。</p>
+<p><strong>观测痕迹</strong></p>
+<pre class="plain"><code>198.51.100.1  →  svc@web01    失败 3 次
+198.51.100.2  →  svc@web01    失败 3 次
+198.51.100.3  →  svc@web01    失败 3 次
+198.51.100.4  →  svc@web01    失败 3 次
+198.51.100.5  →  svc@web01    失败 3 次
+─────────────────────────────────────────
+单源规则（阈值 8）：      **全部不命中**
+按 (host, user) 聚合：   600s 内 15 次失败、5 个来源  →  命中
+</code></pre>
+<p><strong>特征</strong></p>
+<pre class="plain"><code>主体键：  (host, user)      ← 换成&quot;账号&quot;维度，而不是&quot;来源&quot;维度
+窗口：    600s（放长，因为摊薄后单源节奏更慢）
+阈值：    ≥ 10 次失败
+并且：    去重后的来源数 ≥ 3      ← 这条规则的灵魂
+</code></pre>
+<p><strong>窗口与阈值推导</strong></p>
+<ul>
+<li>阈值放到 10：聚合之后单看数量已失去量级意义，这条规则真正要看的是<strong>来源数目</strong>这个新维度；</li>
+<li><code>min_sources ≥ 3</code> 是<strong>关键</strong>：1 个来源 15 次 = 4.1 的单源爆破；3 个以上来源打同一账号 15 次 = 摊薄形态。缺了 <code>min_sources</code>，它就退化成"任何 10 次失败"，与 4.1 重复且误报更多；</li>
+<li>600s 比 300s 长：攻击者为了摊薄<strong>必然</strong>拉长时间线，窗口太短就看不见"同一场攻击"的全貌。</li>
+</ul>
+<p><strong>为什么置信度只能是 medium</strong></p>
+<p>共享出口会<strong>长得一模一样</strong>：</p>
+<ul>
+<li>一个公司 100 人从同一个 NAT 出口登录 → 看起来像"多来源"；</li>
+<li>多个办公室共用同一个代理池 / 企业 VPN 出口；</li>
+<li>反向代理 / CDN 把真实客户端 IP 统一成了 CDN 的 IP（<code>X-Forwarded-For</code> 没被正确采集时尤其明显）；</li>
+<li>员工集体改密后集中重登失败。</li>
+</ul>
+<p>所以这条告警的正确语义是"<strong>我看见了这件事，请判断</strong>"，而不是"已被攻击"。要把它抬到 <code>high</code>，至少还需要三类外部信息：</p>
+<ol>
+<li><strong>值班表 / 变更记录</strong>（区分"内部人正常操作"）；</li>
+<li><strong>来源情报</strong>（IP 归属、信誉、是否爬虫/代理池）；</li>
+<li><strong>认证日志的其它维度</strong>（是否伴随成功登录、是否只打这一个账号、账号覆盖面）。</li>
+</ol>
+<p><strong>规避与对抗</strong></p>
+<table>
+<thead>
+<tr>
+<th>规避手法</th>
+<th>检测对抗</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>每源只打 1–2 次</td>
+<td>阈值降到 10 仍能看见摊薄后的总量</td>
+</tr>
+<tr>
+<td>只打一个账号</td>
+<td>本检测器<strong>正好</strong>针对这个维度</td>
+</tr>
+<tr>
+<td>打很多账号、每账号几次</td>
+<td>落到 4.1 的单源规则（来源维度集中）</td>
+</tr>
+<tr>
+<td>伪造 <code>X-Forwarded-For</code></td>
+<td>属于<strong>采集/解析</strong>问题（要配 <code>%{X-Forwarded-For}i</code>），<strong>不是检测器问题</strong>——这也是"覆盖缺口优先"的又一个理由</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h3 id="43">4.3 失败后成功（爆破得手 / 凭据有效）</h3>
+<p><strong>攻击形态</strong></p>
+<p>两种截然不同的情况在日志里<strong>长得一模一样</strong>：</p>
+<ol>
+<li><strong>攻击成功</strong>：爆破/喷洒最终命中一个弱口令，随后攻击者<strong>用同一来源</strong>登录成功；</li>
+<li><strong>同事手滑</strong>：本人连续输错几次，然后输对了。</li>
+</ol>
+<p>第 2 种远多于第 1 种——<strong>这就是置信度只能是 medium 的根本原因</strong>，也是这条告警永远需要人工确认的原因。</p>
+<p><strong>观测痕迹</strong></p>
+<pre class="plain"><code>09:00:00  deploy@web01  ←  192.0.2.9   Failed password      ┐
+09:00:01  deploy@web01  ←  192.0.2.9   Failed password      │  同一 host + 同一 user
+09:00:02  deploy@web01  ←  192.0.2.9   Failed password      │  + 同一 src_ip
+09:00:03  deploy@web01  ←  192.0.2.9   Failed password      ┘
+09:00:09  deploy@web01  ←  192.0.2.9   Accepted password   ← 成功
+</code></pre>
+<p><strong>特征</strong></p>
+<pre class="plain"><code>主体键：  (host, user, src_ip)    ← 三维全限死
+窗口：    900s
+条件：    同一链路上、成功登录之前的窗口内，失败 ≥ 3 次
+</code></pre>
+<p><strong>为什么必须限死三维（关联条件每放宽一维，误报都成倍增长）</strong></p>
+<table>
+<thead>
+<tr>
+<th>被放宽的维度</th>
+<th>后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>去掉 <code>src_ip</code>（只看 host+user）</td>
+<td>任何人在任何 IP 上连错 3 次、随后换网络正常登录 → P0 假告警。<strong>这是最常见的写法错误。</strong></td>
+</tr>
+<tr>
+<td>去掉 <code>user</code>（只看 host+src_ip）</td>
+<td>同一台跳板机上 A 输错、B 登录成功 → 假关联</td>
+</tr>
+<tr>
+<td>去掉 <code>host</code>（只看 user+src_ip）</td>
+<td>用户在多台机器部署，A 机失败 + B 机成功 → 假关联</td>
+</tr>
+<tr>
+<td>窗口放宽到 24h</td>
+<td>早上的失败与晚上的成功被串成一条 → 假告警</td>
+</tr>
+</tbody>
+</table>
+<p><strong>窗口 900s 的推导</strong>：正常情况下"输错 → 再输对"的间隔在<strong>秒级到分钟级</strong>（人会立刻重试），15 分钟已经非常宽裕；同时它短于"同一个人在两段不相干时间里的正常登录"，避免把无关事件串起来。</p>
+<p><strong>攻击者如何规避</strong></p>
+<ul>
+<li><strong>打完就走，不登录</strong>（把凭据拿去别处用或卖掉）→ 这条链路就断了。此时<strong>只能靠 4.1 的单源高频失败告警兜底</strong>——这就是"检测器必须成对出现"的含义。</li>
+<li>爆破成功后<strong>立即清日志</strong>（见 4.7）。</li>
+<li>低频慢速打到凭据后，隔很久才回来登录（超出 900s）。</li>
+<li>成功的认证方式换成 <code>publickey</code>：本课实现按 <code>action == "login_failed"</code> 统计，<strong>不区分认证方式</strong>，所以 <code>Failed publickey</code> 也计入。这是有意的设计，不是漏洞。</li>
+</ul>
+<p><strong>检测如何对抗</strong></p>
+<ul>
+<li>三维限死 → 保准确率；</li>
+<li>与 4.1 成对 → 覆盖"打完就走"；</li>
+<li>与 <code>login_from_unexpected_source</code> 联动 → 如果成功的来源<strong>不在基线内</strong>，两条告警会同时出现，人工复核时应显著提高其优先级（<strong>这个组合判断本课不自动做</strong>，理由见 10"不会自动处置"）。</li>
+</ul>
+<hr>
+<h3 id="44">4.4 扫描探测（账号枚举 / 目录穿越 / 认证接口滥用）</h3>
+<p>扫描是<strong>入侵的前置阶段</strong>，特征是"广撒网、低强度、多目标"，与爆破的"集中、高强度、单目标"正好互补。</p>
+<p><strong>（a）SSH 账号枚举</strong></p>
+<p>形态：用字典猜<strong>用户名</strong>（<code>Invalid user admin</code>、<code>Invalid user oracle</code>、<code>Invalid user test</code>），口令固定或随机。</p>
+<p>痕迹：<code>Invalid user &lt;name&gt; from &lt;ip&gt;</code>。</p>
+<p>检测侧要点：本课把它解析为独立动作 <code>invalid_user</code>，<strong>不参与</strong> <code>brute_force_single_source</code> 的失败计数（该检测器只统计 <code>login_failed</code>）。这是<strong>有意的取舍</strong>，因为 sshd 对不存在的用户会<strong>先记</strong>一条 <code>Invalid user</code>，<strong>再记</strong>一条 <code>Failed password for invalid user</code>——枚举行为<strong>已经</strong>体现在失败计数里，无需重复计。理解这一点，才不会误判为"枚举没被检测"。</p>
+<p><strong>（b）Web 目录穿越探测</strong></p>
+<p>形态：<code>GET /static/../../etc/passwd</code>、<code>GET /?file=..%2f..%2fetc%2fpasswd</code>、双重编码 <code>%252e%252e</code>（专门绕只解一次码的过滤器）。</p>
+<p>痕迹：请求行里出现 <code>../</code>、<code>%2e%2e</code>、<code>%252e</code>。</p>
+<p>特征：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pattern</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(\.\./|</span><span class="si">%2e%2e</span><span class="s2">|</span><span class="si">%252e</span><span class="s2">)&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">)</span>
+<span class="n">kind</span> <span class="o">==</span> <span class="s2">&quot;http&quot;</span> <span class="n">且</span> <span class="n">path</span> <span class="n">命中</span>
+</code></pre></div>
+<p>窗口：<strong>瞬时类</strong>（<code>window_seconds=0</code>）——<strong>单次命中就足够了</strong>，因为正常业务请求里<strong>不会</strong>出现规范化后的 <code>../</code>。</p>
+<p>误报来源：</p>
+<ul>
+<li>应用<strong>故意</strong>接收相对路径参数（日志查看器、文件管理器）；</li>
+<li>某些框架把路径规范化<strong>放在日志之后</strong>，于是日志里留下的是原始未规范化路径 → 命中，但<strong>实际已被安全处理</strong>。</li>
+</ul>
+<blockquote>
+<p><strong>本课的边界</strong>：只记录"日志里出现了这个特征"，<strong>不构造请求去验证</strong>（那是渗透测试，需要单独授权）。响应码 <code>404</code> 只能说明<strong>可能</strong>没读成功，<strong>不能</strong>据此断言"漏洞不存在"。</p>
+</blockquote>
+<p><strong>（c）Web 认证接口高频失败（撞库）</strong></p>
+<p>形态：对 <code>/login</code>、<code>/api/token</code>、<code>/oauth/token</code> 等接口用大批账号口令组合尝试。痕迹是<strong>同一来源在短时间内产生大量 401/403</strong>。</p>
+<p>特征：</p>
+<pre class="plain"><code>主体键：  (host, src_ip)
+事件：    kind == &quot;http&quot; 且 status ∈ {401, 403}
+窗口：    600s
+阈值：    ≥ 20 次
+</code></pre>
+<p><strong>阈值推导</strong>：正常用户输错一次就只会重试一两次，<strong>不会</strong>在 10 分钟内产生 20 次 401；而撞库工具受 HTTP 开销限制，10 分钟内几百到几千次很常见。阈值放 20 同样是"给低慢速留余量"。</p>
+<p>误报来源：<strong>前端轮询的错误处理</strong>（Token 过期后疯狂重试刷 401）、<strong>移动端断网重连风暴</strong>、<strong>监控探针/健康检查</strong>打到需要鉴权的接口、<strong>爬虫</strong>。所以给 medium/medium。</p>
+<p><strong>规避与对抗</strong>：攻击者改用<strong>分布式</strong>打 Web 接口（每个 IP 低于 20 次）→ 需要按"接口 + 账号"聚合；改慢 → 需要按天/按周的"低频持久"检测（本课不做，属局限，见第 11 节思考题第 2 题）。</p>
+<hr>
+<h3 id="45">4.5 横向移动（意料之外的来源 / 新来源登录）</h3>
+<p><strong>攻击形态</strong></p>
+<p>拿到一个账号后（尤其是<strong>服务账号</strong>或<strong>有跳板权限的账号</strong>），从<strong>非预期的来源</strong>登录，接着在内网横向移动：跳板机 → 应用机 → 数据库机；同一个账号在<strong>多台主机</strong>上先后出现。</p>
+<p>痕迹有两层：</p>
+<ol>
+<li><strong>单点层</strong>：<code>Accepted ... for &lt;user&gt; from &lt;ip&gt;</code>，而 <code>&lt;ip&gt;</code> <strong>不在</strong>该账号已知来源里；</li>
+<li><strong>聚合层</strong>：同一账号在<strong>多台主机</strong>上出现（本课的数据模型天然支持，因为主体键含 host）。</li>
+</ol>
+<p><strong>特征（本课 <code>detect_new_source</code> 一个函数两种形态）</strong></p>
+<pre class="plain"><code>有基线（{&quot;host|user&quot;: [已知 IP, ...]}）：
+      → login_from_unexpected_source    medium / medium   （&quot;来源是否越界&quot;是可判定的布尔问题）
+无基线：
+      → login_from_single_source        low / low          （&quot;本次范围内只看得到一个来源&quot;的启发式）
+</code></pre>
+<p><strong>为什么"置信度取决于你掌握多少外部信息"</strong></p>
+<ul>
+<li>有基线时你问的是"<strong>这个来源是否越界</strong>"——这是一个<strong>可判定</strong>的问题；</li>
+<li>无基线时你只能问"<strong>我见过这个来源吗</strong>"——而"没见过的来源"在第一次收集日志时<strong>到处都是</strong>（每台新接入的主机、每个出差的人）。所以它只能是 low/low：<strong>它在说"我缺少判断依据"，而不是"有坏事发生"</strong>。</li>
+</ul>
+<p>这条设计正好演示了 2.5 的置信度天花板：<strong>没有外部信息，任何检测器都上不了 high</strong>。</p>
+<p><strong>攻击者如何规避</strong></p>
+<ul>
+<li>用<strong>已被基线接受的</strong>跳板机作为中转（这正是跳板机的用途，也是基线必须<strong>定期复查</strong>的原因）；</li>
+<li>用<strong>本来就该出现的</strong>来源 IP 做出口（NAT、多人共用）；</li>
+<li>把横向移动全部走<strong>免密的 SSH Agent 转发</strong>或<strong>内网 API</strong>，不在 <code>auth.log</code> 留下 <code>Accepted</code>（只留在应用日志里）→ <strong>单一日志源看不见</strong>，这是本课"只看日志"的核心局限（见 10）。</li>
+</ul>
+<p><strong>检测如何对抗</strong></p>
+<ul>
+<li><strong>建立并维护基线</strong>：把"确认过的正常来源"写进 baseline JSON（格式见 6.5），把 low/low 的启发式升级为 medium/medium 的<strong>可判定</strong>检测；</li>
+<li><strong>定期复查基线</strong>，否则它会变成永久消音器（与 Day 159 的 baseline 同理）；</li>
+<li>与 <code>off_hours_success</code>（见 4.6）叠加：<strong>非工作时段 + 新来源</strong>同时出现时，人工复核优先级应显著提高。</li>
+</ul>
+<hr>
+<h3 id="46-off_hours_success">4.6 非工作时段活动（<code>off_hours_success</code>）</h3>
+<p><strong>攻击形态</strong></p>
+<p>攻击者（尤其是<strong>内部人员</strong>或已拿到凭据的外部人员）会刻意选择<strong>没有值班、没人看告警</strong>的时段活动：凌晨 2–6 点、周末、节假日。</p>
+<p><strong>痕迹</strong></p>
+<pre class="plain"><code>Sep 19 03:20:00 web01 sshd[1240]: Accepted publickey for deploy from 192.0.2.20 port 2200 ssh2
+</code></pre>
+<p><strong>特征</strong></p>
+<pre class="plain"><code>条件：  action == &quot;login_success&quot;
+判断：  事件本地时间的小时数 不在 [work_start, work_end) 内
+窗口：  瞬时类（0）
+</code></pre>
+<p><strong>为什么 severity 与 confidence 都只能是 low</strong></p>
+<p>运维值班、发布窗口（很多团队在凌晨发布）、跨时区同事、个人加班、定时任务用的服务账号——<strong>都会产生合法的夜间登录</strong>。没有排班表就无法区分"凌晨 3 点登录的是值班的 A 还是攻击者 B"。</p>
+<p>所以这条检测器的<strong>真实价值是给人工复核提供上下文</strong>。它的正确用法不是"看到 P3 就去处理"，而是<strong>在另一条更高危的告警旁边作为加权因素</strong>：</p>
+<pre class="plain"><code>[P0] failed_then_success   deploy@web01    ← 已经是高危
+[P3] off_hours_success     deploy@web01    ← 加固了&quot;这不是正常上班场景&quot;的判断
+</code></pre>
+<p><strong>时区陷阱（必踩）</strong>：<code>start_hour/end_hour</code> 是按 <code>DEFAULT_TZ</code>（UTC+8）判断的（实现为 <code>event.ts.astimezone(DEFAULT_TZ).hour</code>）。如果日志来自跨时区设备，<strong>必须先统一时区</strong>再判断，否则会把"对方的下班时间"当成"你的凌晨"。本课实现的前提是 <code>event.ts</code> <strong>已经带正确时区</strong>——这正是 2.3 坚持"不猜时间"的价值：猜出来的时区会让整条规则的结果整体偏移。</p>
+<p><strong>规避与对抗</strong>：攻击者可以在<strong>工作时段</strong>活动（融入噪声）；对抗方式是<strong>多信号组合</strong>（新来源 + 失败后成功 + 覆盖面异常）。单条 <code>off_hours</code> 从来不是结论。</p>
+<hr>
+<h3 id="47">4.7 日志清痕与日志侧规避（为什么"零告警 ≠ 没攻击"）</h3>
+<p>这是<strong>所有日志检测的共同对手</strong>，必须单独讲。</p>
+<p><strong>攻击形态</strong></p>
+<ol>
+<li><strong>删除 / 截断日志</strong>：<code>rm /var/log/auth.log</code>、<code>truncate -s 0</code>；</li>
+<li><strong>定向清除</strong>：<code>sed -i '/203\.0\.113\.7/d'</code> —— 只删掉自己那几次记录（<strong>最阴险</strong>，总量看起来完全正常）；</li>
+<li><strong>停止 / 篡改采集</strong>：停 <code>rsyslog</code> / <code>auditd</code>、改 <code>rsyslog.conf</code> 的转发目标、污染时间源（NTP）让时间错乱；</li>
+<li><strong>日志注水</strong>：制造海量噪声（大量来自全世界的 <code>Invalid user</code>），让真正的攻击混在里面；</li>
+<li><strong>利用采集链漏洞</strong>：注入换行伪造整条日志行、注入控制字符污染解析器（<strong>日志注入 / CRLF 注入</strong>）；</li>
+<li><strong>制造时间戳问题</strong>：让事件落进 <code>no_timestamp</code> 桶，从而<strong>被排除在窗口判定之外</strong>。</li>
+</ol>
+<p><strong>检测侧的对抗原则</strong></p>
+<table>
+<thead>
+<tr>
+<th>攻击手法</th>
+<th>检测侧对抗</th>
+<th>本课做了什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>删除 / 清空日志</td>
+<td>不可变存储 + 远端实时转发（日志在攻击者够不着的地方）；文件行数基线告警</td>
+<td><strong>超出本课范围</strong>——本课只读日志，无法知道日志被删过，必须写进局限</td>
+</tr>
+<tr>
+<td>定向清除</td>
+<td>与<strong>其它维度</strong>交叉验证（主机侧、网络侧、云审计日志）</td>
+<td>本课<strong>做不到</strong>，只能提醒</td>
+</tr>
+<tr>
+<td>时间戳缺失 / 不可用</td>
+<td><strong>拒绝下结论</strong>，而不是猜</td>
+<td>✅ <code>no_timestamp</code> 计数 → <code>complete=False</code> → 退出码 4</td>
+</tr>
+<tr>
+<td>日志注入（伪造行）</td>
+<td>结构化解析 + 严格正则；对无法识别的行<strong>计数</strong></td>
+<td>✅ <code>unparsed</code> 计数（<code>lab --dirty</code> 演示的 <code>!!! log rotation marker</code> 就是这种）</td>
+</tr>
+<tr>
+<td>乱序 / 拼接</td>
+<td>排序后再统计，同时<strong>统计乱序次数</strong>（异常高的乱序本身就是线索）</td>
+<td>✅ <code>out_of_order</code></td>
+</tr>
+<tr>
+<td>重放 / 重复行</td>
+<td>全字段元组去重</td>
+<td>✅ <code>deduped</code></td>
+</tr>
+<tr>
+<td>注水淹没</td>
+<td>阈值 + 优先级排序 + 主体聚合</td>
+<td>⚠️ 部分覆盖（本课没有"告警量基线"）</td>
+</tr>
+<tr>
+<td>低频慢速</td>
+<td>需要<strong>跨天长窗口</strong>检测</td>
+<td>❌ 局限，见第 11 节思考题第 2 题</td>
+</tr>
+</tbody>
+</table>
+<p><strong>最重要的一条结论</strong></p>
+<blockquote>
+<p>日志分析的输出<strong>永远</strong>是"在我能看到的范围内、用这套阈值，我看到了什么"。<br>
+<strong>"零告警"必须和"覆盖是否完整"一起读</strong>，否则它什么都不能说明——这就是退出码 <code>4 &gt; 3</code> 的工程含义（见 5.6）。</p>
+</blockquote>
+<hr>
+<h3 id="48">4.8 阈值与时间窗口的完整推导（把七个检测器算一遍）</h3>
+<p>把前面散落的推导集中成一张表，方便你<strong>按自己组织的作息重新标定</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>检测器</th>
+<th>窗口</th>
+<th>阈值</th>
+<th>推导依据</th>
+<th>调参方向</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>brute_force_single_source</code></td>
+<td>300s</td>
+<td>8 次</td>
+<td>人会连错 3–5 次就停；自动化脚本 5 分钟能打几百次。取 8 是"离人的噪声远、离脚本的真实强度也远"。<code>count ≥ 3×阈值</code> 升为 critical</td>
+<td>有严格登录限流（fail2ban）时可上调；面对顽固攻击可下调</td>
+</tr>
+<tr>
+<td><code>brute_force_distributed</code></td>
+<td>600s</td>
+<td>10 次 <strong>且</strong> ≥3 来源</td>
+<td>摊薄后单源节奏更慢 → 窗口必须放长；<code>min_sources</code> 是这条规则区别于单源规则的<strong>唯一理由</strong></td>
+<td>NAT 出口多的组织应上调 <code>min_sources</code>，否则共享出口会持续误报</td>
+</tr>
+<tr>
+<td><code>failed_then_success</code></td>
+<td>900s</td>
+<td>前置失败 ≥3</td>
+<td>"输错→再输对"正常在秒级；15 分钟已极宽裕。失败数 ≥3 是为了排除"连续两次手滑"</td>
+<td>口令策略弱时应下调到 2 并配合其它信号</td>
+</tr>
+<tr>
+<td><code>login_from_unexpected_source</code></td>
+<td>瞬时</td>
+<td>无（基线比对）</td>
+<td>这不是统计问题，是<strong>集合隶属</strong>问题</td>
+<td>基线的质量决定一切</td>
+</tr>
+<tr>
+<td><code>login_from_single_source</code></td>
+<td>瞬时</td>
+<td>无（启发式）</td>
+<td>无基线时的退化形态，只用来提示"缺基线"</td>
+<td>应尽快用真基线替代</td>
+</tr>
+<tr>
+<td><code>off_hours_success</code></td>
+<td>瞬时</td>
+<td>工作时段 8–20</td>
+<td>需要覆盖绝大多数组织的作息；跨时区必须先统一</td>
+<td>按自己组织的排班改（<code>--work-start/--work-end</code>）</td>
+</tr>
+<tr>
+<td><code>web_auth_abuse</code></td>
+<td>600s</td>
+<td>20 次 401/403</td>
+<td>人不会 10 分钟内失败 20 次；但前端轮询 bug 会 → 所以给 medium</td>
+<td>有验证码/MFA 时可上调；接口被扫描时下调</td>
+</tr>
+<tr>
+<td><code>path_traversal_probe</code></td>
+<td>瞬时</td>
+<td>1 次</td>
+<td>正常请求<strong>不会</strong>含规范化后的 <code>../</code>——单次即足够</td>
+<td>有业务确实传相对路径时，需按路径白名单收窄</td>
+</tr>
+</tbody>
+</table>
+<p><strong>两条通用原则</strong></p>
+<ol>
+<li><strong>阈值是参数，不是真理</strong>。报告必须<strong>回显实际使用的阈值</strong>（<code>parameters</code> 段），否则"没告警"与"阈值太宽"无法区分（见 3.5）。</li>
+<li><strong>窗口越长，误报越多；窗口越短，攻击者越容易摊薄到窗口外</strong>。唯一稳妥的组合是<strong>多个不同粒度的检测器并存</strong>（秒级 / 分钟级 / 小时级 / 天级）。本课只做到分钟级——<strong>天级（低频持久）是明确的缺口</strong>。</li>
+</ol>
+<hr>
+<h3 id="49">4.9 攻击者规避 ↔ 检测对抗 总表</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>攻击手法</th>
+<th>靠什么痕迹被发现</th>
+<th>攻击者的免费规避</th>
+<th>检测的补偿手段</th>
+<th>本课是否覆盖</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>单源高频爆破</td>
+<td>同源失败密度</td>
+<td>降频</td>
+<td>分布式检测</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>2</td>
+<td>分布式 / 喷洒</td>
+<td>同账号多来源密度</td>
+<td>降来源数、每源只试 1 次</td>
+<td>来源情报 + 采样面扩大</td>
+<td>✅（medium）</td>
+</tr>
+<tr>
+<td>3</td>
+<td>爆破得手</td>
+<td>失败后同链路成功</td>
+<td>打完就走 / 清日志</td>
+<td>与 #1 成对、加强采集</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>4</td>
+<td>账号枚举</td>
+<td><code>Invalid user</code> 密度</td>
+<td>低频、用真实账号列表</td>
+<td>与失败计数合并</td>
+<td>✅（间接）</td>
+</tr>
+<tr>
+<td>5</td>
+<td>目录穿越探测</td>
+<td>请求路径特征串</td>
+<td>编码变形（<code>%252e</code>）、分隔符变体（<code>..\</code>）</td>
+<td>归一化后再匹配、多形态正则</td>
+<td>✅（部分：<code>\</code> 变体未覆盖）</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Web 撞库</td>
+<td>401/403 密度</td>
+<td>分布式、降频</td>
+<td>与 #2 同思路</td>
+<td>✅（medium）</td>
+</tr>
+<tr>
+<td>7</td>
+<td>横向移动</td>
+<td>新来源 / 多主机出现</td>
+<td>走已授权跳板、走内网 API</td>
+<td>基线 + 定期复查 + 多日志源</td>
+<td>✅（medium/low）</td>
+</tr>
+<tr>
+<td>8</td>
+<td>非工作时段活动</td>
+<td>成功登录的时间</td>
+<td>在工作时段活动</td>
+<td>与 #3/#7 组合加权</td>
+<td>✅（low）</td>
+</tr>
+<tr>
+<td>9</td>
+<td>日志清痕</td>
+<td>（<strong>看不见</strong>）</td>
+<td>直接删</td>
+<td>不可变存储 + 远端转发 + 交叉日志源</td>
+<td>❌ 必须靠架构</td>
+</tr>
+<tr>
+<td>10</td>
+<td>日志注入 / 伪造行</td>
+<td><code>unparsed</code> 异常</td>
+<td>构造合法格式的假行</td>
+<td>结构化解析 + 采集侧校验</td>
+<td>⚠️ 部分</td>
+</tr>
+<tr>
+<td>11</td>
+<td>时间戳缺失</td>
+<td><code>no_timestamp</code></td>
+<td>制造无时间戳事件</td>
+<td>拒绝下结论（退出码 4）</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>12</td>
+<td>低频慢速</td>
+<td>（分钟窗口看不见）</td>
+<td>拉长到天 / 周</td>
+<td>天级窗口、成功失败比、账号覆盖面</td>
+<td>❌ 局限</td>
+</tr>
+</tbody>
+</table>
+<p><strong>这张表的用法</strong>：任何一条告警被确认后，<strong>先把"攻击者的免费规避"这一列读一遍</strong>——它决定你下一步该加固哪个检测器，而不是加班看更多日志。</p>
+<h2 id="5">5. 核心机制详解</h2>
+<h3 id="51">5.1 模块结构</h3>
+<pre class="plain"><code>log_core.py            核心：事件模型 / 解析器 / 检测器 / 覆盖统计
+ ├─ LogEvent           标准化事件（不含原始行）
+ ├─ LogCoverage        行数 / 解析 / 无法识别 / 缺时间戳 / 去重 / 乱序
+ ├─ parse_timestamp()  四种时间格式 → 带时区 datetime（失败返回 None）
+ ├─ parse_sshd/nginx/json_log()
+ ├─ detect_source()    JSON → nginx → sshd → unknown
+ ├─ parse_lines()      解析 + 去重 + 排序 + 统计
+ ├─ 7 个检测器（产生 8 类告警）
+ └─ analyze()          跑全部检测器并排序汇总
+
+01-log-parser.py       基础：标准化与覆盖统计
+02-detectors.py        进阶：七个场景 + 七类踩坑演示
+03-log-analyzer.py     实战：CLI（parse / analyze / lab）
+</code></pre>
+<h3 id="52">5.2 解析层：识别顺序与失败处理</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[一行日志] --&gt; B{以 { 开头?}
+    B --&gt;|是| C[parse_json_log]
+    B --&gt;|否| D{匹配 nginx combined?}
+    D --&gt;|是| E[parse_nginx]
+    D --&gt;|否| F{syslog 且含 sshd/sudo?}
+    F --&gt;|是| G[parse_sshd]
+    F --&gt;|否| H[unknown → coverage.unparsed]
+    C --&gt; I{解析成功?}
+    E --&gt; I
+    G --&gt; I
+    I --&gt;|否/不是关心的动作| H
+    I --&gt;|是| J{时间可解析?}
+    J --&gt;|否| K[ts=None → coverage.no_timestamp]
+    J --&gt;|是| L[带时区 datetime]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[一行日志] --&gt; B{以 { 开头?}
+    B --&gt;|是| C[parse_json_log]
+    B --&gt;|否| D{匹配 nginx combined?}
+    D --&gt;|是| E[parse_nginx]
+    D --&gt;|否| F{syslog 且含 sshd/sudo?}
+    F --&gt;|是| G[parse_sshd]
+    F --&gt;|否| H[unknown → coverage.unparsed]
+    C --&gt; I{解析成功?}
+    E --&gt; I
+    G --&gt; I
+    I --&gt;|否/不是关心的动作| H
+    I --&gt;|是| J{时间可解析?}
+    J --&gt;|否| K[ts=None → coverage.no_timestamp]
+    J --&gt;|是| L[带时区 datetime]
+</code></pre></div>
+<p>三个容易忽略的设计点：</p>
+<ol>
+<li><strong><code>detect_source</code> 是启发式</strong>：JSON 靠首字符 <code>{</code>、nginx 靠完整正则、<br>
+   sshd 靠 syslog 前缀 + 进程名。识别失败 → 计入 <code>unparsed</code>，<br>
+<strong>绝不"尽力猜一种格式硬解析"</strong>（那会造出错误字段，比丢行更糟）。</li>
+<li><strong>sshd 行里不关心的动作（如 <code>Connection closed</code>）不算解析失败</strong>：<br>
+   它返回 None，但在本实现中被计入 <code>unparsed</code>——这是一个<strong>有意的取舍</strong>，<br>
+   报告里会显示 <code>unparsed=1</code> 提醒你"这行我没用上"。</li>
+<li><strong>syslog 无年份</strong>：<code>Sep 19 06:12:01</code> 必须补年份，所以 <code>parse_lines</code><br>
+   接受 <code>year=</code> 参数。跨年日志要按文件分批传入（否则 12 月 31 日的日志<br>
+   可能被补成错误年份）。</li>
+</ol>
+<h3 id="53">5.3 时间与派生字段</h3>
+<table>
+<thead>
+<tr>
+<th>输入形态</th>
+<th>解析结果</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>2026-09-19T06:12:01+08:00</code></td>
+<td>带偏移的 datetime</td>
+<td>最理想</td>
+</tr>
+<tr>
+<td><code>2026-09-19T06:12:01Z</code></td>
+<td>UTC datetime</td>
+<td><code>Z</code> 会被换成 <code>+00:00</code></td>
+</tr>
+<tr>
+<td><code>19/Sep/2026:06:12:01 +0800</code></td>
+<td>nginx 标准格式</td>
+<td><code>%d/%b/%Y:%H:%M:%S %z</code></td>
+</tr>
+<tr>
+<td><code>Sep 19 06:12:01</code></td>
+<td>需 <code>year</code> + 假设时区</td>
+<td>缺信息 → 假设必须显式</td>
+</tr>
+<tr>
+<td>无法解析</td>
+<td><code>None</code></td>
+<td><strong>不填 now()、不填文件时间</strong></td>
+</tr>
+</tbody>
+</table>
+<p><code>LogEvent.ts</code> 全部带时区，比较/排序不会出现"naive 与 aware 混用"的经典异常。<br>
+报告展示统一按 <code>DEFAULT_TZ</code>（UTC+8）渲染。</p>
+<h3 id="54-7-8">5.4 检测器清单（7 个注册检测器 / 8 类告警）</h3>
+<table>
+<thead>
+<tr>
+<th>检测器</th>
+<th>主体键</th>
+<th>窗口/阈值（默认）</th>
+<th>severity</th>
+<th>confidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>brute_force_single_source</code></td>
+<td>(host, src_ip)</td>
+<td>300s / 8 次</td>
+<td>high（≥24 次升级 critical）</td>
+<td>high</td>
+</tr>
+<tr>
+<td><code>brute_force_distributed</code></td>
+<td>(host, user)</td>
+<td>600s / 10 次 / ≥3 来源</td>
+<td>medium</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>failed_then_success</code></td>
+<td>(host, user, src_ip)</td>
+<td>900s / 前置失败 ≥3</td>
+<td>high</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>login_from_unexpected_source</code></td>
+<td>(host, user)</td>
+<td>基线比对</td>
+<td>medium</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>login_from_single_source</code></td>
+<td>(host, user)</td>
+<td>无基线时的启发式</td>
+<td>low</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>off_hours_success</code></td>
+<td>(host, user)</td>
+<td>工作时段 8:00–20:00</td>
+<td>low</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>web_auth_abuse</code></td>
+<td>(host, src_ip)</td>
+<td>600s / 20 次 401-403</td>
+<td>medium</td>
+<td>medium</td>
+</tr>
+<tr>
+<td><code>path_traversal_probe</code></td>
+<td>(host, src_ip)</td>
+<td>单次命中</td>
+<td>medium</td>
+<td>high</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><code>login_from_unexpected_source</code> 与 <code>login_from_single_source</code> 由<strong>同一个函数</strong><br>
+<code>detect_new_source()</code> 产生：有基线时是前者（medium/medium），<br>
+无基线时退化到后者（low/low）。这体现了"<strong>置信度取决于你掌握多少外部信息</strong>"。</p>
+</blockquote>
+<h3 id="55">5.5 覆盖与可判定性</h3>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>含义</th>
+<th>会影响结论吗</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lines_total</code></td>
+<td>读取到的非空行数</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>parsed</code></td>
+<td>成功标准化的事件数</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>unparsed</code></td>
+<td>无法识别格式的行</td>
+<td>✅ 使 <code>complete=False</code></td>
+</tr>
+<tr>
+<td><code>no_timestamp</code></td>
+<td>缺少/无法解析时间的事件</td>
+<td>✅ 使 <code>complete=False</code>，且退出窗口检测</td>
+</tr>
+<tr>
+<td><code>deduped</code></td>
+<td>被判定为重复的行</td>
+<td>否（信息性）</td>
+</tr>
+<tr>
+<td><code>out_of_order</code></td>
+<td>文件顺序中的时间倒挂次数</td>
+<td>否（已排序，信息性）</td>
+</tr>
+<tr>
+<td><code>hosts</code> / <code>time_start</code> / <code>time_end</code></td>
+<td>主机集合与时间范围</td>
+<td>用于判断"范围是否对得上"</td>
+</tr>
+<tr>
+<td><code>complete</code></td>
+<td><code>unparsed == 0 and no_timestamp == 0</code></td>
+<td>✅ 唯一"可以下结论"的开关</td>
+</tr>
+</tbody>
+</table>
+<p>CLI 额外把<strong>空输入</strong>和 <strong>read_error</strong>（编码错误、IO 错误、超过行数上限）<br>
+也算作覆盖缺口。</p>
+<h3 id="56">5.6 门禁与报告渲染</h3>
+<pre class="plain"><code>报告结构（Markdown）：
+  摘要（行数/解析/主机/时间范围/告警分级）
+  ⚠️ 覆盖声明        ← 必须在明细之前
+  告警明细（按 priority 降序，每条形如&quot;主体 / 次数 / 窗口 / 时间 / 证据 / 为什么 / 建议&quot;）
+  检测参数（阈值回显，标注默认 or 自定义）
+  检测器清单
+  免责声明
+</code></pre>
+<p><code>--format json</code> 输出结构化报告（<code>summary</code> / <code>parameters</code> / <code>coverage</code> / <code>detectors_run</code> / <code>alerts</code>），<br>
+供 CI 与工单系统消费；<code>analyze --output file</code> 落盘；<code>report</code> 之类的重渲染<br>
+按需自建（本课的 JSON 已含渲染所需全部字段）。</p>
+<h3 id="57">5.7 快速开始</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python
+<span class="nv">D</span><span class="o">=</span>days/day-160-日志安全分析/code
+
+python3<span class="w"> </span><span class="nv">$D</span>/01-log-parser.py<span class="w"> </span>--self-test<span class="w">          </span><span class="c1"># 标准化与覆盖统计</span>
+python3<span class="w"> </span><span class="nv">$D</span>/02-detectors.py<span class="w"> </span>--self-test<span class="w">           </span><span class="c1"># 七场景 + 七类踩坑</span>
+python3<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>--self-test<span class="w">        </span><span class="c1"># CLI 整合</span>
+python3<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>lab<span class="w">                </span><span class="c1"># 合成日志 → 报告 + 退出码 3</span>
+python3<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>lab<span class="w"> </span>--dirty<span class="w">        </span><span class="c1"># 混入脏数据 → 覆盖声明 + 退出码 4</span>
+python3<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>parse<span class="w"> </span>/var/log/auth.log
+python3<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>analyze<span class="w"> </span>/var/log<span class="w"> </span>--fail-on<span class="w"> </span>high<span class="w"> </span>--format<span class="w"> </span>json<span class="w"> </span>--output<span class="w"> </span>/tmp/a.json
+python3<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>analyze<span class="w"> </span>/var/log<span class="w"> </span>--brute-threshold<span class="w"> </span><span class="m">20</span><span class="w"> </span>--work-start<span class="w"> </span><span class="m">7</span><span class="w"> </span>--work-end<span class="w"> </span><span class="m">22</span>
+</code></pre></div>
+<p>无第三方依赖，Python 3.10+（本仓库在 3.12 上验证）。<br>
+<code>--host</code> 用于指定"日志里没有主机名时的回退主机名"（会出现在报告的 hosts 里）。</p>
+<h2 id="6-api">6. 定义与使用方法（API 速查）</h2>
+<h3 id="61">6.1 数据结构</h3>
+<table>
+<thead>
+<tr>
+<th>结构</th>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LogEvent</code></td>
+<td><code>ts / host / source / kind / action / user / src_ip / status / path / ref</code></td>
+<td><code>frozen=True</code>；<strong>无 raw 字段</strong>；<code>subject</code> 属性 = <code>(host, src_ip, user)</code></td>
+</tr>
+<tr>
+<td><code>LogCoverage</code></td>
+<td><code>lines_total / parsed / unparsed / no_timestamp / deduped / out_of_order / hosts / time_start / time_end</code></td>
+<td><code>complete</code> = <code>unparsed==0 and no_timestamp==0</code>；<code>gaps</code> 为人类可读缺口列表</td>
+</tr>
+<tr>
+<td><code>Alert</code></td>
+<td><code>detector / title / severity / confidence / subject / subject_sha / count / window_seconds / first_ts / last_ts / evidence / why / remediation / parameters</code></td>
+<td><code>band</code> 属性 = P0..P3；<code>subject</code> 已掩码</td>
+</tr>
+<tr>
+<td><code>AlertReport</code></td>
+<td><code>alerts / coverage / detectors_run / parameters</code></td>
+<td><code>by_severity()</code> / <code>at_or_above(t)</code> / <code>to_dict()</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="62">6.2 解析层函数</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>签名要点</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>parse_timestamp(text, *, assume_tz=DEFAULT_TZ, year=2026)</code></td>
+<td><code>→ datetime \| None</code></td>
+<td>四种格式；失败返回 None</td>
+</tr>
+<tr>
+<td><code>detect_source(line)</code></td>
+<td><code>→ 'app'\|'nginx'\|'sshd'\|'unknown'</code></td>
+<td>形态识别</td>
+</tr>
+<tr>
+<td><code>parse_sshd / parse_nginx / parse_json_log(line, host, *, assume_tz, year, ref)</code></td>
+<td><code>→ LogEvent \| None</code></td>
+<td>单格式解析</td>
+</tr>
+<tr>
+<td><code>parse_line(line, host, *, ...)</code></td>
+<td><code>→ LogEvent \| None</code></td>
+<td>自动分派</td>
+</tr>
+<tr>
+<td><code>parse_lines(lines, *, fallback_host, assume_tz, year, source_name)</code></td>
+<td><code>→ (events, coverage)</code></td>
+<td>解析 + 去重 + 排序 + 统计</td>
+</tr>
+<tr>
+<td><code>mask_ip(ip)</code> / <code>subject_sha(value)</code></td>
+<td><code>→ str</code></td>
+<td>报告脱敏 / 跨报告关联</td>
+</tr>
+<tr>
+<td><code>priority(sev, conf)</code> / <code>triage_band(sev, conf)</code></td>
+<td><code>→ int / 'P0'..'P3'</code></td>
+<td>分档排序</td>
+</tr>
+</tbody>
+</table>
+<h3 id="63">6.3 检测器函数</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>关键参数</th>
+<th>触发条件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>detect_brute_force(events, *, window_seconds=300, threshold=8, host=None)</code></td>
+<td>窗口/阈值</td>
+<td>同 <code>(host, src_ip)</code> 窗口内失败 ≥ 阈值</td>
+</tr>
+<tr>
+<td><code>detect_distributed_bruteforce(events, *, window_seconds=600, threshold=10, min_sources=3)</code></td>
+<td>窗口/阈值/来源数</td>
+<td>同 <code>(host, user)</code> 窗口内失败 ≥ 阈值且来源 ≥ min_sources</td>
+</tr>
+<tr>
+<td><code>detect_failed_then_success(events, *, window_seconds=900, min_failures=3)</code></td>
+<td>窗口/前置失败数</td>
+<td>同 <code>(host, user, src_ip)</code> 失败 ≥ N 次后成功</td>
+</tr>
+<tr>
+<td><code>detect_new_source(events, baseline=None)</code></td>
+<td>基线 dict</td>
+<td>有基线：来源不在基线内；无基线：退化为 single_source 启发式</td>
+</tr>
+<tr>
+<td><code>detect_off_hours_success(events, *, start_hour=8, end_hour=20)</code></td>
+<td>工作时段</td>
+<td>成功登录发生在时段外</td>
+</tr>
+<tr>
+<td><code>detect_web_auth_abuse(events, *, window_seconds=600, threshold=20)</code></td>
+<td>窗口/阈值</td>
+<td>同 <code>(host, src_ip)</code> 窗口内 401/403 ≥ 阈值</td>
+</tr>
+<tr>
+<td><code>detect_path_traversal_probe(events)</code></td>
+<td>—</td>
+<td>请求路径含 <code>../</code> / <code>%2e%2e</code> / <code>%252e</code></td>
+</tr>
+<tr>
+<td><code>analyze(events, coverage=None, *, baseline=None, parameters=None)</code></td>
+<td>—</td>
+<td>跑全部检测器，返回 <code>AlertReport</code></td>
+</tr>
+</tbody>
+</table>
+<p>所有检测器都只读事件、不写任何东西；<code>window_seconds=0</code> 表示"瞬时类"告警（无窗口）。</p>
+<h3 id="64-cli-03-log-analyzerpy">6.4 CLI 速查（<code>03-log-analyzer.py</code>）</h3>
+<table>
+<thead>
+<tr>
+<th>子命令</th>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>parse &lt;targets...&gt;</code></td>
+<td><code>--year</code> <code>--host</code></td>
+<td>打印标准化事件表与覆盖统计</td>
+</tr>
+<tr>
+<td><code>analyze &lt;targets...&gt;</code></td>
+<td><code>--format {markdown,json}</code> <code>--fail-on {low,medium,high,critical}</code> <code>--baseline FILE</code> <code>--output FILE</code> <code>--year</code> <code>--host</code> <code>--brute-window</code> <code>--brute-threshold</code> <code>--fts-window</code> <code>--fts-min-failures</code> <code>--work-start</code> <code>--work-end</code> <code>--web-window</code> <code>--web-threshold</code></td>
+<td>完整检测 + 报告；退出码即门禁结果</td>
+</tr>
+<tr>
+<td><code>lab</code></td>
+<td><code>--dirty</code> <code>--format</code> <code>--fail-on</code></td>
+<td>临时目录生成合成日志并分析</td>
+</tr>
+<tr>
+<td><code>--self-test</code></td>
+<td>—</td>
+<td>自测，输出 <code>SELF-TEST OK</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>&lt;targets&gt;</code> 可以是文件，也可以是目录（目录只收 <code>*.log</code> / <code>*.txt</code>，递归查找）。</p>
+<h3 id="65-baseline">6.5 基线文件格式（<code>--baseline</code>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;web01|deploy&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;192.0.2.9&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;192.0.2.20&quot;</span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;web02|ops&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;198.51.100.31&quot;</span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>键是 <code>host|user</code>，值是<strong>该账号已知的正常来源 IP 列表</strong>。<br>
+有基线的账号走 <code>login_from_unexpected_source</code>（medium/medium），<br>
+没基线的账号只能走低置信度启发式（low/low）。</p>
+<h2 id="7">7. 运行命令 + 真实预期输出（实测）</h2>
+<blockquote>
+<p>本节所有输出都是<strong>在本机真实跑出来的</strong>（Python 3.12），不是手写示意。<br>
+<code>-B</code> 表示不生成 <code>__pycache__</code>，保证"跑完不留产物"；<br>
+所有演示的临时文件都落在 <code>tempfile.TemporaryDirectory()</code> 里，<strong>不污染仓库工作树</strong>。</p>
+</blockquote>
+<h3 id="70">7.0 准备</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+<span class="nv">D</span><span class="o">=</span>days/day-160-日志安全分析/code
+</code></pre></div>
+<h3 id="71-self-test-ok">7.1 三个脚本的自检（必跑，必须逐行输出 <code>SELF-TEST OK</code>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/01-log-parser.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/02-detectors.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p>实测输出（三行，逐字）：</p>
+<pre class="plain"><code>SELF-TEST OK
+SELF-TEST OK
+SELF-TEST OK
+</code></pre>
+<p>自检<strong>完全离线</strong>：不联网、不读 <code>/var/log</code>、不写仓库；<code>03</code> 的自检在临时目录里生成合成日志并分析。</p>
+<blockquote>
+<p><code>log_core.py</code> 是<strong>被 import 的核心库</strong>，不是 CLI 入口，它没有 <code>--self-test</code>（直接执行会静默退出 0、不输出 OK）。它的行为由上面三个脚本的断言覆盖。</p>
+</blockquote>
+<h3 id="72">7.2 标准化：三种异构日志 → 统一事件模型</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/01-log-parser.py
+</code></pre></div>
+<p>实测输出（完整）：</p>
+<pre class="plain"><code>TIME(UTC+8)          HOST    SOURCE  ACTION         USER     SRC_IP           STATUS REF
+----------------------------------------------------------------------------------------
+2026-09-19 05:59:00  web01   sshd    login_success  deploy   10.0.0.x         -      synthetic.log:4
+2026-09-19 06:12:01  web01   sshd    login_failed   admin    203.0.113.x      -      synthetic.log:1
+2026-09-19 06:12:04  web01   sshd    login_failed   admin    203.0.113.x      -      synthetic.log:2
+2026-09-19 06:13:20  unknown-host nginx   request        -        203.0.113.x      401    synthetic.log:5
+2026-09-19 06:14:00  api01   app     login_failed   ops      198.51.100.x     -      synthetic.log:6
+2026-09-19 06:15:00  web01   sshd    login_success  deploy   10.0.0.x         -      synthetic.log:3
+??                   api02   app     login_failed   svc      198.51.100.x     -      synthetic.log:7
+
+覆盖统计：
+  lines_total=9 parsed=7 unparsed=1 no_timestamp=1 deduped=1 out_of_order=1
+  hosts=[&#x27;api01&#x27;, &#x27;api02&#x27;, &#x27;unknown-host&#x27;, &#x27;web01&#x27;]
+  time_range=2026-09-19 05:59:00+08:00 → 2026-09-19 06:15:00+08:00
+  complete=False  gaps=[&#x27;unparsed=1 行无法识别格式（未参与判定）&#x27;, &#x27;no_timestamp=1 条缺少时间戳（窗口类检测不可用）&#x27;]
+
+提示：缺时间戳 / 无法识别的行不会参与窗口判定，但必须在报告里声明。
+</code></pre>
+<p>读这份输出时注意五处：</p>
+<ul>
+<li><strong><code>??</code></strong>：JSON 行没有 <code>time</code> 字段 → <code>ts=None</code>，<strong>不猜时间</strong>，但仍保留事件（它的<strong>存在</strong>是事实）；</li>
+<li><strong><code>synthetic.log:4</code> 排在 <code>:1</code> 前面</strong>：第 4 行是 05:59，比第 1 行的 06:12 早——<strong>乱序被排序修正</strong>，同时 <code>out_of_order=1</code> 如实记录；</li>
+<li><strong><code>deduped=1</code></strong>：第 8 行与第 1 行完全一致 → 被去重；</li>
+<li><strong><code>unparsed=1</code></strong>：最后那句自然语言行无法识别 → 计入覆盖缺口；</li>
+<li><strong><code>complete=False</code> + 两条 <code>gaps</code></strong>：报告必须声明"这部分未参与判定"。</li>
+</ul>
+<h3 id="73">7.3 七个检测器与七类踩坑演示</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/02-detectors.py
+</code></pre></div>
+<p>实测输出（完整）：</p>
+<pre class="plain"><code>检测器：brute_force_distributed, brute_force_single_source, failed_then_success, login_from_unexpected_source, off_hours_success, path_traversal_probe, web_auth_abuse
+
+── 场景1/2 单源爆破 + 跨主机隔离
+   [P0] brute_force_single_source      high     203.0.113.x@web01 count=10 300s 内失败 10 次；涉及账号数 1
+   [P0] brute_force_single_source      high     203.0.113.x@web02 count=10 300s 内失败 10 次；涉及账号数 1
+   覆盖：complete=True gaps=[]
+── 场景3 分布式爆破
+   [P2] brute_force_distributed        medium   svc@web01 count=15 600s 内失败 15 次，来源 IP 5 个
+   覆盖：complete=True gaps=[]
+── 场景4 失败后成功
+   [P1] failed_then_success            high     deploy@web01 count=4 失败 4 次后成功，来源 192.0.2.x
+   [P3] login_from_single_source       low      deploy@web01 count=1 来源 192.0.2.x（无基线，仅启发式）
+   覆盖：complete=True gaps=[]
+── 场景5 非工作时段登录
+   [P3] login_from_single_source       low      deploy@web01 count=1 来源 192.0.2.x（无基线，仅启发式）
+   [P3] off_hours_success              low      deploy@web01 count=1 本地时间 03:20（工作时段 8:00-20:00）
+   覆盖：complete=True gaps=[]
+── 场景6 Web 撞库 + 穿越探测
+   [P1] path_traversal_probe           medium   203.0.113.x@unknown-host count=1 路径含穿越特征，响应码 404（仅记录，未构造请求验证）
+   [P2] web_auth_abuse                 medium   203.0.113.x@unknown-host count=25 600s 内 401/403 共 25 次；热点路径 [&#x27;/login&#x27;]
+   覆盖：complete=True gaps=[]
+── 场景7 缺时间戳
+   （无告警）
+   覆盖：complete=False gaps=[&#x27;no_timestamp=1 条缺少时间戳（窗口类检测不可用）&#x27;]
+
+提示：阈值是参数不是真理。报告必须回显参数，否则&#x27;没告警&#x27;与&#x27;阈值太宽&#x27;无法区分。
+</code></pre>
+<p>三处值得对照：</p>
+<ul>
+<li><strong>场景 1/2 出现两条 P0</strong>，分别对应 <code>web01</code> 与 <code>web02</code>——同一个源 IP 打两台主机，<strong>必须是两条独立告警</strong>（2.6 的跨主机混淆）；</li>
+<li><strong>场景 3 单源规则完全沉默</strong>，只有按账号聚合的 <code>brute_force_distributed</code> 命中（15 次 / 5 个来源）——这就是"分布式爆破为什么必须单独写一个检测器"；</li>
+<li><strong>场景 4/5 各多出一条 <code>login_from_single_source</code>（P3）</strong>：因为没有提供 baseline，<code>detect_new_source</code> 退化为低置信度启发式。<strong>这是设计使然</strong>，不是 bug——它正是在提示"你缺少基线"。</li>
+</ul>
+<h3 id="74-lab-3">7.4 端到端演示：<code>lab</code>（合成日志 → 报告 → 退出码 3）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>lab<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;退出码=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>实测输出（节选）：</p>
+<pre class="plain"><code># 安全日志分析报告
+
+- 输入文件：1 个（lab-auth.log…）
+- 行数：50（解析 50，无法识别 0，缺时间戳 0，去重 0，乱序 1）
+- 主机：lab-auth, web01, web02
+- 时间范围：2026-09-19 03:20:00+08:00 → 2026-09-19 11:30:00+08:00（统一为 UTC+8 展示）
+- 告警：7 条（low=2、medium=2、high=3）
+
+- 覆盖：完整（全部行均成功解析且带时间戳）
+
+## 告警明细（按优先级排序）
+
+### [P0] brute_force_single_source — 单一来源暴力破解尝试
+
+- 主体：`203.0.113.x@web01`（sha: f362b0ed476a）
+- 次数 / 窗口：10 次 / 300s
+- 时间：2026-09-19 07:00:00+08:00 → 2026-09-19 07:00:09+08:00
+- 严重度 / 置信度：high / high
+- 证据：300s 内失败 10 次；涉及账号数 1
+- 为什么可疑：短窗口内高频认证失败是口令猜测的直接特征，成功一次即可能失陷。
+- 处置建议：对该来源限速/封禁或改用密钥认证；检查是否已有成功登录。
+</code></pre>
+<p>stderr（摘要与退出码）：</p>
+<pre class="plain"><code># alerts=7 [low=2 medium=2 high=3] lines=50 parsed=50 覆盖完整
+# lab 退出码 = 3（0=通过 3=有告警 4=覆盖不全）
+</code></pre>
+<p>退出码为 <code>3</code>。注意主体是 <code>203.0.113.x@web01</code>——<strong>IP 末段已掩码</strong>，并附 <code>sha</code> 指纹供跨报告关联（见 3.7）。</p>
+<h3 id="75-lab-dirty-4">7.5 脏数据演示：<code>lab --dirty</code>（覆盖缺口优先 → 退出码 4）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>lab<span class="w"> </span>--dirty<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;退出码=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p>实测输出（节选）：</p>
+<pre class="plain"><code># 安全日志分析报告
+
+- 输入文件：1 个（lab-auth.log…）
+- 行数：52（解析 51，无法识别 1，缺时间戳 1，去重 0，乱序 1）
+- 主机：api01, lab-auth, web01, web02
+- 时间范围：2026-09-19 03:20:00+08:00 → 2026-09-19 11:30:00+08:00（统一为 UTC+8 展示）
+- 告警：7 条（low=2、medium=2、high=3）
+
+## ⚠️ 覆盖声明（先读这一段）
+
+- unparsed=1 行无法识别格式（未参与判定）
+- no_timestamp=1 条缺少时间戳（窗口类检测不可用）
+
+上述范围内的日志**没有参与判定**。本次报告不能用于得出「未发现异常」的结论。
+</code></pre>
+<p>stderr：</p>
+<pre class="plain"><code># alerts=7 [low=2 medium=2 high=3] lines=52 parsed=51 覆盖不全
+# lab 退出码 = 4（0=通过 3=有告警 4=覆盖不全）
+</code></pre>
+<p><strong>同样的 7 条告警，只因为多了一行乱码和一条缺时间戳的事件，退出码就从 3 变成 4</strong>——告警数没变，但结论的<strong>可信度</strong>变了。这正是"覆盖缺口优先"（见 5.6）的现场演示。</p>
+<h3 id="76-parse">7.6 <code>parse</code>：先看清日志本身，再谈检测</h3>
+<p>先把一小段 sshd 日志放到临时目录（9 行、全部是同一来源的失败）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nv">T</span><span class="o">=</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="k">)</span>
+cat<span class="w"> </span>&gt;<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/auth.log&quot;</span><span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">Sep 19 07:00:00 web01 sshd[1]: Failed password for invalid user admin from 203.0.113.7 port 51001 ssh2</span>
+<span class="s">...（此处共 9 行，时间 07:00:00 → 07:00:08，其余字段同上）</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>parse<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/auth.log&quot;</span><span class="w"> </span>--host<span class="w"> </span>web01
+</code></pre></div>
+<p>实测输出（节选）：</p>
+<pre class="plain"><code>TIME                 HOST     SOURCE  ACTION         USER     SRC_IP
+------------------------------------------------------------------------------
+2026-09-19 07:00:00  web01    sshd    login_failed   admin    203.0.113.x
+2026-09-19 07:00:01  web01    sshd    login_failed   admin    203.0.113.x
+2026-09-19 07:00:02  web01    sshd    login_failed   admin    203.0.113.x
+2026-09-19 07:00:03  web01    sshd    login_failed   admin    203.0.113.x
+2026-09-19 07:00:04  web01    sshd    login_failed   admin    203.0.113.x
+2026-09-19 07:00:05  web01    sshd    login_failed   admin    203.0.113.x
+2026-09-19 07:00:06  web01    sshd    login_failed   admin    203.0.113.x
+2026-09-19 07:00:07  web01    sshd    login_failed   admin    203.0.113.x
+2026-09-19 07:00:08  web01    sshd    login_failed   admin    203.0.113.x
+
+行数 9 / 解析 9 / 无法识别 0 / 缺时间戳 0 / 去重 0 / 乱序 0
+</code></pre>
+<blockquote>
+<p><code>--host web01</code> 只在日志<strong>自带主机名</strong>时才是多余的；对 nginx combined（不含主机名）与无 <code>host</code> 字段的 JSON，它是把事件归到哪台机器的<strong>唯一依据</strong>，会出现在报告的 <code>hosts</code> 里。</p>
+</blockquote>
+<h3 id="77-analyze-json">7.7 <code>analyze</code>：检测 + 参数回显 + JSON</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span><span class="nv">$D</span>/03-log-analyzer.py<span class="w"> </span>analyze<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$T</span><span class="s2">/auth.log&quot;</span><span class="w"> </span>--host<span class="w"> </span>web01<span class="w"> </span>--fail-on<span class="w"> </span>high
+</code></pre></div>
+<p>实测（节选，stderr 摘要 + 告警头部）：</p>
+<pre class="plain"><code># alerts=1 [high=1] lines=9 parsed=9 覆盖完整
+
+# 安全日志分析报告
+## 告警明细（按优先级排序）
+### [P0] brute_force_single_source — 单一来源暴力破解尝试
+
+- 主体：`203.0.113.x@web01`（sha: f362b0ed476a）
+- 次数 / 窗口：9 次 / 300s
+- 严重度 / 置信度：high / high
+- 证据：300s 内失败 9 次；涉及账号数 1
+</code></pre>
+<p><strong>参数回显段（实测，这是"阈值不能省"的落点）</strong>：</p>
+<pre class="plain"><code>## 检测参数（阈值回显）
+
+| 参数 | 值 | 含义 |
+| --- | --- | --- |
+| `brute_window` | 300 （本次自定义） | |
+| `brute_threshold` | 8 （本次自定义） | |
+| `dist_window` | 600 （默认） | |
+| `dist_threshold` | 10 （默认） | |
+| `dist_min_sources` | 3 （默认） | |
+| `fts_window` | 900 （本次自定义） | |
+| `fts_min_failures` | 3 （本次自定义） | |
+| `work_start` | 8 （本次自定义） | |
+| `work_end` | 20 （本次自定义） | |
+| `web_window` | 600 （本次自定义） | |
+| `web_threshold` | 20 （本次自定义） | |
+
+## 检测器清单（7 个）
+
+- `brute_force_distributed`、`brute_force_single_source`、`failed_then_success`、`login_from_unexpected_source`、`off_hours_success`、`path_traversal_probe`、`web_auth_abuse`
+</code></pre>
+<blockquote>
+<p>标"本次自定义"的参数，是因为 <code>analyze</code> 子命令总是显式传入命令行默认值；只有 <code>lab</code> 走纯 <code>{}</code> 参数，全部显示"（默认）"。<strong>这个标注差别本身就是有用信息</strong>：它告诉你这份报告是用哪条代码路径生成的。</p>
+</blockquote>
+<p>JSON 输出（实测节选）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;summary&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;alerts&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">&quot;by_severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;info&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;low&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;medium&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;high&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;critical&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">},</span>
+<span class="w">    </span><span class="nt">&quot;by_triage_band&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;P0&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;P1&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;P2&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;P3&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;detectors_run&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="s2">&quot;brute_force_distributed&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s2">&quot;brute_force_single_source&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s2">&quot;failed_then_success&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s2">&quot;login_from_unexpected_source&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s2">&quot;off_hours_success&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s2">&quot;path_traversal_probe&quot;</span><span class="p">,</span>
+<span class="w">    </span><span class="s2">&quot;web_auth_abuse&quot;</span>
+<span class="w">  </span><span class="p">],</span>
+<span class="w">  </span><span class="nt">&quot;coverage&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;lines_total&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">9</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;parsed&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">9</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;unparsed&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;no_timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;complete&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="78">7.8 退出码实测对照</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>命令</th>
+<th>实测退出码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>合成日志、覆盖完整、有 high 告警</td>
+<td><code>03-log-analyzer.py lab</code></td>
+<td><strong>3</strong></td>
+</tr>
+<tr>
+<td>混入脏数据（unparsed=1, no_timestamp=1）</td>
+<td><code>03-log-analyzer.py lab --dirty</code></td>
+<td><strong>4</strong></td>
+</tr>
+<tr>
+<td>覆盖完整、无达标告警</td>
+<td><code>analyze ... --fail-on critical</code></td>
+<td><strong>0</strong></td>
+</tr>
+<tr>
+<td>空日志文件</td>
+<td><code>analyze empty.log</code></td>
+<td><strong>4</strong>（<code>empty_input</code>）</td>
+</tr>
+<tr>
+<td>目标不存在 / 无输入</td>
+<td><code>parse /nonexistent</code></td>
+<td><strong>2</strong></td>
+</tr>
+</tbody>
+</table>
+<p>优先级 <code>2 &gt; 4 &gt; 3 &gt; 0</code>：<strong>不可信的结果不配当门禁依据</strong>。</p>
+<h2 id="8">8. 实战流程（六步）</h2>
+<ol>
+<li><strong>确定范围与时区</strong>：哪些主机、哪些日志文件、日志时间基准是什么<br>
+   （UTC 还是本地时间、有没有跨时区设备）。这一步错了，后面全错。</li>
+<li><strong>先 parse，后 analyze</strong>：先跑 <code>parse</code> 看事件表与覆盖统计。<br>
+   有大量 <code>unparsed</code> 就先修采集/格式，不要急着调检测阈值。</li>
+<li><strong>确认可判定性</strong>：看 <code>no_timestamp</code> 是否为 0。不为 0 时，<br>
+   窗口类结论一律打折——报告里的"覆盖声明"就是在说这件事。</li>
+<li><strong>跑检测并回显参数</strong>：<code>analyze --fail-on high</code>，检查报告"检测参数"段<br>
+   是否符合你所在组织的作息（<code>work-start/work-end</code>、阈值）。</li>
+<li><strong>人工复核优先级最高的告警</strong>：对照值班表、变更记录、来源情报。<br>
+<code>failed_then_success</code> 永远先看——它最可能是真的。</li>
+<li><strong>建立并维护基线</strong>：把确认过的正常来源写进 baseline JSON，<br>
+   并定期复查（否则基线会变成永久消音器，与 Day 159 的 baseline 同理）。</li>
+</ol>
+<h2 id="9">9. 常见陷阱（对照表）</h2>
+<table>
+<thead>
+<tr>
+<th>陷阱</th>
+<th>症状</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>猜时间戳</td>
+<td>攻击窗口变成编造的数字</td>
+<td>无时间戳 → <code>ts=None</code> + <code>no_timestamp</code> 计数</td>
+</tr>
+<tr>
+<td>按分钟分桶</td>
+<td>攻击均摊到两桶即可隐形</td>
+<td>滑动窗口（任意 W 秒内）</td>
+</tr>
+<tr>
+<td>按 IP 聚合跨主机</td>
+<td>假告警（"一台机器被打 12 次"）</td>
+<td>主体键必须带 host</td>
+</tr>
+<tr>
+<td>忽略重复行</td>
+<td>计数虚高、误报爆炸</td>
+<td>按全字段元组去重</td>
+</tr>
+<tr>
+<td>只写单源检测</td>
+<td>分布式爆破完全隐形</td>
+<td>增加按账号聚合的检测器 + 置信度说明</td>
+</tr>
+<tr>
+<td>关联条件过宽</td>
+<td>"失败后成功"全是误报</td>
+<td>限死 host + user + src_ip</td>
+</tr>
+<tr>
+<td>不回显阈值</td>
+<td>"没告警"与"阈值太宽"无法区分</td>
+<td>报告里输出实际参数</td>
+</tr>
+<tr>
+<td>覆盖不全仍下结论</td>
+<td>漏掉的日志里就是攻击</td>
+<td>覆盖缺口优先（退出码 4 &gt; 3）</td>
+</tr>
+<tr>
+<td>报告输出完整 IP</td>
+<td>内部拓扑泄露</td>
+<td>末段掩码 + sha 指纹</td>
+</tr>
+<tr>
+<td>输出原始日志行</td>
+<td>可能带出口令/Cookie</td>
+<td>只输出结构化字段 + <code>ref</code> 溯源指针</td>
+</tr>
+</tbody>
+</table>
+<h2 id="10">10. 局限（必须写进报告，不能省略）</h2>
+<ul>
+<li><strong>只看日志</strong>：没有主机侧证据（进程、文件、连接），无法确认是否失陷。</li>
+<li><strong>日志可被篡改</strong>：攻击者删除失败记录后，本工具"看不到"任何东西；<br>
+  需要用不可变存储/远端转发来补偿。</li>
+<li><strong>无情报关联</strong>：不知道某个 IP 是否为已知恶意来源，置信度因此受限。</li>
+<li><strong>检测器是教学基线</strong>：7 个检测器远不及真实 SOC 规则集。</li>
+<li><strong>未评测检出率</strong>：没有在带标签的真实日志集上计算 precision/recall，<br>
+<strong>不能</strong>替代生产 SIEM/SOC 产品。</li>
+<li><strong>不会自动处置</strong>：不封 IP、不改配置、不发请求——处置需要单独的授权与流程。</li>
+</ul>
+<h2 id="11">11. 思考题</h2>
+<ol>
+<li>如果"零告警"可能来自"阈值太宽"，那么在给管理层做汇报时，<br>
+<strong>除了告警数</strong>你还必须报告什么，才能让这个数字有意义？</li>
+<li>攻击者知道滑动窗口阈值后可以降低频率（例如每 10 分钟 7 次）。<br>
+   这种"低频慢速"攻击在当前设计里会以什么形式留下痕迹？<br>
+   需要补充哪一类检测（提示：时间跨度、成功/失败比、账号覆盖面）？</li>
+<li><code>no_timestamp</code> 的事件无法参与窗口判定。如果这些事件恰好全部是<br>
+   攻击者构造的，会出现什么后果？如何设计一个"缺时间戳即拒绝下结论"<br>
+   的严格模式（思考 <code>--strict</code> 的语义）？</li>
+<li>分布式爆破的置信度只有 medium，因为 NAT/共享出口也会长成这样。<br>
+   要把它抬到 high，你需要哪三类外部信息？分别从哪里获得？</li>
+<li>日志分析器是只读的。如果给它加上"自动封禁 IP"的能力，<br>
+   哪一类误报会直接升级为生产事故（提示：想想 <code>login_from_single_source</code><br>
+   这种 low/low 的启发式告警）？为什么本课刻意不做这件事？</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-159/index.html">← Day 159 安全审计工具：扫描器设计 · 报告生成 · CLI 整合</a><a class="nav-next" href="../day-161/index.html">Day 161 渗透测试框架：流程编排 · 信息收集 → 检测 → 利用 · 自动化扫描框架 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

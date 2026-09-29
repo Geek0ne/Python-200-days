@@ -1,0 +1,1093 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 25 — 上下文管理器 🎯</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 25 — 上下文管理器 🎯</h1>
+  <div class="lmeta">
+    <span class="badge">核心编程概念</span>
+    <span class="badge">1001 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-025-context-managers" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📖 学习目标</a>
+<a class="toc-l2" href="#_2">一、为什么需要上下文管理器？</a>
+<a class="toc-l3" href="#11">1.1 资源管理的痛点</a>
+<a class="toc-l3" href="#12">1.2 设计原理</a>
+<a class="toc-l2" href="#with">二、with 语句底层原理</a>
+<a class="toc-l3" href="#21">2.1 执行流程</a>
+<a class="toc-l3" href="#22">2.2 字节码层面</a>
+<a class="toc-l3" href="#23">2.3 伪代码等价形式</a>
+<a class="toc-l2" href="#enter-exit">三、enter / exit 协议详解</a>
+<a class="toc-l3" href="#31-enter">3.1 enter 方法</a>
+<a class="toc-l3" href="#32-exit">3.2 exit 方法</a>
+<a class="toc-l3" href="#33">3.3 异常处理模式</a>
+<a class="toc-l3" href="#34">3.4 常见陷阱和最佳实践</a>
+<a class="toc-l2" href="#_3">四、基于类的上下文管理器</a>
+<a class="toc-l3" href="#41">4.1 完整示例</a>
+<a class="toc-l3" href="#42">4.2 返回值模式</a>
+<a class="toc-l2" href="#contextlib">五、contextlib 模块</a>
+<a class="toc-l3" href="#51-api">5.1 API 速查表</a>
+<a class="toc-l3" href="#52-contextmanager">5.2 @contextmanager 装饰器</a>
+<a class="toc-l3" href="#53-contextlibclosing">5.3 contextlib.closing</a>
+<a class="toc-l3" href="#54-contextlibsuppress">5.4 contextlib.suppress</a>
+<a class="toc-l3" href="#55-contextlibredirect_stdout-redirect_stderr">5.5 contextlib.redirect_stdout / redirect_stderr</a>
+<a class="toc-l3" href="#56-contextlibexitstack">5.6 contextlib.ExitStack</a>
+<a class="toc-l3" href="#57-contextlibnullcontext">5.7 contextlib.nullcontext</a>
+<a class="toc-l3" href="#58-contextlibcontextdecorator">5.8 contextlib.ContextDecorator</a>
+<a class="toc-l2" href="#_4">六、嵌套上下文管理器</a>
+<a class="toc-l3" href="#61">6.1 嵌套写法</a>
+<a class="toc-l3" href="#62">6.2 退出顺序</a>
+<a class="toc-l3" href="#63">6.3 异常传播顺序</a>
+<a class="toc-l2" href="#_5">七、异步上下文管理器</a>
+<a class="toc-l3" href="#71">7.1 协议</a>
+<a class="toc-l3" href="#72-asynccontextmanager">7.2 @asynccontextmanager</a>
+<a class="toc-l3" href="#73">7.3 与普通上下文管理器的对比</a>
+<a class="toc-l2" href="#_6">八、实战案例</a>
+<a class="toc-l3" href="#81-json">8.1 原子化 JSON 写入</a>
+<a class="toc-l3" href="#82">8.2 数据库连接池</a>
+<a class="toc-l3" href="#83">8.3 计时器装饰器 + 上下文管理器</a>
+<a class="toc-l3" href="#84">8.4 临时环境变量</a>
+<a class="toc-l3" href="#85">8.5 日志分组上下文</a>
+<a class="toc-l2" href="#_7">九、最佳实践和设计模式</a>
+<a class="toc-l3" href="#91">9.1 什么时候用上下文管理器？</a>
+<a class="toc-l3" href="#92">9.2 设计模式</a>
+<a class="toc-l3" href="#93">9.3 性能考虑</a>
+<a class="toc-l2" href="#faq">十、常见误区 FAQ</a>
+<a class="toc-l3" href="#q1-__exit__-true">Q1: __exit__ 返回 True 到底是什么意思？</a>
+<a class="toc-l3" href="#q2-contextmanager-yield">Q2: @contextmanager 生成器里 yield 后面的代码在异常时会执行吗？</a>
+<a class="toc-l3" href="#q3-exitstack-with">Q3: ExitStack 可以代替嵌套 with 吗？</a>
+<a class="toc-l3" href="#q4">Q4: 上下文管理器可以重复使用吗？</a>
+<a class="toc-l2" href="#_8">十一、思考题</a>
+<a class="toc-l3" href="#1">思考题 1：上下文管理器的本质</a>
+<a class="toc-l3" href="#2tryfinally-vs-with">思考题 2：try/finally vs with</a>
+<a class="toc-l3" href="#3exitstack">思考题 3：ExitStack 的设计意图</a>
+<a class="toc-l3" href="#4exit">思考题 4：exit 中的异常吞噬</a>
+<a class="toc-l3" href="#5">思考题 5：与装饰器的组合</a>
+<a class="toc-l2" href="#_9">📚 参考资料</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-025">Day 025 — 上下文管理器 🎯</h1>
+<h2 id="_1">📖 学习目标</h2>
+<ul>
+<li>理解 <code>with</code> 语句的底层执行流程</li>
+<li>掌握 <code>__enter__</code> / <code>__exit__</code> 上下文管理协议</li>
+<li>熟练使用 <code>contextlib</code> 模块的各种工具</li>
+<li>掌握嵌套和动态上下文管理</li>
+<li>实战：文件操作、数据库连接、计时器、资源管理等</li>
+<li>理解异步上下文管理器</li>
+</ul>
+<hr>
+<h2 id="_2">一、为什么需要上下文管理器？</h2>
+<h3 id="11">1.1 资源管理的痛点</h3>
+<p>在编程中，我们经常需要管理各种资源：文件、网络连接、数据库连接、锁等。这些资源的共同特点是：<strong>用完后必须释放</strong>，否则会导致资源泄漏。</p>
+<p><strong>传统方式 — try/finally：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 每个资源都要自己管理，容易出错</span>
+<span class="n">f</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;data.txt&quot;</span><span class="p">)</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="n">process</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="k">finally</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<p>缺点：<br>
+- 代码冗长，容易忘记 <code>finally</code><br>
+- 如果忘记 <code>close()</code>，文件句柄泄漏<br>
+- 多个资源嵌套时复杂度指数级上升<br>
+- 异常处理逻辑和业务逻辑混杂</p>
+<p><strong>上下文管理器方式：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;data.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="n">process</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="c1"># 文件自动关闭</span>
+</code></pre></div>
+<h3 id="12">1.2 设计原理</h3>
+<p>上下文管理器解决的核心问题是<strong>资源生命周期管理</strong>。它的设计哲学是：</p>
+<ol>
+<li><strong>关注点分离</strong>：资源的获取和释放由管理器负责，业务代码只关注"用资源做什么"</li>
+<li><strong>确定性清理</strong>：无论正常退出还是异常退出，都能保证清理代码被执行</li>
+<li><strong>声名式语法</strong>：用 <code>with</code> 关键字明确标记资源的使用范围</li>
+<li><strong>可组合性</strong>：多个管理器可以自由组合、嵌套</li>
+</ol>
+<blockquote>
+<p>这种模式也称为 <strong>RAII</strong>（Resource Acquisition Is Initialization，资源获取即初始化），源自 C++，Python 的 <code>with</code> 语句实现了类似的效果。</p>
+</blockquote>
+<hr>
+<h2 id="with">二、with 语句底层原理</h2>
+<h3 id="21">2.1 执行流程</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">with</span> <span class="n">EXPRESSION</span> <span class="k">as</span> <span class="n">TARGET</span><span class="p">:</span>
+    <span class="n">BLOCK</span>
+</code></pre></div>
+<p>背后的执行步骤：</p>
+<pre class="plain"><code>Step 1: 计算 EXPRESSION，得到上下文管理器对象 manager
+Step 2: 调用 manager.__enter__()，返回值赋给 TARGET
+Step 3: 执行 BLOCK 代码块
+Step 4a: 如果 BLOCK 正常完成 → 调用 __exit__(None, None, None)
+Step 4b: 如果 BLOCK 抛出异常 → 调用 __exit__(exc_type, exc_val, exc_tb)
+Step 5: 根据 __exit__ 返回值决定是否抑制异常
+</code></pre>
+<h3 id="22">2.2 字节码层面</h3>
+<p>CPython 为 <code>with</code> 语句生成了特殊的字节码指令：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">dis</span>
+
+
+<span class="k">def</span> <span class="nf">demo</span><span class="p">():</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;/dev/null&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+<span class="n">dis</span><span class="o">.</span><span class="n">dis</span><span class="p">(</span><span class="n">demo</span><span class="p">)</span>
+</code></pre></div>
+<p>部分输出：</p>
+<pre class="plain"><code>  2     SETUP_WITH    → 设置上下文管理器，调用 __enter__
+  5     STORE_FAST    → 将 __enter__ 返回值赋给 f
+  6     LOAD_FAST     → 加载 f
+  7     LOAD_ATTR     → 加载 f.read
+  10    CALL_FUNCTION → 调用 f.read()
+  13    POP_TOP
+  14    POP_BLOCK
+  15    LOAD_CONST    → 加载 None
+  18    WITH_EXCEPT_START → 开始异常处理
+</code></pre>
+<p><code>SETUP_WITH</code> 和 <code>WITH_EXCEPT_START</code> 是专为 <code>with</code> 语句设计的字节码，确保 <code>__exit__</code> 在任何情况下都会被调用。</p>
+<h3 id="23">2.3 伪代码等价形式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># with EXPRESSION as TARGET:</span>
+<span class="c1">#     BLOCK</span>
+
+<span class="c1"># 等价于（简化版）：</span>
+<span class="n">manager</span> <span class="o">=</span> <span class="n">EXPRESSION</span>
+<span class="n">target</span> <span class="o">=</span> <span class="n">manager</span><span class="o">.</span><span class="fm">__enter__</span><span class="p">()</span>
+<span class="n">exc</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">TARGET</span> <span class="o">=</span> <span class="n">target</span>
+    <span class="n">BLOCK</span>
+    <span class="n">exc</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="k">except</span><span class="p">:</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">manager</span><span class="o">.</span><span class="fm">__exit__</span><span class="p">(</span><span class="o">*</span><span class="n">sys</span><span class="o">.</span><span class="n">exc_info</span><span class="p">()):</span>
+        <span class="k">raise</span>
+<span class="k">finally</span><span class="p">:</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="n">manager</span><span class="o">.</span><span class="fm">__exit__</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="enter-exit">三、<strong>enter</strong> / <strong>exit</strong> 协议详解</h2>
+<h3 id="31-enter">3.1 <strong>enter</strong> 方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;进入 with 块时调用&quot;&quot;&quot;</span>
+    <span class="c1"># 1. 执行准备工作（打开文件、获取锁、建立连接等）</span>
+    <span class="c1"># 2. 返回一个值（可选），该值绑定到 as 子句</span>
+    <span class="k">return</span> <span class="bp">self</span>  <span class="c1"># 或其他对象</span>
+</code></pre></div>
+<p><strong>关键点：</strong><br>
+- <code>__enter__</code> 的返回值是 <code>as</code> 子句绑定的值<br>
+- 如果不需要 <code>as</code> 绑定，可以不返回任何值（返回 None）<br>
+- <code>__enter__</code> 中如果抛出异常，<code>__exit__</code> <strong>不会被调用</strong>（因为 never entered）</p>
+<h3 id="32-exit">3.2 <strong>exit</strong> 方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc_val</span><span class="p">,</span> <span class="n">exc_tb</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;离开 with 块时调用</span>
+
+<span class="sd">    参数：</span>
+<span class="sd">      exc_type: 异常类型（没有异常时为 None）</span>
+<span class="sd">      exc_val:  异常实例（没有异常时为 None）</span>
+<span class="sd">      exc_tb:   回溯对象（没有异常时为 None）</span>
+
+<span class="sd">    返回值：</span>
+<span class="sd">      True  → 抑制异常（异常不会继续传播）</span>
+<span class="sd">      False → 让异常继续传播（默认行为）</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c1"># 1. 执行清理工作（关闭文件、释放锁、断开连接等）</span>
+    <span class="c1"># 2. 根据异常情况决定返回值</span>
+    <span class="k">return</span> <span class="kc">False</span>
+</code></pre></div>
+<p><strong>关键点：</strong><br>
+- 三个参数在没有异常时<strong>全是 None</strong><br>
+- 返回 <code>True</code> 会<strong>静默吞掉异常</strong>，谨慎使用<br>
+- 如果 <code>__exit__</code> 自身抛出异常，<strong>原异常会被覆盖</strong><br>
+- 返回值和 <code>return</code> 语义不同：显式返回 True 才抑制，默认 None（等价 False）</p>
+<h3 id="33">3.3 异常处理模式</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">FileManager</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filename</span><span class="p">,</span> <span class="n">mode</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">filename</span> <span class="o">=</span> <span class="n">filename</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mode</span> <span class="o">=</span> <span class="n">mode</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">filename</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">mode</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">file</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc_val</span><span class="p">,</span> <span class="n">exc_tb</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">exc_type</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># 正常退出</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;正常关闭&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="k">if</span> <span class="n">exc_type</span> <span class="ow">is</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+            <span class="c1"># 文件未找到，记录日志但不中断</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;文件不存在: </span><span class="si">{</span><span class="n">exc_val</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">True</span>  <span class="c1"># 抑制异常</span>
+
+        <span class="c1"># 其他异常，记录并传播</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;发生异常: </span><span class="si">{</span><span class="n">exc_type</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">exc_val</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>  <span class="c1"># 继续传播</span>
+</code></pre></div>
+<h3 id="34">3.4 常见陷阱和最佳实践</h3>
+<table>
+<thead>
+<tr>
+<th>陷阱</th>
+<th>说明</th>
+<th>最佳实践</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__exit__</code> 意外返回 True</td>
+<td>异常被静默吞掉，难以调试</td>
+<td>只在确定需要抑制时返回 True</td>
+</tr>
+<tr>
+<td><code>__exit__</code> 中抛异常</td>
+<td>覆盖原异常</td>
+<td>用 try/except 包裹清理代码</td>
+</tr>
+<tr>
+<td>管理器重复使用</td>
+<td>大多数管理器是一次性的</td>
+<td>添加 <code>used</code> 标志或重新创建</td>
+</tr>
+<tr>
+<td>忘记 <code>super().__exit__()</code></td>
+<td>子类重写时丢失父类清理</td>
+<td>始终调用 <code>super().__exit__()</code></td>
+</tr>
+<tr>
+<td><code>__enter__</code> 返回 self</td>
+<td>不能区分管理和被管理对象</td>
+<td>按职责分离</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">四、基于类的上下文管理器</h2>
+<h3 id="41">4.1 完整示例</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">DatabaseConnection</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;数据库连接上下文管理器&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">,</span> <span class="n">database</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">host</span> <span class="o">=</span> <span class="n">host</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">port</span> <span class="o">=</span> <span class="n">port</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">database</span> <span class="o">=</span> <span class="n">database</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">connection</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;连接到 </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">host</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">port</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">database</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="c1"># 模拟建立连接</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">connection</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;host&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">host</span><span class="p">,</span> <span class="s2">&quot;db&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">database</span><span class="p">}</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">connection</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc_val</span><span class="p">,</span> <span class="n">exc_tb</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;关闭数据库连接&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">connection</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">if</span> <span class="n">exc_type</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;连接异常关闭: </span><span class="si">{</span><span class="n">exc_type</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="c1"># 数据库错误通常需要回滚，但这里继续传播</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;连接正常关闭&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+
+<span class="c1"># 使用</span>
+<span class="k">with</span> <span class="n">DatabaseConnection</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">5432</span><span class="p">,</span> <span class="s2">&quot;mydb&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">conn</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;查询数据库: </span><span class="si">{</span><span class="n">conn</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="42">4.2 返回值模式</h3>
+<table>
+<thead>
+<tr>
+<th><code>__enter__</code> 返回值</th>
+<th><code>as</code> 绑定</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>self</code> (管理器自身)</td>
+<td>管理器对象</td>
+<td>管理器提供操作方法时</td>
+</tr>
+<tr>
+<td><code>self.resource</code> (被管理资源)</td>
+<td>资源对象</td>
+<td>资源是第三方对象时</td>
+</tr>
+<tr>
+<td>一个新对象</td>
+<td>新对象</td>
+<td>需要转换或包装时</td>
+</tr>
+<tr>
+<td><code>None</code> (无返回值)</td>
+<td><code>None</code></td>
+<td>只需要副作用时</td>
+</tr>
+</tbody>
+</table>
+<p>示例：返回不同对象</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">ConnectionPool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;连接池 — 返回连接，而非自身&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_connections</span> <span class="o">=</span> <span class="p">[{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span> <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="mi">2</span><span class="p">}]</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># 从池中借出一个连接</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_connections</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;借出连接 </span><span class="si">{</span><span class="n">conn</span><span class="p">[</span><span class="s1">&#39;id&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">conn</span>  <span class="c1"># 返回连接对象，不是 self</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="c1"># 归还连接</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_connections</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+</code></pre></div>
+<hr>
+<h2 id="contextlib">五、contextlib 模块</h2>
+<p>Python 标准库提供了 <code>contextlib</code> 模块，大大简化了上下文管理器的实现和使用。</p>
+<h3 id="51-api">5.1 API 速查表</h3>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>用途</th>
+<th>一句话说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>@contextmanager</code></td>
+<td>用生成器实现上下文管理器</td>
+<td>yield 前是 enter，yield 后是 exit</td>
+</tr>
+<tr>
+<td><code>closing(thing)</code></td>
+<td>自动调用对象的 close()</td>
+<td>给任意对象添加 with 支持</td>
+</tr>
+<tr>
+<td><code>suppress(*exceptions)</code></td>
+<td>静默忽略指定异常</td>
+<td>替代 <code>try: ... except: pass</code></td>
+</tr>
+<tr>
+<td><code>redirect_stdout(file)</code></td>
+<td>临时重定向 stdout</td>
+<td>捕获 print 输出</td>
+</tr>
+<tr>
+<td><code>redirect_stderr(file)</code></td>
+<td>临时重定向 stderr</td>
+<td>捕获错误输出</td>
+</tr>
+<tr>
+<td><code>ExitStack()</code></td>
+<td>动态管理多个上下文管理器</td>
+<td>运行时决定打开哪些资源</td>
+</tr>
+<tr>
+<td><code>nullcontext(enter_result=None)</code></td>
+<td>空操作上下文管理器</td>
+<td>条件分支中的统一接口</td>
+</tr>
+<tr>
+<td><code>ContextDecorator</code></td>
+<td>既是装饰器又是上下文管理器</td>
+<td>一个类两种用法</td>
+</tr>
+<tr>
+<td><code>@asynccontextmanager</code></td>
+<td>异步版 @contextmanager</td>
+<td>async with 配套</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52-contextmanager">5.2 @contextmanager 装饰器</h3>
+<p>这是最常用的工具，用<strong>生成器函数</strong>实现上下文管理器：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">contextmanager</span>
+
+
+<span class="nd">@contextmanager</span>
+<span class="k">def</span> <span class="nf">managed_resource</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用生成器实现上下文管理器&quot;&quot;&quot;</span>
+    <span class="c1"># __enter__ 部分</span>
+    <span class="n">resource</span> <span class="o">=</span> <span class="n">acquire_resource</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">yield</span> <span class="n">resource</span>  <span class="c1"># ← 这个值被 as 绑定</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="c1"># __exit__ 部分（无论如何都会执行）</span>
+        <span class="n">release_resource</span><span class="p">(</span><span class="n">resource</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>原理：</strong> <code>@contextmanager</code> 将生成器函数包装成一个实现了 <code>__enter__</code>/<code>__exit__</code> 的类。</p>
+<ul>
+<li><code>__enter__</code>：调用生成器，推进到第一个 <code>yield</code></li>
+<li><code>__exit__</code>：推进生成器继续执行（或传入异常）</li>
+</ul>
+<p><strong>限制：</strong><br>
+- 生成器必须 yield <strong>恰好一次</strong>（不能多，不能少）<br>
+- 不能在 yield 前后使用 return 返回值<br>
+- 不支持协程（需要 <code>@asynccontextmanager</code>）</p>
+<h3 id="53-contextlibclosing">5.3 contextlib.closing</h3>
+<p>用于那些有 <code>close()</code> 方法但没有实现上下文管理器的对象：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">closing</span>
+<span class="kn">from</span> <span class="nn">urllib.request</span> <span class="kn">import</span> <span class="n">urlopen</span>
+
+<span class="k">with</span> <span class="n">closing</span><span class="p">(</span><span class="n">urlopen</span><span class="p">(</span><span class="s2">&quot;https://python.org&quot;</span><span class="p">))</span> <span class="k">as</span> <span class="n">page</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">page</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+<span class="c1"># page.close() 自动调用</span>
+</code></pre></div>
+<p>等价于：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">closing</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">thing</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">thing</span> <span class="o">=</span> <span class="n">thing</span>
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">thing</span>
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">exc_info</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">thing</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="54-contextlibsuppress">5.4 contextlib.suppress</h3>
+<p>替代 <code>try-except-pass</code> 模式，更简洁：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">suppress</span>
+
+<span class="c1"># 传统方式</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="s2">&quot;temp.txt&quot;</span><span class="p">)</span>
+<span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="c1"># suppress 方式</span>
+<span class="k">with</span> <span class="n">suppress</span><span class="p">(</span><span class="ne">FileNotFoundError</span><span class="p">):</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="s2">&quot;temp.txt&quot;</span><span class="p">)</span>
+
+<span class="c1"># 抑制多种异常</span>
+<span class="k">with</span> <span class="n">suppress</span><span class="p">(</span><span class="ne">FileNotFoundError</span><span class="p">,</span> <span class="ne">PermissionError</span><span class="p">):</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="s2">&quot;protected.txt&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="55-contextlibredirect_stdout-redirect_stderr">5.5 contextlib.redirect_stdout / redirect_stderr</h3>
+<p>临时重定向标准输出/错误：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">redirect_stdout</span><span class="p">,</span> <span class="n">redirect_stderr</span>
+<span class="kn">import</span> <span class="nn">io</span>
+
+<span class="c1"># 捕获 print 输出到字符串</span>
+<span class="n">f</span> <span class="o">=</span> <span class="n">io</span><span class="o">.</span><span class="n">StringIO</span><span class="p">()</span>
+<span class="k">with</span> <span class="n">redirect_stdout</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;这行不会显示在控制台&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;会被捕获到 StringIO&quot;</span><span class="p">)</span>
+<span class="n">captured</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">getvalue</span><span class="p">()</span>  <span class="c1"># &quot;这行不会显示在控制台\n会被捕获到 StringIO\n&quot;</span>
+
+<span class="c1"># 重定向到文件</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;log.txt&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">log</span><span class="p">,</span> <span class="n">redirect_stdout</span><span class="p">(</span><span class="n">log</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;这行写入日志文件&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="56-contextlibexitstack">5.6 contextlib.ExitStack</h3>
+<p><strong>最强大的上下文管理工具</strong>，适用于运行时才能确定需要的资源数量：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">ExitStack</span>
+
+
+<span class="k">def</span> <span class="nf">process_files</span><span class="p">(</span><span class="n">file_list</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;处理多个文件（数量在运行时才能确定）&quot;&quot;&quot;</span>
+    <span class="k">with</span> <span class="n">ExitStack</span><span class="p">()</span> <span class="k">as</span> <span class="n">stack</span><span class="p">:</span>
+        <span class="n">files</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">stack</span><span class="o">.</span><span class="n">enter_context</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="n">fname</span><span class="p">))</span>
+            <span class="k">for</span> <span class="n">fname</span> <span class="ow">in</span> <span class="n">file_list</span>
+        <span class="p">]</span>
+        <span class="c1"># 所有文件在退出时自动关闭</span>
+        <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">files</span><span class="p">:</span>
+            <span class="n">process</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>高级用法：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1. 条件性进入</span>
+<span class="k">with</span> <span class="n">ExitStack</span><span class="p">()</span> <span class="k">as</span> <span class="n">stack</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">need_cache</span><span class="p">:</span>
+        <span class="n">cache</span> <span class="o">=</span> <span class="n">stack</span><span class="o">.</span><span class="n">enter_context</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;cache.txt&quot;</span><span class="p">))</span>
+    <span class="c1"># ... 其他操作</span>
+
+<span class="c1"># 2. 推迟清理（手动清理）</span>
+<span class="n">stack</span> <span class="o">=</span> <span class="n">ExitStack</span><span class="p">()</span>
+<span class="n">f1</span> <span class="o">=</span> <span class="n">stack</span><span class="o">.</span><span class="n">enter_context</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;a.txt&quot;</span><span class="p">))</span>
+<span class="n">f2</span> <span class="o">=</span> <span class="n">stack</span><span class="o">.</span><span class="n">enter_context</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;b.txt&quot;</span><span class="p">))</span>
+<span class="c1"># ... 一些操作</span>
+<span class="n">stack</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>  <span class="c1"># 手动触发 LIFO 顺序清理</span>
+
+<span class="c1"># 3. 注册回调</span>
+<span class="n">stack</span><span class="o">.</span><span class="n">callback</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;cleanup&quot;</span><span class="p">))</span>
+<span class="n">stack</span><span class="o">.</span><span class="n">push</span><span class="p">(</span><span class="n">exit_func</span><span class="p">)</span>  <span class="c1"># 注册 __exit__ 风格的函数</span>
+
+<span class="c1"># 4. pop_all 转移所有权</span>
+<span class="n">stack2</span> <span class="o">=</span> <span class="n">ExitStack</span><span class="p">()</span>
+<span class="n">stack2</span><span class="o">.</span><span class="n">pop_all</span><span class="p">(</span><span class="n">stack</span><span class="p">)</span>  <span class="c1"># stack 的所有清理任务移交给 stack2</span>
+</code></pre></div>
+<h3 id="57-contextlibnullcontext">5.7 contextlib.nullcontext</h3>
+<p>在条件分支中提供统一的上下文管理器接口：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">nullcontext</span>
+
+
+<span class="k">def</span> <span class="nf">process</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">profile</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;profile=True 时启用性能分析，否则无操作&quot;&quot;&quot;</span>
+    <span class="n">profiler</span> <span class="o">=</span> <span class="n">cProfile</span><span class="o">.</span><span class="n">Profile</span><span class="p">()</span> <span class="k">if</span> <span class="n">profile</span> <span class="k">else</span> <span class="n">nullcontext</span><span class="p">()</span>
+    <span class="k">with</span> <span class="n">profiler</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">expensive_computation</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+</code></pre></div>
+<h3 id="58-contextlibcontextdecorator">5.8 contextlib.ContextDecorator</h3>
+<p>让同一个类既能做上下文管理器，又能做装饰器：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">ContextDecorator</span>
+
+
+<span class="k">class</span> <span class="nc">trace</span><span class="p">(</span><span class="n">ContextDecorator</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;开始&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">exc</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;结束&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+
+<span class="c1"># 作为装饰器</span>
+<span class="nd">@trace</span><span class="p">()</span>
+<span class="k">def</span> <span class="nf">hello</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">)</span>
+
+<span class="c1"># 作为上下文管理器</span>
+<span class="k">with</span> <span class="n">trace</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;world&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_4">六、嵌套上下文管理器</h2>
+<h3 id="61">6.1 嵌套写法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 方式 1：缩进嵌套</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;a.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f1</span><span class="p">:</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;b.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f2</span><span class="p">:</span>
+        <span class="n">data1</span> <span class="o">=</span> <span class="n">f1</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+        <span class="n">data2</span> <span class="o">=</span> <span class="n">f2</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+<span class="c1"># 方式 2：单行多个（Python 3.1+）</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;a.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f1</span><span class="p">,</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;b.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f2</span><span class="p">:</span>
+    <span class="n">data1</span> <span class="o">=</span> <span class="n">f1</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="n">data2</span> <span class="o">=</span> <span class="n">f2</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+<span class="c1"># 方式 3：ExitStack（动态数量）</span>
+<span class="k">with</span> <span class="n">ExitStack</span><span class="p">()</span> <span class="k">as</span> <span class="n">stack</span><span class="p">:</span>
+    <span class="n">f1</span> <span class="o">=</span> <span class="n">stack</span><span class="o">.</span><span class="n">enter_context</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;a.txt&quot;</span><span class="p">))</span>
+    <span class="n">f2</span> <span class="o">=</span> <span class="n">stack</span><span class="o">.</span><span class="n">enter_context</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">&quot;b.txt&quot;</span><span class="p">))</span>
+
+<span class="c1"># 方式 4：括号语法（Python 3.10+）</span>
+<span class="k">with</span> <span class="p">(</span>
+    <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;a.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f1</span><span class="p">,</span>
+    <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;b.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f2</span><span class="p">,</span>
+    <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;c.txt&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f3</span><span class="p">,</span>
+<span class="p">):</span>
+    <span class="o">...</span>
+</code></pre></div>
+<h3 id="62">6.2 退出顺序</h3>
+<p>嵌套上下文管理器的退出顺序是 <strong>LIFO</strong>（后进先出）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Tag</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&lt;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&gt;&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&lt;/</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&gt;&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+<span class="k">with</span> <span class="n">Tag</span><span class="p">(</span><span class="s2">&quot;div&quot;</span><span class="p">):</span>
+    <span class="k">with</span> <span class="n">Tag</span><span class="p">(</span><span class="s2">&quot;p&quot;</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Hello&quot;</span><span class="p">)</span>
+<span class="c1"># 输出：</span>
+<span class="c1"># &lt;div&gt;</span>
+<span class="c1"># &lt;p&gt;</span>
+<span class="c1"># Hello</span>
+<span class="c1"># &lt;/p&gt;</span>
+<span class="c1"># &lt;/div&gt;</span>
+</code></pre></div>
+<h3 id="63">6.3 异常传播顺序</h3>
+<pre class="plain"><code>内层异常 → 内层 __exit__ → 外层 __exit__
+
+如果内层 __exit__ 返回 True（抑制）：
+  → 外层认为没有异常
+  → 外层 __exit__(None, None, None)
+
+如果内层 __exit__ 返回 False（传播）：
+  → 异常传播到外层
+  → 外层 __exit__(exception_type, ...)
+</code></pre>
+<hr>
+<h2 id="_5">七、异步上下文管理器</h2>
+<h3 id="71">7.1 协议</h3>
+<p>Python 3.5+ 引入了异步上下文管理器，用于 <code>async with</code> 语句：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">AsyncResource</span><span class="p">:</span>
+    <span class="k">async</span> <span class="k">def</span> <span class="fm">__aenter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">async</span> <span class="k">def</span> <span class="fm">__aexit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc_val</span><span class="p">,</span> <span class="n">exc_tb</span><span class="p">):</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+
+<span class="c1"># 使用</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">AsyncResource</span><span class="p">()</span> <span class="k">as</span> <span class="n">res</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">res</span><span class="o">.</span><span class="n">do_work</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="72-asynccontextmanager">7.2 @asynccontextmanager</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">contextlib</span> <span class="kn">import</span> <span class="n">asynccontextmanager</span>
+
+
+<span class="nd">@asynccontextmanager</span>
+<span class="k">async</span> <span class="k">def</span> <span class="nf">async_open</span><span class="p">(</span><span class="n">filename</span><span class="p">):</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="k">await</span> <span class="n">aio_open</span><span class="p">(</span><span class="n">filename</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">yield</span> <span class="n">f</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">f</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="73">7.3 与普通上下文管理器的对比</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>同步</th>
+<th>异步</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>协议方法</td>
+<td><code>__enter__</code> / <code>__exit__</code></td>
+<td><code>__aenter__</code> / <code>__aexit__</code></td>
+</tr>
+<tr>
+<td>语句</td>
+<td><code>with</code></td>
+<td><code>async with</code></td>
+</tr>
+<tr>
+<td>装饰器</td>
+<td><code>@contextmanager</code></td>
+<td><code>@asynccontextmanager</code></td>
+</tr>
+<tr>
+<td>堆栈</td>
+<td><code>ExitStack</code></td>
+<td><code>AsyncExitStack</code></td>
+</tr>
+<tr>
+<td>引入版本</td>
+<td>Python 2.5 (PEP 343)</td>
+<td>Python 3.5 (PEP 492)</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_6">八、实战案例</h2>
+<h3 id="81-json">8.1 原子化 JSON 写入</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">AtomicJSONWriter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;保证 JSON 写入的原子性</span>
+
+<span class="sd">    原理：先写入临时文件，成功后再原子 rename</span>
+<span class="sd">    如果中间出错，临时文件自动删除，不破坏原文件</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filepath</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">filepath</span> <span class="o">=</span> <span class="n">filepath</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">indent</span> <span class="o">=</span> <span class="n">indent</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">temp_path</span> <span class="o">=</span> <span class="n">filepath</span> <span class="o">+</span> <span class="s2">&quot;.tmp&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fp</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">temp_path</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc_val</span><span class="p">,</span> <span class="n">exc_tb</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">fp</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">exc_type</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">temp_path</span><span class="p">)</span>  <span class="c1"># 回滚</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">temp_path</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">filepath</span><span class="p">)</span>  <span class="c1"># 原子提交</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="k">def</span> <span class="nf">write</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="n">json</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">fp</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">indent</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="82">8.2 数据库连接池</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">ConnectionPool</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;简单的数据库连接池管理器</span>
+
+<span class="sd">    with pool as conn: 自动管理连接的获取和归还</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_connections</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_pool</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_create_conn</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_connections</span><span class="p">)]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_in_use</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">_create_conn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">id</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;id&quot;</span><span class="p">:</span> <span class="nb">id</span><span class="p">,</span> <span class="s2">&quot;active&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="n">conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pool</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_in_use</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">conn</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">])</span>
+            <span class="k">return</span> <span class="n">conn</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_in_use</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_current_conn</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">])</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_pool</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_current_conn</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+</code></pre></div>
+<h3 id="83">8.3 计时器装饰器 + 上下文管理器</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Timer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;既是上下文管理器又是装饰器的计时器&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;Timer&quot;</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">elapsed</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc_val</span><span class="p">,</span> <span class="n">exc_tb</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">start</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">] </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">elapsed</span><span class="o">*</span><span class="mi">1000</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">ms&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="k">def</span> <span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">):</span>
+        <span class="nd">@functools</span><span class="o">.</span><span class="n">wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+        <span class="k">def</span> <span class="nf">wrapper</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+            <span class="k">with</span> <span class="bp">self</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">wrapper</span>
+
+
+<span class="c1"># 两种用法</span>
+<span class="nd">@Timer</span><span class="p">(</span><span class="s2">&quot;排序&quot;</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">sort</span><span class="p">():</span>
+    <span class="o">...</span>
+
+<span class="k">with</span> <span class="n">Timer</span><span class="p">(</span><span class="s2">&quot;查询&quot;</span><span class="p">):</span>
+    <span class="o">...</span>
+</code></pre></div>
+<h3 id="84">8.4 临时环境变量</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@contextmanager</span>
+<span class="k">def</span> <span class="nf">set_env</span><span class="p">(</span><span class="o">**</span><span class="n">environ</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;临时设置环境变量&quot;&quot;&quot;</span>
+    <span class="n">old_environ</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">environ</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">yield</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">old_environ</span><span class="p">)</span>
+
+
+<span class="k">with</span> <span class="n">set_env</span><span class="p">(</span><span class="n">DATABASE_URL</span><span class="o">=</span><span class="s2">&quot;sqlite:///test.db&quot;</span><span class="p">):</span>
+    <span class="k">assert</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;DATABASE_URL&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;sqlite:///test.db&quot;</span>
+<span class="c1"># 环境变量恢复</span>
+</code></pre></div>
+<h3 id="85">8.5 日志分组上下文</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">LogGroup</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;日志分组 — 自动缩进和时间标记&quot;&quot;&quot;</span>
+
+    <span class="n">indent</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">label</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">label</span> <span class="o">=</span> <span class="n">label</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;▶ </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="n">LogGroup</span><span class="o">.</span><span class="n">indent</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc_val</span><span class="p">,</span> <span class="n">exc_tb</span><span class="p">):</span>
+        <span class="n">LogGroup</span><span class="o">.</span><span class="n">indent</span> <span class="o">-=</span> <span class="mi">1</span>
+        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">start</span>
+        <span class="n">status</span> <span class="o">=</span> <span class="s2">&quot;✓&quot;</span> <span class="k">if</span> <span class="n">exc_type</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;✗&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_log</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">status</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s)&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">_log</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">msg</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;  &#39;</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="bp">cls</span><span class="o">.</span><span class="n">indent</span><span class="si">}{</span><span class="n">msg</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">with</span> <span class="n">LogGroup</span><span class="p">(</span><span class="s2">&quot;HTTP 请求&quot;</span><span class="p">):</span>
+    <span class="n">LogGroup</span><span class="o">.</span><span class="n">_log</span><span class="p">(</span><span class="s2">&quot;验证 token...&quot;</span><span class="p">)</span>
+    <span class="k">with</span> <span class="n">LogGroup</span><span class="p">(</span><span class="s2">&quot;数据库查询&quot;</span><span class="p">):</span>
+        <span class="n">LogGroup</span><span class="o">.</span><span class="n">_log</span><span class="p">(</span><span class="s2">&quot;SELECT ...&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_7">九、最佳实践和设计模式</h2>
+<h3 id="91">9.1 什么时候用上下文管理器？</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>典型资源</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>文件 I/O</td>
+<td>文件句柄</td>
+<td><code>with open(...) as f:</code></td>
+</tr>
+<tr>
+<td>网络连接</td>
+<td>socket</td>
+<td><code>with socket.create_connection(...) as s:</code></td>
+</tr>
+<tr>
+<td>数据库</td>
+<td>连接/游标</td>
+<td><code>with db.cursor() as cur:</code></td>
+</tr>
+<tr>
+<td>线程同步</td>
+<td>锁/信号量</td>
+<td><code>with lock:</code></td>
+</tr>
+<tr>
+<td>临时状态</td>
+<td>环境变量</td>
+<td><code>with set_env(DEBUG="1"):</code></td>
+</tr>
+<tr>
+<td>事务</td>
+<td>数据库事务</td>
+<td><code>with transaction():</code></td>
+</tr>
+<tr>
+<td>计时</td>
+<td>时间测量</td>
+<td><code>with Timer() as t:</code></td>
+</tr>
+<tr>
+<td>重定向</td>
+<td>stdout/stderr</td>
+<td><code>with redirect_stdout(f):</code></td>
+</tr>
+<tr>
+<td>精度/上下文</td>
+<td>decimal 精度</td>
+<td><code>with localcontext() as ctx:</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="92">9.2 设计模式</h3>
+<p><strong>模式 1：资源获取与释放</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Resource</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_acquire</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span>
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_release</span><span class="p">()</span>
+        <span class="k">return</span> <span class="kc">False</span>
+</code></pre></div>
+<p><strong>模式 2：临时状态修改</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@contextmanager</span>
+<span class="k">def</span> <span class="nf">temporary_change</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+    <span class="n">old</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">attr</span><span class="p">)</span>
+    <span class="nb">setattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">yield</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="nb">setattr</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">old</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>模式 3：条件执行</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@contextmanager</span>
+<span class="k">def</span> <span class="nf">optional</span><span class="p">(</span><span class="n">condition</span><span class="p">,</span> <span class="n">cm</span><span class="p">,</span> <span class="n">else_cm</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;条件性进入上下文管理器&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">condition</span><span class="p">:</span>
+        <span class="k">with</span> <span class="n">cm</span><span class="p">:</span>
+            <span class="k">yield</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">else_cm</span><span class="p">:</span>
+            <span class="k">with</span> <span class="n">else_cm</span><span class="p">:</span>
+                <span class="k">yield</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">yield</span>
+</code></pre></div>
+<p><strong>模式 4：重试/回滚</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@contextmanager</span>
+<span class="k">def</span> <span class="nf">transaction</span><span class="p">(</span><span class="n">conn</span><span class="p">):</span>
+    <span class="n">savepoint</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">savepoint</span><span class="p">()</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">yield</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">rollback</span><span class="p">(</span><span class="n">savepoint</span><span class="p">)</span>
+        <span class="k">raise</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="93">9.3 性能考虑</h3>
+<ul>
+<li>上下文管理器的开销极小（主要是函数调用和几个字节码）</li>
+<li>不要为了避免 <code>with</code> 而写 <code>try/finally</code> — <code>with</code> 更安全</li>
+<li><code>ExitStack</code> 的 enter_context 有轻微开销，但对大多数应用可忽略</li>
+<li>热路径（内层循环）中慎用嵌套上下文管理器</li>
+</ul>
+<hr>
+<h2 id="faq">十、常见误区 FAQ</h2>
+<h3 id="q1-__exit__-true">Q1: <code>__exit__</code> 返回 True 到底是什么意思？</h3>
+<p>A: 告诉 Python 解释器："我已经处理了这个异常，不要传播它"。程序会继续执行 with 块之后的代码。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Eater</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="k">return</span> <span class="kc">True</span>  <span class="c1"># 吃掉一切异常</span>
+
+<span class="k">with</span> <span class="n">Eater</span><span class="p">():</span>
+    <span class="mi">1</span> <span class="o">/</span> <span class="mi">0</span>  <span class="c1"># ZeroDivisionError 被静默吞掉</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;这行会执行&quot;</span><span class="p">)</span>  <span class="c1"># ← 真的会执行！</span>
+</code></pre></div>
+<h3 id="q2-contextmanager-yield">Q2: <code>@contextmanager</code> 生成器里 yield 后面的代码在异常时会执行吗？</h3>
+<p>A: <strong>会的</strong>，前提是你用了 try/finally。如果直接 yield 没有 try/finally，且抛出异常，yield 之后的代码不会执行：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@contextmanager</span>
+<span class="k">def</span> <span class="nf">bad</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;enter&quot;</span><span class="p">)</span>
+    <span class="k">yield</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;exit&quot;</span><span class="p">)</span>  <span class="c1"># 如果异常发生，这行不执行</span>
+
+<span class="nd">@contextmanager</span>
+<span class="k">def</span> <span class="nf">good</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;enter&quot;</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">yield</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;exit&quot;</span><span class="p">)</span>  <span class="c1"># 无论如何都执行</span>
+</code></pre></div>
+<h3 id="q3-exitstack-with">Q3: ExitStack 可以代替嵌套 with 吗？</h3>
+<p>A: 可以，但更适合动态场景。对于已知数量的固定资源，嵌套 <code>with</code> 或逗号分隔更清晰。<code>ExitStack</code> 的优势在于：</p>
+<ul>
+<li>运行时才能知道需要多少资源</li>
+<li>需要条件性进入某些上下文</li>
+<li>需要将清理推迟到不确定的未来</li>
+</ul>
+<h3 id="q4">Q4: 上下文管理器可以重复使用吗？</h3>
+<p>A: 默认<strong>不能</strong>。大多数上下文管理器（如 <code>open()</code> 返回的文件对象）在 <code>__exit__</code> 后状态已改变。但你可以：</p>
+<ol>
+<li>每次创建新实例</li>
+<li>在 <code>__exit__</code> 中"重置"状态（不推荐）</li>
+<li>使用工厂函数每次返回新管理器</li>
+</ol>
+<hr>
+<h2 id="_8">十一、思考题</h2>
+<h3 id="1">思考题 1：上下文管理器的本质</h3>
+<p>为什么 Python 选择用协议（<code>__enter__</code>/<code>__exit__</code>）而不是继承（抽象基类）来实现上下文管理器？这种设计有什么好处？</p>
+<p><strong>提示</strong>：想想 Python 的"鸭子类型"哲学、标准库的灵活性、以及用户自定义类型的自由度。</p>
+<h3 id="2tryfinally-vs-with">思考题 2：try/finally vs with</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 方式 A</span>
+<span class="n">f</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;file&quot;</span><span class="p">)</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">process</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+<span class="k">finally</span><span class="p">:</span>
+    <span class="n">f</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+<span class="c1"># 方式 B</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;file&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">process</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+</code></pre></div>
+<p>方式 A 和方式 B 是严格等价的吗？如果不是，差异在哪里？</p>
+<p><strong>提示</strong>：想想 <code>open()</code> 本身可能失败的情况，以及 <code>__exit__</code> 的返回值。</p>
+<h3 id="3exitstack">思考题 3：ExitStack 的设计意图</h3>
+<p>假设你有以下场景：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">files</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;a.txt&quot;</span><span class="p">,</span> <span class="s2">&quot;b.txt&quot;</span><span class="p">,</span> <span class="s2">&quot;c.txt&quot;</span><span class="p">]</span>
+<span class="c1"># 想同时打开所有文件并处理</span>
+</code></pre></div>
+<ol>
+<li>用 <code>with open(f1) as a, open(f2) as b, ...</code> 有什么问题？</li>
+<li><code>ExitStack</code> 如何解决这个问题？</li>
+<li>如果中间一个文件打开失败，已经打开的文件应该怎么处理？</li>
+</ol>
+<h3 id="4exit">思考题 4：<strong>exit</strong> 中的异常吞噬</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Swallower</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc_type</span><span class="p">,</span> <span class="n">exc_val</span><span class="p">,</span> <span class="n">exc_tb</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">exc_type</span> <span class="o">==</span> <span class="ne">ValueError</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;吞掉 ValueError&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="c1"># RuntimeError 不处理</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+<span class="k">with</span> <span class="n">Swallower</span><span class="p">():</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;test&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;ValueError 被吞掉&quot;</span><span class="p">)</span>
+
+<span class="k">with</span> <span class="n">Swallower</span><span class="p">():</span>
+    <span class="k">pass</span>  <span class="c1"># 正常退出</span>
+</code></pre></div>
+<p>如果 <code>__exit__</code> 中除了返回 True，还打印了日志，这个日志是否可能被用户忽略？在生产环境中应该如何处理这种"抑制"操作？</p>
+<h3 id="5">思考题 5：与装饰器的组合</h3>
+<p>如何实现一个既可以用作 <code>@timer</code> 装饰器又可以用作 <code>with timer:</code> 上下文管理器的工具？这两种使用方式在语义上有什么细微差别？</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 装饰器方式 — 整个函数耗时</span>
+<span class="nd">@timer</span>
+<span class="k">def</span> <span class="nf">load_data</span><span class="p">():</span>
+    <span class="o">...</span>
+
+<span class="c1"># 上下文管理器方式 — 代码块耗时</span>
+<span class="k">with</span> <span class="n">timer</span><span class="p">():</span>
+    <span class="n">load_data</span><span class="p">()</span>
+</code></pre></div>
+<p><strong>提示</strong>：考虑一下，装饰器方式无法精确控制计时范围，而上下文管理器可以。如果需要同时支持两种模式，需要满足什么接口？</p>
+<hr>
+<h2 id="_9">📚 参考资料</h2>
+<ul>
+<li><a href="https://peps.python.org/pep-0343/">PEP 343 — The "with" Statement</a></li>
+<li><a href="https://docs.python.org/3/reference/datamodel.html#context-managers">Python 官方文档 — With Statement Context Managers</a></li>
+<li><a href="https://docs.python.org/3/library/contextlib.html">Python 官方文档 — contextlib</a></li>
+<li><a href="https://peps.python.org/pep-0492/">PEP 492 — Coroutines with async and await syntax</a>（异步上下文管理器）</li>
+<li><a href="https://effectivepython.com/">Effective Python — Item 34: Use with Statements for Resource Management</a></li>
+<li><a href="https://www.oreilly.com/library/view/fluent-python/9781491946237/">Fluent Python — Chapter 15: Context Managers and else Blocks</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-024/index.html">← Day 24 装饰器进阶 🚀</a><a class="nav-next" href="../day-026/index.html">Day 26 字符串高级 🎯 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

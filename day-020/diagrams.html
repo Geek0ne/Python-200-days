@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 20 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 20 正文</a>
+  <h1>Day 20 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-020">Day 020 — 递归原理图解</h1>
+<h2 id="1">1. 调用栈与栈帧模型</h2>
+<h3 id="factorial3">调用栈生命周期（factorial(3) 为例）</h3>
+<pre class="plain"><code>初始状态:
+┌─────────────┐
+│   main()    │  ← 当前执行
+└─────────────┘
+调用栈底部
+
+调用 factorial(3):
+┌─────────────┐
+│ factorial(3)│  ← 当前执行 (n=3)
+├─────────────┤
+│   main()    │
+└─────────────┘
+
+调用 factorial(2):
+┌─────────────┐
+│ factorial(2)│  ← 当前执行 (n=2)
+├─────────────┤
+│ factorial(3)│  (等待 return, n=3, 记住了 3 * ?)
+├─────────────┤
+│   main()    │
+└─────────────┘
+
+调用 factorial(1):
+┌─────────────┐
+│ factorial(1)│  ← 当前执行 (n=1)
+├─────────────┤
+│ factorial(2)│  (等待 return, n=2, 记住了 2 * ?)
+├─────────────┤
+│ factorial(3)│  (等待 return, n=3, 记住了 3 * ?)
+├─────────────┤
+│   main()    │
+└─────────────┘
+
+调用 factorial(0):
+┌─────────────┐
+│ factorial(0)│  ← 基线条件, 返回 1
+├─────────────┤
+│ factorial(1)│  (等待 return, n=1)
+├─────────────┤
+│ factorial(2)│  (等待 return, n=2)
+├─────────────┤
+│ factorial(3)│  (等待 return, n=3)
+├─────────────┤
+│   main()    │
+└─────────────┘
+
+开始回溯:
+┌─────────────┐
+│ factorial(1)│  ← 收到 1, 计算 1*1=1, 返回 1
+├─────────────┤
+│ factorial(2)│  (等待 return, n=2)
+├─────────────┤
+│ factorial(3)│  (等待 return, n=3)
+├─────────────┤
+│   main()    │
+└─────────────┘
+
+继续回溯:
+┌─────────────┐
+│ factorial(2)│  ← 收到 1, 计算 2*1=2, 返回 2
+├─────────────┤
+│ factorial(3)│  (等待 return, n=3)
+├─────────────┤
+│   main()    │
+└─────────────┘
+
+继续回溯:
+┌─────────────┐
+│ factorial(3)│  ← 收到 2, 计算 3*2=6, 返回 6
+├─────────────┤
+│   main()    │
+└─────────────┘
+
+最终:
+┌─────────────┐
+│   main()    │  ← 收到 6, result = 6
+└─────────────┘
+</code></pre>
+<h3 id="factorial3_1">栈帧内部结构（factorial(3) 的栈帧）</h3>
+<pre class="plain"><code>栈帧地址: 0x7ffeeb4a8f30
+┌──────────────────────────────┐
+│     返回地址: 0x55a3b2c1     │ → 返回到 factorial(3) 的调用处
+├──────────────────────────────┤
+│     局部变量:                 │
+│       n      = 3             │  ← 参数
+│       result = ?             │  ← 未计算（等待递归返回）
+├──────────────────────────────┤
+│     代码指针: fact+42        │ → 当前执行到的行号
+├──────────────────────────────┤
+│     上一层栈帧指针: 0x7ffe...│ → 链接到 main 的栈帧
+└──────────────────────────────┘
+</code></pre>
+<h2 id="2">2. 递归执行流程对比</h2>
+<h3 id="vs-factorial">普通递归 vs 尾递归 (factorial)</h3>
+<pre class="plain"><code>普通递归:
+    fact(3) → 3 * fact(2)
+                  → 2 * fact(1)
+                        → 1 * fact(0)
+                              → 1
+                        ← 1
+                  ← 2
+            ← 6
+
+    特点: 展开(递推) → 收缩(回溯)
+         每层都需要记住 &quot;n * ?&quot;
+
+尾递归:
+    fact_tail(3, 1) → fact_tail(2, 3)
+                      → fact_tail(1, 6)
+                        → fact_tail(0, 6)
+                          → 6
+
+    特点: 不需要回溯
+         累加器直接传递结果
+         理论上只需一个栈帧（如果优化）
+         但 Python 不优化！
+</code></pre>
+<h2 id="3-dag">3. 递归树与 DAG</h2>
+<h3 id="_1">斐波那契递归树（显示重复计算）</h3>
+<pre class="plain"><code>                    fib(5)
+                   ╱     ╲
+              fib(4)     fib(3)
+             ╱     ╲     ╱   ╲
+        fib(3)   fib(2) fib(2) fib(1)★
+        ╱   ╲    ╱  ╲   ╱  ╲
+    fib(2) fib(1)★1★  1★  1★
+    ╱   ╲
+   1★   1★
+
+★ = fib(1) 被计算了 5 次!
+fib(2) 被计算了 3 次!
+
+Memoization 后变成 DAG:
+                    fib(5)
+                   ╱     ╲
+              fib(4)     fib(3)
+             ╱     ╲       │
+        fib(3)   fib(2)    │
+        ╱   ╲      │       │
+    fib(2) fib(1)  │       │
+       │     │     │       │
+    fib(0)  (1)    │       │
+       │           │       │
+      (0)         (1)     (2)
+
+    每个节点仅计算一次 → O(n)
+</code></pre>
+<h2 id="4">4. 汉诺塔递归分治图解</h2>
+<h3 id="n3">n=3 的移动过程</h3>
+<pre class="plain"><code>初始状态:
+    A: [3, 2, 1]    B: []    C: []
+
+步骤 1-3: 移动 1,2 到 B (借助 C)
+    A: [3]           B: [2, 1]    C: []
+
+步骤 4: 移动 3 到 C
+    A: []            B: [2, 1]    C: [3]
+
+步骤 5-7: 移动 1,2 从 B 到 C (借助 A)
+    A: []            B: []        C: [3, 2, 1]
+
+递归树:
+    hanoi(3, A, C, B)
+    ├── hanoi(2, A, B, C)
+    │   ├── hanoi(1, A, C, B)     → 1: A→C
+    │   ├── 移动 2:        A→B
+    │   └── hanoi(1, C, B, A)     → 3: C→B
+    ├── 移动 3:            A→C
+    └── hanoi(2, B, C, A)
+        ├── hanoi(1, B, A, C)     → 5: B→A
+        ├── 移动 2:        B→C
+        └── hanoi(1, A, C, B)     → 7: A→C
+</code></pre>
+<h2 id="5">5. 二分查找递归树</h2>
+<h3 id="1-3-5-7-9-11-13-15-7">在 [1, 3, 5, 7, 9, 11, 13, 15] 中搜索 7</h3>
+<pre class="plain"><code>                查找(arr, 7, 0, 7)     mid=3, arr[3]=7 → 找到!
+                │
+                └── 命中基线条件
+
+    实际上分治过程：
+    arr = [1, 3, 5, 7, 9, 11, 13, 15]     left=0, right=7
+                              ↓
+    mid = 3, arr[3] = 7 == target → 返回 3 ✅
+
+    搜索 1 的过程（更典型）:
+    arr = [1, 3, 5, 7, 9, 11, 13, 15]     left=0, right=7, mid=3, arr[3]=7 &gt; 1
+                              ↓
+    arr = [1, 3, 5, 7]                    left=0, right=2, mid=1, arr[1]=3 &gt; 1
+                              ↓
+    arr = [1, 3]                          left=0, right=0, mid=0, arr[0]=1 == 1 ✅
+</code></pre>
+<h2 id="6-mermaid">6. Mermaid 图</h2>
+<h3 id="_2">递归调用序列图</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant M as main()
+    participant F4 as fact(4)
+    participant F3 as fact(3)
+    participant F2 as fact(2)
+    participant F1 as fact(1)
+    participant F0 as fact(0)
+
+    M-&gt;&gt;F4: factorial(4)
+    Note over F4: n=4, 4 * fact(3)
+    F4-&gt;&gt;F3: factorial(3)
+    Note over F3: n=3, 3 * fact(2)
+    F3-&gt;&gt;F2: factorial(2)
+    Note over F2: n=2, 2 * fact(1)
+    F2-&gt;&gt;F1: factorial(1)
+    Note over F1: n=1, 1 * fact(0)
+    F1-&gt;&gt;F0: factorial(0)
+    Note over F0: 基线条件! return 1
+    F0--&gt;&gt;F1: return 1
+    Note over F1: 1 * 1 = 1
+    F1--&gt;&gt;F2: return 1
+    Note over F2: 2 * 1 = 2
+    F2--&gt;&gt;F3: return 2
+    Note over F3: 3 * 2 = 6
+    F3--&gt;&gt;F4: return 6
+    Note over F4: 4 * 6 = 24
+    F4--&gt;&gt;M: return 24
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant M as main()
+    participant F4 as fact(4)
+    participant F3 as fact(3)
+    participant F2 as fact(2)
+    participant F1 as fact(1)
+    participant F0 as fact(0)
+
+    M-&gt;&gt;F4: factorial(4)
+    Note over F4: n=4, 4 * fact(3)
+    F4-&gt;&gt;F3: factorial(3)
+    Note over F3: n=3, 3 * fact(2)
+    F3-&gt;&gt;F2: factorial(2)
+    Note over F2: n=2, 2 * fact(1)
+    F2-&gt;&gt;F1: factorial(1)
+    Note over F1: n=1, 1 * fact(0)
+    F1-&gt;&gt;F0: factorial(0)
+    Note over F0: 基线条件! return 1
+    F0--&gt;&gt;F1: return 1
+    Note over F1: 1 * 1 = 1
+    F1--&gt;&gt;F2: return 1
+    Note over F2: 2 * 1 = 2
+    F2--&gt;&gt;F3: return 2
+    Note over F3: 3 * 2 = 6
+    F3--&gt;&gt;F4: return 6
+    Note over F4: 4 * 6 = 24
+    F4--&gt;&gt;M: return 24
+</code></pre></div>
+<h3 id="vs">递归树 vs 迭代流程对比</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph 递归
+        R1[&quot;fact(3)&quot;] --&gt; R2[&quot;3 * fact(2)&quot;]
+        R2 --&gt; R3[&quot;2 * fact(1)&quot;]
+        R3 --&gt; R4[&quot;1 * fact(0)&quot;]
+        R4 --&gt; R5[&quot;return 1&quot;]
+        R5 --&gt; R6[&quot;1*1=1&quot;]
+        R6 --&gt; R7[&quot;2*1=2&quot;]
+        R7 --&gt; R8[&quot;3*2=6&quot;]
+    end
+
+    subgraph 迭代
+        I1[&quot;result=1&quot;] --&gt; I2[&quot;i=2 → result*=2&quot;]
+        I2 --&gt; I3[&quot;i=3 → result*=3&quot;]
+        I3 --&gt; I4[&quot;return 6&quot;]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph 递归
+        R1[&quot;fact(3)&quot;] --&gt; R2[&quot;3 * fact(2)&quot;]
+        R2 --&gt; R3[&quot;2 * fact(1)&quot;]
+        R3 --&gt; R4[&quot;1 * fact(0)&quot;]
+        R4 --&gt; R5[&quot;return 1&quot;]
+        R5 --&gt; R6[&quot;1*1=1&quot;]
+        R6 --&gt; R7[&quot;2*1=2&quot;]
+        R7 --&gt; R8[&quot;3*2=6&quot;]
+    end
+
+    subgraph 迭代
+        I1[&quot;result=1&quot;] --&gt; I2[&quot;i=2 → result*=2&quot;]
+        I2 --&gt; I3[&quot;i=3 → result*=3&quot;]
+        I3 --&gt; I4[&quot;return 6&quot;]
+    end
+</code></pre></div>
+<h3 id="_3">文件系统递归遍历</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    root[&quot;📁 project/&quot;] --&gt; src[&quot;📁 src/&quot;]
+    root --&gt; tests[&quot;📁 tests/&quot;]
+    root --&gt; readme[&quot;📄 README.md&quot;]
+
+    src --&gt; main[&quot;📄 main.py&quot;]
+    src --&gt; utils[&quot;📁 utils/&quot;]
+    utils --&gt; helpers[&quot;📄 helpers.py&quot;]
+    utils --&gt; config[&quot;📄 config.py&quot;]
+
+    tests --&gt; test_main[&quot;📄 test_main.py&quot;]
+
+    style root fill:#e1f5fe
+    style src fill:#f3e5f5
+    style utils fill:#f3e5f5
+    style tests fill:#f3e5f5
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    root[&quot;📁 project/&quot;] --&gt; src[&quot;📁 src/&quot;]
+    root --&gt; tests[&quot;📁 tests/&quot;]
+    root --&gt; readme[&quot;📄 README.md&quot;]
+
+    src --&gt; main[&quot;📄 main.py&quot;]
+    src --&gt; utils[&quot;📁 utils/&quot;]
+    utils --&gt; helpers[&quot;📄 helpers.py&quot;]
+    utils --&gt; config[&quot;📄 config.py&quot;]
+
+    tests --&gt; test_main[&quot;📄 test_main.py&quot;]
+
+    style root fill:#e1f5fe
+    style src fill:#f3e5f5
+    style utils fill:#f3e5f5
+    style tests fill:#f3e5f5
+</code></pre></div>
+<h2 id="7">7. 递归深度与栈溢出示意</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph 栈空间
+        D1[&quot;深度 1&quot;] --&gt; D2[&quot;深度 2&quot;]
+        D2 --&gt; D3[&quot;深度 3&quot;]
+        D3 --&gt; D4[&quot;深度 4&quot;]
+        D4 --&gt; D5[&quot;深度 5&quot;]
+        D5 --&gt; D6[&quot;...&quot;]
+        D6 --&gt; D1000[&quot;深度 1000 ✅&quot;]
+        D1000 --&gt; D1001[&quot;深度 1001 💥&quot;]
+    end
+
+    D1001 --&gt; crash[&quot;RecursionError:&lt;br/&gt;maximum recursion depth exceeded&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph 栈空间
+        D1[&quot;深度 1&quot;] --&gt; D2[&quot;深度 2&quot;]
+        D2 --&gt; D3[&quot;深度 3&quot;]
+        D3 --&gt; D4[&quot;深度 4&quot;]
+        D4 --&gt; D5[&quot;深度 5&quot;]
+        D5 --&gt; D6[&quot;...&quot;]
+        D6 --&gt; D1000[&quot;深度 1000 ✅&quot;]
+        D1000 --&gt; D1001[&quot;深度 1001 💥&quot;]
+    end
+
+    D1001 --&gt; crash[&quot;RecursionError:&lt;br/&gt;maximum recursion depth exceeded&quot;]
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

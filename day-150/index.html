@@ -1,0 +1,1605 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 150 — OAuth2 与认证安全：授权流程、CSRF/SSRF 与安全审计</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 150 — OAuth2 与认证安全：授权流程、CSRF/SSRF 与安全审计</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">988 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-150-oauth2-auth-security" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-authenticationauthorization">1.1 先分清：认证（Authentication）与授权（Authorization）</a>
+<a class="toc-l3" href="#12-oauth2">1.2 OAuth2 是什么，不是什么</a>
+<a class="toc-l3" href="#13">1.3 四个角色（必须背下来）</a>
+<a class="toc-l3" href="#14-grant-types">1.4 四个授权模式（Grant Types）</a>
+<a class="toc-l3" href="#15-csrf">1.5 CSRF（跨站请求伪造）是什么</a>
+<a class="toc-l3" href="#16-ssrf">1.6 SSRF（服务端请求伪造）是什么</a>
+<a class="toc-l3" href="#17-vs-jwt">1.7 令牌的两种形态：不透明串 vs JWT（选型必须想清楚）</a>
+<a class="toc-l3" href="#18-oidc-nonce-oauth2">1.8 OIDC 与 nonce：为什么 OAuth2 做不了登录</a>
+<a class="toc-l2" href="#_2">二、原理解释（底层机制）</a>
+<a class="toc-l3" href="#21-authorization-code-flow">2.1 授权码流程（Authorization Code Flow）逐步拆解</a>
+<a class="toc-l3" href="#22-pkce-proof-key-for-code-exchange-rfc-7636">2.2 PKCE 原理（Proof Key for Code Exchange, RFC 7636）</a>
+<a class="toc-l3" href="#23-state-oauth2-csrf">2.3 state 参数：OAuth2 里的 CSRF 防护</a>
+<a class="toc-l3" href="#24-csrf">2.4 CSRF 攻击原理与四层防护</a>
+<a class="toc-l3" href="#25-ssrf">2.5 SSRF 原理、检测与防护</a>
+<a class="toc-l2" href="#_3">三、攻击方式 · 手段 · 原理</a>
+<a class="toc-l3" href="#31-authorization-code-interception">3.1 授权码拦截（Authorization Code Interception）</a>
+<a class="toc-l3" href="#32-csrf-state">3.2 CSRF 型账号绑定（缺 state 的经典后果）</a>
+<a class="toc-l3" href="#33-redirect_uri">3.3 redirect_uri 校验缺陷 → 授权码外泄 + 开放重定向</a>
+<a class="toc-l3" href="#34-pkce">3.4 PKCE 的三种&quot;假防护&quot;</a>
+<a class="toc-l3" href="#35">3.5 令牌的泄漏面：为什么&quot;放哪儿&quot;比&quot;多长&quot;更重要</a>
+<a class="toc-l3" href="#36-csrf-cors">3.6 CSRF：攻击原理与&quot;为什么 CORS 不管&quot;</a>
+<a class="toc-l3" href="#37-ssrf-url">3.7 SSRF：从&quot;用户可控 URL&quot;到&quot;接管云账号&quot;</a>
+<a class="toc-l3" href="#38">3.8 检测信号：哪些日志/指标能看出&quot;有人在打&quot;</a>
+<a class="toc-l2" href="#_4">四、防护与修复原理</a>
+<a class="toc-l3" href="#41">4.1 授权码流程为什么安全：三道锁</a>
+<a class="toc-l3" href="#42-state">4.2 state：三个性质一个都不能少</a>
+<a class="toc-l3" href="#43">4.3 授权服务器侧必须做的三件事</a>
+<a class="toc-l3" href="#44">4.4 令牌设计：短命 + 轮转 + 可撤销 + 不透明优先</a>
+<a class="toc-l3" href="#45-csrf">4.5 CSRF 四层纵深（为什么是四层而不是挑一个）</a>
+<a class="toc-l3" href="#46-ssrf">4.6 SSRF 五层纵深：为什么&quot;黑名单永远不够&quot;</a>
+<a class="toc-l2" href="#api">五、定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#51-oauth2">5.1 OAuth2 端点与参数速查</a>
+<a class="toc-l3" href="#52">5.2 安全基线检查表（今天的内容浓缩版）</a>
+<a class="toc-l2" href="#_5">六、图解</a>
+<a class="toc-l3" href="#61-pkce-mermaid">6.1 授权码 + PKCE 全流程（Mermaid）</a>
+<a class="toc-l3" href="#62-csrf-ascii">6.2 CSRF 攻击与防护对照（ASCII）</a>
+<a class="toc-l3" href="#63-ssrf-ascii">6.3 SSRF 攻击路径与纵深防御（ASCII）</a>
+<a class="toc-l2" href="#_6">七、代码案例逐节说明 + 运行命令 + 预期输出</a>
+<a class="toc-l3" href="#70">7.0 统一验证命令（一键跑完三个自检）</a>
+<a class="toc-l3" href="#71-01-oauth2-auth-code-flowpy-pkce">7.1 01-oauth2-auth-code-flow.py — 授权码 + PKCE 流程模拟</a>
+<a class="toc-l3" href="#72-02-oauth2-csrf-pitfallspy-csrf">7.2 02-oauth2-csrf-pitfalls.py — CSRF 攻击复现与四层防护</a>
+<a class="toc-l3" href="#73-03-auth-security-auditpy">7.3 03-auth-security-audit.py — 认证系统安全审计脚本（实战）</a>
+<a class="toc-l2" href="#_7">八、思考题</a>
+<a class="toc-l2" href="#_8">附：本日文件清单</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-150-oauth2-csrfssrf">Day 150 — OAuth2 与认证安全：授权流程、CSRF/SSRF 与安全审计</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化 · 主题：实战认证安全</p>
+<p>前置知识：Day 146 HTTPS/TLS、Day 147 哈希与 HMAC、Day 148 对称/非对称加密、<br>
+Day 149 JWT。今天把前面几天的密码学与令牌知识，接到 Web 世界里最普遍、也最<br>
+容易被做错的一套协议上：<strong>OAuth 2.0</strong>。同时补齐两个"不见血但很致命"的漏洞<br>
+类型：<strong>CSRF</strong>（跨站请求伪造）与 <strong>SSRF</strong>（服务端请求伪造），最后写一个<br>
+<strong>认证系统安全审计脚本</strong>把今天所有检查点自动化。</p>
+<p><strong>本次升级</strong>：三个脚本都新增了 <code>--self-test</code> 离线自检（不联网、不依赖第三方库、<br>
+不依赖 sleep 与计时，重复运行结果一致）；审计脚本新增 <code>--save</code> 把报告写进<br>
+<code>tempfile</code> 临时目录（不污染仓库工作树）；SSRF 检测修掉了一个真实存在的<br>
+<strong>IPv4-mapped IPv6 漏判</strong> bug（<code>http://[::ffff:127.0.0.1]/</code> 以前会被判成公网地址）。<br>
+每个脚本的"逐节说明 + 运行命令 + 预期输出"见 <strong>第七节</strong>。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-authenticationauthorization">1.1 先分清：认证（Authentication）与授权（Authorization）</h3>
+<p>这两个词中文只差一个字，含义完全不同，混用会导致整个账号体系设计跑偏。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>英文</th>
+<th>回答的问题</th>
+<th>典型技术</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>认证</td>
+<td>Authentication</td>
+<td><strong>你是谁？</strong></td>
+<td>密码、短信码、TOTP、WebAuthn、JWT</td>
+</tr>
+<tr>
+<td>授权</td>
+<td>Authorization</td>
+<td><strong>你能做什么？</strong></td>
+<td>OAuth2、RBAC、ABAC、scope、权限表</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>记忆法：<strong>认证在前，授权在后</strong>。你必须先证明"你是张三"，系统才能判断<br>
+"张三能不能删这条订单"。</p>
+</blockquote>
+<p><strong>为什么必须分开？</strong> 因为现实里有两种完全不同的需求：</p>
+<ol>
+<li><strong>我要登录你的系统</strong> → 认证问题 → 用密码/验证码 → 得到"我是谁"。</li>
+<li><strong>我要让第三方应用读取我在你系统里的数据，但我</strong>不想把密码给它** →<br>
+   授权问题 → 用 OAuth2 → 得到"第三方能做什么"的受限凭证。</li>
+</ol>
+<p>OAuth2 <strong>只解决第 2 类问题</strong>。它本身<strong>不是登录协议</strong>——用 OAuth2 做登录，<br>
+必须在它之上再套一层（OpenID Connect，简称 OIDC）才能安全地拿到"用户是谁"。<br>
+很多系统出安全事故，根源就是<strong>把 OAuth2 当登录协议用了</strong>。</p>
+<hr>
+<h3 id="12-oauth2">1.2 OAuth2 是什么，不是什么</h3>
+<p><strong>定义</strong>：OAuth 2.0（RFC 6749）是一个<strong>授权框架（authorization framework）</strong>，<br>
+它让资源所有者（用户）可以授权第三方应用（Client）<strong>有限地、可撤销地</strong><br>
+访问自己在某服务上的受保护资源，而<strong>无需把自己的密码交给第三方</strong>。</p>
+<p>它解决问题的方式可以一句话概括：</p>
+<blockquote>
+<p><strong>把"密码"换成"有范围、有期限、可撤销的令牌（Access Token）"。</strong></p>
+</blockquote>
+<p><strong>它不是什么：</strong></p>
+<ul>
+<li>❌ 不是认证协议（不告诉你"用户是谁"，只告诉你"这个令牌被授权做什么"）。</li>
+<li>❌ 不是加密协议（它规定怎么"要令牌"，不规定令牌内容必须加密）。</li>
+<li>❌ 不是身份提供商的实现（Google/微信/钉钉 是<strong>实现了 OAuth2 的服务</strong>）。</li>
+</ul>
+<p><strong>为什么需要它？</strong> 想象 2010 年以前的做法：你在某个"导入通讯录"网站里<br>
+输入 Gmail 的<strong>账号密码</strong>，它拿你的密码去登录 Gmail 抓联系人。后果是：</p>
+<ul>
+<li>网站能拿到你的<strong>明文密码</strong>，等于把家门钥匙给了别人；</li>
+<li>网站权限<strong>无限大</strong>，能读邮件、能发邮件、能改密码；</li>
+<li>你<strong>无法撤销</strong>，除非改密码（改了所有设备都掉线）。</li>
+</ul>
+<p>OAuth2 把这三件事全解决了：<strong>不传密码、限定 scope、令牌可撤销且有期限</strong>。</p>
+<hr>
+<h3 id="13">1.3 四个角色（必须背下来）</h3>
+<table>
+<thead>
+<tr>
+<th>角色</th>
+<th>英文</th>
+<th>通俗解释</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>资源所有者</td>
+<td>Resource Owner</td>
+<td>数据的主人</td>
+<td>你</td>
+</tr>
+<tr>
+<td>客户端</td>
+<td>Client</td>
+<td>想访问数据的应用</td>
+<td>"某记账 App"</td>
+</tr>
+<tr>
+<td>授权服务器</td>
+<td>Authorization Server</td>
+<td>发令牌的地方</td>
+<td>Google 账号中心</td>
+</tr>
+<tr>
+<td>资源服务器</td>
+<td>Resource Server</td>
+<td>存数据、验令牌的地方</td>
+<td>Gmail API</td>
+</tr>
+</tbody>
+</table>
+<p>⚠️ <strong>授权服务器和资源服务器可以是同一台，也可以是两台</strong>（微服务里经常拆开）。<br>
+很多漏洞就出在"授权服务器验的令牌，资源服务器验得不一样"。</p>
+<hr>
+<h3 id="14-grant-types">1.4 四个授权模式（Grant Types）</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>适用场景</th>
+<th>安全性</th>
+<th>现代建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>授权码（Authorization Code）</strong></td>
+<td>有后端的 Web / App</td>
+<td>⭐⭐⭐⭐⭐</td>
+<td>✅ 首选</td>
+</tr>
+<tr>
+<td><strong>授权码 + PKCE</strong></td>
+<td>纯前端 SPA、移动 App</td>
+<td>⭐⭐⭐⭐⭐</td>
+<td>✅ 移动/SPA 必须</td>
+</tr>
+<tr>
+<td>隐式（Implicit）</td>
+<td>老式 SPA</td>
+<td>⭐⭐</td>
+<td>❌ 已废弃，用 <code>code+PKCE</code></td>
+</tr>
+<tr>
+<td>密码（Password / ROPC）</td>
+<td>自家 App 登录自家服务</td>
+<td>⭐</td>
+<td>❌ 已废弃</td>
+</tr>
+<tr>
+<td>客户端凭证（Client Credentials）</td>
+<td>服务端对服务端，<strong>无用户</strong></td>
+<td>⭐⭐⭐⭐</td>
+<td>✅ 机器间调用</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么隐式模式被废弃？</strong> 因为它把 access_token 直接放在<strong>URL 的 fragment</strong><br>
+（<code>#access_token=...</code>）里返回。URL 会被写进浏览器历史、被 Referer 头带出去、<br>
+被日志系统记录、被前端 JS 读到——令牌泄漏面极大，而且<strong>没法用 refresh token</strong><br>
+（因为刷新需要客户端认证，前端没有"秘密"可认证）。RFC 9700（OAuth 2.0<br>
+Security Best Current Practice）已明确建议弃用。</p>
+<p><strong>为什么需要 PKCE？</strong> 授权码流程有个天生弱点：在移动 App / SPA 里，客户端<br>
+<strong>没有能力安全保存 client_secret</strong>（反编译 App 就能拿到）。于是攻击者可以<br>
+冒充这个 client 去换 token。PKCE 的思路是：<strong>每次请求都生成一对临时的<br>
+"验证码 + 摘要"</strong>，用一次就作废，从而不需要长期密钥。</p>
+<hr>
+<h3 id="15-csrf">1.5 CSRF（跨站请求伪造）是什么</h3>
+<p><strong>定义</strong>：攻击者诱导<strong>已登录用户的浏览器</strong>，向目标网站发送一个<strong>用户并不知情<br>
+的、带有用户身份凭证的请求</strong>。</p>
+<p><strong>关键前提（三个条件同时成立才会中招）：</strong></p>
+<ol>
+<li>浏览器会自动携带身份凭证（主要是 <strong>Cookie</strong>）；</li>
+<li>服务器<strong>只靠 Cookie 判断"是谁"</strong>，不校验请求来源；</li>
+<li>攻击者能构造出有效的、有副作用的请求（转账、改密码、发帖……）。</li>
+</ol>
+<p><strong>为什么危险？</strong> 因为服务器看到的确实是"合法用户的合法 Cookie"，从服务端<br>
+视角<strong>完全无法区分</strong>这是用户自己点的，还是恶意网页自动发的。它不是"偷密码"，<br>
+而是"<strong>借你的手</strong>"——所以中文也译作"跨站请求伪造"。</p>
+<p><strong>一句话原理</strong>：Cookie 的 <code>SameSite</code> 默认行为和"跨站请求会带 Cookie"这个<br>
+浏览器设计，是 CSRF 存在的土壤。</p>
+<hr>
+<h3 id="16-ssrf">1.6 SSRF（服务端请求伪造）是什么</h3>
+<p><strong>定义</strong>：攻击者<strong>控制了服务端发起的网络请求的目标地址</strong>，让服务器去请求<br>
+攻击者指定的 URL —— 从而以服务器的身份、从<strong>内网视角</strong>发起请求。</p>
+<p><strong>为什么它比 CSRF 更凶险？</strong></p>
+<ul>
+<li>服务器通常<strong>在内网</strong>，能访问外网访问不到的东西：数据库、Redis、<br>
+  内部管理后台、K8s API、云厂商<strong>元数据服务</strong>（<code>169.254.169.254</code>）。</li>
+<li>很多云环境的元数据服务能直接换取<strong>临时云凭证</strong>（IAM Role），拿到就等于<br>
+<strong>接管整台云主机/整个云账号</strong>（2019 年 Capital One 泄露 1 亿用户数据就是 SSRF）。</li>
+<li>它常常只是"<strong>跳板</strong>"：先用 SSRF 打通内网，再配合其他漏洞扩大战果。</li>
+</ul>
+<p><strong>典型入口</strong>：图片抓取、网页截图、URL 预览、Webhook 回调、PDF 导出、<br>
+"从链接导入数据"等<strong>用户可控 URL</strong> 的功能。</p>
+<h3 id="17-vs-jwt">1.7 令牌的两种形态：不透明串 vs JWT（选型必须想清楚）</h3>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>不透明令牌（opaque）</th>
+<th>JWT（自包含）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内容</td>
+<td>一串随机字符，本身无含义</td>
+<td>头部+负载+签名，允许服务端直接解码</td>
+</tr>
+<tr>
+<td>校验方式</td>
+<td>去授权服务器/会话存储查表（introspection）</td>
+<td>本地验签即可（无需回源）</td>
+</tr>
+<tr>
+<td>撤销</td>
+<td><strong>好用</strong>：删掉记录就失效</td>
+<td><strong>麻烦</strong>：签出去就无法收回，只能靠短 TTL + 黑名单</td>
+</tr>
+<tr>
+<td>适合</td>
+<td>会话、单体应用、要求强撤销的场景</td>
+<td>微服务间无状态校验、一次性短期凭证</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>📌 一个常见误解："用了 JWT 就更安全"。<strong>恰恰相反</strong>：JWT 把"能不能用"判断<br>
+完全交给了签名和过期时间，服务端失去了"随时抽走它"的能力。<br>
+所以业界常见组合是：<strong>不透明的 refresh_token + 短 TTL 的 access_token</strong>，<br>
+把"可撤销"留在 refresh 这一层（本日示例 01 的 <code>revoke()</code> 就是这个思路）。</p>
+</blockquote>
+<h3 id="18-oidc-nonce-oauth2">1.8 OIDC 与 <code>nonce</code>：为什么 OAuth2 做不了登录</h3>
+<p>OAuth2 只回答"这个令牌能访问什么"，<strong>不回答"用户是谁"</strong>。<br>
+OpenID Connect（OIDC）在它之上加了一层：</p>
+<ul>
+<li>多一个 <code>openid</code> scope，换令牌时额外返回 <strong><code>id_token</code></strong>（一个 JWT）；</li>
+<li><code>id_token</code> 里的 <code>sub</code> / <code>iss</code> / <code>aud</code> / <code>nonce</code> 才是"用户身份"的载体；</li>
+<li><strong><code>nonce</code></strong>：客户端生成、随授权请求下发、在 <code>id_token</code> 原样返回 ——<br>
+  用于防"<strong>ID Token 重放</strong>"（令牌偷走了就能重放登录）。</li>
+</ul>
+<blockquote>
+<p>⚠️ 与 <code>state</code> 的区别：<code>state</code> 保护的是"换令牌这一步的绑定"，<br>
+<code>nonce</code> 保护的是"最终令牌/身份的绑定"。两者都必需，不能互相替代。</p>
+</blockquote>
+<hr>
+<h2 id="_2">二、原理解释（底层机制）</h2>
+<h3 id="21-authorization-code-flow">2.1 授权码流程（Authorization Code Flow）逐步拆解</h3>
+<pre class="plain"><code>① 用户点&quot;用 Google 登录&quot;
+   Client → 浏览器重定向 → Authorization Server
+   GET /authorize?response_type=code
+                &amp;client_id=CLIENT_ID
+                &amp;redirect_uri=https://app.com/cb
+                &amp;scope=email+profile
+                &amp;state=RANDOM_CSRF_TOKEN
+                &amp;code_challenge=xxx&amp;code_challenge_method=S256   ← PKCE
+
+② 用户在授权服务器上&quot;同意授权&quot;（这一步能看到&quot;应用要读你的邮箱&quot;）
+
+③ 授权服务器重定向回 Client
+   302 https://app.com/cb?code=AUTH_CODE&amp;state=RANDOM_CSRF_TOKEN
+
+④ Client 后端用 code 换 token（这一步走服务器到服务器，浏览器看不到）
+   POST /token
+     grant_type=authorization_code
+     &amp;code=AUTH_CODE
+     &amp;redirect_uri=https://app.com/cb
+     &amp;client_id=...&amp;client_secret=...
+     &amp;code_verifier=原始随机串    ← PKCE
+
+⑤ 授权服务器返回
+   {&quot;access_token&quot;:&quot;...&quot;, &quot;refresh_token&quot;:&quot;...&quot;, &quot;expires_in&quot;:3600, &quot;token_type&quot;:&quot;Bearer&quot;}
+
+⑥ Client 用 access_token 访问资源
+   GET /userinfo  Authorization: Bearer &lt;access_token&gt;
+</code></pre>
+<p><strong>为什么要把"发码"和"换令牌"分成两步？</strong></p>
+<ul>
+<li>授权码是<strong>通过浏览器前端</strong>（URL 重定向）传回来的，可以被 URL 日志、历史记录、<br>
+  Referer 泄漏 —— 所以它<strong>天生不安全</strong>。</li>
+<li>因此设计上给授权码加了两个保险：<strong>① 一次性、极短有效期（通常 30~60 秒）；<br>
+  ② 换令牌时必须由客户端</strong>后端<strong>带着 <code>client_secret</code> 发起</strong>。</li>
+<li>攻击者就算截到授权码，只要换不了令牌（拿不到 secret），也拿不到 access_token。</li>
+</ul>
+<p>这就是<strong>授权码流程最核心的设计思想</strong>：让"敏感的令牌"永远不经过浏览器，<br>
+浏览器只传一个"很快就作废的临时凭证"。</p>
+<h3 id="22-pkce-proof-key-for-code-exchange-rfc-7636">2.2 PKCE 原理（Proof Key for Code Exchange, RFC 7636）</h3>
+<p>PKCE 解决的是"<strong>公开客户端（Public Client）没有 client_secret</strong>"的问题。</p>
+<pre class="plain"><code>Client 侧（一次性随机）:
+  code_verifier  = 随机 43~128 字符的高熵字符串
+  code_challenge = BASE64URL( SHA256(code_verifier) )      # method = S256
+
+① 授权请求带上 code_challenge
+② 换令牌请求带上 code_verifier
+③ 授权服务器计算 SHA256(verifier)，与最初存的 challenge 比对
+</code></pre>
+<p><strong>为什么这样能防攻击？</strong> 攻击者即使<strong>截获了授权码</strong>，也不知道 <code>code_verifier</code><br>
+（它只存在于生成它的那个客户端内存里，从不经过浏览器 URL）。没有 verifier，<br>
+换不到令牌。</p>
+<p>⚠️ <strong>避坑</strong>：<code>code_challenge_method</code> 必须是 <code>S256</code>，<strong>绝不能用 <code>plain</code></strong><br>
+（plain 等于明文传 verifier，PKCE 白做）。另外 verifier 必须用<br>
+<strong>密码学安全的随机源</strong>（Python 里是 <code>secrets</code>，不是 <code>random</code>）。</p>
+<h3 id="23-state-oauth2-csrf">2.3 <code>state</code> 参数：OAuth2 里的 CSRF 防护</h3>
+<p><code>state</code> 是一段<strong>客户端自己生成的随机串</strong>，在授权请求里带上，授权服务器<br>
+<strong>原样回传</strong>。客户端在回调里比对：对不上就拒绝。</p>
+<p><strong>它防的正是 CSRF</strong>。攻击流程如下（无 state 时）：</p>
+<pre class="plain"><code>攻击者用自己的账号在 Google 走完授权，拿到一个回调 URL:
+  https://victim-app.com/cb?code=ATTACKER_CODE
+然后把这个 URL 发给受害者，诱导其点击（图片/链接/短链）。
+受害者浏览器带着自己的会话 Cookie 访问该 URL；
+应用用 ATTACKER_CODE 换了令牌，把攻击者的第三方账号
+绑定到了受害者的账号上 → 攻击者以后可以用自己的第三方账号登录受害者账号。
+</code></pre>
+<p>加了 <code>state</code> 后：回调里的 state 和受害者浏览器会话里存的 state 不一致 → 拒绝。</p>
+<p><strong>记住三件绑定关系：</strong> <code>state</code> 必须</p>
+<ol>
+<li><strong>随机且高熵</strong>（<code>secrets.token_urlsafe(32)</code>）；</li>
+<li><strong>存在用户会话里</strong>（服务端 session，或加密 Cookie）；</li>
+<li><strong>用后即焚</strong>（一次性，回调后立刻删除，防重放）。</li>
+</ol>
+<h3 id="24-csrf">2.4 CSRF 攻击原理与四层防护</h3>
+<p><strong>攻击本体（一个恶意 HTML 页面就够了）：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">html</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="cm">&lt;!-- evil.com 上的页面 --&gt;</span>
+<span class="p">&lt;</span><span class="nt">form</span> <span class="na">action</span><span class="o">=</span><span class="s">&quot;https://bank.com/transfer&quot;</span> <span class="na">method</span><span class="o">=</span><span class="s">&quot;POST&quot;</span> <span class="na">id</span><span class="o">=</span><span class="s">&quot;f&quot;</span><span class="p">&gt;</span>
+  <span class="p">&lt;</span><span class="nt">input</span> <span class="na">name</span><span class="o">=</span><span class="s">&quot;to&quot;</span>   <span class="na">value</span><span class="o">=</span><span class="s">&quot;attacker&quot;</span><span class="p">&gt;</span>
+  <span class="p">&lt;</span><span class="nt">input</span> <span class="na">name</span><span class="o">=</span><span class="s">&quot;amount&quot;</span> <span class="na">value</span><span class="o">=</span><span class="s">&quot;10000&quot;</span><span class="p">&gt;</span>
+<span class="p">&lt;/</span><span class="nt">form</span><span class="p">&gt;</span>
+<span class="p">&lt;</span><span class="nt">script</span><span class="p">&gt;</span><span class="nb">document</span><span class="p">.</span><span class="nx">getElementById</span><span class="p">(</span><span class="s1">&#39;f&#39;</span><span class="p">).</span><span class="nx">submit</span><span class="p">()&lt;/</span><span class="nt">script</span><span class="p">&gt;</span>
+</code></pre></div>
+<p>用户只要在登录 bank.com 的状态下访问 evil.com，浏览器就会<strong>自动带上<br>
+bank.com 的 Cookie</strong> 去 POST —— 服务器以为是用户本人操作。</p>
+<blockquote>
+<p>⚠️ 注意：<strong>CORS 不能防 CSRF</strong>。CORS 限制的是"JS 能不能读取响应"，<br>
+不是"请求能不能发出去"。简单请求（表单、img、script）根本不受 CORS 预检约束。</p>
+</blockquote>
+<p><strong>四层防护，建议全上（纵深防御）：</strong></p>
+<table>
+<thead>
+<tr>
+<th>防护</th>
+<th>机制</th>
+<th>强度</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SameSite=Lax/Strict</code> Cookie</td>
+<td>浏览器跨站请求时不带该 Cookie</td>
+<td>⭐⭐⭐⭐</td>
+<td>现代首选，默认 <code>Lax</code></td>
+</tr>
+<tr>
+<td>Synchronizer Token（CSRF Token）</td>
+<td>服务端生成随机 token 存 session，表单/头里必须带上并比对</td>
+<td>⭐⭐⭐⭐⭐</td>
+<td>传统可靠方案</td>
+</tr>
+<tr>
+<td>Double Submit Cookie</td>
+<td>token 同时放 Cookie 和请求体，服务端比对两者</td>
+<td>⭐⭐⭐</td>
+<td>适合无状态服务，需签名</td>
+</tr>
+<tr>
+<td><code>Origin</code> / <code>Referer</code> 校验</td>
+<td>检查请求来源域名白名单</td>
+<td>⭐⭐⭐</td>
+<td>作为补充，不要单独依赖</td>
+</tr>
+</tbody>
+</table>
+<p>⚠️ <strong>避坑</strong>：<code>SameSite=None</code> 必须配合 <code>Secure</code>；只对<strong>状态改变</strong>的请求<br>
+（POST/PUT/DELETE）做校验，GET 必须<strong>无副作用</strong>（否则 CSRF 防护失效）；<br>
+JSON API 若靠 <code>Content-Type: application/json</code> 做隐式防护是<strong>不可靠的</strong><br>
+（攻击者可用 <code>text/plain</code> 绕过表单限制的场景要具体分析）。</p>
+<h3 id="25-ssrf">2.5 SSRF 原理、检测与防护</h3>
+<p><strong>原理</strong>：任何"服务端会去请求一个 URL"的功能，如果 URL 部分或全部<br>
+<strong>用户可控</strong>，就可能是 SSRF。</p>
+<p><strong>常见绕过手法（做检测时必须考虑）：</strong></p>
+<table>
+<thead>
+<tr>
+<th>绕过手法</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>十进制/八进制/十六进制 IP</td>
+<td><code>http://2130706433/</code> = <code>127.0.0.1</code>；<code>http://0x7f000001/</code></td>
+</tr>
+<tr>
+<td>IPv6 映射</td>
+<td><code>http://[::ffff:127.0.0.1]/</code>、<code>http://[::1]/</code></td>
+</tr>
+<tr>
+<td>短域名/重定向</td>
+<td><code>http://attacker.com</code> → 302 到 <code>http://169.254.169.254/</code></td>
+</tr>
+<tr>
+<td>DNS Rebinding</td>
+<td>第一次解析到公网 IP（通过校验），第二次解析到内网 IP（发起请求）</td>
+</tr>
+<tr>
+<td>用户名 @ 混淆</td>
+<td><code>http://expected.com@evil.com/</code></td>
+</tr>
+<tr>
+<td>域名后缀混淆</td>
+<td><code>http://evil.com#expected.com</code>、<code>http://expected.com.evil.com</code></td>
+</tr>
+<tr>
+<td>URL 解析差异</td>
+<td><code>http://expected.com%2f@evil.com</code>、多余 <code>\</code> 或 <code>@</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>高危目标（防护黑名单必须包含）：</strong></p>
+<ul>
+<li><code>127.0.0.0/8</code>、<code>::1</code>（本机）</li>
+<li><code>10.0.0.0/8</code>、<code>172.16.0.0/12</code>、<code>192.168.0.0/16</code>（内网）</li>
+<li><code>169.254.0.0/16</code> 特别是 <code>169.254.169.254</code>（云元数据）</li>
+<li><code>0.0.0.0/8</code>、<code>100.64.0.0/10</code>（CGNAT）、<code>224.0.0.0/4</code>（组播）</li>
+<li>云厂商专用：<code>metadata.google.internal</code>、<code>100.100.100.200</code>（阿里云）</li>
+</ul>
+<p><strong>正确防护顺序（白名单 &gt; 黑名单）：</strong></p>
+<ol>
+<li><strong>业务上优先白名单</strong>：只允许固定域名/路径，用映射表（<code>id → URL</code>）而非直接收 URL；</li>
+<li><strong>协议白名单</strong>：只允许 <code>http/https</code>，禁止 <code>file://</code>、<code>gopher://</code>、<code>dict://</code>、<br>
+<code>ftp://</code>（老漏洞里这些协议能打内网服务）；</li>
+<li><strong>解析 → 校验 → 再请求，且 IP 校验后不要再二次 DNS 解析</strong>（防 Rebinding），<br>
+   最稳的是：<strong>解析出 IP 后直接连该 IP，并带上 Host 头</strong>；</li>
+<li><strong>禁止跟随重定向</strong>（或每次跳转都重新校验）；</li>
+<li><strong>网络层隔离</strong>：出网走代理，代理侧做白名单；云元数据服务用 IMDSv2（需要 token）。</li>
+</ol>
+<hr>
+<h2 id="_3">三、攻击方式 · 手段 · 原理</h2>
+<blockquote>
+<p>这一节把"别人怎么打你"讲透。<strong>所有手法都只用来理解防护</strong>：<br>
+本书里的攻击链路只在本地回环 / 内存靶场 / 临时目录里复现，<br>
+不对任何外部真实目标发包（未授权测试属于违法行为）。</p>
+</blockquote>
+<h3 id="31-authorization-code-interception">3.1 授权码拦截（Authorization Code Interception）</h3>
+<p><strong>前提</strong>：授权码要经过浏览器（302 跳转）回到客户端，这条链路不可信<br>
+（浏览器历史、Referer、代理日志、恶意扩展、共享设备都能看到 URL）。</p>
+<p><strong>真实利用链（没有 PKCE 的移动 App / SPA）</strong>：</p>
+<pre class="plain"><code>① 受害者手机上装了恶意 App，恶意 App 注册了同样的自定义 scheme（如 myapp://cb）
+② 受害者点&quot;用 XX 登录&quot;，恶意 App 抢到回调 → 拿到 code
+③ 因为公开客户端没有 client_secret，恶意 App 直接用这个 code 换 token
+   → 攻击者拿到受害者身份的 access_token
+</code></pre>
+<p><strong>为什么会被拦下</strong>：只要客户端是公开客户端且启用 <code>S256</code> PKCE，第 ③ 步就断了 ——<br>
+授权码必须配上只在<strong>合法客户端内存里</strong>存在过的 <code>code_verifier</code> 才能换令牌。</p>
+<p><strong>排查要点</strong>：回调 URL 里的 <code>code</code> 是否被写入日志/Referer？是否用了 <code>plain</code> PKCE？<br>
+同一条授权码第二次使用是否被拒绝（本日示例 01 第 6 步会实测）？</p>
+<h3 id="32-csrf-state">3.2 CSRF 型账号绑定（缺 <code>state</code> 的经典后果）</h3>
+<p><strong>攻击条件</strong>：① 回调不校验 <code>state</code>；② 攻击者先用自己的账号走完授权拿到 code；<br>
+③ 诱导受害者点击带这个 code 的回调链接。</p>
+<pre class="plain"><code>攻击者用自己的账号在 provider 完成授权，拿到：
+    https://victim-app.com/cb?code=ATTACKER_CODE
+把这串发给受害者 → 受害者的浏览器带着自己的会话 Cookie 访问它
+→ 应用拿 ATTACKER_CODE 换了令牌 → 把**攻击者的第三方账号**绑到了**受害者账号**上
+→ 攻击者以后用自己的第三方账号登录，就进了受害者的号
+</code></pre>
+<p><strong>关键理解</strong>：这里受害者没有输密码、没有点同意，他的身份也没被偷；<br>
+被偷的是"<strong>绑定操作本身</strong>"。所以这类漏洞的资产不是 token，而是<strong>账号关联关系</strong>。</p>
+<p><strong>为什么它防不住</strong>：服务端没有"这张请求是不是从本浏览器本轮登录流程来的"这个信息。<br>
+<code>state</code> 就是把这个信息补上（一次性随机串 + 会话绑定）。</p>
+<h3 id="33-redirect_uri">3.3 <code>redirect_uri</code> 校验缺陷 → 授权码外泄 + 开放重定向</h3>
+<p>授权服务器在校验 <code>redirect_uri</code> 时如果用前缀/后缀/正则/包含匹配，就给了攻击者<br>
+把 <strong>code 送到自己服务器</strong>的机会。真实出现过的绕过方式：</p>
+<table>
+<thead>
+<tr>
+<th>恶意 <code>redirect_uri</code></th>
+<th>前缀匹配的后果</th>
+<th>为什么能绕</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>https://app.example.com/callback.evil.com</code></td>
+<td>放行 💀</td>
+<td>字符串以合法前缀开头</td>
+</tr>
+<tr>
+<td><code>https://app.example.com/callback/../../steal</code></td>
+<td>放行 💀</td>
+<td>路径穿越，很多服务器会归一化</td>
+</tr>
+<tr>
+<td><code>https://app.example.com/callback@evil.com</code></td>
+<td>放行 💀</td>
+<td>userinfo 语法，host 其实是 evil.com</td>
+</tr>
+<tr>
+<td><code>https://app.example.com/callback?x=1#@evil.com</code></td>
+<td>放行 💀</td>
+<td>用 query/fragment 干扰解析</td>
+</tr>
+<tr>
+<td><code>https://app.example.com.evil.com/callback</code></td>
+<td>被拦（前缀不匹配）</td>
+<td>域名主体是 evil.com，但前缀不是合法值</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 第二层危害：即使 code 换不到令牌，<strong>错误响应本身也会被重定向到攻击者页面</strong><br>
+（<code>?error=...&amp;state=...</code>），这叫 <strong>open redirect</strong>，常被用来做钓鱼和 token 盗窃链。<br>
+所以顺序必须是：<strong>先校验 <code>redirect_uri</code>，再决定重定向</strong>。</p>
+</blockquote>
+<h3 id="34-pkce">3.4 PKCE 的三种"假防护"</h3>
+<table>
+<thead>
+<tr>
+<th>假防护</th>
+<th>为什么等于没做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code_challenge_method=plain</code></td>
+<td>challenge 就是 verifier 本身，任何能看到授权请求的人都能伪造换令牌</td>
+</tr>
+<tr>
+<td>用 <code>random</code> 而非 <code>secrets</code> 生成 verifier</td>
+<td>种子可预测（<code>random</code> 是 Mersenne Twister，不是密码学安全）</td>
+</tr>
+<tr>
+<td>verifier 复用/长期不变</td>
+<td>失去了"每次授权一次性"的核心价值，泄漏一次全废</td>
+</tr>
+</tbody>
+</table>
+<p>另外还有两个与 PKCE 相关的<strong>协议级攻击</strong>（了解名字即可，不必自己实现）：</p>
+<ul>
+<li><strong>PKCE Downgrade</strong>：攻击者让授权请求不带 <code>challenge</code>，诱导服务器退回无 PKCE 流程。<br>
+  对策：<strong>公开客户端强制 PKCE</strong>（本日示例 01 的 <code>authorize()</code> 就实现了这条：<br>
+<code>if client["public"]: ... 必须 S256</code>）。</li>
+<li><strong>Mix-up Attack</strong>：客户端同时对接多个授权服务器时，攻击者用一个 AS 的 code<br>
+  去另一个 AS 换令牌。对策：把 <code>iss</code> 与授权服务器绑定、换令牌时必须校验 <code>iss</code>。</li>
+</ul>
+<h3 id="35">3.5 令牌的泄漏面：为什么"放哪儿"比"多长"更重要</h3>
+<table>
+<thead>
+<tr>
+<th>存放位置</th>
+<th>谁能读</th>
+<th>XSS 能否拿走</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>localStorage</code> / <code>sessionStorage</code></td>
+<td>页面内任意 JS</td>
+<td>✅ 能，一行 <code>fetch</code> 就外传</td>
+<td>演示见示例 02 坑 3</td>
+</tr>
+<tr>
+<td>非 HttpOnly Cookie</td>
+<td>任意 JS</td>
+<td>✅ 能</td>
+<td>最差组合</td>
+</tr>
+<tr>
+<td>HttpOnly + Secure + SameSite Cookie</td>
+<td>仅浏览器发送</td>
+<td>❌ 读不到（但能发请求）</td>
+<td>首选</td>
+</tr>
+<tr>
+<td>服务端 session + 不透明 Cookie</td>
+<td>服务端</td>
+<td>❌ 拿不到真实令牌</td>
+<td>最强，可随时吊销</td>
+</tr>
+<tr>
+<td>URL fragment（隐式模式）</td>
+<td>浏览器历史/日志/Referer/JS</td>
+<td>✅ 能</td>
+<td>已废弃的根本原因</td>
+</tr>
+<tr>
+<td>日志/错误上报</td>
+<td>运维、日志平台、第三方 APM</td>
+<td>间接</td>
+<td>最常见又最容易被忽略</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>✨ <strong>为什么 Cookie 比 localStorage 强</strong>？因为 <code>HttpOnly</code> 是<strong>浏览器内核级</strong>的<br>
+访问控制：JS 根本拿不到这个值。而服务端 session 更进一步 —— 就算 Cookie 被<br>
+拿到，拿到的也只是一串不透明的会话 ID，<strong>服务端可以随时作废它</strong>，<br>
+而 JWT 一旦签发，在过期前只能靠黑名单/短 TTL 来限制。</p>
+</blockquote>
+<h3 id="36-csrf-cors">3.6 CSRF：攻击原理与"为什么 CORS 不管"</h3>
+<p><strong>一个恶意 HTML 页面就够了</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">html</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="cm">&lt;!-- evil.com 上的页面，受害者无需点击任何按钮 --&gt;</span>
+<span class="p">&lt;</span><span class="nt">form</span> <span class="na">action</span><span class="o">=</span><span class="s">&quot;https://bank.com/transfer&quot;</span> <span class="na">method</span><span class="o">=</span><span class="s">&quot;POST&quot;</span> <span class="na">id</span><span class="o">=</span><span class="s">&quot;f&quot;</span><span class="p">&gt;</span>
+  <span class="p">&lt;</span><span class="nt">input</span> <span class="na">name</span><span class="o">=</span><span class="s">&quot;to&quot;</span> <span class="na">value</span><span class="o">=</span><span class="s">&quot;attacker&quot;</span><span class="p">&gt;&lt;</span><span class="nt">input</span> <span class="na">name</span><span class="o">=</span><span class="s">&quot;amount&quot;</span> <span class="na">value</span><span class="o">=</span><span class="s">&quot;10000&quot;</span><span class="p">&gt;</span>
+<span class="p">&lt;/</span><span class="nt">form</span><span class="p">&gt;</span>
+<span class="p">&lt;</span><span class="nt">script</span><span class="p">&gt;</span><span class="nb">document</span><span class="p">.</span><span class="nx">getElementById</span><span class="p">(</span><span class="s1">&#39;f&#39;</span><span class="p">).</span><span class="nx">submit</span><span class="p">()&lt;/</span><span class="nt">script</span><span class="p">&gt;</span>
+</code></pre></div>
+<p><strong>攻击成立的三要素</strong>：① 浏览器自动带凭据（Cookie）；② 服务端只靠 Cookie 认人；<br>
+③ 攻击者能构造出有副作用的请求。</p>
+<p><strong>SameSite 语义矩阵（必须逐格记住）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th><code>Strict</code></th>
+<th><code>Lax</code></th>
+<th><code>None</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>跨站 POST（恶意表单）</td>
+<td>不带 Cookie</td>
+<td><strong>不带 Cookie</strong></td>
+<td>带上 Cookie 💀</td>
+</tr>
+<tr>
+<td>跨站 GET 顶层导航（点链接跳过去）</td>
+<td>不带 Cookie</td>
+<td><strong>带上 Cookie</strong> ⚠️</td>
+<td>带上 Cookie</td>
+</tr>
+<tr>
+<td>跨站 <code>&lt;img&gt;</code> / <code>&lt;script&gt;</code> 子资源</td>
+<td>不带 Cookie</td>
+<td>不带 Cookie</td>
+<td>带上 Cookie</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ <code>Lax</code> 那一格（跨站 GET 会带 Cookie）就是为什么<strong>"有副作用的 GET"必须根除</strong>：<br>
+<code>GET /transfer?to=attacker&amp;amount=10000</code> 在 <code>Lax</code> 下依然能被一条链接打穿。</p>
+</blockquote>
+<p><strong>为什么 CORS 不能防 CSRF</strong>：CORS 限制的是"<strong>JS 能不能读到响应</strong>"，<br>
+不是"请求能不能发出去"。表单/<code>&lt;img&gt;</code>/<code>&lt;script&gt;</code> 这类<strong>简单请求</strong>根本不做预检，<br>
+请求照样到达服务端并且带上 Cookie —— 副作用已经发生了。</p>
+<h3 id="37-ssrf-url">3.7 SSRF：从"用户可控 URL"到"接管云账号"</h3>
+<p><strong>原理</strong>：服务端<strong>按攻击者指定的地址</strong>发请求，于是攻击者借服务器的网络位置<br>
+（通常在内网）去打自己够不着的东西。</p>
+<p><strong>绕过的本质是"解析器差异"</strong> —— 校验用的解析器和真正发起连接用的解析器<br>
+如果对同一个字符串的理解不一致，校验就白做：</p>
+<table>
+<thead>
+<tr>
+<th>绕过手法</th>
+<th>例子</th>
+<th>真实解析结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>十进制 IP</td>
+<td><code>http://2130706433/</code></td>
+<td>127.0.0.1（libc 的 inet_aton 支持）</td>
+</tr>
+<tr>
+<td>十六进制/八进制</td>
+<td><code>http://0x7f000001/</code>、<code>http://017700000001/</code></td>
+<td>127.0.0.1</td>
+</tr>
+<tr>
+<td>IPv4-mapped IPv6</td>
+<td><code>http://[::ffff:127.0.0.1]/</code></td>
+<td>127.0.0.1（<strong>本日修掉的漏判</strong>）</td>
+</tr>
+<tr>
+<td>IPv6 回环/链路本地</td>
+<td><code>http://[::1]/</code>、<code>http://[fe80::1]/</code></td>
+<td>本机 / 同链路</td>
+</tr>
+<tr>
+<td>userinfo 混淆</td>
+<td><code>http://expected.com@evil.com/</code></td>
+<td>host 是 evil.com</td>
+</tr>
+<tr>
+<td>域名后缀</td>
+<td><code>http://expected.com.evil.com/</code></td>
+<td>host 是 evil.com 的子域</td>
+</tr>
+<tr>
+<td>URL 编码</td>
+<td><code>http://expected.com%2f@evil.com/</code></td>
+<td>依解析器而异</td>
+</tr>
+<tr>
+<td>空字节</td>
+<td><code>http://cdn.example.com/%00.png</code></td>
+<td>依解析器而异</td>
+</tr>
+</tbody>
+</table>
+<p><strong>DNS Rebinding 的攻击时序</strong>（"校验时是公网、连接时是内网"）：</p>
+<pre class="plain"><code>① 攻击者控制 evil.com，TTL 设为 0
+② 第一次解析（服务端做校验时）→ 返回 1.2.3.4（公网）  ✅ 通过校验
+③ 攻击者立刻把 DNS 改成 169.254.169.254
+④ 服务端真正发起请求时再解析一次 → 拿到 169.254.169.254 💀
+</code></pre>
+<blockquote>
+<p>对策不是"再校验一次"，而是<strong>校验与连接用同一个已解析 IP</strong>：<br>
+自己解析 → 校验 IP → 用这个 IP 建立连接 + 手动设置 <code>Host</code> 头。<br>
+这样第 ④ 步不再有第二次解析，Rebinding 就没了着力点。</p>
+</blockquote>
+<p><strong>高危目标清单</strong>（防护黑名单必须覆盖）：<code>127.0.0.0/8</code>、<code>::1</code>、<code>10.0.0.0/8</code>、<br>
+<code>172.16.0.0/12</code>、<code>192.168.0.0/16</code>、<code>169.254.0.0/16</code>（含 <code>169.254.169.254</code> 云元数据）、<br>
+<code>0.0.0.0/8</code>、<code>100.64.0.0/10</code>（CGNAT）、<code>224.0.0.0/4</code>（组播）、<code>fc00::/7</code>、<code>fe80::/10</code>，<br>
+以及 <code>metadata.google.internal</code>、<code>100.100.100.200</code>（阿里云）等云厂商专用地址。</p>
+<p><strong>为什么云元数据是终极目标</strong>：<code>169.254.169.254</code> 能给主机返回<strong>临时 IAM 凭证</strong>。<br>
+拿到凭证就可以直接调云 API 读取对象存储 —— 2019 年 Capital One 1 亿用户数据泄漏<br>
+就是这个链条（SSRF → 元数据 → 凭证 → S3）。</p>
+<h3 id="38">3.8 检测信号：哪些日志/指标能看出"有人在打"</h3>
+<table>
+<thead>
+<tr>
+<th>信号</th>
+<th>对应攻击</th>
+<th>阈值建议（示例）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>同一会话短时间内多次 <code>invalid_grant</code></td>
+<td>授权码重放/爆破</td>
+<td>5 次/分钟 → 告警 + 吊销该用户令牌</td>
+</tr>
+<tr>
+<td>回调请求里 <code>state</code> 不匹配</td>
+<td>CSRF 型绑定</td>
+<td>任意一次即告警</td>
+</tr>
+<tr>
+<td>授权错误率 / 404 突增（回调地址被探测）</td>
+<td><code>redirect_uri</code> 探测</td>
+<td>相对基线 3σ</td>
+</tr>
+<tr>
+<td>同一 IP 大量相似查询、P99 延迟异常</td>
+<td>盲注 / 时间盲注</td>
+<td>相似度聚类 + P99 突增</td>
+</tr>
+<tr>
+<td>目标地址含内网 IP/元数据域名</td>
+<td>SSRF</td>
+<td>命中即告警（生产建议直接拒绝）</td>
+</tr>
+<tr>
+<td>数据库报错率上升</td>
+<td>报错注入探测</td>
+<td>任意异常峰值</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">四、防护与修复原理</h2>
+<blockquote>
+<p>这一节回答"<strong>为什么这样写就安全</strong>"。每一条都给出<strong>原理</strong>而不是"照做就行"。</p>
+</blockquote>
+<h3 id="41">4.1 授权码流程为什么安全：三道锁</h3>
+<table>
+<thead>
+<tr>
+<th>锁</th>
+<th>机制</th>
+<th>拦住的攻击</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>一次性 + 短 TTL（30~60s）</td>
+<td>服务端记录 <code>used</code>，过期即废</td>
+<td>授权码重放、日志长期留存后被利用</td>
+</tr>
+<tr>
+<td>后端换令牌需 <code>client_secret</code></td>
+<td>机密客户端才有的长期密钥</td>
+<td>授权码被截获（攻击者换不了）</td>
+</tr>
+<tr>
+<td>PKCE（公开客户端）</td>
+<td>一次性 verifier，与 challenge 做 SHA256 比对</td>
+<td>公开客户端没有 secret 时的授权码拦截</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>设计思想一句话：<strong>让敏感凭证永远不经过浏览器</strong>，浏览器只传一个<br>
+"很快就会作废、且单独拿到也没用"的临时凭证。</p>
+</blockquote>
+<h3 id="42-state">4.2 <code>state</code>：三个性质一个都不能少</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">state</span> <span class="o">=</span> <span class="n">secrets</span><span class="o">.</span><span class="n">token_urlsafe</span><span class="p">(</span><span class="mi">32</span><span class="p">)</span>        <span class="c1"># ① 高熵（≈256 bit），密码学随机源</span>
+<span class="n">session</span><span class="p">[</span><span class="s2">&quot;oauth_state&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">state</span>           <span class="c1"># ② 绑定会话（存服务端 session / 加密 Cookie）</span>
+<span class="c1"># 回调时：</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">secrets</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">q</span><span class="p">[</span><span class="s2">&quot;state&quot;</span><span class="p">],</span> <span class="n">session</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s2">&quot;oauth_state&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">)):</span>
+    <span class="n">reject</span><span class="p">()</span>                             <span class="c1"># ③ 一次性：pop 掉，用后即焚</span>
+</code></pre></div>
+<p><strong>为什么必须绑定会话</strong>：如果 <code>state</code> 存在全局变量/缓存里、或所有用户共用一个，<br>
+攻击者就能先让服务器生成一个 state 并预先知道它，CSRF 防护立刻失效。<br>
+<strong>为什么用 <code>compare_digest</code></strong>：常量时间比较，避免比较耗时泄漏前缀信息<br>
+（对随机串意义有限，但安全代码里比对任何凭证都该这么写）。</p>
+<h3 id="43">4.3 授权服务器侧必须做的三件事</h3>
+<ol>
+<li><strong>先校验 <code>redirect_uri</code> 再重定向</strong>（否则错误响应就是 open redirect）；</li>
+<li><strong>先校验 <code>redirect_uri</code> 再发 code</strong>（否则 code 直接送到攻击者手里）；</li>
+<li><strong>换令牌时再校验一次 <code>redirect_uri</code> 与授权时完全一致</strong>（防"授权用一个、换令牌用另一个"）。</li>
+</ol>
+<h3 id="44">4.4 令牌设计：短命 + 轮转 + 可撤销 + 不透明优先</h3>
+<table>
+<thead>
+<tr>
+<th>决策点</th>
+<th>推荐</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>access_token 形态</td>
+<td>短 TTL 的不透明随机串（或 JWT）</td>
+<td>不透明串可随时撤销；JWT 便于跨服务校验但要处理撤销</td>
+</tr>
+<tr>
+<td>TTL</td>
+<td>5~60 分钟</td>
+<td>泄漏窗口与用户体验的平衡点；24 小时等于"泄漏即长期沦陷"</td>
+</tr>
+<tr>
+<td>refresh_token</td>
+<td><strong>轮转</strong>（用一次换一次）</td>
+<td>检测到重放即整条链吊销 —— 这本身就是一个入侵检测信号</td>
+</tr>
+<tr>
+<td>撤销</td>
+<td>提供 RFC 7009 端点</td>
+<td>登出/改密/发现泄漏时能<strong>立即</strong>失效</td>
+</tr>
+<tr>
+<td>存储</td>
+<td>服务端 session / HttpOnly Cookie</td>
+<td>见 3.5 的泄漏面对照表</td>
+</tr>
+</tbody>
+</table>
+<h3 id="45-csrf">4.5 CSRF 四层纵深（为什么是四层而不是挑一个）</h3>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>拦住什么</th>
+<th>拦不住什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SameSite=Strict/Lax</code></td>
+<td>跨站请求自动免带 Cookie</td>
+<td>老浏览器、<code>None</code> 场景、跨站 GET（Lax）</td>
+</tr>
+<tr>
+<td>CSRF Token（服务端比对）</td>
+<td>攻击者无法读取页面 ⇒ 造不出正确 token</td>
+<td>同源 XSS（XSS 能读到 token）</td>
+</tr>
+<tr>
+<td><code>Origin</code>/<code>Referer</code> 白名单</td>
+<td>表单/JS 发起的跨站请求</td>
+<td>部分老客户端不带 Origin；<strong>绝不能做后缀匹配</strong></td>
+</tr>
+<tr>
+<td>GET 无副作用</td>
+<td>从设计上消灭"链接就能触发"的入口</td>
+<td>——</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>📌 <strong>设计原则</strong>：CSRF 防护必须在<strong>服务端</strong>成立。只在前端加 token、<br>
+或者只依赖 <code>Content-Type: application/json</code> 这类隐式假设，都是纸糊的。</p>
+</blockquote>
+<h3 id="46-ssrf">4.6 SSRF 五层纵深：为什么"黑名单永远不够"</h3>
+<pre class="plain"><code>① 业务层：根本不给用户&quot;任意 URL&quot; —— 传 id，服务端查映射表
+② 协议层：白名单 http/https（禁 file/gopher/dict/ftp/jar...）
+③ 主机层：精确匹配白名单（禁止 startswith/endswith/正则）
+④ IP 层：解析 → 校验回环/私网/链路本地/组播/元数据 → 用**同一个 IP** 连接
+⑤ 网络层：出网代理 + ACL；云侧启用 IMDSv2（需要 token 头才能读元数据）
+</code></pre>
+<p><strong>为什么黑名单不够</strong>：地址空间是无限的（十进制、十六进制、IPv6 各种写法、<br>
+重定向、DNS 回环），而你的规则集是有限的。<strong>白名单 + 解析后直连</strong>才是结构性的。</p>
+<p><strong>顺序不能乱</strong>：先协议 → 再主机 → 再解析 IP → 最后连接；<br>
+任何一步"跳过"（比如校验了域名却没校验解析后的 IP）都等于没做。</p>
+<hr>
+<h2 id="api">五、定义与使用方法（API 速查）</h2>
+<h3 id="51-oauth2">5.1 OAuth2 端点与参数速查</h3>
+<p><strong>授权端点 <code>GET /authorize</code></strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>response_type</code></td>
+<td>✅</td>
+<td><code>code</code>（推荐）；<code>token</code> 属于已废弃的隐式模式</td>
+</tr>
+<tr>
+<td><code>client_id</code></td>
+<td>✅</td>
+<td>客户端标识</td>
+</tr>
+<tr>
+<td><code>redirect_uri</code></td>
+<td>✅</td>
+<td>回调地址，<strong>必须精确匹配</strong>注册值</td>
+</tr>
+<tr>
+<td><code>scope</code></td>
+<td>❌</td>
+<td>权限范围，空格分隔，如 <code>openid email profile</code></td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td>✅(实践)</td>
+<td>防 CSRF 的随机串，必须校验</td>
+</tr>
+<tr>
+<td><code>code_challenge</code></td>
+<td>PKCE</td>
+<td><code>BASE64URL(SHA256(verifier))</code></td>
+</tr>
+<tr>
+<td><code>code_challenge_method</code></td>
+<td>PKCE</td>
+<td><code>S256</code>（禁用 <code>plain</code>）</td>
+</tr>
+<tr>
+<td><code>nonce</code></td>
+<td>OIDC</td>
+<td>防 ID Token 重放（OIDC 专属）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>令牌端点 <code>POST /token</code></strong></p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>grant=authorization_code</th>
+<th>grant=refresh_token</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>grant_type</code></td>
+<td>✅ <code>authorization_code</code></td>
+<td>✅ <code>refresh_token</code></td>
+</tr>
+<tr>
+<td><code>code</code></td>
+<td>✅</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>redirect_uri</code></td>
+<td>✅（若授权时带了）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>client_id</code> / <code>client_secret</code></td>
+<td>机密客户端必填</td>
+<td>同左</td>
+</tr>
+<tr>
+<td><code>code_verifier</code></td>
+<td>PKCE 必填</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>refresh_token</code></td>
+<td>—</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<p><strong>令牌响应</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;access_token&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;eyJhbGciOi...&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;token_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Bearer&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;expires_in&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">3600</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;refresh_token&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;8xLOxBtZp8&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;scope&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;read write&quot;</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;id_token&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;eyJ...&quot;</span><span class="w">      </span><span class="c1">// 仅 OIDC</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>调用资源</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">http</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nf">GET</span> <span class="nn">/api/me</span> <span class="kr">HTTP</span><span class="o">/</span><span class="m">1.1</span>
+<span class="na">Authorization</span><span class="o">:</span> <span class="l">Bearer &lt;access_token&gt;</span>
+</code></pre></div>
+<h3 id="52">5.2 安全基线检查表（今天的内容浓缩版）</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>检查项</th>
+<th>合格标准</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>授权请求是否含 <code>state</code></td>
+<td>有且高熵、服务端会话存储、一次性</td>
+</tr>
+<tr>
+<td>2</td>
+<td>公开客户端是否用 PKCE</td>
+<td><code>S256</code>，非 <code>plain</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>redirect_uri</code> 校验</td>
+<td><strong>精确字符串匹配</strong>，禁止通配/前缀匹配</td>
+</tr>
+<tr>
+<td>4</td>
+<td>是否仍支持隐式/密码模式</td>
+<td>应关闭</td>
+</tr>
+<tr>
+<td>5</td>
+<td>全链路是否 HTTPS</td>
+<td>授权、令牌、回调、资源全 HTTPS</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Cookie 标志</td>
+<td><code>HttpOnly</code> + <code>Secure</code> + <code>SameSite=Lax/Strict</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td>令牌存储位置</td>
+<td>后端 session 或 <code>HttpOnly</code> Cookie；<strong>不要放 localStorage</strong></td>
+</tr>
+<tr>
+<td>8</td>
+<td>令牌有效期</td>
+<td>access 短（5~60min），refresh 轮转（Rotation）</td>
+</tr>
+<tr>
+<td>9</td>
+<td>撤销能力</td>
+<td>支持 refresh 撤销 / 登出失效</td>
+</tr>
+<tr>
+<td>10</td>
+<td>SSRF 入口</td>
+<td>用户可控 URL 全部走白名单 + IP 校验</td>
+</tr>
+<tr>
+<td>11</td>
+<td>错误信息</td>
+<td>不回显内部地址/堆栈</td>
+</tr>
+<tr>
+<td>12</td>
+<td>日志</td>
+<td>不打印 token / code / secret</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_5">六、图解</h2>
+<h3 id="61-pkce-mermaid">6.1 授权码 + PKCE 全流程（Mermaid）</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant U as 用户(浏览器)
+    participant C as Client 应用
+    participant AS as 授权服务器
+    participant RS as 资源服务器
+
+    C-&gt;&gt;C: 生成 code_verifier / state
+    C-&gt;&gt;U: 302 /authorize?code_challenge=S256(v)&amp;state=随机
+    U-&gt;&gt;AS: 带 code_challenge 的授权请求
+    AS-&gt;&gt;U: 登录 + 同意授权页面
+    U-&gt;&gt;AS: 同意
+    AS-&gt;&gt;U: 302 /cb?code=CODE&amp;state=随机
+    U-&gt;&gt;C: 回调(浏览器只看到 code, 看不到 token)
+    C-&gt;&gt;C: 校验 state 一致且未用过 ✅
+    C-&gt;&gt;AS: POST /token (code + code_verifier + client_secret)
+    AS-&gt;&gt;AS: SHA256(verifier) == 存下的 challenge ?
+    AS-&gt;&gt;C: access_token + refresh_token
+    C-&gt;&gt;RS: GET /api/me  Authorization: Bearer &lt;token&gt;
+    RS-&gt;&gt;C: 200 用户数据
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant U as 用户(浏览器)
+    participant C as Client 应用
+    participant AS as 授权服务器
+    participant RS as 资源服务器
+
+    C-&gt;&gt;C: 生成 code_verifier / state
+    C-&gt;&gt;U: 302 /authorize?code_challenge=S256(v)&amp;state=随机
+    U-&gt;&gt;AS: 带 code_challenge 的授权请求
+    AS-&gt;&gt;U: 登录 + 同意授权页面
+    U-&gt;&gt;AS: 同意
+    AS-&gt;&gt;U: 302 /cb?code=CODE&amp;state=随机
+    U-&gt;&gt;C: 回调(浏览器只看到 code, 看不到 token)
+    C-&gt;&gt;C: 校验 state 一致且未用过 ✅
+    C-&gt;&gt;AS: POST /token (code + code_verifier + client_secret)
+    AS-&gt;&gt;AS: SHA256(verifier) == 存下的 challenge ?
+    AS-&gt;&gt;C: access_token + refresh_token
+    C-&gt;&gt;RS: GET /api/me  Authorization: Bearer &lt;token&gt;
+    RS-&gt;&gt;C: 200 用户数据
+</code></pre></div>
+<h3 id="62-csrf-ascii">6.2 CSRF 攻击与防护对照（ASCII）</h3>
+<pre class="plain"><code>                 【无防护】
+ 受害者浏览器 ── 已登录 bank.com (Cookie: session=abc)
+        │
+        │  访问 evil.com  →  页面自动提交表单
+        ▼
+ bank.com: 看到 Cookie(session=abc) ✅ ── 执行转账 💸
+        （服务端无法区分&quot;用户点的&quot;和&quot;evil.com发的&quot;）
+
+                 【有防护】
+ evil.com 自动提交 ─→ bank.com
+                       ├─ 校验 csrf_token ✗ 缺失/不匹配 → 403 拒绝
+                       ├─ SameSite=Lax 跨站POST不带Cookie → 无会话 → 拒绝
+                       └─ Origin: https://evil.com ✗ 不在白名单 → 拒绝
+</code></pre>
+<h3 id="63-ssrf-ascii">6.3 SSRF 攻击路径与纵深防御（ASCII）</h3>
+<pre class="plain"><code> 用户可控 URL
+      │
+      ▼
+ ┌──────────────────────────────────────────────────────┐
+ │ 第1层 协议白名单:  http/https only  ✗ file/gopher/dict │
+ │ 第2层 域名白名单:  只允许 api.trusted.com 映射表        │
+ │ 第3层 DNS解析→IP:  10.0.0.5 / 169.254.169.254 ✗        │
+ │ 第4层 直连该IP(防 Rebinding) + 禁跟随重定向             │
+ │ 第5层 出网代理 + 网络层ACL: 内网段不可达                │
+ └──────────────────────────────────────────────────────┘
+      │
+      ▼
+  公网目标 ✅        内网/元数据 ❌ (如果漏了任意一层 → 云凭证泄漏)
+</code></pre>
+<hr>
+<h2 id="_6">七、代码案例逐节说明 + 运行命令 + 预期输出</h2>
+<blockquote>
+<p>全部代码位于 <code>code/</code>，<strong>仅依赖 Python 标准库</strong>（无 requests / authlib，<br>
+Python 3.10+），可直接 <code>python3 xx.py</code> 跑通。</p>
+<p>每个脚本都有两种模式：<br>
+* <strong>演示模式</strong>：<code>python3 code/xx.py</code> —— 把机制完整跑一遍给你看（含真实 sleep、真实 DNS）；<br>
+* <strong>自检模式</strong>：<code>python3 code/xx.py --self-test</code> —— 离线断言，输出最后一行必须是 <code>SELF-TEST OK</code>，<br>
+  失败时打印"实际值 vs 期望值"并以 1 退出（可直接接 CI）。</p>
+</blockquote>
+<h3 id="70">7.0 统一验证命令（一键跑完三个自检）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span>days/day-150-oauth2-auth-security/code/*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;=== </span><span class="nv">$f</span><span class="s2">&quot;</span>
+<span class="w">  </span>python3<span class="w"> </span>-B<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span>&gt;<span class="w"> </span>/tmp/st.log<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span>
+<span class="w">  </span><span class="nv">code</span><span class="o">=</span><span class="nv">$?</span>
+<span class="w">  </span>tail<span class="w"> </span>-2<span class="w"> </span>/tmp/st.log
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$code</span><span class="s2">&quot;</span>
+<span class="k">done</span>
+</code></pre></div>
+<p><strong>预期输出（实测）</strong>：</p>
+<pre class="plain"><code>=== days/day-150-oauth2-auth-security/code/01-oauth2-auth-code-flow.py
+共 27 项断言全部通过
+SELF-TEST OK
+exit=0
+=== days/day-150-oauth2-auth-security/code/02-oauth2-csrf-pitfalls.py
+共 37 项断言全部通过
+SELF-TEST OK
+exit=0
+=== days/day-150-oauth2-auth-security/code/03-auth-security-audit.py
+共 47 项断言全部通过
+SELF-TEST OK
+exit=0
+</code></pre>
+<h3 id="71-01-oauth2-auth-code-flowpy-pkce">7.1 <code>01-oauth2-auth-code-flow.py</code> — 授权码 + PKCE 流程模拟</h3>
+<p><strong>逐节说明</strong></p>
+<table>
+<thead>
+<tr>
+<th>节</th>
+<th>代码位置</th>
+<th>演示什么</th>
+<th>对应原理（为什么）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>①</td>
+<td><code>b64url()</code> / <code>s256()</code></td>
+<td>Base64URL 无填充 + SHA256</td>
+<td>PKCE 的 challenge 必须是 URL-safe 且与官方实现一致；自检用 <strong>RFC 7636 附录 B 官方向量</strong>交叉验证</td>
+</tr>
+<tr>
+<td>②</td>
+<td><code>MiniAuthServer.__init__</code></td>
+<td>注册机密/公开两类客户端</td>
+<td>公开客户端没有 <code>client_secret</code>，必须靠 PKCE 补位</td>
+</tr>
+<tr>
+<td>③</td>
+<td><code>authorize()</code></td>
+<td>redirect_uri 精确匹配 / response_type / 公开客户端强制 PKCE(S256)</td>
+<td>把"三道关卡"摆在发码前，任一道不过就不发码</td>
+</tr>
+<tr>
+<td>④</td>
+<td><code>token()</code></td>
+<td>授权码一次性、绑客户端、绑 redirect_uri、PKCE 校验、secret 校验</td>
+<td>换令牌是<strong>后端到后端</strong>，浏览器永远看不到 token</td>
+</tr>
+<tr>
+<td>⑤</td>
+<td><code>userinfo()</code></td>
+<td>Bearer 校验 + 过期 + 撤销</td>
+<td>凭证必须"可控"：能过期、能刷新、能吊销</td>
+</tr>
+<tr>
+<td>⑥</td>
+<td><code>_token_from_refresh()</code></td>
+<td>refresh 轮转</td>
+<td>旧 refresh 用后即废，重放就是入侵信号</td>
+</tr>
+<tr>
+<td>⑦</td>
+<td><code>OAuthClient.handle_callback()</code></td>
+<td><code>state</code> 比对 + 用后即焚</td>
+<td><code>state</code> 由<strong>客户端</strong>校验，PKCE 由<strong>服务器</strong>校验，两者不是一回事</td>
+</tr>
+<tr>
+<td>⑧</td>
+<td><code>run_flow()</code></td>
+<td>完整走两遍（机密 / PKCE），含授权码重放、过期、刷新、撤销</td>
+<td>把前面每个机制串成一条可观测的链路</td>
+</tr>
+</tbody>
+</table>
+<p><strong>运行命令</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-150-oauth2-auth-security/code/01-oauth2-auth-code-flow.py
+</code></pre></div>
+<p><strong>预期输出（实测）</strong></p>
+<pre class="plain"><code>════════════════════════════════════════════════════════════════════
+  流程演示：授权码（机密客户端）
+════════════════════════════════════════════════════════════════════
+1. 客户端生成授权 URL:
+   https://auth.example.com/authorize?response_type=code&amp;client_id=webapp&amp;redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback...
+2. 授权服务器回调（浏览器只看到 code）:
+   https://app.example.com/callback?code=on1WmxTKuQblQ4cf...&amp;state=un...
+3. ✅ state 校验通过，拿到授权码: on1WmxTKuQblQ4cf...
+4. ✅ 拿到令牌: access_token=2OZnLcmmmgvLT2T2... expires_in=3s
+5. ✅ 调用受保护接口: {&#x27;sub&#x27;: &#x27;alice&#x27;, &#x27;email&#x27;: &#x27;alice@example.com&#x27;, &#x27;scope&#x27;: &#x27;profile email&#x27;}
+
+6. 攻击者重放刚才那个授权码（应被拒绝）:
+   → {&#x27;error&#x27;: &#x27;invalid_grant&#x27;, &#x27;detail&#x27;: &#x27;code already used&#x27;}
+
+7. 等 4 秒让 access_token 过期……
+   过期后调用接口: {&#x27;error&#x27;: &#x27;invalid_token&#x27;, &#x27;detail&#x27;: &#x27;expired&#x27;}
+8. ✅ 用 refresh_token 换新令牌: access_token=...
+   现在调用接口: {&#x27;sub&#x27;: &#x27;alice&#x27;, &#x27;email&#x27;: &#x27;alice@example.com&#x27;, &#x27;scope&#x27;: &#x27;&#x27;}
+9. 主动撤销令牌后调用接口: {&#x27;error&#x27;: &#x27;invalid_token&#x27;}
+
+📋 服务端审计日志（真实系统里这就是安全事件溯源）:
+   [21:42:36] authorize OK user=alice client=webapp
+   [21:42:36] issue tokens for user=alice scope=&#x27;profile email&#x27;
+   [21:42:36] token REJECT: code replay detected!
+</code></pre>
+<blockquote>
+<p>🔍 <strong>看输出要看三件事</strong>：① 第 6 步的重放被拒（授权码一次性）；<br>
+② 第 7 步过期后拿到 <code>expired</code>（TTL 真的生效）；<br>
+③ 日志里出现了 <code>code replay detected!</code>，但<strong>没有出现任何 token 原文</strong>。<br>
+输出的 <code>code</code> / <code>access_token</code> 每次都不一样（随机生成），这是正常的；<br>
+需要"每次都一样"的确定性输出时，就用 <code>--self-test</code>。</p>
+</blockquote>
+<p><strong>自检模式</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-150-oauth2-auth-security/code/01-oauth2-auth-code-flow.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p>预期最后两行为 <code>共 27 项断言全部通过</code> 与 <code>SELF-TEST OK</code>，退出码 0。<br>
+自检里 <strong>不 sleep</strong>：把 <code>expires_at</code> 手动拨到过去来模拟过期，因此秒出且结果稳定。</p>
+<h3 id="72-02-oauth2-csrf-pitfallspy-csrf">7.2 <code>02-oauth2-csrf-pitfalls.py</code> — CSRF 攻击复现与四层防护</h3>
+<p><strong>逐节说明</strong></p>
+<table>
+<thead>
+<tr>
+<th>坑</th>
+<th>关键代码</th>
+<th>漏洞点（为什么会中招）</th>
+<th>修复原理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>AppWithoutState</code> / <code>AppWithState</code></td>
+<td>回调不校验 <code>state</code> ⇒ 攻击者用自己的 code 完成绑定</td>
+<td>高熵 state + 会话绑定 + 用后即焚（<code>compare_digest</code> 比较）</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>Bank.transfer()</code></td>
+<td>只靠 Cookie 认人，且接口可被跨站触发</td>
+<td>SameSite + CSRF Token + Origin 白名单 + GET 无副作用（四层）</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>parse_set_cookie()</code> + 风险对照</td>
+<td>令牌放 localStorage ⇒ JS 可读 ⇒ 一次 XSS 永久失窃</td>
+<td>不透明会话 Cookie，<code>HttpOnly; Secure; SameSite=Lax; Path=/</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>check_redirect_uri_vulnerable/fixed</code></td>
+<td><code>startswith</code> 前缀匹配会被 <code>.evil.com</code> / <code>@evil</code> / 路径穿越绕过</td>
+<td>精确字符串匹配（RFC 6749 §3.1.2.3）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>运行命令与预期输出（实测）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-150-oauth2-auth-security/code/02-oauth2-csrf-pitfalls.py
+</code></pre></div>
+<pre class="plain"><code>── ❌ 漏洞版：无 state ────────────────────────────────────────────────
+  绑定成功: victim ← third_party_of(ATTACKER_CODE_12345)      ← 攻击成立
+── ✅ 修复版：校验 state ───────────────────────────────────────────────
+  ❌ state 不匹配 → 拒绝回调（已拦截 CSRF）                    ← 拦下了
+
+── 场景 A：SameSite=none + 无 CSRF Token（最危险） ─────────────────
+  💸 转账成功: victim → attacker 10000 元 (余额 0)
+── 场景 B：SameSite=Lax + 无 CSRF Token ─────────────────────────────
+  跨站 POST（恶意表单）:
+  ❌ 403 跨站请求未携带会话 Cookie（SameSite 拦截）
+  但 SameSite=Lax 对跨站 GET 顶层导航仍会带 Cookie：
+  💸 转账成功: victim → attacker 10000 元 (余额 0)              ← Lax 不是万能药
+── 场景 C：SameSite=None + CSRF Token（推荐组合之一） ──────────────
+  ❌ 403 CSRF token 缺失或不匹配（拦截）
+  💸 转账成功: victim → attacker 10000 元 (余额 0)              ← 带正确 Token 才放行
+
+  恶意 redirect_uri                                  前缀匹配       精确匹配
+  https://app.example.com/callback.evil.com        ✅放行(危险)    拦截
+  https://app.example.com/callback/../../steal     ✅放行(危险)    拦截
+  https://app.example.com/callback@evil.com        ✅放行(危险)    拦截
+  https://app.example.com/callback?x=1#@evil.com   ✅放行(危险)    拦截
+  https://app.example.com.evil.com/callback        拦截         拦截
+</code></pre>
+<p><strong>自检模式</strong>：<code>--self-test</code> → <code>共 37 项断言全部通过</code> / <code>SELF-TEST OK</code> / exit 0。<br>
+自检把上表里<strong>每一格结论</strong>都变成断言（含 SameSite 语义矩阵的 6 格、<br>
+<code>Set-Cookie</code> 属性解析、5 个恶意 <code>redirect_uri</code> 必须全被精确匹配拦下）。</p>
+<h3 id="73-03-auth-security-auditpy">7.3 <code>03-auth-security-audit.py</code> — 认证系统安全审计脚本（实战）</h3>
+<p><strong>逐节说明</strong></p>
+<table>
+<thead>
+<tr>
+<th>节</th>
+<th>代码</th>
+<th>检查什么</th>
+<th>判级逻辑（为什么这么定）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>①</td>
+<td><code>audit_oauth2()</code></td>
+<td>OAUTH-01~09：授权模式 / state / PKCE / redirect_uri / HTTPS / TTL / 轮转 / 撤销 / 废弃 grant</td>
+<td>能被直接利用的 → FAIL；"指标偏弱"的 → WARN</td>
+</tr>
+<tr>
+<td>②</td>
+<td><code>audit_cookie()</code></td>
+<td>COOKIE-01~05：HttpOnly / Secure / SameSite / Domain / Max-Age</td>
+<td>缺 HttpOnly/Secure/SameSite=None → FAIL；Domain 过宽/超长 TTL → WARN</td>
+</tr>
+<tr>
+<td>③</td>
+<td><code>audit_csrf()</code></td>
+<td>CSRF-01~06：Token 开关 / 服务端校验 / 复用 / GET 副作用 / Origin / Content-Type 误依赖</td>
+<td>"有 token 但服务端不校验"也是 FAIL —— <strong>假防护比没有防护更危险</strong></td>
+</tr>
+<tr>
+<td>④</td>
+<td><code>check_url_ssrf()</code></td>
+<td>SSRF-01~07：协议 / 凭据 / 白名单 / 元数据与 IP / 混淆特征 / 重定向</td>
+<td>只做<strong>静态判定</strong>，不发任何网络请求</td>
+</tr>
+<tr>
+<td>⑤</td>
+<td><code>demo_config()</code></td>
+<td>一份故意做错的配置</td>
+<td>用它演示"审计器到底能抓出多少东西"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>运行命令与预期输出（实测）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-150-oauth2-auth-security/code/03-auth-security-audit.py<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+</code></pre></div>
+<pre class="plain"><code>  [1/4] OAuth2 配置
+  [2/4] Cookie / 会话
+  [3/4] CSRF 防护
+  [4/4] SSRF 检测
+    · 检测 URL: https://cdn.example.com/avatar.png
+    · 检测 URL: http://169.254.169.254/latest/meta-data/
+    · 检测 URL: http://2130706433:6379/
+    · 检测 URL: file:///etc/passwd
+    · 检测 URL: http://expected.com@evil.com/x
+    · 检测 URL: http://192.168.1.1/admin
+...
+⚠️  [WARN] OAUTH-06 access_token 有效期偏长     · 现状: 86400s (&gt;1h)
+⚠️  [WARN] OAUTH-07 refresh_token 未轮转
+⚠️  [WARN] OAUTH-08 未提供令牌撤销端点
+
+❌ [FAIL] SSRF-04 目标是云元数据地址 `169.254.169.254`
+        · 建议: 永久封禁该地址；启用 IMDSv2（需要 token 头）等云侧加固
+❌ [FAIL] SSRF-06 URL 中存在混淆/绕过特征
+        · 现状: 疑似十进制/十六进制/八进制编码的 127.0.0.1
+❌ [FAIL] SSRF-01 危险协议 `file://`
+❌ [FAIL] SSRF-02 URL 中携带凭据（user:pass@host）
+❌ [FAIL] SSRF-05 IP 字面量命中受限网段: 192.168.1.1 (in 192.168.0.0/16)
+──────────────────────────────────────────────────────────────────────
+  合计: ✅ 25 个通过 / ⚠️  9 个警告 / ❌ 13 个失败
+</code></pre>
+<blockquote>
+<p>⚠️ <strong>一处环境相关的差异</strong>：演示里 <code>https://cdn.example.com/avatar.png</code><br>
+那一行需要 DNS 解析。<strong>离线环境</strong>下它会输出<br>
+<code>⚠️ [WARN] SSRF-05 域名 cdn.example.com 解析失败</code>（这正是"解析失败应拒绝"提醒的用处），<br>
+而在能上网的机器上会多一行 <code>✅ … 解析到 [... ]，均为公网地址</code>。<br>
+这也是 <code>--self-test</code> 一律用 <code>resolve_dns=False</code> 的原因：<strong>自检必须离线可重复</strong>。</p>
+</blockquote>
+<p><strong>退出码</strong>：<code>13</code> 个 FAIL ⇒ <code>exit=1</code>（可接 CI：有 FAIL 就阻断发布）。</p>
+<p><strong>--json 与 --save（报告不落仓库工作树）</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-B<span class="w"> </span>days/day-150-oauth2-auth-security/code/03-auth-security-audit.py<span class="w"> </span>--json<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-20
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-150-oauth2-auth-security/code/03-auth-security-audit.py<span class="w"> </span>--save
+<span class="c1"># → 💾 报告已写入临时目录：</span>
+<span class="c1">#    /tmp/auth-audit-xxxxxxxx/audit-report.json</span>
+<span class="c1">#    /tmp/auth-audit-xxxxxxxx/audit-report.txt</span>
+</code></pre></div>
+<p><strong>自检模式</strong>：<code>--self-test</code> → <code>共 47 项断言全部通过</code> / <code>SELF-TEST OK</code> / exit 0。<br>
+自检覆盖：合规配置 0 FAIL（防假阳性）→ 每一项缺陷精准落到 FAIL/WARN（防漏报）→<br>
+SSRF 的 11 类恶意 URL 全部被抓。</p>
+<blockquote>
+<p>🐞 <strong>本文件在升级时抽出并修掉的一个真 bug</strong>（值得单独记一笔）：<br>
+<code>_is_blocked_ip()</code> 原来只比较 <code>ip.version == net.version</code>，<br>
+于是 <code>http://[::ffff:127.0.0.1]/</code>（IPv4-mapped IPv6）因为 version=6<br>
+而 <code>127.0.0.0/8</code> 是 version=4，被当成"公网地址"放行了。<br>
+修法是先 <code>ip.ipv4_mapped</code> 拆回 IPv4 再判，并补上 6to4（<code>2002::/16</code>）的内嵌地址。<br>
+现在自检里有一条专门的断言锁死这个行为。</p>
+</blockquote>
+<hr>
+<h2 id="_7">八、思考题</h2>
+<ol>
+<li>
+<p><strong>OAuth2 到底"授权"了什么？</strong> 如果说 access_token 泄漏等于"别人拿到了你的<br>
+   权限"，那么"令牌该有多长的有效期"这个权衡里，安全和体验的边界在哪？<br>
+   为什么业界普遍选 5~60 分钟而不是 24 小时？</p>
+</li>
+<li>
+<p><strong><code>state</code> 和 PKCE 都在防"攻击者拿到 code"，它们防的是一回事吗？</strong><br>
+   请分别说出各自拦截的攻击场景，并解释为什么<strong>两者都要有</strong>。</p>
+</li>
+<li>
+<p><strong>有 <code>SameSite=Lax</code> 就够了吗？</strong> 找出至少两种 <code>SameSite=Lax</code> <strong>防不住</strong>或<br>
+   需要额外考虑的场景（提示：子域名、<code>GET</code> 有副作用、老浏览器、<br>
+<code>SameSite=None</code> 的第三方嵌入场景）。</p>
+</li>
+<li>
+<p><strong>SSRF 为什么"黑名单永远防不住"？</strong> 请解释 DNS Rebinding 的攻击时序，<br>
+   并说明"解析出 IP 后直连该 IP、且不跟随重定向"为什么能同时缓解<br>
+   Rebinding 和 302 绕过。</p>
+</li>
+<li>
+<p><strong>把这三天的知识串起来：</strong> 假设你负责一个"用 Google 登录"的系统，<br>
+   请写出从浏览器到数据库这一条链路上，<strong>至少 8 个</strong>必须做的安全动作<br>
+   （从 TLS、state、PKCE、redirect_uri、token 存储、Cookie 标志、SSRF 防护，<br>
+   到审计日志），并标注每一项属于"认证"还是"授权"问题。</p>
+</li>
+</ol>
+<hr>
+<h2 id="_8">附：本日文件清单</h2>
+<pre class="plain"><code>days/day-150-oauth2-auth-security/
+├── README.md                          ← 本文
+├── code/                              ← 全部仅依赖标准库，Python 3.10+
+│   ├── 01-oauth2-auth-code-flow.py    ← 授权码 + PKCE 全流程（--self-test：27 项）
+│   ├── 02-oauth2-csrf-pitfalls.py     ← CSRF / 令牌存储 / redirect_uri 四坑（--self-test：37 项）
+│   └── 03-auth-security-audit.py      ← 配置审计 + SSRF 检测（--self-test：47 项，--json/--save）
+├── diagrams/
+│   └── README.md                      ← 流程图 / 攻击路径 ASCII + Mermaid
+└── exercises/
+    └── checklist.md                   ← 完成清单 + 练习题
+</code></pre>
+<blockquote>
+<p>✅ <strong>验收方式</strong>（与 "可验证" 对应）：上面 3 个脚本分别跑 <code>--self-test</code>，<br>
+全部输出 <code>SELF-TEST OK</code> 且 <code>exit=0</code>；演示模式下的预期输出见第七节。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-149/index.html">← Day 149 JWT 安全：结构、签名与攻击面</a><a class="nav-next" href="../day-151/index.html">Day 151 SQL 注入原理：五类注入、参数化查询与 ORM 防线 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

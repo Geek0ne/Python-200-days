@@ -1,0 +1,1579 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 157 — 流量分析：PCAP 格式、pyshark/tshark 与标准库解析双路径</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 157 — 流量分析：PCAP 格式、pyshark/tshark 与标准库解析双路径</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">1126 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-157-pyshark-traffic-analysis" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">目录</a>
+<a class="toc-l2" href="#_2">一、概念解释</a>
+<a class="toc-l3" href="#11-pcap">1.1 PCAP 是什么</a>
+<a class="toc-l3" href="#12-pyshark">1.2 pyshark 是什么：它不是一个解析器</a>
+<a class="toc-l3" href="#13">1.3 五个工具的分工（别用错工具）</a>
+<a class="toc-l3" href="#14-bpf-display-filter">1.4 先把两个&quot;过滤&quot;分清：BPF 与 display filter</a>
+<a class="toc-l3" href="#15-pyshark">1.5 本日的双路径设计（为什么自检不依赖 pyshark）</a>
+<a class="toc-l2" href="#_3">二、底层原理与机制</a>
+<a class="toc-l3" href="#21-pcap">2.1 pcap 文件头逐字节（为什么字节序判断是第一道坎）</a>
+<a class="toc-l3" href="#22-pcapng-if_tsresol">2.2 pcapng 的块结构与 if_tsresol 深坑</a>
+<a class="toc-l3" href="#23-dissection">2.3 dissection 模型：逐层剥头 + 猜下一层</a>
+<a class="toc-l3" href="#24">2.4 校验和：三种算法，一篇讲透</a>
+<a class="toc-l3" href="#25-tshark-python">2.5 为什么 tshark 快、纯 Python 慢</a>
+<a class="toc-l3" href="#26-cpu">2.6 为什么内核态过滤能救 CPU</a>
+<a class="toc-l3" href="#27">2.7 时间戳：为什么分析里它比内容还重要</a>
+<a class="toc-l2" href="#_4">三、攻击方式·手段·原理 与 检测原理</a>
+<a class="toc-l3" href="#30">3.0 先说总纲：单包特征 ≠ 检测特征</a>
+<a class="toc-l3" href="#31-syn-scan">3.1 半开端口扫描（SYN Scan）</a>
+<a class="toc-l3" href="#32-syn-syn-flood">3.2 SYN 洪水（SYN Flood）</a>
+<a class="toc-l3" href="#33-cleartext-credentials">3.3 明文凭据嗅探（Cleartext Credentials）</a>
+<a class="toc-l3" href="#34-dns-dns-tunneling">3.4 DNS 隧道（DNS Tunneling）</a>
+<a class="toc-l3" href="#35-c2-beaconing">3.5 C2 心跳（Beaconing）</a>
+<a class="toc-l3" href="#36-arp-arp-spoofing">3.6 ARP 欺骗（ARP Spoofing）</a>
+<a class="toc-l3" href="#37">3.7 报文头篡改与校验和</a>
+<a class="toc-l3" href="#38">3.8 检测器的共同工程要求</a>
+<a class="toc-l2" href="#_5">四、防护/修复原理</a>
+<a class="toc-l3" href="#41">4.1 加密：把&quot;明文嗅探&quot;这一类问题整体消掉</a>
+<a class="toc-l3" href="#42">4.2 网络分段与访问控制</a>
+<a class="toc-l3" href="#43-arp">4.3 交换机侧（防 ARP 欺骗三件套）</a>
+<a class="toc-l3" href="#44-dns-dns">4.4 DNS 出口治理（防 DNS 隧道）</a>
+<a class="toc-l3" href="#45-syn">4.5 防 SYN 洪水 / 端口扫描</a>
+<a class="toc-l3" href="#46">4.6 检测工程本身（容易被忽略的&quot;防护&quot;）</a>
+<a class="toc-l3" href="#47">4.7 合规：抓包文件本身是敏感数据</a>
+<a class="toc-l2" href="#_6">五、代码案例逐节说明</a>
+<a class="toc-l3" href="#51-pcap_libpy">5.1 pcap_lib.py —— 核心引擎（逐节）</a>
+<a class="toc-l3" href="#52-01-basic-usagepy">5.2 01-basic-usage.py —— 读取与列出数据包</a>
+<a class="toc-l3" href="#53-02-advanced-filteringpy">5.3 02-advanced-filtering.py —— 过滤的两种语义</a>
+<a class="toc-l3" href="#54-03-traffic-analysispy">5.4 03-traffic-analysis.py —— 从包到结论</a>
+<a class="toc-l2" href="#_7">六、运行命令 + 预期输出</a>
+<a class="toc-l3" href="#61">6.1 环境与依赖</a>
+<a class="toc-l3" href="#62-self-test-ok">6.2 全部自检（必须逐个跑，输出 SELF-TEST OK 才算通过）</a>
+<a class="toc-l3" href="#63">6.3 合成抓包演示（不碰网卡、不落仓库工作树）</a>
+<a class="toc-l3" href="#64">6.4 处理你自己抓的包（离线解析，不碰网卡）</a>
+<a class="toc-l3" href="#65-pyshark-tshark">6.5 pyshark 联机路径（装了 tshark 之后）</a>
+<a class="toc-l3" href="#66-pyshark">6.6 pyshark 的工作流（原图解保留）</a>
+<a class="toc-l2" href="#_8">七、常见陷阱速查表</a>
+<a class="toc-l2" href="#_9">八、局限（必须知道）</a>
+<a class="toc-l2" href="#_10">九、思考题</a>
+<a class="toc-l2" href="#_11">附：本日文件清单</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-157-pcap-pysharktshark">Day 157 — 流量分析：PCAP 格式、pyshark/tshark 与标准库解析双路径</h1>
+<blockquote>
+<p>阶段：Phase 10 — 网络安全开发 · 主题：PCAP 文件分析（pyshark 及标准库实现）</p>
+<p>前置知识：Day 115 socket 编程、Day 116 TCP/UDP、Day 153 端口扫描进阶、<br>
+Day 156 Scapy 数据包构造（<strong>建议先看 156</strong>：那里讲"怎么造包"，这里讲"怎么读包/下结论"）。</p>
+<p>本日要解决三个现实问题：<br>
+1. <strong>PCAP/PCAPNG 文件到底是什么字节结构？</strong>（能自己解析，才算真懂）<br>
+2. <strong>pyshark 为什么依赖 tshark？没装 tshark 的机器怎么活？</strong>（工程上的降级设计）<br>
+3. <strong>怎么从一堆包得出"有人在扫描 / 有人在隧道外泄 / 主机被 C2 控制"的结论？</strong><br>
+   （检测原理 + 误报控制）</p>
+</blockquote>
+<hr>
+<h2 id="_1">目录</h2>
+<ul>
+<li><a href="#一概念解释">一、概念解释</a></li>
+<li><a href="#二底层原理与机制">二、底层原理与机制</a></li>
+<li><a href="#三攻击方式手段原理-与-检测原理">三、攻击方式·手段·原理 与 检测原理</a></li>
+<li><a href="#四防护修复原理">四、防护/修复原理</a></li>
+<li><a href="#五代码案例逐节说明">五、代码案例逐节说明</a></li>
+<li><a href="#六运行命令--预期输出">六、运行命令 + 预期输出</a></li>
+<li><a href="#七常见陷阱速查表">七、常见陷阱速查表</a></li>
+<li><a href="#八局限必须知道">八、局限（必须知道）</a></li>
+<li><a href="#九思考题">九、思考题</a></li>
+<li><a href="#附本日文件清单">附：本日文件清单</a></li>
+</ul>
+<hr>
+<h2 id="_2">一、概念解释</h2>
+<h3 id="11-pcap">1.1 PCAP 是什么</h3>
+<p><strong>PCAP（Packet CAPture）是"抓包结果"的标准文件格式</strong>，由 libpcap（tcpdump 背后的库）<br>
+定义。它的设计极其简单，简单到<strong>24 字节文件头 + 每包 16 字节记录头</strong>：</p>
+<pre class="plain"><code>┌──────────────── 全局头 24 字节 ────────────────┐
+│ magic(4) version(4) thiszone(4) sigfigs(4)    │
+│ snaplen(4) network(4)                          │
+├──────────────── 每个包一条记录 ────────────────┤
+│ ts_sec(4) ts_usec(4) incl_len(4) orig_len(4)  │
+│ 包数据（incl_len 字节）                          │
+├──────────────── 下一条记录 … ──────────────────┤
+</code></pre>
+<p>关键特性（后面每个坑都从这里长出来）：</p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>魔数里带<strong>字节序</strong>信息</td>
+<td>读之前必须先判断大小端，判错会读出天文数字长度</td>
+</tr>
+<tr>
+<td><strong>没有任何"总包数"字段</strong></td>
+<td>只能读到文件尾；抓包进程被 kill 时最后一条记录是残缺的</td>
+</tr>
+<tr>
+<td>每条记录有 <code>incl_len</code> 与 <code>orig_len</code> 两个长度</td>
+<td>抓包时可以用 <code>-s</code> 只抓前 N 字节（snaplen），此时 <code>incl_len &lt; orig_len</code>，<strong>载荷是被截断的</strong></td>
+</tr>
+<tr>
+<td>时间戳有<strong>微秒/纳秒</strong>两种魔数</td>
+<td>精度不同，混着用会差 1000 倍</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>PCAPNG</strong> 是下一代格式（Wireshark 默认保存格式）。它是一串"块(block)"：<br>
+每块 = <code>类型(4) + 总长度(4) + 内容 + 总长度(4)</code>（长度出现两次，方便从后往前遍历）。<br>
+好处：支持多网卡、接口注释、纳秒时间戳、上游进程信息。<br>
+<strong>代价：格式复杂得多，而且初学者经常把 pcapng 喂给只认 pcap 的解析器</strong><br>
+—— 这正是本日 <code>sniff_format()</code> 第一步就做的事（先认格式，再解析）。</p>
+</blockquote>
+<h3 id="12-pyshark">1.2 pyshark 是什么：它不是一个解析器</h3>
+<p><strong>pyshark 本质上是 tshark（Wireshark 的命令行版）的 Python 包装</strong>。</p>
+<pre class="plain"><code>        ┌──────────────┐   subprocess   ┌──────────────────┐
+PCAP ──►│    tshark    │ ─────────────► │ XML / JSON 文本   │──► pyshark 解析成对象
+        │（C 解析引擎） │  （-T ek / -T pdml）                  │
+        └──────────────┘                                       ▼
+                                                        你的 Python 代码
+</code></pre>
+<p>三个必须记住的结论：</p>
+<ol>
+<li><strong>pyshark 的解析能力 = tshark 的解析能力</strong>：tshark 认识 3000+ 协议，<br>
+   所以 pyshark 也认识；但要清楚这是<strong>借来的能力</strong>。</li>
+<li><strong>它没有 tshark 就完全不能工作</strong>：<code>import pyshark</code> 在没装 Wireshark 的机器上<br>
+   直接 <code>ModuleNotFoundError</code>。本日运行环境就是这种情况——<code>python3 -c "import pyshark"</code><br>
+   会报错，所以<strong>本日的自检被设计成完全不依赖它</strong>。</li>
+<li><strong>它每读一批包都要和子进程通信</strong>：进程间管道 + 文本解析 → 大文件慢。<br>
+   真正高性能场景用 Zeek、dpkt 或自己做流式解析。</li>
+</ol>
+<h3 id="13">1.3 五个工具的分工（别用错工具）</h3>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>谁在解析</th>
+<th>能读</th>
+<th>能写/发包</th>
+<th>速度</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>tshark</strong></td>
+<td>C（Wireshark 引擎）</td>
+<td>pcap/pcapng</td>
+<td>转换格式</td>
+<td>快</td>
+<td>命令行快速挑包、批量字段导出</td>
+</tr>
+<tr>
+<td><strong>pyshark</strong></td>
+<td>tshark + Python 包装</td>
+<td>pcap/pcapng</td>
+<td>❌</td>
+<td>中</td>
+<td>Python 里用 Wireshark 的全协议能力</td>
+</tr>
+<tr>
+<td><strong>scapy</strong>（Day156）</td>
+<td>纯 Python</td>
+<td>pcap/pcapng</td>
+<td>✅ 能造包发包</td>
+<td>慢</td>
+<td>造包、改包、协议实验</td>
+</tr>
+<tr>
+<td><strong>dpkt</strong></td>
+<td>纯 Python</td>
+<td>pcap/pcapng</td>
+<td>有限</td>
+<td>中</td>
+<td>高性能纯 Python 解析（无外部依赖）</td>
+</tr>
+<tr>
+<td><strong>标准库 pcap_lib</strong>（本日）</td>
+<td>纯 Python</td>
+<td>pcap/pcapng</td>
+<td>✅ 能造包</td>
+<td>慢</td>
+<td><strong>离线自检、教学、无依赖兜底</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>一句话选择：<strong>要全协议 → pyshark/tshark；要造包 → scapy；<br>
+要"在任何机器上都能跑的自检和轻量统计" → 标准库自己写（本日重点）。</strong></p>
+</blockquote>
+<h3 id="14-bpf-display-filter">1.4 先把两个"过滤"分清：BPF 与 display filter</h3>
+<p>这是本日<strong>最容易糊涂</strong>的概念。很多人写了三年抓包命令，也没分清：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>BPF（<code>bpf_filter</code> / 捕获过滤）</th>
+<th>display filter（显示过滤）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>何时生效</td>
+<td><strong>抓包时</strong>（包进入内核的那一刻）</td>
+<td><strong>解析后</strong>（读文件/拿到包之后）</td>
+</tr>
+<tr>
+<td>在哪执行</td>
+<td><strong>内核</strong>（libpcap 把表达式编译成字节码）</td>
+<td><strong>用户态</strong>（tshark/pyshark/本库逐包求值）</td>
+</tr>
+<tr>
+<td>看到的是什么</td>
+<td><strong>原始字节的固定偏移</strong></td>
+<td>任意<strong>解析出来的协议字段</strong></td>
+</tr>
+<tr>
+<td>写法</td>
+<td><code>tcp[tcpflags] &amp; tcp-syn != 0</code></td>
+<td><code>tcp.flags.syn == 1</code></td>
+</tr>
+<tr>
+<td>没命中的包</td>
+<td><strong>永远不会到达用户态</strong>（丢了就是丢了）</td>
+<td>还在文件里，改条件就能看</td>
+</tr>
+<tr>
+<td>性能</td>
+<td>极高（不命中的包 0 拷贝）</td>
+<td>一般（每包都要 dissect）</td>
+</tr>
+<tr>
+<td>典型用途</td>
+<td>长时间抓包时挡掉 99% 噪声</td>
+<td>事后从各个角度挑包</td>
+</tr>
+</tbody>
+</table>
+<p><strong>一句话记忆：BPF 决定"你手里有什么"，display filter 决定"你先看哪一条"。</strong></p>
+<p><strong>为什么 BPF 只能看固定偏移？</strong> 因为它运行在<strong>协议解析之前</strong>。内核不认识<br>
+"HTTP 方法"是什么，它只认"从 TCP 头开始第 2 个字节的 2 字节等于 80"。<br>
+所以 <code>port 80</code> 在内核里其实展开成这样：</p>
+<pre class="plain"><code>(tcp[2:2]==80 or tcp[4:2]==80) or (udp[2:2]==80 or udp[4:2]==80)
+</code></pre>
+<h3 id="15-pyshark">1.5 本日的双路径设计（为什么自检不依赖 pyshark）</h3>
+<pre class="plain"><code>                    ┌──────────────────────────────┐
+   统一数据结构 IR   │ number/ts/ip/tcp/udp/http …  │  ← 字段名对齐 Wireshark 显示过滤器名
+                    └──────────────▲───────────────┘
+                                   │
+        ┌──────────────────────────┴──────────────────────────┐
+        │                                                     │
+ ┌──────┴──────┐                                     ┌────────┴────────┐
+ │  pyshark 路 │  import pyshark → FileCapture        │  标准库路 pcap_lib│
+ │  （全协议） │  依赖 tshark 二进制                   │  纯 stdlib，零依赖 │
+ └─────────────┘                                     └─────────────────┘
+</code></pre>
+<p>上层代码（统计、检测、报告）<strong>完全不关心</strong>用的是哪条路径：<br>
+<code>--backend auto</code> 有 pyshark 就用，没有就自动降级；<code>--backend pyshark</code> 则<br>
+<strong>明确报错而不是静默降级</strong>（否则你永远不知道自己在跑哪条路）。</p>
+<hr>
+<h2 id="_3">二、底层原理与机制</h2>
+<h3 id="21-pcap">2.1 pcap 文件头逐字节（为什么字节序判断是第一道坎）</h3>
+<pre class="plain"><code>偏移  长度  字段            说明
+0     4     magic           0xa1b2c3d4(微秒) / 0xa1b23c4d(纳秒)
+4     2     version_major   2
+6     2     version_minor   4
+8     4     thiszone        时区修正，**永远是 0**（历史包袱，从未使用）
+12    4     sigfigs         时间戳精度，**永远是 0**
+16    4     snaplen         抓包时每个包最多抓多少字节
+20    4     network         链路类型：1=Ethernet, 0=NULL(BSD lo), 113=Linux SLL(any 网卡)
+</code></pre>
+<p><strong>魔数陷阱（必须理解）</strong>：写文件的一方按自己的 CPU 字节序写入 <code>0xa1b2c3d4</code>。<br>
+读的时候如果按小端读：</p>
+<table>
+<thead>
+<tr>
+<th>读出来的值</th>
+<th>含义</th>
+<th>后续 struct 前缀</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0xa1b2c3d4</code></td>
+<td>小端文件、微秒</td>
+<td><code>&lt;</code></td>
+</tr>
+<tr>
+<td><code>0xd4c3b2a1</code></td>
+<td><strong>大端文件</strong>（字节被交换）</td>
+<td><code>&gt;</code></td>
+</tr>
+<tr>
+<td><code>0xa1b23c4d</code></td>
+<td>小端文件、<strong>纳秒</strong></td>
+<td><code>&lt;</code>（时间戳 ÷1e9）</td>
+</tr>
+<tr>
+<td><code>0x4d3cb2a1</code></td>
+<td>大端文件、纳秒</td>
+<td><code>&gt;</code>（÷1e9）</td>
+</tr>
+</tbody>
+</table>
+<p>判错的后果非常具体：<code>incl_len</code> 会变成一个天文数字，然后<br>
+<code>f.read(incl_len)</code> <strong>一口吃掉大半个文件</strong>，后面的解析全乱。<br>
+本库因此加了一个保险：单包长度 &gt; 256KB 直接报错并提示"字节序可能判错了"。</p>
+<h3 id="22-pcapng-if_tsresol">2.2 pcapng 的块结构与 <code>if_tsresol</code> 深坑</h3>
+<pre class="plain"><code>Section Header Block (SHB, 0x0A0D0D0A)
+  ├ 字节序魔数 0x1A2B3C4D（用来判断这个段是大端还是小端）
+  ├ 版本 1.0
+  └ 段长度（-1 = 未知，读到 EOF 为止）
+Interface Description Block (IDB, 0x00000001)
+  ├ linktype(2) 保留(2) snaplen(4)
+  └ 选项：if_tsresol(码 9)、if_name、if_speed …
+Enhanced Packet Block (EPB, 0x00000006)
+  ├ 接口号(4) 时间戳高32位(4) 时间戳低32位(4) caplen(4) origlen(4)
+  └ 包数据（**必须 4 字节对齐填充**）+ 选项
+</code></pre>
+<p><strong><code>if_tsresol</code> 这个 1 字节的值有双重含义</strong>（本库自检真的抓到过这个 bug）：</p>
+<ul>
+<li>最高位 = 0 → 分辨率 = <strong>10⁻ⁿ</strong>（<code>n=6</code> 就是微秒，最常见的默认值）</li>
+<li>最高位 = 1 → 分辨率 = <strong>2⁻ⁿ</strong>（<code>0x80|6</code> → 1/64 秒，某些二进制时钟的设备）</li>
+</ul>
+<p>我第一版实现按 <code>2ⁿ</code> 处理，结果时间戳精度掉到 <strong>15.625ms</strong><br>
+（表现为"时间戳看着差不多，但怎么都对不齐"）。修正后 1:1 复现原始时间戳。<br>
+<strong>这类 bug 的可怕之处是它不报错，只是数字微错</strong> —— 所以自检必须断言时间差。</p>
+<p>另一个点：<strong>未知块必须能跳过</strong>。文件里会出现 NRB(名字解析)、ISB(统计)、<br>
+厂商自定义块；如果解析器"遇到不认识的块就报错"，等 Wireshark 升级加个新块，<br>
+你的工具就废了。本库只认 SHB/IDB/EPB/SPB，其余按长度跳过。</p>
+<h3 id="23-dissection">2.3 dissection 模型：逐层剥头 + 猜下一层</h3>
+<p>pyshark（以及本库）的核心思想都是"<strong>剥洋葱</strong>"：</p>
+<pre class="plain"><code>以太网头 → 看 ethertype → 0x0800 就交给 IPv4，0x86DD 交给 IPv6，0x0806 交给 ARP
+IPv4 头  → 看 proto     → 6 交给 TCP，17 交给 UDP，1 交给 ICMP
+TCP 头   → 看端口       → 53 交给 DNS，80 交给 HTTP
+</code></pre>
+<p>每一步都要处理"<strong>我怎么知道下一层是什么</strong>"这个问题：</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>判断依据</th>
+<th>坑</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>链路层</td>
+<td>EtherType</td>
+<td>VLAN(0x8100) 会在中间插 4 字节，<strong>不剥就会全错位</strong></td>
+</tr>
+<tr>
+<td>网络层</td>
+<td>IP 头 <code>proto</code> 字段</td>
+<td>分片包（frag_offset≠0）没有传输层头，硬解会得到垃圾</td>
+</tr>
+<tr>
+<td>传输层</td>
+<td>端口号</td>
+<td>非标端口（8080、8443）需要靠<strong>内容特征</strong>兜底</td>
+</tr>
+<tr>
+<td>应用层</td>
+<td>内容特征</td>
+<td>HTTP/2 是二进制帧，按文本解会失败；TLS 更是完全加密</td>
+</tr>
+</tbody>
+</table>
+<p>这就是"为什么排障时经常看到 <code>[Malformed Packet]</code>"：<br>
+解析器按规则猜下一层，猜错就把后面的字节当成别的协议头。</p>
+<h3 id="24">2.4 校验和：三种算法，一篇讲透</h3>
+<table>
+<thead>
+<tr>
+<th>协议</th>
+<th>校验和覆盖范围</th>
+<th>有没有伪首部</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IPv4</td>
+<td><strong>只有 IP 头</strong>（20~60 字节）</td>
+<td>❌</td>
+<td>每跳 TTL 递减都要增量更新</td>
+</tr>
+<tr>
+<td>TCP</td>
+<td>伪首部 + TCP 头 + 载荷</td>
+<td>✅</td>
+<td><strong>改载荷必须重算</strong></td>
+</tr>
+<tr>
+<td>UDP</td>
+<td>伪首部 + UDP 头 + 载荷</td>
+<td>✅</td>
+<td>值为 0 表示"发送方没算"，不算错</td>
+</tr>
+<tr>
+<td>ICMP</td>
+<td><strong>整条 ICMP 消息</strong></td>
+<td>❌</td>
+<td>和 TCP/UDP 不同，容易记混</td>
+</tr>
+<tr>
+<td>IPv6</td>
+<td>无头校验和</td>
+<td>—</td>
+<td>交给上层，且<strong>强制</strong>校验</td>
+</tr>
+</tbody>
+</table>
+<p><strong>算法（16 位反码求和）</strong>：</p>
+<pre class="plain"><code>1) 数据按 16 位一组当大端整数相加（奇数长度末尾补一个 0x00 字节！）
+2) 结果的高 16 位是进位，回卷加到低 16 位（可能卷多次）
+3) 取反码 → 这就是要填进校验和字段的值
+4) 验证时：把&quot;含校验和字段&quot;的整段再算一次反码和，结果应为 0xFFFF
+</code></pre>
+<p><strong>为什么用反码和而不是普通和？</strong> 因为它<strong>可结合、可交换</strong>：<br>
+路由器只需要"减掉旧 TTL、加上新 TTL"就能增量更新校验和，<br>
+不用重算整包——这是 1970 年代为路由器性能做的设计取舍。</p>
+<p><strong>伪首部为什么存在？</strong> 它包含源/目的 IP，作用不是检错而是<strong>防误投递</strong>：<br>
+如果包被错误路由到别的 IP，接收端算出的校验和对不上 → 丢弃。<br>
+（延伸：这也解释了为什么 NAT 改 IP/端口<strong>必须</strong>同时改 TCP/UDP 校验和，<br>
+改错就变成"连接能建但数据全丢"的玄学故障。）</p>
+<h3 id="25-tshark-python">2.5 为什么 tshark 快、纯 Python 慢</h3>
+<table>
+<thead>
+<tr>
+<th>环节</th>
+<th>tshark（C）</th>
+<th>纯 Python（本库）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>字节 → 字段</td>
+<td>指针偏移 + 位运算</td>
+<td>每个字段一次 <code>int.from_bytes</code></td>
+</tr>
+<tr>
+<td>字符串/对象开销</td>
+<td>无（写固定缓冲区）</td>
+<td>每包多个 dict/str 对象，有 GC 压力</td>
+</tr>
+<tr>
+<td>状态机（流重组）</td>
+<td>有（且很强）</td>
+<td>本教学库<strong>没有</strong></td>
+</tr>
+<tr>
+<td>量级</td>
+<td>百万包/秒级</td>
+<td>万包/秒级（差 2 个数量级以上）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>这正是"双路径"存在的理由</strong>：pyshark 用于全协议、大批量；<br>
+标准库路径用于<strong>离线自检、无依赖环境、轻量统计</strong>（本日 70 个包的演示场景<br>
+纯 Python 完全够用）。</p>
+<h3 id="26-cpu">2.6 为什么内核态过滤能救 CPU</h3>
+<pre class="plain"><code>网卡收到帧
+   │
+   ▼
+内核 netif_receive_skb
+   ├──────────────────────────► 正常协议栈（TCP/IP）
+   └──► AF_PACKET 套接字（抓包）
+            │
+            │ ① BPF 过滤 ← 不命中的包在这里就被扔掉，**零拷贝到用户态**
+            ▼
+        ② 环形缓冲区（默认约 208KB）  ← 突发流量写满即丢包
+            ▼
+        ③ 用户态 recvfrom() → dissect（贵）
+            ▼
+        ④ 存进列表（store=True）      ← 内存无限增长 → OOM
+</code></pre>
+<p>一次抓包命令的开销排序是 <strong>③ &gt; ① &gt; ②</strong>。所以：<br>
+<strong>能用 BPF 挡掉的，绝不要留给用户态</strong>；display filter 是"事后精挑"，不是性能手段。</p>
+<h3 id="27">2.7 时间戳：为什么分析里它比内容还重要</h3>
+<p>本日 03 的三个检测器（SYN 洪水、C2 心跳、端口扫描速率）<strong>全都依赖时间</strong>：</p>
+<ul>
+<li>C2 心跳靠"间隔的<strong>抖动系数</strong>"（标准差 / 平均值）判定，与内容无关；</li>
+<li>端口扫描靠"短时间内铺开多少端口"；</li>
+<li>洪水靠"每秒多少个 SYN"。</li>
+</ul>
+<p>所以分析脚本里<strong>永远不要丢时间戳</strong>（也不要用 <code>time.time()</code> 代替包的 <code>ts</code>），<br>
+否则你只能做"有没有"的判断，做不了"是不是有规律"的判断。</p>
+<hr>
+<h2 id="_4">三、攻击方式·手段·原理 与 检测原理</h2>
+<blockquote>
+<p>本日所有实验都在<strong>本地临时目录里的合成抓包</strong>上做：<br>
+不联网、不抓真网卡、不需要 sudo。合成流量里植入了 6 类异常，<br>
+每一类都对应一个可精确断言的检测器（这就是"结果准确且可复现"的实现方式）。</p>
+</blockquote>
+<h3 id="30">3.0 先说总纲：单包特征 ≠ 检测特征</h3>
+<pre class="plain"><code>看一个包   → &quot;这是一个 SYN&quot;          → 完全正常，无法判断
+看 8 个 SYN→ 打到 8 个不同端口，
+             且一个握手都没完成     → &quot;这是端口扫描&quot;
+看 25 个 SYN→ 打同一个端口          → &quot;这是 SYN 洪水&quot;
+看 4 次连接→ 间隔精确 60.000s       → &quot;这是 C2 心跳&quot;
+</code></pre>
+<p><strong>检测 = 聚合 + 基线 + 阈值</strong>。三者缺一：<br>
+无聚合则看不到行为；无基线则不知道"多少算多"；无阈值则给不出结论。<br>
+后面每个检测器都会明确写出这三样。</p>
+<h3 id="31-syn-scan">3.1 半开端口扫描（SYN Scan）</h3>
+<p><strong>手段与原理</strong>：只用 <code>socket.connect()</code> 扫描会完成三次握手，应用层日志会留下记录。<br>
+改成"只发 SYN、收到 SYN-ACK 后直接发 RST 断开"，则：</p>
+<pre class="plain"><code>   扫描器                     目标                    IDS/防火墙
+     │  SYN  ─────────────────►│                      │
+     │◄── SYN-ACK（开放）───────│                      │ 记录：SYN 无后续
+     │  RST  ─────────────────►│（连接从未建立）         │
+     │                         │                      │
+     │  SYN  ─────────────────►│                      │
+     │◄── RST,ACK（关闭）───────│                      │
+     │                         │                      │
+     │  SYN  ─────────────────►│  （被丢弃）            │ 大量同源 SYN ⇒ 速率告警
+     │     超时 ⇒ filtered      │                      │
+</code></pre>
+<p><strong>为什么隐蔽</strong>：应用层（Web/SSH 日志）<strong>没有任何记录</strong>，因为连接从未建立。<br>
+<strong>为什么仍然会被发现</strong>：网络层留下了"<strong>只有 SYN、没有握手</strong>"的模式，<br>
+而且必然伴随"<strong>同一源在短时间打到很多不同端口</strong>"。</p>
+<p><strong>检测原理（本日实现）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>判据</th>
+<th>取值</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>纯 SYN（SYN 且无 ACK、无载荷）打到不同目的端口的数量</td>
+<td>≥ 5</td>
+<td>正常访问目标端口固定</td>
+</tr>
+<tr>
+<td>该 (源,目标) 是否<strong>完成过任何握手</strong></td>
+<td>必须为"无"</td>
+<td>这条把正常访问完全排除，误报极低</td>
+</tr>
+</tbody>
+</table>
+<p><strong>误报分析</strong>：CDN 健康检查、负载均衡探测、漏洞扫描器（授权的）都可能有这种模式<br>
+→ 所以要结合资产表与授权名单做白名单（见第四章）。</p>
+<h3 id="32-syn-syn-flood">3.2 SYN 洪水（SYN Flood）</h3>
+<p><strong>手段与原理</strong>：TCP 三次握手里，服务端收到 SYN 后会分配一块<br>
+<strong>半连接队列（SYN backlog）</strong> 内存并回 SYN-ACK。攻击者只发 SYN 不完成握手，<br>
+服务端的半连接队列被占满 → <strong>正常用户再也连不上</strong>（典型的资源耗尽型 DoS）。</p>
+<pre class="plain"><code>攻击者 ── 10000 个 SYN（源 IP 可能还是伪造的）──► 服务端
+服务端：每个 SYN 分配一块 TCB，回 SYN-ACK，等最后一个 ACK……
+       队列满了 ⇒ 新连接被丢弃 ⇒ 正常用户看到&quot;连接超时&quot;
+</code></pre>
+<p>注意：<strong>伪造源 IP 的洪水是单向的</strong>（SYN-ACK 回给受害者），<br>
+所以"看回包"没用，只能在<strong>被打的那一侧</strong>看 SYN 速率。</p>
+<p><strong>检测原理</strong>：同一 <code>(源, 目标, 端口)</code> 的纯 SYN 数量 ≥ 阈值（本日 25）。<br>
+<strong>关键区分（重传 vs 洪水）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>正常重传</th>
+<th>SYN 洪水</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数量</td>
+<td>几个</td>
+<td>几十~几万</td>
+</tr>
+<tr>
+<td>间隔</td>
+<td><strong>指数退避</strong>（1s→2s→4s…）</td>
+<td>密集、匀速</td>
+</tr>
+<tr>
+<td>来源</td>
+<td>单一真实源</td>
+<td>单源或大量分散源</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-cleartext-credentials">3.3 明文凭据嗅探（Cleartext Credentials）</h3>
+<p><strong>手段与原理</strong>：HTTP 是明文协议。<code>Authorization: Basic &lt;base64&gt;</code> 里的<br>
+base64 <strong>不是加密</strong>（<code>echo dXNlcjpwYXNzd29yZA== | base64 -d</code> 一行就解出来）。<br>
+Cookie、表单密码同理。只要攻击者处于：<br>
+<code>同一广播域</code>（ARP 欺骗后做中间人）或<code>你上游的某个设备</code>，<br>
+他就能直接读到凭据——<strong>本日的分析脚本做的就是同一件事</strong>。</p>
+<pre class="plain"><code>GET /login HTTP/1.1
+Host: intranet.example.com
+Authorization: Basic dXNlcjpwYXNzd29yZA==     ← 直接解出 user:password
+Cookie: SESSION=8f3a1c0d9e2b                  ← 拿到它等于拿到你的登录态
+</code></pre>
+<p><strong>检测原理</strong>：在 HTTP 头里匹配敏感字段名（authorization/cookie/x-api-key…）、<br>
+URI 查询参数（<code>password=</code>/<code>token=</code>…）、请求体（表单字段）。<br>
+<strong>检测工具自身的纪律</strong>：输出<strong>只给掩码 + 指纹</strong>，绝不回显原文——<br>
+安全工具如果自己泄露凭据，那就是最大的问题。</p>
+<h3 id="34-dns-dns-tunneling">3.4 DNS 隧道（DNS Tunneling）</h3>
+<p><strong>手段与原理</strong>：DNS 是极少数"<strong>不可能被整体封掉</strong>"的协议（封了就没法上网）。<br>
+于是攻击者把数据编码进域名：</p>
+<pre class="plain"><code>外泄（出站）：aGVsbG8gd29ybGQ.tunnel.evil.example   ← 编码后的数据放在 label 里
+             解析请求会一路走到攻击者控制的权威 DNS，他那边解码即可
+回传（入站）：查询 TXT 记录，应答里带指令
+</code></pre>
+<p><strong>为什么难防</strong>：它长得就是正常的 DNS 流量（UDP/53），<br>
+端口白名单、协议白名单全部放行。</p>
+<p><strong>检测原理</strong>（三个特征一起看，<strong>只靠一个都不够</strong>）：</p>
+<table>
+<thead>
+<tr>
+<th>特征</th>
+<th>正常域名</th>
+<th>隧道域名</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>最长 label 长度</td>
+<td>通常 ≤ 15</td>
+<td>40~180（要装数据）</td>
+</tr>
+<tr>
+<td>label 的香农熵</td>
+<td>英文单词约 2.5~3.5 bit/char</td>
+<td>编码数据 4.5~6 bit/char</td>
+</tr>
+<tr>
+<td>子域是否复用</td>
+<td>有复用（缓存友好）</td>
+<td><strong>每次都不同</strong>（故意穿透缓存）</td>
+</tr>
+<tr>
+<td>查询频率</td>
+<td>不稳定</td>
+<td>高频且规律</td>
+</tr>
+</tbody>
+</table>
+<p>本日实现用"label 长度 ≥ 40"筛出候选，再用<strong>香农熵</strong>打分（演示中隧道 label<br>
+熵 = 4.91，正常词 <code>intranet</code> = 2.50）。<strong>熵只是辅助判据</strong>：<br>
+CDN 的长哈希子域、base64 编码的文件名也会高熵，所以必须和"陌生父域 +<br>
+高频 + 不复用"组合判断。</p>
+<h3 id="35-c2-beaconing">3.5 C2 心跳（Beaconing）</h3>
+<p><strong>手段与原理</strong>：被植入的恶意程序需要"随时能接到指令"，但攻击者无法主动连入内网，<br>
+所以让木马<strong>周期性主动回连</strong>（如每 60 秒一次），这就是 beacon。<br>
+为了隐蔽，周期往往固定、目标往往是 443/8443 之类的常见端口，<br>
+甚至伪装成正常 HTTP 请求（比如 <code>POST /ping</code>）。</p>
+<p><strong>检测原理：机器比人守时。</strong></p>
+<pre class="plain"><code>人的行为：点网页的间隔是随机的（0.3s / 5s / 200s …）
+木马行为：60.000s / 60.001s / 59.999s  ← 抖动 &lt; 0.1%
+
+抖动系数 jitter = 间隔的标准差 / 平均值；C2 通常 &lt; 5%
+</code></pre>
+<p>本日实现：同一 <code>(源, 目标, 端口)</code> 的连接 ≥ 4 次，平均间隔 ≥ 5s，<br>
+且 jitter ≤ 0.10 → 告警。demo 里 4 次连接间隔 <code>[60.0, 60.0, 60.0]</code>，jitter = 0.0。</p>
+<p><strong>这个检测器与协议无关</strong>：DNS 查询、HTTPS 连接、ICMP 都能用同一套时间序列逻辑<br>
+——这就是"<strong>检测行为，而不是检测协议</strong>"的体现。</p>
+<h3 id="36-arp-arp-spoofing">3.6 ARP 欺骗（ARP Spoofing）</h3>
+<p><strong>手段与原理</strong>：ARP 协议没有任何认证，谁都可以发"我是 192.168.1.1"。<br>
+攻击者持续广播伪造应答，让全网把网关 MAC 指向他：</p>
+<pre class="plain"><code>正常：  主机 ──► 网关 MAC aa:..:01 ──► 真实网关
+欺骗后：主机 ──► 攻击者 MAC aa:..:de:ad ──► 攻击者转发 ──► 真实网关
+                                          （他看得见全部流量，可抓包可改包）
+</code></pre>
+<p><strong>检测原理</strong>：同一个 IP 被<strong>两个不同 MAC</strong> 宣告。<br>
+本日 demo 里 <code>10.0.0.1</code> 同时被 <code>aa:00:00:00:00:01</code>（真网关）和<br>
+<code>aa:00:00:00:de:ad</code>（攻击者）宣告 → critical 级告警。</p>
+<p><strong>误报</strong>：双机热备（VRRP）、网卡更换、容器重建都会造成 MAC 变化<br>
+→ 必须结合资产表与时间窗口判断（这就是为什么检测结果是"线索"不是"结论"）。</p>
+<h3 id="37">3.7 报文头篡改与校验和</h3>
+<p><strong>手段与原理</strong>：中间设备或攻击工具修改 IP 头字段（改地址、改 TTL、<br>
+做分片绕过 IDS）时，如果<strong>忘记重算校验和</strong>，接收端/分析人员就能发现。<br>
+反过来，攻击者如果重算了校验和，你就抓不到——所以这条检测<strong>只是一条线索</strong>。</p>
+<p><strong>检测原理</strong>：重算 IPv4 头校验和并比对。<strong>重要的误报来源</strong>：<br>
+网卡卸载（TSO/LRO/checksum offload）会让抓到的包校验和字段是"未填"状态，<br>
+在<strong>本机抓出去的包</strong>上尤其常见。tshark 会提示 "checksum not available"，<br>
+分析时必须先排除这个因素。</p>
+<h3 id="38">3.8 检测器的共同工程要求</h3>
+<table>
+<thead>
+<tr>
+<th>要求</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>每条告警带<strong>证据</strong>（源/目标/端口/时间戳）</td>
+<td>没有证据的告警无法复核</td>
+</tr>
+<tr>
+<td>每条告警带<strong>为什么这么判</strong></td>
+<td>让复核者能验证判据是否成立</td>
+</tr>
+<tr>
+<td>每条告警带<strong>怎么修/怎么防</strong></td>
+<td>检测的价值在于能被修复</td>
+</tr>
+<tr>
+<td>每条告警带<strong>严重度</strong></td>
+<td>决定响应优先级（ARP 欺骗 &gt; 校验和异常）</td>
+</tr>
+<tr>
+<td><strong>必须有误报控制</strong></td>
+<td>本日自检里有一条断言专门保证"正常 Web 会话不被误报"</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_5">四、防护/修复原理</h2>
+<blockquote>
+<p>按"从最根本到最具体"的顺序排列。<strong>先做能根治的，再做缓解的。</strong></p>
+</blockquote>
+<h3 id="41">4.1 加密：把"明文嗅探"这一类问题整体消掉</h3>
+<ul>
+<li><strong>全站 HTTPS + HSTS</strong>：让 Authorization/Cookie 不再裸奔；<br>
+  HSTS 防止降级到 HTTP（否则一次 http:// 跳转就漏一次）。</li>
+<li><strong>Cookie 加 <code>Secure; HttpOnly; SameSite</code></strong>：即使被 XSS，也拿不到会话。</li>
+<li><strong>内网同样要加密</strong>：不要相信"内网可信"。本日 demo 的被窃凭据就在内网主机之间。<br>
+  Zero Trust 的核心就是"不因为在内网就免除加密与认证"。</li>
+<li><strong>注意加密后的残余可见性</strong>：TLS 仍会暴露 SNI、证书、包长/时序特征<br>
+  → 所以 C2 心跳这类<strong>行为检测在加密流量上依然有效</strong>（这也是为什么行为检测重要）。</li>
+</ul>
+<h3 id="42">4.2 网络分段与访问控制</h3>
+<ul>
+<li>按业务划分 VLAN/子网，<strong>阻断横向移动</strong>（ARP 欺骗的影响面被限制在一个广播域内）。</li>
+<li>内网服务之间也要做<strong>最小权限</strong>：数据库不该对所有网段开放 3306。</li>
+<li>出站默认拒绝（egress filtering）：木马回连最难的就是"找不到能出去的路"。</li>
+</ul>
+<h3 id="43-arp">4.3 交换机侧（防 ARP 欺骗三件套）</h3>
+<table>
+<thead>
+<tr>
+<th>措施</th>
+<th>原理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>DHCP Snooping</strong></td>
+<td>只信任连 DHCP 服务器的端口，防止私接 DHCP 服务器</td>
+</tr>
+<tr>
+<td><strong>动态 ARP 检测（DAI）</strong></td>
+<td>依据 DHCP Snooping 建立的"IP-MAC-端口"绑定表丢弃伪造 ARP</td>
+</tr>
+<tr>
+<td><strong>端口安全 / MAC 数量限制</strong></td>
+<td>一个接入口出现大量 MAC ⇒ 后面挂了交换机/被攻陷</td>
+</tr>
+</tbody>
+</table>
+<p>补充：关键网关/服务器做<strong>静态 ARP 绑定</strong>（简单有效，维护成本高）。</p>
+<h3 id="44-dns-dns">4.4 DNS 出口治理（防 DNS 隧道）</h3>
+<ol>
+<li><strong>强制走内部递归解析器</strong>：防火墙只放行到内部 DNS 的 53，<br>
+<strong>禁止主机直连 8.8.8.8 等外部解析器</strong>（这一步能挡掉绝大多数隧道）。</li>
+<li>在解析器上做<strong>响应大小与 label 长度限制</strong>，对高熵子域采样告警。</li>
+<li>用<strong>信誉/威胁情报</strong>拦截已知隧道域名与其父域。</li>
+<li>记录全量 DNS 日志（存查询名 + 客户端 + 应答），用于事后回溯。</li>
+</ol>
+<h3 id="45-syn">4.5 防 SYN 洪水 / 端口扫描</h3>
+<table>
+<thead>
+<tr>
+<th>目标</th>
+<th>措施</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>抗 SYN 洪水</td>
+<td><code>net.ipv4.tcp_syncookies=1</code>（半连接队列满时用 cookie 免分配）；合理设置 <code>tcp_max_syn_backlog</code>；上游做流量清洗</td>
+</tr>
+<tr>
+<td>减少暴露面</td>
+<td>只开必要端口；管理口不对外；用防火墙限制源</td>
+</tr>
+<tr>
+<td>反扫描</td>
+<td>边界启用扫描检测与速率限制；fail2ban/IPS 封禁；对扫描源做 Tarpit</td>
+</tr>
+<tr>
+<td>检测侧</td>
+<td>监控"SYN 与 SYN-ACK 数量比"，比值异常即告警</td>
+</tr>
+</tbody>
+</table>
+<h3 id="46">4.6 检测工程本身（容易被忽略的"防护"）</h3>
+<ul>
+<li><strong>误报控制优先于检出率</strong>：一个误报率高的规则会被运维直接关掉，等于没有。<br>
+  本日自检里专门断言"正常 Web 会话不被误报"。</li>
+<li><strong>阈值要有基线</strong>：固定阈值只在固定环境有效；生产要按"每周同时段"做基线。</li>
+<li><strong>保留原始数据</strong>：pcap 保留期与容量要提前规划（见 4.7）。</li>
+<li><strong>规则可解释</strong>：每条规则都要有 why/remediation，否则无法维护。</li>
+</ul>
+<h3 id="47">4.7 合规：抓包文件本身是敏感数据</h3>
+<p>pcap 里可能有 Cookie、Token、明文密码、内网拓扑、个人信息。<br>
+<strong>抓包 = 收集他人通信内容</strong>，务必：</p>
+<ol>
+<li>只抓已有授权的范围（自己的资产、自己的流量）；</li>
+<li>存储加密 + 访问控制 + 最小化留存（按天/周清理）；</li>
+<li>对外分享前<strong>先脱敏</strong>（本日的 <code>mask_secret</code> / <code>fingerprint</code> 就是干这个的）；</li>
+<li>保留操作审计（谁在什么时候抓了什么）。</li>
+</ol>
+<hr>
+<h2 id="_6">五、代码案例逐节说明</h2>
+<p>本日代码共 4 个文件（<strong>每个都支持 <code>--self-test</code>，且自检完全不依赖 pyshark/tshark</strong>）：</p>
+<pre class="plain"><code>code/
+├── pcap_lib.py              核心引擎：pcap/pcapng 读写 + 解析 + 过滤器 + 合成流量（被下面三个 import）
+├── 01-basic-usage.py        读文件、列包、两条后端统一
+├── 02-advanced-filtering.py 过滤（BPF vs display filter）、HTTP 提取、Summary 坑
+└── 03-traffic-analysis.py   统计 + 连接跟踪 + 7 类异常检测 + 报告 + CI 门禁
+</code></pre>
+<h3 id="51-pcap_libpy">5.1 <code>pcap_lib.py</code> —— 核心引擎（逐节）</h3>
+<table>
+<thead>
+<tr>
+<th>节</th>
+<th>内容</th>
+<th>关键点（为什么这么写）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>常量表</td>
+<td>EtherType / IP proto / TCP 标志位 / 端口提示。<strong>这些数字必须背</strong>，排错全靠它</td>
+</tr>
+<tr>
+<td>1</td>
+<td>校验和</td>
+<td><code>ones_complement_sum</code> 用 <code>int.from_bytes</code> 一次求和再折叠进位（比逐 2 字节循环快得多）；<strong>奇数长度必须补 0</strong></td>
+</tr>
+<tr>
+<td>2</td>
+<td>pcap/pcapng 读写</td>
+<td><code>sniff_format()</code> 先认格式；<code>iter_pcap</code> <strong>流式</strong>（内存 O(1)）；容错"最后一条记录残缺"；pcapng 未知块可跳过</td>
+</tr>
+<tr>
+<td>3</td>
+<td>解析器</td>
+<td>每层只剥自己的头；VLAN 循环剥离；分片包不当传输层解；TCP 选项按 kind 走（NOP 只有 1 字节）</td>
+</tr>
+<tr>
+<td>4</td>
+<td>顶层解析</td>
+<td><code>dissect_packet()</code> 把字节变成"对齐 Wireshark 字段名"的字典；<strong>任何一层失败只少一个键，不抛异常</strong></td>
+</tr>
+<tr>
+<td>5</td>
+<td>过滤器引擎</td>
+<td>手写 tokenizer + 递归下降解析（or→and→not→比较）；<strong>编译期校验字段名</strong>（fail fast）</td>
+</tr>
+<tr>
+<td>5.1</td>
+<td>BPF 翻译器</td>
+<td>把常见 BPF 子集映射到 display filter，并给出"BPF 在比哪些字节"的对照</td>
+</tr>
+<tr>
+<td>6</td>
+<td>报文构造器</td>
+<td>相当于"标准库版 Scapy"，用于造合成流量；<code>build_tcp</code> <strong>强制校验选项 4 字节对齐</strong></td>
+</tr>
+<tr>
+<td>6.1</td>
+<td>合成流量</td>
+<td><code>build_demo_packets()</code> 70 个包，植入 6 类异常 + 1 个坏校验和包，<code>DEMO_FACTS</code> 记录"标准答案"</td>
+</tr>
+<tr>
+<td>7-8</td>
+<td>自检 + CLI</td>
+<td><code>check_eq</code> 打印"实际 vs 期望"；CLI 支持 <code>--self-test/--dump/--filter/--write-demo</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>几个值得单独讲的实现细节</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ① 校验和：奇数长度必须补零，否则所有奇数载荷都算错</span>
+<span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mi">1</span><span class="p">:</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">data</span> <span class="o">+</span> <span class="sa">b</span><span class="s2">&quot;</span><span class="se">\x00</span><span class="s2">&quot;</span>
+
+<span class="c1"># ② 分片：frag_offset 字段单位是 8 字节，忘乘 8 是最经典的分片解析错误</span>
+<span class="s2">&quot;frag_offset&quot;</span><span class="p">:</span> <span class="p">(</span><span class="n">flags_frag</span> <span class="o">&amp;</span> <span class="mh">0x1FFF</span><span class="p">)</span> <span class="o">*</span> <span class="mi">8</span>
+
+<span class="c1"># ③ IPv4 载荷长度以 total_len 为准，不能用 len(以太网载荷)</span>
+<span class="c1">#    因为以太网最小帧 46 字节载荷，小包会被填充（padding）</span>
+<span class="n">end</span> <span class="o">=</span> <span class="n">total_len</span> <span class="k">if</span> <span class="n">ihl</span> <span class="o">&lt;=</span> <span class="n">total_len</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span> <span class="k">else</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+<span class="c1"># ④ TCP/UDP 校验和要带伪首部；ICMP 不带</span>
+<span class="n">verify_l4_checksum</span><span class="p">(</span><span class="n">segment</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">dst</span><span class="p">,</span> <span class="n">IPPROTO_TCP</span><span class="p">)</span>   <span class="c1"># 伪首部 + 段</span>
+<span class="n">ones_complement_sum</span><span class="p">(</span><span class="n">data</span><span class="p">)</span> <span class="o">==</span> <span class="mh">0xFFFF</span>                  <span class="c1"># ICMP 直接整条验</span>
+</code></pre></div>
+<h3 id="52-01-basic-usagepy">5.2 <code>01-basic-usage.py</code> —— 读取与列出数据包</h3>
+<pre class="plain"><code>probe_pyshark()      延迟探测 pyshark 与 tshark，**不在模块顶层 import**
+normalize_pyshark()  把 pyshark 对象转成统一 dict（字段名对齐 ip.src / tcp.dstport）
+iter_pyshark()       生成器 + finally close()（不写 close 会残留 tshark 子进程）
+iter_stdlib()        走 pcap_lib
+load_packets()       统一入口：backend=auto/pyshark/stdlib，返回 (包列表, 实际后端, 说明)
+</code></pre>
+<p><strong>两个必须记住的写法</strong>：</p>
+<ol>
+<li><strong><code>import pyshark</code> 绝不能写在模块顶层</strong>：没装 tshark 的机器上，<br>
+   如果顶层 import 失败，连 <code>--self-test</code> 都跑不起来（脚本直接崩）。<br>
+   正确姿势是"延迟导入 + 捕获异常 + 给人话提示"。</li>
+<li><strong>字段名是 <code>pkt.ip.src</code>，不是 <code>pkt.ip.src_ip</code></strong>（tshark 字段 <code>ip.src</code>）；<br>
+   协议号是 <code>pkt.ip.proto</code>，不是 <code>ip.protocol</code>。写成 <code>src_ip</code> 必 AttributeError<br>
+   —— 这是抄教程时最常见的坑。</li>
+</ol>
+<h3 id="53-02-advanced-filteringpy">5.3 <code>02-advanced-filtering.py</code> —— 过滤的两种语义</h3>
+<pre class="plain"><code>DEMO_FILTERS        11 条教学过滤条件（从粗到细）
+print_bpf_mapping() 打印 BPF 在**内核**里比的字节（tcp[2:2]==80 …）
+print_bpf_translation() 把 BPF 翻译成 display filter，并**逐包比对结果集相同**
+print_http_requests()   提取 HTTP 请求 + 敏感信息检测（掩码输出）
+demo_only_summaries_trap() 复现&quot;Summary 只有 7 个字段&quot;的坑
+</code></pre>
+<p><strong>原版代码的 bug 与修复</strong>（这是本案例的教学重点之一）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 原版写法：only_summaries=True 拿不到 http 层，却在读 packet.http.method</span>
+<span class="n">cap</span> <span class="o">=</span> <span class="n">pyshark</span><span class="o">.</span><span class="n">FileCapture</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">display_filter</span><span class="o">=</span><span class="s1">&#39;http&#39;</span><span class="p">,</span> <span class="n">only_summaries</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">pkt</span> <span class="ow">in</span> <span class="n">cap</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">pkt</span><span class="o">.</span><span class="n">http</span><span class="o">.</span><span class="n">method</span><span class="p">)</span>        <span class="c1"># AttributeError！</span>
+
+<span class="c1"># ✅ 修复：要么不用摘要模式（字段齐全、慢），要么只读摘要列</span>
+<span class="n">cap</span> <span class="o">=</span> <span class="n">pyshark</span><span class="o">.</span><span class="n">FileCapture</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">display_filter</span><span class="o">=</span><span class="s1">&#39;http&#39;</span><span class="p">)</span>          <span class="c1"># 全字段</span>
+<span class="n">cap</span> <span class="o">=</span> <span class="n">pyshark</span><span class="o">.</span><span class="n">FileCapture</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">only_summaries</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>            <span class="c1"># 只读 pkt.info</span>
+</code></pre></div>
+<h3 id="54-03-traffic-analysispy">5.4 <code>03-traffic-analysis.py</code> —— 从包到结论</h3>
+<pre class="plain"><code>protocol_stats / top_talkers / port_stats / tcp_flag_stats   统计层
+connection_table(pkts)                                       连接跟踪（TCP 状态机）
+detect_port_scan / detect_syn_flood / detect_cleartext_credentials
+detect_dns_tunneling / detect_beaconing / detect_arp_conflict
+detect_bad_checksums                                         七个检测器
+shannon_entropy(text)                                        熵（DNS 隧道辅助判据）
+analyze(pkts) → report                                      报告数据
+render_report(rep) / gate_exit_code(rep, fail_on)            人类可读 + CI 门禁
+</code></pre>
+<p><strong>连接跟踪的状态机设计要点</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 为什么要单独记 established 而不只看 state？</span>
+<span class="c1"># 因为正常连接关闭后 state 会变成 CLOSING，如果只比对 &quot;state == ESTABLISHED&quot;，</span>
+<span class="c1"># 就会把一条正常关闭的连接误判成&quot;没建立成功&quot;。这是状态机里典型的&quot;终态 vs 历史&quot;问题。</span>
+<span class="s2">&quot;established&quot;</span><span class="p">:</span> <span class="kc">False</span>    <span class="c1"># 曾经进入过 ESTABLISHED</span>
+<span class="s2">&quot;state&quot;</span><span class="p">:</span> <span class="s2">&quot;CLOSING&quot;</span>      <span class="c1"># 当前状态</span>
+</code></pre></div>
+<p><strong>告警的通用结构</strong>（每条都必须是自解释的）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">finding</span><span class="p">(</span><span class="n">kind</span><span class="p">,</span> <span class="n">severity</span><span class="p">,</span> <span class="n">summary</span><span class="p">,</span>
+        <span class="n">evidence</span><span class="o">=</span><span class="p">{</span><span class="o">...</span><span class="p">},</span>      <span class="c1"># 证据：源/目标/端口/时间戳/计数</span>
+        <span class="n">why</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">,</span>           <span class="c1"># 凭什么这么判（复核者要能验证）</span>
+        <span class="n">remediation</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>   <span class="c1"># 怎么修/怎么防</span>
+</code></pre></div>
+<hr>
+<h2 id="_7">六、运行命令 + 预期输出</h2>
+<h3 id="61">6.1 环境与依赖</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 本日**只需 Python 3.10+ 标准库**就能完成全部自检与演示（不需要联网/不需要 sudo）</span>
+python3<span class="w"> </span>-V<span class="w">          </span><span class="c1"># 本环境：Python 3.12.3</span>
+
+<span class="c1"># 可选的&quot;全协议&quot;路径（本环境未安装；装不装都不影响自检）</span>
+pip<span class="w"> </span>install<span class="w"> </span>pyshark<span class="w">         </span><span class="c1"># 还要有 tshark 二进制：</span>
+sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>tshark<span class="w">      </span><span class="c1"># Debian/Ubuntu</span>
+brew<span class="w"> </span>install<span class="w"> </span>wireshark<span class="w">       </span><span class="c1"># macOS</span>
+</code></pre></div>
+<h3 id="62-self-test-ok">6.2 全部自检（<strong>必须逐个跑，输出 SELF-TEST OK 才算通过</strong>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/root/code/Learn-Python
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/pcap_lib.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/01-basic-usage.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/02-advanced-filtering.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/03-traffic-analysis.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>真实输出（本环境实测，<code>pcap_lib.py</code>）</strong>：</p>
+<pre class="plain"><code>==========================================================================
+pcap_lib 离线自检：校验和 / 格式读写 / 解析 / 过滤器 / 合成流量
+==========================================================================
+✅ 校验和：RFC 1071 例子 + scapy 交叉验证 + 奇数长度 + 篡改检测 全部一致
+✅ 解析：ether/ip/tcp 字段、标志顺序、选项、校验和 —— #1  1.000000  10.0.0.2 → 10.0.0.1  TCP 12345→80 [SYN,ACK] seq=1000 ack=0 win=64240 len=0
+✅ VLAN：0x8100 标签被正确剥离（vid=100），内层 IP 未错位
+✅ 分片：frag_offset=24（3×8）、MF=1，且非首片不误判为 TCP
+✅ UDP/DNS：端口、A 记录、压缩指针、校验和 —— 全部正确
+✅ ICMP：校验和自洽（无伪首部，与 TCP/UDP 的算法不同）
+✅ HTTP：请求/响应解析正常；敏感值全部掩码（例：Be***********************************ig(len=39)）
+✅ 健壮性：截断/畸形包返回 None 或被跳过，解析器不崩溃
+✅ pcap 往返：70 包字节级一致（含时间戳）
+✅ 大端 pcap：魔数 0xd4c3b2a1 被正确识别，字节序切换到 &gt;
+✅ pcapng：SHB/IDB/EPB 块解析 + 时间戳拼接正确（自动识别格式）
+✅ 过滤器：tcp=60  syn&amp;dport80=28  ip.addr==10.0.0.66=8
+✅ 过滤器错误处理：缺值/括号/未知字段/多余 token 全部报 FilterError
+✅ BPF 翻译：常见写法可等价映射到 display filter（含 SYN/port/host/not）
+✅ 合成流量：70 包 / HTTP 6 / DNS 5 / ARP 3 / ICMP 2 / 坏校验和 1
+SELF-TEST OK
+</code></pre>
+<p><strong><code>01-basic-usage.py --self-test</code></strong>：</p>
+<pre class="plain"><code>==========================================================================
+案例 01 离线自检：合成 pcap → 走两条路径解析 → 核对已知答案
+==========================================================================
+✅ 标准库路径：70 个包，首包 = #1  1700000000.000000  10.0.0.10 → 10.0.0.53  UDP 53124→53 len=46  DNS Query intranet.example.com
+✅ HTTP 提取：GET /login Host=intranet.example.com，敏感项 2 条（掩码示例 Ba**********************==(len=26)）
+✅ display_filter 生效：&#x27;tcp.flags.syn == 1 and tcp.dstport == 80&#x27; → 28 个包
+✅ --limit 生效：只解析前 7 个包
+ℹ️  pyshark 不可用（ModuleNotFoundError: No module named &#x27;pyshark&#x27;）
+    → 本自检**故意不依赖它**：上面的断言全部走标准库路径。
+    → 想跑联机路径：pip install pyshark 并安装 tshark，再执行 --compare
+✅ 降级策略：auto 静默降级、显式 pyshark 明确报错 —— 两条语义都对
+SELF-TEST OK
+</code></pre>
+<p><strong><code>02-advanced-filtering.py --self-test</code></strong>：</p>
+<pre class="plain"><code>====================================================================================
+案例 02 离线自检：过滤引擎 / BPF 等价性 / HTTP 提取 / Summary 坑
+====================================================================================
+✅ 11 条教学过滤条件命中数全部符合预期（tcp=60 udp=5 http=6 …）
+✅ 关键对比：纯 SYN 39 个 vs 完成握手 5 条 → 差出来的 34 个就是「只发起不完成」的可疑行为
+✅ BPF 等价性：6 条条件翻译后结果集完全一致（逐包比对）
+✅ HTTP 提取：5 个请求（GET /login + 4 心跳 POST）；敏感项 [(&#x27;header:authorization&#x27;, &#x27;Ba***…==(len=26)&#x27;), (&#x27;header:cookie&#x27;, &#x27;SE***…rk(len=32)&#x27;)]
+✅ Summary 坑已复现：only_summaries=True 时只有 7 个字段，访问 .http/.ip 必 AttributeError
+✅ 过滤器错误处理：错误语法一律给出人话提示（含错在哪）
+SELF-TEST OK
+</code></pre>
+<p><strong><code>03-traffic-analysis.py --self-test</code></strong>：</p>
+<pre class="plain"><code>====================================================================================
+案例 03 离线自检：统计 / 连接跟踪 / 7 个检测器 vs 已知植入的异常
+====================================================================================
+✅ 统计：tcp=60 udp=5 arp=3 icmp=2；SYN=44（含 5 个 SYN,ACK）；最活跃会话 = 10.0.0.99 → 10.0.0.20
+✅ 连接跟踪：正常 Web 会话曾进入 ESTABLISHED 并正常关闭（终态 CLOSING）；扫描的 8 条全部停在 SYN_SENT（未完成）
+✅ DNS 隧道：3 次查询，label 最长 43 字符，熵 4.91 vs 正常域名 2.50
+✅ 七个检测器全部命中预设异常：{&#x27;arp_spoof&#x27;: 1, &#x27;bad_checksum&#x27;: 1, &#x27;c2_beacon&#x27;: 1, &#x27;cleartext_credential&#x27;: 1, &#x27;dns_tunneling&#x27;: 1, &#x27;port_scan&#x27;: 1, &#x27;syn_flood&#x27;: 1}
+✅ 误报控制：正常 Web 会话（含 1 次 SYN、正常 DNS 查询）未被任何扫描/洪水/心跳/隧道检测器误报
+✅ 熵函数：空串=0、&#x27;aaaa&#x27;=0、&#x27;ab&#x27;=1.0 bit（边界正确）
+✅ 门禁：fail-on none/critical/high 的退出码判定正确
+SELF-TEST OK
+</code></pre>
+<h3 id="63">6.3 合成抓包演示（不碰网卡、不落仓库工作树）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 生成一份&quot;带标准答案&quot;的抓包到临时目录</span>
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/pcap_lib.py<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--write-demo<span class="w"> </span>/tmp/day157demo.pcap
+</code></pre></div>
+<pre class="plain"><code>已生成合成抓包：/tmp/day157demo.pcap（70 个包，5942 字节）
+</code></pre>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 逐包解析 + 显示过滤器（就像 tshark -r ... -Y ...）</span>
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/pcap_lib.py<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--dump<span class="w"> </span>/tmp/day157demo.pcap<span class="w"> </span>--filter<span class="w"> </span><span class="s1">&#39;tcp.flags.syn==1 and tcp.dstport==80&#39;</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">3</span>
+</code></pre></div>
+<pre class="plain"><code>#3    1700000000.013000  10.0.0.10 → 10.0.0.20  TCP 49152→80 [SYN] seq=1000 ack=0 win=64240 len=0
+#22   1700000003.200000  10.0.0.66 → 10.0.0.20  TCP 40000→80 [SYN] seq=7004 ack=0 win=64240 len=0
+#26   1700000004.000000  10.0.0.99 → 10.0.0.20  TCP 50000→80 [SYN] seq=100 ack=0 win=64240 len=0
+
+匹配 28 个包（已打印前 3 个）
+</code></pre>
+<p><strong><code>01-basic-usage.py --demo --limit 6</code></strong>（列出数据包）：</p>
+<pre class="plain"><code>（本轮使用合成抓包：/tmp/day157-01-73e8q22n/demo.pcap，共 70 个包；分析完会删除）
+（`day157-01-` 后面那串随机字符每次都不同 —— 这是 mkdtemp 的行为，属于正常现象）
+
+⚠️ pyshark 不可用（ModuleNotFoundError: No module named &#x27;pyshark&#x27;），已自动降级到标准库解析
+文件: /tmp/day157-01-73e8q22n/demo.pcap
+后端: stdlib   过滤器: (无)
+==========================================================================
+#1    1700000000.000000  10.0.0.10 → 10.0.0.53  UDP 53124→53 len=46  DNS Query intranet.example.com
+#2    1700000000.012000  10.0.0.53 → 10.0.0.10  UDP 53→53124 len=62  DNS Response intranet.example.com → 10.0.0.20
+#3    1700000000.013000  10.0.0.10 → 10.0.0.20  TCP 49152→80 [SYN] seq=1000 ack=0 win=64240 len=0
+#4    1700000000.014000  10.0.0.20 → 10.0.0.10  TCP 80→49152 [SYN,ACK] seq=5000 ack=1001 win=64240 len=0
+#5    1700000000.014000  10.0.0.10 → 10.0.0.20  TCP 49152→80 [ACK] seq=1001 ack=5001 win=64240 len=0
+#6    1700000000.015000  10.0.0.10 → 10.0.0.20  TCP 49152→80 [PSH,ACK] seq=1001 ack=5001 win=64240 len=218  HTTP GET /login Host=intranet.example.com
+==========================================================================
+共 6 个数据包
+</code></pre>
+<p><strong><code>02-advanced-filtering.py --demo</code></strong>（过滤对照表）：</p>
+<pre class="plain"><code>过滤表达式                                            命中   说明
+------------------------------------------------------------------------------------
+tcp                                              60   所有 TCP 包
+udp                                               5   所有 UDP 包
+http                                              6   所有 HTTP 包（含请求与响应）
+tcp.flags.syn == 1 and tcp.flags.ack == 0        39   纯 SYN（扫描/连接请求）
+tcp.flags.rst == 1                                0   RST（连接被拒绝或主动重置）
+ip.addr == 10.0.0.66                              8   只看某台主机（扫描器）
+tcp.port == 4444                                 16   只看某个端口（可疑回连端口）
+dns.qry.name contains &quot;evil&quot;                      3   域名包含 evil 的 DNS 包
+http.request.method == &quot;POST&quot;                     4   HTTP POST 请求
+tcp.dstport == 80 and tcp.len &gt; 0                 1   发往 80 端口且带载荷（真正的请求）
+ip.src == 10.0.0.99                              25   SYN 洪水的来源
+
+BPF 在**内核**里到底比什么字节（这些偏移量是硬编码的，改不了）：
+  tcp port 80                  → ip proto 6 and (tcp[2:2] == 80 or tcp[4:2] == 80)
+  port 80                      → (tcp[2:2] == 80 or tcp[4:2] == 80) or (udp[2:2] == 80 or udp[4:2] == 80)
+  icmp                         → ip proto 1
+  host 10.0.0.1                → ip[12:4] == 10.0.0.1 or ip[16:4] == 10.0.0.1
+  tcp[tcpflags] &amp; tcp-syn != 0 → tcp[13] &amp; 2 != 0   # TCP 头第 13 字节的 bit1 就是 SYN
+
+BPF → display filter 等价翻译，并对同一份抓包**实测两种写法结果相同**：
+  tcp port 80                        → tcp.port == 80                               命中 37
+  udp port 53                        → udp.port == 53                               命中 5
+  icmp                               → icmp                                         命中 2
+  host 10.0.0.66                     → ip.addr == 10.0.0.66                         命中 8
+  tcp[tcpflags] &amp; tcp-syn != 0       → tcp.flags.syn == 1                           命中 44
+  not port 22                        → (not ((tcp.port == 22 or udp.port == 22)))   命中 69
+</code></pre>
+<p><strong><code>03-traffic-analysis.py --demo</code></strong>（完整分析报告，节选）：</p>
+<pre class="plain"><code>====================================================================================
+流量分析报告 —— 共 70 个包
+====================================================================================
+
+【协议分布】(层计数，一个包可能同时含 ip 与 tcp)
+  ether    70
+  ip       67
+  tcp      60
+  http     6
+  udp      5
+  dns      5
+  arp      3
+  icmp     2
+
+【最活跃的会话】(按字节数降序)
+  源               目标                  包数      字节
+  10.0.0.99       10.0.0.20           25    1350
+  10.0.0.77       10.0.0.40           12    1052
+  10.0.0.10       10.0.0.20            8     653
+
+【TCP 标志分布】
+  SYN    44
+  ACK    21
+  PSH    6
+  FIN    2
+  ── 行为指标：纯 SYN 39 个 vs SYN+ACK 5 个（正常应大致相等；差值 = 只发起不完成的可疑连接）
+
+【连接跟踪】(共 43 条，显示前 12 条)
+  源                   端口 → 目标                  端口  状态            SYN/SA  完成
+  10.0.0.10        49152 → 10.0.0.20           80  CLOSING          2/0  ✅
+  10.0.0.77        44000 → 10.0.0.40         4444  ESTABLISHED      1/0  ✅
+  10.0.0.66        40000 → 10.0.0.20           21  SYN_SENT         1/0  ❌
+
+【检测结果】(共 7 条)
+
+  1. 🔴 [CRITICAL] arp_spoof — IP 10.0.0.1 同时被 2 个 MAC 宣告
+     证据: {&quot;ip&quot;: &quot;10.0.0.1&quot;, &quot;macs&quot;: [&quot;aa:00:00:00:00:01&quot;, &quot;aa:00:00:00:de:ad&quot;]}
+     为什么这么判: ARP 无认证，任何主机都能应答「我是某 IP」；同一 IP 对应多个 MAC 是 ARP 欺骗（中间人）最直接的信号。
+     怎么修/怎么防: 交换机开启动态 ARP 检测（DAI）+ DHCP Snooping；关键网关/IP 做静态 ARP 绑定；…
+
+  2. 🟠 [HIGH] syn_flood — 10.0.0.99 → 10.0.0.20:80 发出 25 个纯 SYN
+  3. 🟠 [HIGH] cleartext_credential — 10.0.0.10 → 10.0.0.20 的明文 HTTP 请求携带凭据
+     证据: {… &quot;items&quot;: [{&quot;where&quot;: &quot;header:authorization&quot;, &quot;masked&quot;: &quot;Ba***…==(len=26)&quot;, &quot;fp&quot;: &quot;9c06d532edf0&quot;},
+                        {&quot;where&quot;: &quot;header:cookie&quot;, &quot;masked&quot;: &quot;SE***…rk(len=32)&quot;, &quot;fp&quot;: &quot;b46364b716c8&quot;}]}
+  4. 🟠 [HIGH] dns_tunneling — 10.0.0.88 向陌生父域 tunnel.evil.example 发起 3 次超长/高熵 DNS 查询
+     证据: {&quot;src&quot;: &quot;10.0.0.88&quot;, &quot;parent_domain&quot;: &quot;tunnel.evil.example&quot;, &quot;query_count&quot;: 3,
+            &quot;max_label_len&quot;: 43, &quot;avg_entropy_bits_per_char&quot;: 4.91, &quot;sample_label&quot;: &quot;a1***…1v(len=43)&quot;}
+  5. 🟠 [HIGH] c2_beacon — 10.0.0.77 → 10.0.0.40:4444 出现 4 次周期为 60.0s 的规律回连
+     证据: {&quot;mean_interval_s&quot;: 60.0, &quot;jitter_ratio&quot;: 0.0, &quot;intervals_s&quot;: [60.0, 60.0, 60.0]}
+  6. 🟡 [MEDIUM] port_scan — 10.0.0.66 → 10.0.0.20 在 8 个端口上发纯 SYN 且未完成任何握手
+     证据: {&quot;distinct_ports&quot;: 8, &quot;ports&quot;: [21, 22, 23, 25, 80, 443, 3306, 8080]}
+  7. 🔵 [LOW] bad_checksum — 检测到 1 个 IPv4 头校验和错误的包
+
+提醒：检测结果是**复核线索**，不是结论。
+      ARP 冲突可能是双机热备；心跳可能是监控探针；高熵域名可能是 CDN。
+</code></pre>
+<h3 id="64">6.4 处理你自己抓的包（离线解析，不碰网卡）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 用 tcpdump 抓一小段自己的流量（需要权限；-s 0 抓完整包，-c 限制数量）</span>
+<span class="c1"># ⚠️ 只抓自己的资产/自己的流量，并先确认合规</span>
+sudo<span class="w"> </span>tcpdump<span class="w"> </span>-i<span class="w"> </span>lo<span class="w"> </span>-c<span class="w"> </span><span class="m">200</span><span class="w"> </span>-w<span class="w"> </span>/tmp/my.pcap
+
+<span class="c1"># 用本日工具分析</span>
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/01-basic-usage.py<span class="w"> </span>--pcap<span class="w"> </span>/tmp/my.pcap<span class="w"> </span>--limit<span class="w"> </span><span class="m">20</span>
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/02-advanced-filtering.py<span class="w"> </span>--pcap<span class="w"> </span>/tmp/my.pcap<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--expr<span class="w"> </span><span class="s1">&#39;tcp.flags.syn == 1 and tcp.flags.ack == 0&#39;</span>
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/03-traffic-analysis.py<span class="w"> </span>--pcap<span class="w"> </span>/tmp/my.pcap<span class="w"> </span>--json
+
+<span class="c1"># CI 门禁：命中 high/critical 时退出码 3</span>
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/03-traffic-analysis.py<span class="w"> </span>--pcap<span class="w"> </span>/tmp/my.pcap<span class="w"> </span>--fail-on<span class="w"> </span>high
+<span class="nb">echo</span><span class="w"> </span><span class="nv">$?</span><span class="w">    </span><span class="c1"># 0 = 通过，3 = 命中门禁阈值</span>
+</code></pre></div>
+<h3 id="65-pyshark-tshark">6.5 pyshark 联机路径（装了 tshark 之后）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>pyshark<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sudo<span class="w"> </span>apt<span class="w"> </span>install<span class="w"> </span>tshark
+
+<span class="c1"># 两条后端对比同一文件</span>
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/01-basic-usage.py<span class="w"> </span>--demo<span class="w"> </span>--compare
+
+<span class="c1"># 强制走 pyshark（没装时**明确报错**，不会静默降级）</span>
+python3<span class="w"> </span>-B<span class="w"> </span>days/day-157-pyshark-traffic-analysis/code/01-basic-usage.py<span class="w"> </span>--pcap<span class="w"> </span>/tmp/my.pcap<span class="w"> </span>--backend<span class="w"> </span>pyshark
+</code></pre></div>
+<p><strong>pyshark API 速查</strong>（原内容保留并修正字段名）：</p>
+<table>
+<thead>
+<tr>
+<th>对象</th>
+<th>关键属性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FileCapture</code></td>
+<td><code>display_filter=</code> / <code>only_summaries=</code> / <code>bpf_filter=</code></td>
+<td>迭代器；用完必须 <code>close()</code></td>
+</tr>
+<tr>
+<td><code>Packet</code></td>
+<td><code>number</code> / <code>length</code> / <code>sniff_time</code></td>
+<td>包级元数据</td>
+</tr>
+<tr>
+<td><code>pkt.ip</code></td>
+<td><code>src</code> / <code>dst</code> / <code>ttl</code> / <code>proto</code></td>
+<td><strong>注意是 <code>src</code> 不是 <code>src_ip</code></strong></td>
+</tr>
+<tr>
+<td><code>pkt.tcp</code></td>
+<td><code>srcport</code> / <code>dstport</code> / <code>seq</code> / <code>ack</code> / <code>flags</code> / <code>flags_str</code> / <code>window_size_value</code></td>
+<td><code>flags</code> 是 <code>0x00xx</code>，可读形式看 <code>flags_str</code></td>
+</tr>
+<tr>
+<td><code>pkt.udp</code></td>
+<td><code>srcport</code> / <code>dstport</code> / <code>length</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>pkt.http</code></td>
+<td><code>request.method</code> / <code>request.uri</code> / <code>host</code> / <code>user_agent</code> / <code>response.code</code></td>
+<td>请求与响应字段名不同</td>
+</tr>
+<tr>
+<td><code>pkt.dns</code></td>
+<td><code>qry_name</code> / <code>flags_response</code> / <code>a</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td>Summary 对象</td>
+<td><code>number/time/source/destination/protocol/length/info</code></td>
+<td><strong>只有这 7 个</strong>（<code>only_summaries=True</code>）</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">pyshark</span>
+
+<span class="c1"># 推荐写法：显式 allow 列表 + 明确的 display_filter</span>
+<span class="n">cap</span> <span class="o">=</span> <span class="n">pyshark</span><span class="o">.</span><span class="n">FileCapture</span><span class="p">(</span><span class="s1">&#39;/tmp/my.pcap&#39;</span><span class="p">,</span>
+                          <span class="n">display_filter</span><span class="o">=</span><span class="s1">&#39;tcp.flags.syn == 1&#39;</span><span class="p">,</span>
+                          <span class="n">keep_packets</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>     <span class="c1"># 不把包留在内存（长时间分析必备）</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">pkt</span> <span class="ow">in</span> <span class="n">cap</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">pkt</span><span class="p">,</span> <span class="s1">&#39;ip&#39;</span><span class="p">):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="n">pkt</span><span class="o">.</span><span class="n">number</span><span class="p">,</span> <span class="n">pkt</span><span class="o">.</span><span class="n">ip</span><span class="o">.</span><span class="n">src</span><span class="p">,</span> <span class="s1">&#39;→&#39;</span><span class="p">,</span> <span class="n">pkt</span><span class="o">.</span><span class="n">ip</span><span class="o">.</span><span class="n">dst</span><span class="p">)</span>
+<span class="k">finally</span><span class="p">:</span>
+    <span class="n">cap</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>                                   <span class="c1"># ← 不写这句会残留 tshark 子进程</span>
+</code></pre></div>
+<h3 id="66-pyshark">6.6 pyshark 的工作流（原图解保留）</h3>
+<pre class="plain"><code>┌─────────────┐     ┌──────────────────┐     ┌─────────────────────┐
+│  PCAP文件    │────▶│   tshark命令行    │────▶│   XML/JSON输出       │
+│ (捕获的流量) │     │ (协议解析引擎)    │     │ (结构化数据)         │
+└─────────────┘     └──────────────────┘     └─────────────────────┘
+                                                            │
+                                                            ▼
+                                              ┌─────────────────────────┐
+                                              │  pyshark 解析成 Python 对象│
+                                              └─────────────────────────┘
+                                                            │
+                                                            ▼
+                                              ┌─────────────────────────┐
+                                              │  统计 / 检测 / 报告      │
+                                              └─────────────────────────┘
+
+本日的第二条路径（不经过 tshark）：
+   PCAP ──► pcap_lib（纯标准库）──► 同样的字典结构 ──► 同一套统计/检测代码
+</code></pre>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    classDef pcap fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef tshark fill:#bbf,stroke:#333,stroke-width:2px;
+    classDef lib fill:#bfb,stroke:#333,stroke-width:2px;
+    classDef user fill:#ffb,stroke:#333,stroke-width:2px;
+
+    PCAP[PCAP / PCAPNG 文件]:::pcap
+    TSHARK[tshark（C 解析引擎）]:::tshark
+    PYSHARK[pyshark 包装]:::tshark
+    LIB[pcap_lib（纯标准库）]:::lib
+    IR[统一数据结构&lt;br/&gt;ip.src / tcp.dstport / http.request.uri]:::lib
+    USER[统计 / 过滤 / 检测 / 报告]:::user
+
+    PCAP --&gt;|&quot;tshark -r（子进程）&quot;| TSHARK
+    TSHARK --&gt;|&quot;XML/JSON&quot;| PYSHARK
+    PCAP --&gt;|&quot;直接读字节&quot;| LIB
+    PYSHARK --&gt; IR
+    LIB --&gt; IR
+    IR --&gt; USER
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    classDef pcap fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef tshark fill:#bbf,stroke:#333,stroke-width:2px;
+    classDef lib fill:#bfb,stroke:#333,stroke-width:2px;
+    classDef user fill:#ffb,stroke:#333,stroke-width:2px;
+
+    PCAP[PCAP / PCAPNG 文件]:::pcap
+    TSHARK[tshark（C 解析引擎）]:::tshark
+    PYSHARK[pyshark 包装]:::tshark
+    LIB[pcap_lib（纯标准库）]:::lib
+    IR[统一数据结构&lt;br/&gt;ip.src / tcp.dstport / http.request.uri]:::lib
+    USER[统计 / 过滤 / 检测 / 报告]:::user
+
+    PCAP --&gt;|&quot;tshark -r（子进程）&quot;| TSHARK
+    TSHARK --&gt;|&quot;XML/JSON&quot;| PYSHARK
+    PCAP --&gt;|&quot;直接读字节&quot;| LIB
+    PYSHARK --&gt; IR
+    LIB --&gt; IR
+    IR --&gt; USER
+</code></pre></div>
+<hr>
+<h2 id="_8">七、常见陷阱速查表</h2>
+<blockquote>
+<p>左列是现象，右列是根因与解法。这张表基本覆盖了本日代码里踩过的每一个坑。</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>根因</th>
+<th>解法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>import pyshark</code> 直接 ModuleNotFoundError</td>
+<td>没装 pyshark，或装了但没有 tshark 二进制</td>
+<td>延迟导入 + 降级到标准库路径（<code>probe_pyshark()</code>）</td>
+</tr>
+<tr>
+<td><code>AttributeError: src_ip</code></td>
+<td>pyshark 的字段名是 <code>ip.src</code></td>
+<td>用 <code>pkt.ip.src</code> / <code>pkt.ip.dst</code> / <code>pkt.ip.proto</code></td>
+</tr>
+<tr>
+<td><code>only_summaries=True</code> 后读 <code>.http</code>/<code>.tcp</code> 报错</td>
+<td>Summary 对象只有 7 个字段</td>
+<td>去掉摘要模式，或只读 <code>pkt.info</code></td>
+</tr>
+<tr>
+<td>脚本跑完进程里堆了一堆 tshark</td>
+<td><code>FileCapture</code> 没 <code>close()</code></td>
+<td><code>try/finally</code> 里 <code>cap.close()</code></td>
+</tr>
+<tr>
+<td>时间戳差 1000 倍</td>
+<td>文件是纳秒魔数（0xa1b23c4d），按微秒读了</td>
+<td>由魔数决定除数（1e6 / 1e9）</td>
+</tr>
+<tr>
+<td>时间戳"差不多但总对不齐"（差 15.625ms）</td>
+<td>pcapng 的 <code>if_tsresol</code> 被当成 2ⁿ 解释</td>
+<td>按规范：最高位 0 → 10ⁿ，1 → 2ⁿ</td>
+</tr>
+<tr>
+<td><code>f.read()</code> 一次吃掉半个文件</td>
+<td>字节序判错 → <code>incl_len</code> 变成天文数字</td>
+<td>先判魔数；对超长单包直接报错</td>
+</tr>
+<tr>
+<td>大端 pcap 读出来全是乱码</td>
+<td>只实现了小端分支</td>
+<td>魔数 <code>0xd4c3b2a1</code> 时切 <code>&gt;</code> 前缀</td>
+</tr>
+<tr>
+<td>最后一个包解析报错</td>
+<td>抓包进程被 kill，尾部记录残缺</td>
+<td>长度不足时<strong>丢弃残包正常结束</strong>，不要抛异常</td>
+</tr>
+<tr>
+<td>VLAN 环境字段全错位</td>
+<td>EtherType 0x8100 后面还有 4 字节标签</td>
+<td>循环剥 VLAN（QinQ 有两层）</td>
+</tr>
+<tr>
+<td><code>tcp.len</code> 明明没数据却是 2</td>
+<td>TCP 选项长度不是 4 的倍数 → data offset 偏小</td>
+<td>选项末尾补 NOP 凑齐 4 字节（本库会直接报错）</td>
+</tr>
+<tr>
+<td>小包（DNS/ARP）后面多出垃圾字节</td>
+<td>拿 <code>len(以太网载荷)</code> 当 IP 总长，没考虑最小帧填充</td>
+<td>以 IP 头 <code>total_len</code> 为准</td>
+</tr>
+<tr>
+<td>分片包解析成垃圾 TCP</td>
+<td>非首片没有传输层头</td>
+<td><code>frag_offset != 0</code> 时不按 TCP 解析</td>
+</tr>
+<tr>
+<td>"TCP checksum incorrect"</td>
+<td>改了载荷没重算校验和</td>
+<td>用对象赋值改载荷后重新序列化；校验和含<strong>伪首部</strong></td>
+</tr>
+<tr>
+<td>"UDP checksum incorrect" 但其实是正常的</td>
+<td>UDP 校验和为 0 表示"未提供校验和"</td>
+<td>值为 0 时判定为"未提供"，不算错</td>
+</tr>
+<tr>
+<td>分析自己的抓包发现大量校验和错误</td>
+<td>网卡 checksum offload（TSO/LRO）</td>
+<td>先在抓包点排除 offload，再谈篡改</td>
+</tr>
+<tr>
+<td>display filter 写对了却过滤不掉噪声/丢包</td>
+<td>拿 display filter 当性能手段用了</td>
+<td>该用 BPF（内核态）；display filter 是事后精挑</td>
+</tr>
+<tr>
+<td>复杂 BPF 手写不出来</td>
+<td>BPF 只能表达"字节偏移"，没有协议字段概念</td>
+<td>用 tcpdump 语法文档，或先用 tshark 的 display filter 验证思路</td>
+</tr>
+<tr>
+<td>长时间抓包内存暴涨</td>
+<td>把包全存列表里</td>
+<td>流式迭代 + <code>keep_packets=False</code> + 只保留需要的字段</td>
+</tr>
+<tr>
+<td>100k 包分析慢到不可用</td>
+<td>纯 Python 逐包全量 dissect</td>
+<td>BPF 预过滤 + 只取必要字段 + 考虑 tshark/dpkt/Zeek</td>
+</tr>
+<tr>
+<td>检测器误报一堆</td>
+<td>只有阈值没有基线，或没排除正常行为</td>
+<td>加基线、加白名单、先跑一段正常流量看误报</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_9">八、局限（必须知道）</h2>
+<p><strong>本日代码是教学实现，不是生产 IDS。</strong> 以下局限写清楚，避免误用：</p>
+<ol>
+<li><strong>不做流重组</strong>：TCP 分段/乱序/重传不会拼成完整应用层消息。<br>
+   所以"跨段的 HTTP 请求""被分片逃避的载荷"会漏检。<br>
+   生产用 Suricata/Zeek（它们有完整流重组与协议状态机）。</li>
+<li><strong>不做解密</strong>：TLS/SSH 之后的内容看不到（只能看 SNI、证书、包长时序）。</li>
+<li><strong>协议覆盖有限</strong>：只解 Ethernet/VLAN/ARP/IPv4/IPv6/TCP/UDP/ICMP/DNS/HTTP。<br>
+   加密协议、工业协议、私有协议都不认（pyshark/tshark 能认 3000+，这是它的价值）。</li>
+<li><strong>没有 IPv6 扩展头全支持</strong>：只跳过 Hop-by-Hop/Routing/Fragment 的基础情形。</li>
+<li><strong>BPF 只做子集翻译</strong>：不支持 <code>portrange</code>、<code>ether proto</code>、<code>vlan</code>、<code>less/greater</code> 等；<br>
+   真正的 BPF 必须交给 libpcap 编译（内核字节码不是用 Python 写的）。</li>
+<li><strong>阈值写死</strong>：<code>min_ports=5</code>、<code>min_syns=20</code>、<code>min_label_len=40</code> 等只适用于<br>
+   本演示的小数据集；生产要按业务基线调，并考虑时间窗口内速率（pps）。</li>
+<li><strong>连接跟踪是简化状态机</strong>：不处理同时打开、半关闭、超时重传、<br>
+   RST 的合法性等边角情况。</li>
+<li><strong>没有 pyshark 联机验证</strong>：本环境没装 pyshark/tshark，<br>
+   因此 <code>iter_pyshark()</code> 这条路径<strong>没有被实际执行过</strong>（只做了代码层面的梳理与<br>
+   防御性写法）。装了 tshark 之后请用 <code>--compare</code> 自行验证两条路径结果一致。</li>
+<li><strong>合成流量的时间戳是固定的（1_700_000_000 起）</strong>：<br>
+   这是为了自检可复现，不代表真实时间分布。</li>
+</ol>
+<hr>
+<h2 id="_10">九、思考题</h2>
+<blockquote>
+<p>前 5 题保留自原版（表述已理顺），后 4 题为本次补强新增，都是能"写代码验证"的题。</p>
+</blockquote>
+<ol>
+<li><strong>协议识别</strong>：一个 PCAP 里混有 IPv4/IPv6/TCP/UDP/ICMP，<br>
+   怎么只提取 TCP？<code>display_filter</code> 和 <code>bpf_filter</code> 的本质区别是什么？<br>
+   （提示：想一想到底是谁在过滤，以及"没命中的包去哪了"）</li>
+<li><strong>性能权衡</strong>：要分析 100,000 个包的 pcap，你会怎么优化内存与时间？<br>
+   什么时候该从 pyshark 换到 scapy/dpkt/tshark？<br>
+   （提示：<code>keep_packets=False</code>、流式、只取必要字段、BPF 预过滤）</li>
+<li><strong>隐私与合规</strong>：企业里分析抓包文件有哪些合规考量？<br>
+   如何保证分析过程不泄露敏感信息？<br>
+   （提示：参考本日 <code>mask_secret</code>/<code>fingerprint</code> 的设计，以及第四章 4.7）</li>
+<li><strong>解析的局限</strong>：你遇到过 pyshark 解不了的协议/字段吗？<br>
+   解析失败时怎么回退到原始字节或 scapy？<br>
+   （提示：本库的"返回 None 不抛异常"+ <code>hexdump</code> 就是最小的回退机制）</li>
+<li><strong>扩展性设计</strong>：设计一个以 pyshark 为核心的流量分析平台，<br>
+   如何做插件架构（自定义解析、可视化、报告）？<br>
+   （提示：本日"统一 IR + 后端可替换"就是插件化的第一层）</li>
+<li><strong>校验和</strong>：为什么 TCP/UDP 校验和要带伪首部，而 ICMP 不带？<br>
+   如果 NAT 改了源 IP 却不改 TCP 校验和，会发生什么？<br>
+   （可以自己改 <code>pcap_lib.build_ipv4</code> 造一个，再用 <code>dissect_packet</code> 验）</li>
+<li><strong>纸面推演 → 代码验证</strong>：本日 <code>detect_beaconing</code> 用"抖动系数 ≤ 0.10"判定心跳。<br>
+   如果攻击者把周期改成"60 秒 ± 5 秒随机"，这个检测器还能抓到吗？<br>
+   你会怎么改进？（提示：思考"规律性"的其它度量：自相关、直方图、<br>
+   与"人类活动曲线"的对比）</li>
+<li><strong>pcapng</strong>：为什么 pcapng 的每块长度字段要写<strong>两次</strong>？<br>
+   这个设计换来了什么能力？（提示：想想从文件尾部往前遍历、<br>
+   以及文件被截断时如何校验完整性）</li>
+<li><strong>检测工程</strong>：本日自检里专门有一条断言"正常 Web 会话不被误报"。<br>
+   如果让你给 <code>detect_port_scan</code> 增加一条基线规则来进一步降误报，<br>
+   你会用哪个统计量？（提示：全局"每个源的平均目的端口数"）</li>
+</ol>
+<hr>
+<h2 id="_11">附：本日文件清单</h2>
+<pre class="plain"><code>days/day-157-pyshark-traffic-analysis/
+├── README.md                    ← 本文
+├── code/
+│   ├── pcap_lib.py              ← 核心引擎：pcap/pcapng 读写 + 解析 + 过滤器 + 合成流量
+│   ├── 01-basic-usage.py        ← 读取与列出数据包（pyshark 主路径 + 标准库兜底）
+│   ├── 02-advanced-filtering.py ← BPF vs display filter + HTTP 提取 + Summary 坑
+│   └── 03-traffic-analysis.py   ← 统计 + 连接跟踪 + 7 类异常检测 + 报告 + CI 门禁
+├── diagrams/
+│   └── README.md                ← 机制图（ASCII + Mermaid）
+└── exercises/
+    └── checklist.md             ← 完成清单 + 练习
+</code></pre>
+<p><strong>与旧版内容的对应关系</strong>（旧版是 47/48/96 行的清单式脚本，本次改造后）：</p>
+<table>
+<thead>
+<tr>
+<th>旧版</th>
+<th>现在</th>
+<th>变化</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>案例 1（47 行，硬编码 <code>example_traffic.pcap</code>）</td>
+<td><code>01-basic-usage.py</code></td>
+<td>加 CLI、加标准库兜底、加 HTTP/统计、加自检；删掉硬编码文件名</td>
+</tr>
+<tr>
+<td>案例 2（48 行，<code>only_summaries=True</code> + 读 <code>http</code> 字段）</td>
+<td><code>02-advanced-filtering.py</code></td>
+<td><strong>修掉 AttributeError 级 bug</strong>；加 BPF/display 对照与等价性验证</td>
+</tr>
+<tr>
+<td>案例 3（96 行，含 <code>x[1] if False else count</code> 死代码）</td>
+<td><code>03-traffic-analysis.py</code></td>
+<td>清掉死代码；加连接跟踪与 7 个检测器；加误报控制与 CI 门禁</td>
+</tr>
+<tr>
+<td>—</td>
+<td><code>pcap_lib.py</code>（新增）</td>
+<td>纯标准库引擎：让全部自检不依赖 pyshark/tshark</td>
+</tr>
+</tbody>
+</table>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-156/index.html">← Day 156 Scapy 数据包构造：从 IP/TCP 到自定义网络探测工具</a><a class="nav-next" href="../day-158/index.html">Day 158 WebShell 检测：实战扫描器（静态特征 + 行为关联 + 评分定级） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

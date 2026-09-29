@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 118 — NLP 基础</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 118 — NLP 基础</h1>
+  <div class="lmeta">
+    <span class="badge">数据分析与AI/ML</span>
+    <span class="badge">513 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-118-nlp-基础" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 目录</a>
+<a class="toc-l2" href="#1-jieba">1. 分词（jieba）</a>
+<a class="toc-l3" href="#11">1.1 什么是分词？</a>
+<a class="toc-l3" href="#12-jieba">1.2 jieba 分词原理</a>
+<a class="toc-l3" href="#13-jieba-api">1.3 jieba 核心 API</a>
+<a class="toc-l3" href="#14-pos-tagging">1.4 词性标注（POS Tagging）</a>
+<a class="toc-l2" href="#2-tf-idf">2. TF-IDF 文本表示</a>
+<a class="toc-l3" href="#21">2.1 从文字到数字</a>
+<a class="toc-l3" href="#22-tf-idf">2.2 TF-IDF 原理</a>
+<a class="toc-l3" href="#23">2.3 计算实例</a>
+<a class="toc-l3" href="#24-scikit-learn-tf-idf">2.4 scikit-learn 中的 TF-IDF</a>
+<a class="toc-l3" href="#25">2.5 常用参数说明</a>
+<a class="toc-l2" href="#3-word-embedding">3. Word Embedding 概念</a>
+<a class="toc-l3" href="#31">3.1 从稀疏到稠密</a>
+<a class="toc-l3" href="#32-word2vec">3.2 Word2Vec 原理</a>
+<a class="toc-l3" href="#33">3.3 词向量的神奇特性</a>
+<a class="toc-l3" href="#34-glove-fasttext">3.4 GloVe 与 FastText</a>
+<a class="toc-l3" href="#35-gensim">3.5 使用 Gensim 加载预训练词向量</a>
+<a class="toc-l2" href="#4">4. 实战：文本分类</a>
+<a class="toc-l3" href="#41">4.1 文本分类流程</a>
+<a class="toc-l3" href="#42">4.2 完整文本分类实战</a>
+<a class="toc-l3" href="#43">4.3 避坑指南</a>
+<a class="toc-l2" href="#5">5. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-118-nlp">Day 118 — NLP 基础</h1>
+<blockquote>
+<p>自然语言处理（Natural Language Processing）是让计算机理解、分析和生成人类语言的技术。今天我们将从分词开始，逐步掌握文本表示与分类的核心方法。</p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 目录</h2>
+<ol>
+<li><a href="#1-分词jieba">分词（jieba）</a></li>
+<li><a href="#2-tf-idf-文本表示">TF-IDF 文本表示</a></li>
+<li><a href="#3-word-embedding-概念">Word Embedding 概念</a></li>
+<li><a href="#4-实战文本分类">实战：文本分类</a></li>
+<li><a href="#5-思考题">思考题</a></li>
+</ol>
+<hr>
+<h2 id="1-jieba">1. 分词（jieba）</h2>
+<h3 id="11">1.1 什么是分词？</h3>
+<p>分词是将连续的文本切分成有意义的词语序列的过程。对于中文而言，分词是 NLP 的基础步骤——因为中文不像英文有天然的空格分隔。</p>
+<p><strong>为什么中文需要分词？</strong></p>
+<table>
+<thead>
+<tr>
+<th>语言</th>
+<th>示例</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>英文</td>
+<td><code>I love Python</code></td>
+<td>空格天然分隔</td>
+</tr>
+<tr>
+<td>中文</td>
+<td><code>我爱Python</code></td>
+<td>没有空格，需要算法切分</td>
+</tr>
+</tbody>
+</table>
+<p>一个中文句子可能有多种切分方式：</p>
+<pre class="plain"><code>南京市长江大桥
+→ 南京市 / 长江大桥 ✓
+→ 南京 / 市长 / 江大桥 ✗（歧义）
+</code></pre>
+<h3 id="12-jieba">1.2 jieba 分词原理</h3>
+<p>jieba 是最常用的中文分词库，其核心算法基于 <strong>HMM（隐马尔可夫模型）+ Trie 树（前缀词典）</strong>：</p>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[输入句子] --&gt; B[构建有向无环图 DAG]
+    B --&gt; C{基于 Trie 词典查找所有可能切分}
+    C --&gt; D[动态规划计算最大概率路径]
+    D --&gt; E[未登录词 → HMM 新词发现]
+    E --&gt; F[最终分词结果]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[输入句子] --&gt; B[构建有向无环图 DAG]
+    B --&gt; C{基于 Trie 词典查找所有可能切分}
+    C --&gt; D[动态规划计算最大概率路径]
+    D --&gt; E[未登录词 → HMM 新词发现]
+    E --&gt; F[最终分词结果]
+</code></pre></div>
+<p><strong>jieba 的三种分词模式：</strong></p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>函数</th>
+<th>特点</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>精确模式</td>
+<td><code>jieba.cut()</code></td>
+<td>最精确，无冗余</td>
+<td>文本分析</td>
+</tr>
+<tr>
+<td>全模式</td>
+<td><code>jieba.cut_all()</code></td>
+<td>所有可能组合</td>
+<td>搜索引擎</td>
+</tr>
+<tr>
+<td>搜索引擎模式</td>
+<td><code>jieba.cut_for_search()</code></td>
+<td>兼顾召回和精确</td>
+<td>搜索引擎索引</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13-jieba-api">1.3 jieba 核心 API</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">jieba</span>
+
+<span class="c1"># 精确模式（最常用）</span>
+<span class="n">words</span> <span class="o">=</span> <span class="n">jieba</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="s2">&quot;我在北京大学学习自然语言处理&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">words</span><span class="p">))</span>
+<span class="c1"># 我/在/北京/大学/学习/自然语言处理</span>
+
+<span class="c1"># 全模式</span>
+<span class="n">words</span> <span class="o">=</span> <span class="n">jieba</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="s2">&quot;我在北京大学学习自然语言处理&quot;</span><span class="p">,</span> <span class="n">cut_all</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">words</span><span class="p">))</span>
+<span class="c1"># 我/在/北京/大学/北京大/大学/学习/自然/语言/处理/自然语言</span>
+
+<span class="c1"># 搜索引擎模式</span>
+<span class="n">words</span> <span class="o">=</span> <span class="n">jieba</span><span class="o">.</span><span class="n">cut_for_search</span><span class="p">(</span><span class="s2">&quot;南京市长江大桥&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;/&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">words</span><span class="p">))</span>
+<span class="c1"># 南京市/南京/市长/长江/长江大桥/大桥</span>
+
+<span class="c1"># 添加自定义词典</span>
+<span class="n">jieba</span><span class="o">.</span><span class="n">add_word</span><span class="p">(</span><span class="s2">&quot;机器学习&quot;</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="mi">10000</span><span class="p">)</span>
+<span class="n">jieba</span><span class="o">.</span><span class="n">add_word</span><span class="p">(</span><span class="s2">&quot;深度学习&quot;</span><span class="p">,</span> <span class="n">freq</span><span class="o">=</span><span class="mi">10000</span><span class="p">)</span>
+
+<span class="c1"># 加载外部词典文件</span>
+<span class="c1"># jieba.load_userdict(&quot;mydict.txt&quot;)</span>
+<span class="c1"># 文件格式：词语 频率 词性</span>
+<span class="c1"># 机器学习 10000 n</span>
+<span class="c1"># 深度学习 10000 n</span>
+
+<span class="c1"># 获取词语和词性</span>
+<span class="kn">import</span> <span class="nn">jieba.posseg</span> <span class="k">as</span> <span class="nn">pseg</span>
+<span class="n">words</span> <span class="o">=</span> <span class="n">pseg</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="s2">&quot;我爱自然语言处理&quot;</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">word</span><span class="p">,</span> <span class="n">flag</span> <span class="ow">in</span> <span class="n">words</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">word</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">flag</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">end</span><span class="o">=</span><span class="s2">&quot; &quot;</span><span class="p">)</span>
+<span class="c1"># 我/r 爱/v 自然语言处理/l</span>
+</code></pre></div>
+<h3 id="14-pos-tagging">1.4 词性标注（POS Tagging）</h3>
+<p>jieba.posseg 提供词性标注功能，常用词性：</p>
+<table>
+<thead>
+<tr>
+<th>标签</th>
+<th>含义</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>n</td>
+<td>名词</td>
+<td>人名、地名、机构名</td>
+</tr>
+<tr>
+<td>v</td>
+<td>动词</td>
+<td>学习、运行</td>
+</tr>
+<tr>
+<td>a</td>
+<td>形容词</td>
+<td>美丽、快速</td>
+</tr>
+<tr>
+<td>r</td>
+<td>代词</td>
+<td>我、你、他</td>
+</tr>
+<tr>
+<td>d</td>
+<td>副词</td>
+<td>很、非常</td>
+</tr>
+<tr>
+<td>m</td>
+<td>数词</td>
+<td>一个、三本</td>
+</tr>
+<tr>
+<td>eng</td>
+<td>英文</td>
+<td>Python、API</td>
+</tr>
+<tr>
+<td>l</td>
+<td>习用语</td>
+<td>自然语言处理</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2-tf-idf">2. TF-IDF 文本表示</h2>
+<h3 id="21">2.1 从文字到数字</h3>
+<p>计算机无法直接处理文字，需要将文本转换为数值向量。这就是<strong>文本表示</strong>的核心问题。</p>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[原始文本] --&gt; B[分词] --&gt; C[去除停用词] --&gt; D[文本向量化] --&gt; E[数值向量]
+    D --&gt; D1[TF-IDF]
+    D --&gt; D2[Word2Vec]
+    D --&gt; D3[BERT Embedding]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[原始文本] --&gt; B[分词] --&gt; C[去除停用词] --&gt; D[文本向量化] --&gt; E[数值向量]
+    D --&gt; D1[TF-IDF]
+    D --&gt; D2[Word2Vec]
+    D --&gt; D3[BERT Embedding]
+</code></pre></div>
+<h3 id="22-tf-idf">2.2 TF-IDF 原理</h3>
+<p><strong>TF-IDF（Term Frequency - Inverse Document Frequency）</strong> 是经典的文本特征提取方法。</p>
+<p><strong>核心思想：</strong> 一个词对某篇文章的重要性，不仅取决于它在该文章中出现的频率（TF），还取决于它在整个语料库中的稀有程度（IDF）。</p>
+<h4 id="tf">TF（词频）</h4>
+<p>$$TF(t, d) = \frac{\text{词 } t \text{ 在文档 } d \text{ 中出现的次数}}{\text{文档 } d \text{ 的总词数}}$$</p>
+<p><strong>设计原理：</strong> 如果一个词在文档中频繁出现，说明它对这篇文档很重要。但单纯看频率不够——"的"、"是"、"在" 这些词出现频率极高，却没什么信息量。</p>
+<h4 id="idf">IDF（逆文档频率）</h4>
+<p>$$IDF(t) = \log\left(\frac{\text{文档总数}}{\text{包含词 } t \text{ 的文档数}}\right)$$</p>
+<p><strong>设计原理：</strong> IDF 给罕见词更高的权重。如果一个词只在少数文档中出现，说明它有很强的区分能力。例如 "量子力学" 在科技论文中比 "学习" 更有区分度。</p>
+<h4 id="tf-idf">TF-IDF</h4>
+<p>$$TF\text{-}IDF(t, d) = TF(t, d) \times IDF(t)$$</p>
+<h3 id="23">2.3 计算实例</h3>
+<p>假设语料库有 4 篇文档：</p>
+<table>
+<thead>
+<tr>
+<th>文档</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D1</td>
+<td>机器学习是人工智能的一个分支</td>
+</tr>
+<tr>
+<td>D2</td>
+<td>深度学习是机器学习的重要方法</td>
+</tr>
+<tr>
+<td>D3</td>
+<td>自然语言处理使用深度学习</td>
+</tr>
+<tr>
+<td>D4</td>
+<td>Python 是广泛使用的编程语言</td>
+</tr>
+</tbody>
+</table>
+<p>计算 "深度学习" 在 D2 中的 TF-IDF：</p>
+<ul>
+<li>TF("深度学习", D2) = 1/10 = 0.1</li>
+<li>IDF("深度学习") = log(4/2) = 0.301</li>
+<li>TF-IDF = 0.1 × 0.301 = 0.0301</li>
+</ul>
+<p>计算 "Python" 在 D4 中的 TF-IDF：</p>
+<ul>
+<li>TF("Python", D4) = 1/8 = 0.125</li>
+<li>IDF("Python") = log(4/1) = 0.602</li>
+<li>TF-IDF = 0.125 × 0.602 = 0.0753</li>
+</ul>
+<p>"Python" 的 TF-IDF 更高，因为它只出现在 D4 中，具有更强的区分能力。</p>
+<h3 id="24-scikit-learn-tf-idf">2.4 scikit-learn 中的 TF-IDF</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">sklearn.feature_extraction.text</span> <span class="kn">import</span> <span class="n">TfidfVectorizer</span>
+<span class="kn">import</span> <span class="nn">jieba</span>
+
+<span class="c1"># 中文需要先分词</span>
+<span class="n">corpus</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;机器学习是人工智能的一个分支&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;深度学习是机器学习的重要方法&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;自然语言处理使用深度学习&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Python 是广泛使用的编程语言&quot;</span>
+<span class="p">]</span>
+
+<span class="c1"># 分词 + 去除停用词</span>
+<span class="n">stopwords</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;是&quot;</span><span class="p">,</span> <span class="s2">&quot;的&quot;</span><span class="p">,</span> <span class="s2">&quot;一个&quot;</span><span class="p">,</span> <span class="s2">&quot;重要&quot;</span><span class="p">,</span> <span class="s2">&quot;广泛&quot;</span><span class="p">,</span> <span class="s2">&quot;使用&quot;</span><span class="p">}</span>
+<span class="n">segmented</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">w</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">jieba</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">text</span><span class="p">)</span> <span class="k">if</span> <span class="n">w</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">stopwords</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">])</span>
+    <span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">corpus</span>
+<span class="p">]</span>
+
+<span class="c1"># TF-IDF 向量化</span>
+<span class="n">vectorizer</span> <span class="o">=</span> <span class="n">TfidfVectorizer</span><span class="p">()</span>
+<span class="n">tfidf_matrix</span> <span class="o">=</span> <span class="n">vectorizer</span><span class="o">.</span><span class="n">fit_transform</span><span class="p">(</span><span class="n">segmented</span><span class="p">)</span>
+
+<span class="c1"># 查看结果</span>
+<span class="n">feature_names</span> <span class="o">=</span> <span class="n">vectorizer</span><span class="o">.</span><span class="n">get_feature_names_out</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;特征词：&quot;</span><span class="p">,</span> <span class="nb">list</span><span class="p">(</span><span class="n">feature_names</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;TF-IDF 矩阵：&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">tfidf_matrix</span><span class="o">.</span><span class="n">toarray</span><span class="p">())</span>
+
+<span class="c1"># 查看某个词的 IDF 值</span>
+<span class="k">for</span> <span class="n">word</span><span class="p">,</span> <span class="n">idf</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">feature_names</span><span class="p">,</span> <span class="n">vectorizer</span><span class="o">.</span><span class="n">idf_</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  IDF(</span><span class="si">{</span><span class="n">word</span><span class="si">}</span><span class="s2">) = </span><span class="si">{</span><span class="n">idf</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="25">2.5 常用参数说明</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_features</code></td>
+<td>None</td>
+<td>最大特征数（按 IDF 排序取前N个）</td>
+</tr>
+<tr>
+<td><code>min_df</code></td>
+<td>1</td>
+<td>最小文档频率，低于此值的词被忽略</td>
+</tr>
+<tr>
+<td><code>max_df</code></td>
+<td>1.0</td>
+<td>最大文档频率，高于此值的词被忽略</td>
+</tr>
+<tr>
+<td><code>ngram_range</code></td>
+<td>(1,1)</td>
+<td>n-gram 范围，(1,2) 表示同时考虑词和双词</td>
+</tr>
+<tr>
+<td><code>sublinear_tf</code></td>
+<td>False</td>
+<td>是否使用对数 TF（1 + log(tf)）</td>
+</tr>
+<tr>
+<td><code>norm</code></td>
+<td>'l2'</td>
+<td>归一化方式，l2 或 l1</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3-word-embedding">3. Word Embedding 概念</h2>
+<h3 id="31">3.1 从稀疏到稠密</h3>
+<p>TF-IDF 生成的是<strong>稀疏向量</strong>（高维、大部分元素为0）。Word Embedding 的核心思想是将每个词映射到一个<strong>低维稠密向量</strong>，使得语义相近的词在向量空间中距离相近。</p>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[TF-IDF 稀疏向量&lt;br&gt;维度: 10000+&lt;br&gt;大部分元素: 0] --&gt;|问题| B[维度灾难&lt;br&gt;无法捕捉语义关系]
+    C[Word Embedding 稠密向量&lt;br&gt;维度: 100~300&lt;br&gt;语义信息丰富] --&gt;|解决| D[捕捉语义关系&lt;br&gt;相似词距离近]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[TF-IDF 稀疏向量&lt;br&gt;维度: 10000+&lt;br&gt;大部分元素: 0] --&gt;|问题| B[维度灾难&lt;br&gt;无法捕捉语义关系]
+    C[Word Embedding 稠密向量&lt;br&gt;维度: 100~300&lt;br&gt;语义信息丰富] --&gt;|解决| D[捕捉语义关系&lt;br&gt;相似词距离近]
+</code></pre></div>
+<h3 id="32-word2vec">3.2 Word2Vec 原理</h3>
+<p>Word2Vec 由 Google 的 Tomas Mikolov 于 2013 年提出，核心假设是<strong>分布式假设</strong>：出现在相似上下文中的词具有相似的语义。</p>
+<p><strong>两种模型架构：</strong></p>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph CBOW[&quot;CBOW（连续词袋）&quot;]
+        C1[上下文词1] --&gt; P[Predict]
+        C2[上下文词2] --&gt; P
+        C3[上下文词3] --&gt; P
+        P --&gt; T[目标词]
+    end
+
+    subgraph SkipGram[&quot;Skip-gram&quot;]
+        T2[目标词] --&gt; P2[Predict]
+        P2 --&gt; C12[上下文词1]
+        P2 --&gt; C22[上下文词2]
+        P2 --&gt; C32[上下文词3]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph CBOW[&quot;CBOW（连续词袋）&quot;]
+        C1[上下文词1] --&gt; P[Predict]
+        C2[上下文词2] --&gt; P
+        C3[上下文词3] --&gt; P
+        P --&gt; T[目标词]
+    end
+
+    subgraph SkipGram[&quot;Skip-gram&quot;]
+        T2[目标词] --&gt; P2[Predict]
+        P2 --&gt; C12[上下文词1]
+        P2 --&gt; C22[上下文词2]
+        P2 --&gt; C32[上下文词3]
+    end
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>架构</th>
+<th>输入</th>
+<th>输出</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CBOW</td>
+<td>上下文词</td>
+<td>目标词</td>
+<td>训练快，适合频繁词</td>
+</tr>
+<tr>
+<td>Skip-gram</td>
+<td>目标词</td>
+<td>上下文词</td>
+<td>效果好，适合罕见词</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33">3.3 词向量的神奇特性</h3>
+<p>训练好的词向量具有线性代数的语义关系：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 经典例子</span>
+<span class="n">vec</span><span class="p">(</span><span class="s2">&quot;king&quot;</span><span class="p">)</span> <span class="o">-</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;man&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;woman&quot;</span><span class="p">)</span> <span class="err">≈</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;queen&quot;</span><span class="p">)</span>
+
+<span class="c1"># 语义类比</span>
+<span class="n">vec</span><span class="p">(</span><span class="s2">&quot;Paris&quot;</span><span class="p">)</span> <span class="o">-</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;France&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;Japan&quot;</span><span class="p">)</span> <span class="err">≈</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;Tokyo&quot;</span><span class="p">)</span>
+<span class="n">vec</span><span class="p">(</span><span class="s2">&quot;bigger&quot;</span><span class="p">)</span> <span class="o">-</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;big&quot;</span><span class="p">)</span> <span class="o">+</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;small&quot;</span><span class="p">)</span> <span class="err">≈</span> <span class="n">vec</span><span class="p">(</span><span class="s2">&quot;smaller&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>为什么能实现这种线性关系？</strong></p>
+<p>Word2Vec 在训练过程中，本质上是在学习词与词之间的共现关系。如果 king 和 queen 经常出现在相似的上下文中（王室、权力、统治），它们的向量就会被拉近。而 king/queen 与 man/woman 之间的关系是另一个维度（性别），这两个关系在向量空间中近似正交，所以可以通过向量加减来表达。</p>
+<h3 id="34-glove-fasttext">3.4 GloVe 与 FastText</h3>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th>原理</th>
+<th>优势</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Word2Vec</strong></td>
+<td>预测模型（CBOW/Skip-gram）</td>
+<td>训练快，效果好</td>
+</tr>
+<tr>
+<td><strong>GloVe</strong></td>
+<td>全局词共现矩阵分解</td>
+<td>充分利用全局统计信息</td>
+</tr>
+<tr>
+<td><strong>FastText</strong></td>
+<td>基于子词（subword）的 Word2Vec</td>
+<td>能处理未登录词</td>
+</tr>
+</tbody>
+</table>
+<h3 id="35-gensim">3.5 使用 Gensim 加载预训练词向量</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">gensim.models</span> <span class="kn">import</span> <span class="n">KeyedVectors</span>
+
+<span class="c1"># 加载预训练的 Word2Vec 模型（中文需要下载对应模型）</span>
+<span class="c1"># model = KeyedVectors.load_word2vec_format(&quot;sgns.baidubaike.bigram-char&quot;, binary=False)</span>
+
+<span class="c1"># 使用示例（以模拟数据为例）</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+
+<span class="c1"># 模拟词向量（实际使用时加载预训练模型）</span>
+<span class="n">word_vectors</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;机器&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.8</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">]),</span>
+    <span class="s2">&quot;学习&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">]),</span>
+    <span class="s2">&quot;深度&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">]),</span>
+    <span class="s2">&quot;自然&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">,</span> <span class="mf">0.7</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">]),</span>
+    <span class="s2">&quot;语言&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.6</span><span class="p">,</span> <span class="mf">0.3</span><span class="p">]),</span>
+<span class="p">}</span>
+
+<span class="k">def</span> <span class="nf">cosine_similarity</span><span class="p">(</span><span class="n">v1</span><span class="p">,</span> <span class="n">v2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;计算余弦相似度&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">v1</span><span class="p">,</span> <span class="n">v2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">v1</span><span class="p">)</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">norm</span><span class="p">(</span><span class="n">v2</span><span class="p">))</span>
+
+<span class="c1"># 语义相似度</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;机器 与 学习 的相似度:&quot;</span><span class="p">,</span> <span class="n">cosine_similarity</span><span class="p">(</span><span class="n">word_vectors</span><span class="p">[</span><span class="s2">&quot;机器&quot;</span><span class="p">],</span> <span class="n">word_vectors</span><span class="p">[</span><span class="s2">&quot;学习&quot;</span><span class="p">]))</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;机器 与 自然 的相似度:&quot;</span><span class="p">,</span> <span class="n">cosine_similarity</span><span class="p">(</span><span class="n">word_vectors</span><span class="p">[</span><span class="s2">&quot;机器&quot;</span><span class="p">],</span> <span class="n">word_vectors</span><span class="p">[</span><span class="s2">&quot;自然&quot;</span><span class="p">]))</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 实战：文本分类</h2>
+<h3 id="41">4.1 文本分类流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[原始文本数据] --&gt; B[数据预处理]
+    B --&gt; B1[分词]
+    B --&gt; B2[去除停用词]
+    B --&gt; B3[清洗特殊字符]
+    B1 --&gt; C[特征提取]
+    B2 --&gt; C
+    B3 --&gt; C
+    C --&gt; C1[TF-IDF]
+    C --&gt; C2[Word2Vec]
+    C --&gt; C3[Bag of Words]
+    C1 --&gt; D[选择分类器]
+    C2 --&gt; D
+    C3 --&gt; D
+    D --&gt; D1[朴素贝叶斯]
+    D --&gt; D2[SVM]
+    D --&gt; D3[逻辑回归]
+    D --&gt; D4[神经网络]
+    D1 --&gt; E[训练与评估]
+    D2 --&gt; E
+    D3 --&gt; E
+    D4 --&gt; E
+    E --&gt; F[模型部署]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[原始文本数据] --&gt; B[数据预处理]
+    B --&gt; B1[分词]
+    B --&gt; B2[去除停用词]
+    B --&gt; B3[清洗特殊字符]
+    B1 --&gt; C[特征提取]
+    B2 --&gt; C
+    B3 --&gt; C
+    C --&gt; C1[TF-IDF]
+    C --&gt; C2[Word2Vec]
+    C --&gt; C3[Bag of Words]
+    C1 --&gt; D[选择分类器]
+    C2 --&gt; D
+    C3 --&gt; D
+    D --&gt; D1[朴素贝叶斯]
+    D --&gt; D2[SVM]
+    D --&gt; D3[逻辑回归]
+    D --&gt; D4[神经网络]
+    D1 --&gt; E[训练与评估]
+    D2 --&gt; E
+    D3 --&gt; E
+    D4 --&gt; E
+    E --&gt; F[模型部署]
+</code></pre></div>
+<h3 id="42">4.2 完整文本分类实战</h3>
+<p>我们将使用 TF-IDF + 朴素贝叶斯 实现一个新闻分类器：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">完整文本分类示例：新闻分类</span>
+<span class="sd">使用 TF-IDF + 多种分类器对比</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">jieba</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">from</span> <span class="nn">sklearn.feature_extraction.text</span> <span class="kn">import</span> <span class="n">TfidfVectorizer</span>
+<span class="kn">from</span> <span class="nn">sklearn.naive_bayes</span> <span class="kn">import</span> <span class="n">MultinomialNB</span>
+<span class="kn">from</span> <span class="nn">sklearn.linear_model</span> <span class="kn">import</span> <span class="n">LogisticRegression</span>
+<span class="kn">from</span> <span class="nn">sklearn.svm</span> <span class="kn">import</span> <span class="n">LinearSVC</span>
+<span class="kn">from</span> <span class="nn">sklearn.model_selection</span> <span class="kn">import</span> <span class="n">train_test_split</span>
+<span class="kn">from</span> <span class="nn">sklearn.metrics</span> <span class="kn">import</span> <span class="n">classification_report</span><span class="p">,</span> <span class="n">accuracy_score</span>
+<span class="kn">from</span> <span class="nn">sklearn.pipeline</span> <span class="kn">import</span> <span class="n">Pipeline</span>
+
+<span class="c1"># ── 1. 准备训练数据 ──</span>
+<span class="n">train_data</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="c1"># 科技类</span>
+    <span class="p">(</span><span class="s2">&quot;苹果发布新款iPhone，搭载A18芯片&quot;</span><span class="p">,</span> <span class="s2">&quot;科技&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;华为推出鸿蒙操作系统新版本&quot;</span><span class="p">,</span> <span class="s2">&quot;科技&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;人工智能在医疗诊断领域取得突破&quot;</span><span class="p">,</span> <span class="s2">&quot;科技&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;特斯拉发布自动驾驶新功能&quot;</span><span class="p">,</span> <span class="s2">&quot;科技&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;谷歌推出新一代大语言模型&quot;</span><span class="p">,</span> <span class="s2">&quot;科技&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;量子计算机实现新里程碑&quot;</span><span class="p">,</span> <span class="s2">&quot;科技&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;5G网络覆盖范围进一步扩大&quot;</span><span class="p">,</span> <span class="s2">&quot;科技&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;SpaceX 成功发射星舰&quot;</span><span class="p">,</span> <span class="s2">&quot;科技&quot;</span><span class="p">),</span>
+    <span class="c1"># 体育类</span>
+    <span class="p">(</span><span class="s2">&quot;中国女排夺得世界冠军&quot;</span><span class="p">,</span> <span class="s2">&quot;体育&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;世界杯预选赛中国队获胜&quot;</span><span class="p">,</span> <span class="s2">&quot;体育&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;姚明当选篮球协会主席&quot;</span><span class="p">,</span> <span class="s2">&quot;体育&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;奥运会筹备工作进展顺利&quot;</span><span class="p">,</span> <span class="s2">&quot;体育&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;刘翔退役后投身青少年体育教育&quot;</span><span class="p">,</span> <span class="s2">&quot;体育&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;足球联赛新赛季开幕&quot;</span><span class="p">,</span> <span class="s2">&quot;体育&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;游泳世锦赛中国队摘金夺银&quot;</span><span class="p">,</span> <span class="s2">&quot;体育&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;NBA总决赛湖人队夺冠&quot;</span><span class="p">,</span> <span class="s2">&quot;体育&quot;</span><span class="p">),</span>
+    <span class="c1"># 财经类</span>
+    <span class="p">(</span><span class="s2">&quot;央行宣布降低利率&quot;</span><span class="p">,</span> <span class="s2">&quot;财经&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;股市今日大幅上涨&quot;</span><span class="p">,</span> <span class="s2">&quot;财经&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;房地产市场调控政策出台&quot;</span><span class="p">,</span> <span class="s2">&quot;财经&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;比特币价格突破历史新高&quot;</span><span class="p">,</span> <span class="s2">&quot;财经&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;新能源汽车企业获得融资&quot;</span><span class="p">,</span> <span class="s2">&quot;财经&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;外资持续流入A股市场&quot;</span><span class="p">,</span> <span class="s2">&quot;财经&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;央行发布货币政策报告&quot;</span><span class="p">,</span> <span class="s2">&quot;财经&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;科技股估值引发市场讨论&quot;</span><span class="p">,</span> <span class="s2">&quot;财经&quot;</span><span class="p">),</span>
+<span class="p">]</span>
+
+<span class="n">texts</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">train_data</span><span class="p">]</span>
+<span class="n">labels</span> <span class="o">=</span> <span class="p">[</span><span class="n">t</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">train_data</span><span class="p">]</span>
+
+<span class="c1"># ── 2. 文本预处理 ──</span>
+<span class="n">stopwords</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;的&quot;</span><span class="p">,</span> <span class="s2">&quot;了&quot;</span><span class="p">,</span> <span class="s2">&quot;在&quot;</span><span class="p">,</span> <span class="s2">&quot;是&quot;</span><span class="p">,</span> <span class="s2">&quot;我&quot;</span><span class="p">,</span> <span class="s2">&quot;有&quot;</span><span class="p">,</span> <span class="s2">&quot;和&quot;</span><span class="p">,</span> <span class="s2">&quot;就&quot;</span><span class="p">,</span> <span class="s2">&quot;不&quot;</span><span class="p">,</span> <span class="s2">&quot;人&quot;</span><span class="p">,</span> <span class="s2">&quot;都&quot;</span><span class="p">,</span> <span class="s2">&quot;一&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;一个&quot;</span><span class="p">,</span> <span class="s2">&quot;上&quot;</span><span class="p">,</span> <span class="s2">&quot;也&quot;</span><span class="p">,</span> <span class="s2">&quot;很&quot;</span><span class="p">,</span> <span class="s2">&quot;到&quot;</span><span class="p">,</span> <span class="s2">&quot;说&quot;</span><span class="p">,</span> <span class="s2">&quot;要&quot;</span><span class="p">,</span> <span class="s2">&quot;去&quot;</span><span class="p">,</span> <span class="s2">&quot;你&quot;</span><span class="p">,</span> <span class="s2">&quot;会&quot;</span><span class="p">,</span> <span class="s2">&quot;着&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;没有&quot;</span><span class="p">,</span> <span class="s2">&quot;看&quot;</span><span class="p">,</span> <span class="s2">&quot;好&quot;</span><span class="p">,</span> <span class="s2">&quot;自己&quot;</span><span class="p">,</span> <span class="s2">&quot;这&quot;</span><span class="p">,</span> <span class="s2">&quot;他&quot;</span><span class="p">,</span> <span class="s2">&quot;她&quot;</span><span class="p">,</span> <span class="s2">&quot;它&quot;</span><span class="p">,</span> <span class="s2">&quot;们&quot;</span><span class="p">,</span> <span class="s2">&quot;那&quot;</span><span class="p">,</span> <span class="s2">&quot;被&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;从&quot;</span><span class="p">,</span> <span class="s2">&quot;把&quot;</span><span class="p">,</span> <span class="s2">&quot;让&quot;</span><span class="p">,</span> <span class="s2">&quot;给&quot;</span><span class="p">,</span> <span class="s2">&quot;对&quot;</span><span class="p">,</span> <span class="s2">&quot;与&quot;</span><span class="p">,</span> <span class="s2">&quot;以&quot;</span><span class="p">,</span> <span class="s2">&quot;及&quot;</span><span class="p">,</span> <span class="s2">&quot;等&quot;</span><span class="p">,</span> <span class="s2">&quot;但&quot;</span><span class="p">,</span> <span class="s2">&quot;而&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;如&quot;</span><span class="p">,</span> <span class="s2">&quot;或&quot;</span><span class="p">,</span> <span class="s2">&quot;之&quot;</span><span class="p">,</span> <span class="s2">&quot;其&quot;</span><span class="p">,</span> <span class="s2">&quot;已&quot;</span><span class="p">,</span> <span class="s2">&quot;将&quot;</span><span class="p">,</span> <span class="s2">&quot;更&quot;</span><span class="p">,</span> <span class="s2">&quot;新&quot;</span><span class="p">,</span> <span class="s2">&quot;为&quot;</span><span class="p">,</span> <span class="s2">&quot;于&quot;</span><span class="p">,</span> <span class="s2">&quot;中&quot;</span><span class="p">,</span>
+             <span class="s2">&quot;后&quot;</span><span class="p">,</span> <span class="s2">&quot;前&quot;</span><span class="p">,</span> <span class="s2">&quot;可&quot;</span><span class="p">,</span> <span class="s2">&quot;能&quot;</span><span class="p">,</span> <span class="s2">&quot;所&quot;</span><span class="p">,</span> <span class="s2">&quot;此&quot;</span><span class="p">,</span> <span class="s2">&quot;这个&quot;</span><span class="p">,</span> <span class="s2">&quot;那个&quot;</span><span class="p">,</span> <span class="s2">&quot;什么&quot;</span><span class="p">}</span>
+
+<span class="k">def</span> <span class="nf">preprocess</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;分词 + 去停用词&quot;&quot;&quot;</span>
+    <span class="n">words</span> <span class="o">=</span> <span class="n">jieba</span><span class="o">.</span><span class="n">cut</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="n">w</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">words</span> <span class="k">if</span> <span class="n">w</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">stopwords</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">w</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">])</span>
+
+<span class="n">processed_texts</span> <span class="o">=</span> <span class="p">[</span><span class="n">preprocess</span><span class="p">(</span><span class="n">t</span><span class="p">)</span> <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">texts</span><span class="p">]</span>
+
+<span class="c1"># 打印预处理结果</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;📝 预处理示例&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;原文: </span><span class="si">{</span><span class="n">texts</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;分词: </span><span class="si">{</span><span class="n">processed_texts</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">()</span>
+
+<span class="c1"># ── 3. 划分训练集和测试集 ──</span>
+<span class="n">X_train</span><span class="p">,</span> <span class="n">X_test</span><span class="p">,</span> <span class="n">y_train</span><span class="p">,</span> <span class="n">y_test</span> <span class="o">=</span> <span class="n">train_test_split</span><span class="p">(</span>
+    <span class="n">processed_texts</span><span class="p">,</span> <span class="n">labels</span><span class="p">,</span> <span class="n">test_size</span><span class="o">=</span><span class="mf">0.3</span><span class="p">,</span> <span class="n">random_state</span><span class="o">=</span><span class="mi">42</span><span class="p">,</span> <span class="n">stratify</span><span class="o">=</span><span class="n">labels</span>
+<span class="p">)</span>
+
+<span class="c1"># ── 4. 使用 Pipeline 构建分类器 ──</span>
+<span class="n">classifiers</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;朴素贝叶斯&quot;</span><span class="p">:</span> <span class="n">Pipeline</span><span class="p">([</span>
+        <span class="p">(</span><span class="s2">&quot;tfidf&quot;</span><span class="p">,</span> <span class="n">TfidfVectorizer</span><span class="p">(</span><span class="n">max_features</span><span class="o">=</span><span class="mi">5000</span><span class="p">)),</span>
+        <span class="p">(</span><span class="s2">&quot;clf&quot;</span><span class="p">,</span> <span class="n">MultinomialNB</span><span class="p">())</span>
+    <span class="p">]),</span>
+    <span class="s2">&quot;逻辑回归&quot;</span><span class="p">:</span> <span class="n">Pipeline</span><span class="p">([</span>
+        <span class="p">(</span><span class="s2">&quot;tfidf&quot;</span><span class="p">,</span> <span class="n">TfidfVectorizer</span><span class="p">(</span><span class="n">max_features</span><span class="o">=</span><span class="mi">5000</span><span class="p">)),</span>
+        <span class="p">(</span><span class="s2">&quot;clf&quot;</span><span class="p">,</span> <span class="n">LogisticRegression</span><span class="p">(</span><span class="n">max_iter</span><span class="o">=</span><span class="mi">1000</span><span class="p">))</span>
+    <span class="p">]),</span>
+    <span class="s2">&quot;SVM&quot;</span><span class="p">:</span> <span class="n">Pipeline</span><span class="p">([</span>
+        <span class="p">(</span><span class="s2">&quot;tfidf&quot;</span><span class="p">,</span> <span class="n">TfidfVectorizer</span><span class="p">(</span><span class="n">max_features</span><span class="o">=</span><span class="mi">5000</span><span class="p">)),</span>
+        <span class="p">(</span><span class="s2">&quot;clf&quot;</span><span class="p">,</span> <span class="n">LinearSVC</span><span class="p">())</span>
+    <span class="p">]),</span>
+<span class="p">}</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;📊 分类器对比&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">clf</span> <span class="ow">in</span> <span class="n">classifiers</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+    <span class="n">clf</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X_train</span><span class="p">,</span> <span class="n">y_train</span><span class="p">)</span>
+    <span class="n">y_pred</span> <span class="o">=</span> <span class="n">clf</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">X_test</span><span class="p">)</span>
+    <span class="n">acc</span> <span class="o">=</span> <span class="n">accuracy_score</span><span class="p">(</span><span class="n">y_test</span><span class="p">,</span> <span class="n">y_pred</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: 准确率 = </span><span class="si">{</span><span class="n">acc</span><span class="si">:</span><span class="s2">.2%</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">y_test</span><span class="p">))</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">classification_report</span><span class="p">(</span><span class="n">y_test</span><span class="p">,</span> <span class="n">y_pred</span><span class="p">,</span> <span class="n">zero_division</span><span class="o">=</span><span class="mi">0</span><span class="p">))</span>
+
+<span class="c1"># ── 5. 使用最佳模型进行预测 ──</span>
+<span class="n">best_clf</span> <span class="o">=</span> <span class="n">classifiers</span><span class="p">[</span><span class="s2">&quot;逻辑回归&quot;</span><span class="p">]</span>  <span class="c1"># 通常逻辑回归效果最好</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;🔮 新文本预测&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+
+<span class="n">new_texts</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;研究人员开发出新型电池技术&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;足球世界杯决赛将在今晚举行&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;央行宣布下调存款准备金率&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">new_texts</span><span class="p">:</span>
+    <span class="n">processed</span> <span class="o">=</span> <span class="n">preprocess</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    <span class="n">pred</span> <span class="o">=</span> <span class="n">best_clf</span><span class="o">.</span><span class="n">predict</span><span class="p">([</span><span class="n">processed</span><span class="p">])[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="c1"># 获取概率（如果支持）</span>
+    <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">best_clf</span><span class="o">.</span><span class="n">named_steps</span><span class="p">[</span><span class="s1">&#39;clf&#39;</span><span class="p">],</span> <span class="s1">&#39;predict_proba&#39;</span><span class="p">):</span>
+        <span class="n">proba</span> <span class="o">=</span> <span class="n">best_clf</span><span class="o">.</span><span class="n">predict_proba</span><span class="p">([</span><span class="n">processed</span><span class="p">])[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">classes</span> <span class="o">=</span> <span class="n">best_clf</span><span class="o">.</span><span class="n">classes_</span>
+        <span class="n">proba_str</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">c</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">p</span><span class="si">:</span><span class="s2">.1%</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">c</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">classes</span><span class="p">,</span> <span class="n">proba</span><span class="p">)])</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;文本: </span><span class="si">{</span><span class="n">text</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  预测: </span><span class="si">{</span><span class="n">pred</span><span class="si">}</span><span class="s2"> | 概率: </span><span class="si">{</span><span class="n">proba_str</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;文本: </span><span class="si">{</span><span class="n">text</span><span class="si">}</span><span class="s2"> → 预测: </span><span class="si">{</span><span class="n">pred</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="43">4.3 避坑指南</h3>
+<table>
+<thead>
+<tr>
+<th>坑</th>
+<th>说明</th>
+<th>解决方案</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>中文没空格</td>
+<td>直接用 sklearn 会按字符切分</td>
+<td>先用 jieba 分词，结果用空格连接</td>
+</tr>
+<tr>
+<td>停用词干扰</td>
+<td>"的"、"是"等词没有区分度</td>
+<td>加载中文停用词表</td>
+</tr>
+<tr>
+<td>标点符号</td>
+<td>"，"、"。"混入特征</td>
+<td>预处理时用正则清除标点</td>
+</tr>
+<tr>
+<td>数据不平衡</td>
+<td>某类样本太少导致偏见</td>
+<td>过采样/欠采样/调整 class_weight</td>
+</tr>
+<tr>
+<td>过拟合</td>
+<td>训练集表现好但测试集差</td>
+<td>增加数据、正则化、减少特征数</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="5">5. 思考题</h2>
+<ol>
+<li>
+<p><strong>分词歧义问题</strong>："南京市长江大桥" 可以切分为 "南京市/长江大桥" 或 "南京/市长/江大桥"。jieba 是如何解决这种歧义的？HMM 在其中扮演什么角色？</p>
+</li>
+<li>
+<p><strong>TF-IDF 的局限性</strong>：TF-IDF 将每个词视为独立的特征，无法捕捉词序信息（如 "喜欢" 和 "不喜欢" 在 TF-IDF 中差异可能很小）。如何改进？</p>
+</li>
+<li>
+<p><strong>Word Embedding 的语义鸿沟</strong>：Word2Vec 为每个词只生成一个固定向量，但 "苹果" 在 "吃苹果" 和 "苹果手机" 中含义完全不同。这个问题叫<strong>多义词问题（Polysemy）</strong>，如何解决？</p>
+</li>
+<li>
+<p><strong>TF-IDF vs Word Embedding</strong>：在什么场景下 TF-IDF 比 Word Embedding 更好？什么场景下相反？</p>
+</li>
+<li>
+<p><strong>实践挑战</strong>：如果你要构建一个中文垃圾邮件过滤器，除了今天学的方法，还需要考虑哪些额外的预处理步骤？</p>
+</li>
+</ol>
+<hr>
+<blockquote>
+<p>📅 <strong>明日预告</strong>：Day 119 — 大模型 API 调用，学习如何调用 OpenAI/DeepSeek API 以及 Prompt Engineering 技巧。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-117/index.html">← Day 117 迁移学习 (Transfer Learning)</a><a class="nav-next" href="../day-119/index.html">Day 119 大模型 API 调用 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

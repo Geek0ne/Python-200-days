@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 163 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 163 正文</a>
+  <h1>Day 163 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-163-sqli-xss">Day 163 完成清单 · 安全审计工具箱（二）：SQLi 检测 + XSS 检测</h1>
+<blockquote>
+<p>Phase 10 — 网络安全开发 · 阶段项目 Day 162–165 的第 2 天</p>
+<p>⚠️ 实验只跑在本机回环靶标（<code>code/vuln_core.py</code> 的 <code>LabVulnHTTP</code>）。
+只对自己拥有或已获书面授权的目标做检测；只发 GET；不取数、不绕过。</p>
+</blockquote>
+<hr>
+<h2 id="_1">✅ 一、完成清单（照着打勾）</h2>
+<h3 id="readmemd">概念与原理（读 <code>README.md</code>）</h3>
+<ul>
+<li>[ ] 能说清阶段项目四天分工，以及"漏洞面为什么必须建立在资产面之上"</li>
+<li>[ ] 能写出 SQLi 检测的<strong>两段式</strong>判定条件（报错回显 / 布尔差分）</li>
+<li>[ ] 能解释布尔差分<strong>为什么必须锚定 baseline</strong>（而不是只比 true vs false）</li>
+<li>[ ] 能说出 4 个探针各自的作用，以及为什么不多发</li>
+<li>[ ] 能说出 XSS 检测的<strong>四层判定</strong>：反射确认 → 转义判定 → 上下文判定 → 缓解措施</li>
+<li>[ ] 能说出 4 种上下文的严重度，以及 <code>&lt;script&gt;</code> 块为什么最高</li>
+<li>[ ] 能说出"探针不该是可执行载荷"的三个理由</li>
+<li>[ ] 能解释 <code>close()</code> 的 <code>max(tol_abs, tol_rel×max(a,b))</code> 为什么两头都要</li>
+<li>[ ] 能解释优先级为什么用"严重度 × 置信度"而不是相加</li>
+<li>[ ] 能解释退出码 <code>4</code>（覆盖不完整）为什么必须独立于 <code>3</code>（有发现）</li>
+</ul>
+<h3 id="code">代码与实测（在 <code>code/</code> 下跑）</h3>
+<ul>
+<li>[ ] <code>python3 vuln_core.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 01-sqli-detect.py</code> → 看到三类结果：<code>error_based</code> / <code>none</code> / <code>none</code></li>
+<li>[ ] <code>python3 02-xss-detect.py</code> → 看到四种上下文 + 两个安全对照沉默</li>
+<li>[ ] <code>python3 03-vuln-scan-cli.py --lab</code> → 退出码 <code>3</code>，<code>out/</code> 下有报告</li>
+<li>[ ] <code>python3 03-vuln-scan-cli.py --lab --throttle-after 6</code> → 退出码 <code>4</code></li>
+<li>[ ] 用 <code>--targets targets.example.txt</code> 复现第 1 步的结论（可复现性）</li>
+<li>[ ] 亲手触发一次越界（退出码 <code>2</code>），确认<strong>它不会重试</strong></li>
+<li>[ ] 打开 <code>out/day163-lab-report.md</code>，逐条核对"事实 / 推断 / 待验证"的措辞</li>
+</ul>
+<h3 id="_2">工程习惯</h3>
+<ul>
+<li>[ ] 读完 <code>README.md</code> §9「边界与合规」表格，能复述至少 5 条及其理由</li>
+<li>[ ] 报告里没有出现目标响应中的<strong>原始报错全文</strong>（只出现特征名）</li>
+<li>[ ] 能说出今天修掉的 2 个真实坑（行尾注释 / 完整 URL 拼接）</li>
+</ul>
+<hr>
+<h2 id="3">📝 二、基础练习题（3 道）</h2>
+<h3 id="1">练习 1：读懂探针表（观察题）</h3>
+<p>运行 <code>python3 01-sqli-detect.py</code>，把 <code>/product</code> 与 <code>/echo</code> 的输出抄下来，回答：</p>
+<ol>
+<li><code>/product</code> 的 <code>error</code> 探针返回的状态码是多少？检测器凭什么下结论？</li>
+<li><code>/echo</code> 的 <code>baseline</code>/<code>error</code>/<code>true</code>/<code>false</code> 四个长度分别是多少？
+   其中"布尔差分不成立"是因为哪一条条件没满足（①②③）？</li>
+<li>如果把 <code>/echo</code> 的输出给一个"只比长度"的检测器，它会得出什么错误结论？</li>
+</ol>
+<p><strong>验收标准</strong>：能用一句话说清"长度变化 ≠ 注入"。</p>
+<h3 id="2">练习 2：给检测器加一个探针并解释代价</h3>
+<p>在 <code>vuln_core.py</code> 的 <code>detect_sqli()</code> 里，把探针计划临时改成 5 个
+（加一个 <code>probe: 原值 OR 1=1</code>），然后回答：</p>
+<ol>
+<li>为什么 <code>MAX_PROBES_PER_PARAM = 4</code> 会让这个改动<strong>直接抛异常</strong>而不是静默多加一次请求？</li>
+<li>把上限改成 5 让它能跑，观察 <code>/safe-product</code> 的结论会不会变。为什么？</li>
+<li>讨论：如果一个真实工具想用 20 个探针，应该在哪里做补偿（限速？授权记录？报告？）</li>
+</ol>
+<p><strong>验收标准</strong>：能说出"硬闸门 vs 静默跳过"的设计差异，并明确它属于<strong>授权边界</strong>而非性能问题。</p>
+<h3 id="3_1">练习 3：上下文判定的手算</h3>
+<p>靶标 <code>/profile?name=ops</code> 的响应片段是：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">html</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">&lt;</span><span class="nt">form</span><span class="p">&gt;&lt;</span><span class="nt">input</span> <span class="na">name</span><span class="o">=</span><span class="s">&#39;fullname&#39;</span> <span class="na">value</span><span class="o">=</span><span class="s">&quot;【探针】&quot;</span><span class="p">&gt;&lt;</span><span class="nt">button</span><span class="p">&gt;</span>保存<span class="p">&lt;/</span><span class="nt">button</span><span class="p">&gt;&lt;/</span><span class="nt">form</span><span class="p">&gt;</span>
+</code></pre></div>
+<ol>
+<li>手工执行 <code>classify_context()</code> 的三步判断（注释 → 脚本块 → 标签内），
+   写出每一步的 <code>rfind</code> 比较结果。</li>
+<li>为什么它判成 <code>attr_quoted_double</code> 而不是 <code>attr_unquoted</code>？</li>
+<li>如果响应写成 <code>&lt;input name='fullname' value='【探针】'&gt;</code>（单引号属性），
+   结论会变成什么？严重度会变吗？</li>
+</ol>
+<p><strong>验收标准</strong>：能画出"标记左边最近的未闭合结构"这张图。</p>
+<hr>
+<h2 id="2_1">🚀 三、进阶挑战题（2 道）</h2>
+<h3 id="1_1">挑战 1：消灭"重复内容型"假阳性</h3>
+<p><strong>背景</strong>：现在的 <code>boolean_based</code> 判据要求 <code>true</code> 贴近 baseline、
+<code>false</code> 偏离 baseline。请构造一个<strong>会骗过它</strong>的假想端点：</p>
+<ul>
+<li>要求：这个端点<strong>没有 SQL 注入</strong>，但检测器会报 <code>boolean_based</code>。</li>
+<li>提示：让"响应长度"取决于输入字符串的长度本身，但差值恰好超过容差。</li>
+</ul>
+<p>然后给出至少两种改进方案，并比较代价：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>做法</th>
+<th>代价 / 新风险</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>多次采样取长度分布（去掉 1 次采样的噪声）</td>
+<td>请求数 ×N，撞上授权上限</td>
+</tr>
+<tr>
+<td>B</td>
+<td>换不变量：比较<strong>结构指纹</strong>（如 DOM 节点数、去空白后的文本长度）</td>
+<td>需要解析 HTML，复杂度和误判面上升</td>
+</tr>
+<tr>
+<td>C</td>
+<td>你的方案</td>
+<td>?</td>
+</tr>
+</tbody>
+</table>
+<p><strong>验收标准</strong>：能说清"提高检出率"与"降低误报率"在这类工具里为什么天然对立。</p>
+<h3 id="2_2">挑战 2：把"覆盖完整性"做成可执行的门禁</h3>
+<p>当前 <code>coverage</code> 只统计 <code>throttled</code> / <code>errors</code>。请扩展它，使其能回答：</p>
+<ol>
+<li>哪些<strong>具体</strong>目标没有取得结论？（列出 <code>url + param</code>）</li>
+<li>给一个 <code>--require-coverage 100</code> 的 CLI 选项：只要有任何目标未取得结论，
+   就退出码 <code>4</code> 并在报告里单开一节「未覆盖清单」。</li>
+<li>思考：这算不算"检测工具的正确用法"？如果一个工具永远无法 100% 覆盖，
+   CI 里应该设置成 <code>--require-coverage</code> 多少？（提示：结合"无法覆盖的原因"分类讨论：
+   限速 / 网络 / 门禁拒绝，哪一种应该阻断流水线？）</li>
+</ol>
+<p><strong>验收标准</strong>：产出一份"未覆盖清单" Markdown，且退出码语义与 README §2.7 表格一致。</p>
+<hr>
+<h2 id="_3">🔍 四、自检命令（一键跑完）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-163-安全审计工具箱-part2/code
+
+python3<span class="w"> </span>vuln_core.py<span class="w"> </span>--self-test<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
+python3<span class="w"> </span><span class="m">01</span>-sqli-detect.py<span class="w"> </span>&gt;<span class="w"> </span>/tmp/d163-01.log<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
+python3<span class="w"> </span><span class="m">02</span>-xss-detect.py<span class="w"> </span>&gt;<span class="w"> </span>/tmp/d163-02.log<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="se">\</span>
+python3<span class="w"> </span><span class="m">03</span>-vuln-scan-cli.py<span class="w"> </span>--lab<span class="w"> </span>&gt;<span class="w"> </span>/tmp/d163-03.log<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+
+grep<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;error_based&quot;</span><span class="w"> </span>/tmp/d163-01.log
+grep<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;script_block&quot;</span><span class="w"> </span>/tmp/d163-02.log
+ls<span class="w"> </span>out/
+</code></pre></div>
+<p>预期：<code>--self-test</code> 输出 <code>SELF-TEST OK</code>；最后一条命令的 <code>exit=3</code>；
+<code>out/</code> 下至少有 <code>day163-lab-report.{json,md}</code>。</p>
+<hr>
+<h2 id="_4">📌 五、今日关键结论（背下来）</h2>
+<pre class="plain"><code>1. 报错特征是强证据（自证），布尔差分是弱证据（必须锚定 baseline）。
+2. 长度变化 ≠ 注入：/echo 陷阱专治&quot;只比长度&quot;。
+3. XSS 判定是四层：反射 → 转义 → 上下文 → 缓解措施，少一层就失真。
+4. 探针不是载荷：检测只需证明&quot;危险字符原样进入 HTML&quot;，无需真的执行。
+5. 缺缓解措施头是事实，不是结论（&quot;缺 CSP&quot; ≠ &quot;有 XSS&quot;）。
+6. 越界 = 退出码 2（不重试）；没测完 = 退出码 4（不能当通过）。
+7. 优先级 = 严重度 × 置信度：两个维度独立，不能压成一维。
+8. 边界是用来让程序停下来的（硬闸门抛异常），不是用来&quot;温柔提醒&quot;的。
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

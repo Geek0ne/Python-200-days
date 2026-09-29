@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 143 — 阶段项目 Part 1：代理池 + 浏览器模拟 + JS 解析</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 143 — 阶段项目 Part 1：代理池 + 浏览器模拟 + JS 解析</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">135 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-143-anticrawl-project-part1" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11">1.1 项目整体架构</a>
+<a class="toc-l3" href="#12-proxy-pool">1.2 代理池（Proxy Pool）</a>
+<a class="toc-l3" href="#13-headless-browser">1.3 浏览器模拟（Headless Browser）</a>
+<a class="toc-l3" href="#14-js">1.4 JS 解析的两种路线</a>
+<a class="toc-l2" href="#_2">二、原理解析</a>
+<a class="toc-l3" href="#21">2.1 代理池评分模型</a>
+<a class="toc-l3" href="#22">2.2 无头浏览器为什么会被识别</a>
+<a class="toc-l3" href="#23">2.3 今日系统数据流</a>
+<a class="toc-l2" href="#api">三、API 速查</a>
+<a class="toc-l3" href="#httpx">httpx 代理</a>
+<a class="toc-l3" href="#playwright">Playwright 核心</a>
+<a class="toc-l2" href="#_3">四、实战代码</a>
+<a class="toc-l2" href="#_4">五、思考题</a>
+<a class="toc-l2" href="#_5">六、今日总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-143-part-1-js">Day 143 — 阶段项目 Part 1：代理池 + 浏览器模拟 + JS 解析</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化<br>
+主题：全栈反爬突破系统（上）—— 架构设计 / 代理池 / 浏览器模拟 / JS 动态内容解析</p>
+<p>⚠️ <strong>合规提醒</strong>：本项目仅用于学习反爬技术原理与防御性测试，请只对自己拥有/授权的测试站点练习（见 Day 142）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11">1.1 项目整体架构</h3>
+<p>"全栈反爬突破系统"分三天搭建，今天负责<strong>取数层</strong>：</p>
+<pre class="plain"><code>Day 143: 代理池 + 浏览器模拟 + JS 解析   → 解决&quot;请求被识别/页面是动态渲染&quot;
+Day 144: 验证码处理 + 数据清洗 + 调度告警 + 容器化 → 解决&quot;人机验证&quot;与&quot;工程化运行&quot;
+</code></pre>
+<h3 id="12-proxy-pool">1.2 代理池（Proxy Pool）</h3>
+<p>代理池是一个<strong>自动维护可用代理列表的服务</strong>：</p>
+<ul>
+<li><strong>采集</strong>：从免费/付费代理 API 抓取代理</li>
+<li><strong>验证</strong>：定时用目标（或通用）URL 测试代理的可用性与延迟</li>
+<li><strong>打分/淘汰</strong>：连续失败的代理降分直至移除</li>
+<li><strong>供给</strong>：爬虫按策略（轮询/随机/按成功率加权）取用</li>
+</ul>
+<p><strong>为什么要代理池？</strong> 目标站点按 IP 维度限频/封禁。单一 IP 高频请求必然触发风控；代理池把请求分散到大量出口 IP 上，使每个 IP 的请求频率降到阈值以下。</p>
+<h3 id="13-headless-browser">1.3 浏览器模拟（Headless Browser）</h3>
+<p>requests 拿到的 HTML 是"生面团"，很多站点的数据由 JS 在浏览器里执行后才"烤熟"（DOM 渲染、XHR 补数据）。浏览器模拟的思路：<strong>不再猜接口，直接跑一个真浏览器</strong>（Playwright/Selenium），等 JS 执行完再取 DOM。</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>原理</th>
+<th>成本</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>requests/httpx</td>
+<td>直接发 HTTP</td>
+<td>极低，但拿不到渲染结果</td>
+</tr>
+<tr>
+<td>requests + 逆向 JS 接口</td>
+<td>分析 XHR 直接调 API</td>
+<td>中（逆向难），效率最高</td>
+</tr>
+<tr>
+<td>Playwright(无头)</td>
+<td>真浏览器内核执行 JS</td>
+<td>高（内存/CPU），最通用</td>
+</tr>
+<tr>
+<td>Playwright + stealth</td>
+<td>补齐无头特征指纹</td>
+<td>高，绕过基本无头检测</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14-js">1.4 JS 解析的两种路线</h3>
+<ol>
+<li><strong>DOM 路线</strong>：等页面 <code>networkidle</code>，用选择器取渲染后的 DOM（简单但慢）</li>
+<li><strong>接口路线</strong>：拦截页面的 XHR/fetch 请求，直接请求返回 JSON 的数据接口（快，且数据最干净）</li>
+</ol>
+<hr>
+<h2 id="_2">二、原理解析</h2>
+<h3 id="21">2.1 代理池评分模型</h3>
+<p>每个代理维护滑动窗口成功率，取用时按权重随机：</p>
+<pre class="plain"><code>score = 连续成功次数 / (连续成功次数 + 连续失败次数)
+取用概率 ∝ score（加权随机，避免&quot;最好用&quot;的代理被打死）
+</code></pre>
+<h3 id="22">2.2 无头浏览器为什么会被识别</h3>
+<p>无头 Chrome 与真浏览器的差异点（Day 137 的指纹知识回收利用）：</p>
+<ul>
+<li><code>navigator.webdriver = true</code></li>
+<li>UA 中含 <code>HeadlessChrome</code></li>
+<li>缺失插件/字体/WebGL 渲染特征</li>
+<li>鼠标轨迹为空、事件节奏机械</li>
+</ul>
+<p>Playwright 的 <code>playwright-stealth</code>（或手工注入 init script）可抹平大部分特征。</p>
+<h3 id="23">2.3 今日系统数据流</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[调度器&lt;br&gt;待抓 URL 队列] --&gt; B[代理池&lt;br&gt;加权取用]
+    A --&gt; C{页面类型判断}
+    C -- 静态 HTML --&gt; D[httpx 直取]
+    C -- JS 渲染 --&gt; E[Playwright 无头]
+    E --&gt; F[网络拦截: 优先抓 XHR JSON]
+    D --&gt; G[解析器]
+    F --&gt; G
+    G --&gt; H[(原始数据落地 JSONL)]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[调度器&lt;br&gt;待抓 URL 队列] --&gt; B[代理池&lt;br&gt;加权取用]
+    A --&gt; C{页面类型判断}
+    C -- 静态 HTML --&gt; D[httpx 直取]
+    C -- JS 渲染 --&gt; E[Playwright 无头]
+    E --&gt; F[网络拦截: 优先抓 XHR JSON]
+    D --&gt; G[解析器]
+    F --&gt; G
+    G --&gt; H[(原始数据落地 JSONL)]
+</code></pre></div>
+<hr>
+<h2 id="api">三、API 速查</h2>
+<h3 id="httpx">httpx 代理</h3>
+<table>
+<thead>
+<tr>
+<th>用法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>httpx.Client(proxy="http://u:p@host:port")</code></td>
+<td>全局走代理</td>
+</tr>
+<tr>
+<td><code>httpx.get(url, proxy=...)</code></td>
+<td>单次代理</td>
+</tr>
+<tr>
+<td><code>client.get(url, timeout=10)</code></td>
+<td>务必设超时</td>
+</tr>
+</tbody>
+</table>
+<h3 id="playwright">Playwright 核心</h3>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sync_playwright().start()</code></td>
+<td>同步模式入口</td>
+</tr>
+<tr>
+<td><code>browser.new_page(...)</code></td>
+<td>新页面</td>
+</tr>
+<tr>
+<td><code>page.goto(url, wait_until="networkidle")</code></td>
+<td>等 JS 静默</td>
+</tr>
+<tr>
+<td><code>page.content()</code> / <code>page.query_selector_all(sel)</code></td>
+<td>取 DOM</td>
+</tr>
+<tr>
+<td><code>page.on("response", cb)</code></td>
+<td>拦截网络响应</td>
+</tr>
+<tr>
+<td><code>page.add_init_script(js)</code></td>
+<td>页面加载前注入 JS（抹指纹）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">四、实战代码</h2>
+<p>见 <code>code/</code>：</p>
+<ol>
+<li><code>01-proxy-pool.py</code> — 基础：带评分与后台校验的代理池</li>
+<li><code>02-browser-render.py</code> — 进阶：Playwright 渲染 + XHR 接口拦截 + 无头检测规避（需 <code>pip install playwright &amp;&amp; playwright install chromium</code>）</li>
+<li><code>03-fetch-pipeline.py</code> — 实战：静态/动态自动分流 + 代理池联动的取数管线</li>
+</ol>
+<hr>
+<h2 id="_4">五、思考题</h2>
+<ol>
+<li>加权随机取代理为什么比"永远取分数最高的"更健壮？</li>
+<li><code>wait_until="networkidle"</code> 的缺陷是什么？什么场景应改用 <code>domcontentloaded</code> + 显式等待？</li>
+<li>拦截 XHR 拿 JSON 与解析 DOM 相比，数据质量与稳定性差异在哪？什么时候反而必须走 DOM？</li>
+<li>代理池的验证 URL 如果直接用目标站点，会有什么法律与工程上的问题？</li>
+<li>如果目标站使用 WebSocket 推送数据，今天的拦截方案要怎么扩展？</li>
+</ol>
+<hr>
+<h2 id="_5">六、今日总结</h2>
+<ul>
+<li>代理池 = 采集 + 验证 + 评分 + 加权供给，核心是把单 IP 频率压到阈值下</li>
+<li>动态页面两条路：DOM 渲染路线（通用慢）与 XHR 接口路线（快但需分析）</li>
+<li>无头检测的本质是指纹差异，可用 init script 抹平基础特征</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-142/index.html">← Day 142 爬虫法律与规范</a><a class="nav-next" href="../day-144/index.html">Day 144 阶段项目 Part 2：验证码处理 + 数据清洗 + 调度 + 告警 + 容器化 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

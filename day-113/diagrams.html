@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 113 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 113 正文</a>
+  <h1>Day 113 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-113-pytorch">Day 113 图解 - PyTorch 基础</h1>
+<h2 id="1-pytorch">1. PyTorch 计算图</h2>
+<p>计算图是 PyTorch 实现自动微分的核心数据结构。当操作涉及 <code>requires_grad=True</code> 的 Tensor 时，PyTorch 自动构建此图。</p>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[&quot;x&lt;br/&gt;(requires_grad=True)&lt;br/&gt;值: 2.0&quot;] --&gt;|&quot;+ 3&quot;| B[&quot;y&lt;br/&gt;(grad_fn=AddBackward)&lt;br/&gt;值: 5.0&quot;]
+    B --&gt;|&quot;* 2&quot;| C[&quot;z&lt;br/&gt;(grad_fn=MulBackward)&lt;br/&gt;值: 10.0&quot;]
+    C --&gt;|&quot;^ 2&quot;| D[&quot;w&lt;br/&gt;(grad_fn=PowBackward)&lt;br/&gt;值: 100.0&quot;]
+    
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#fff3e0
+    style D fill:#e8f5e9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[&quot;x&lt;br/&gt;(requires_grad=True)&lt;br/&gt;值: 2.0&quot;] --&gt;|&quot;+ 3&quot;| B[&quot;y&lt;br/&gt;(grad_fn=AddBackward)&lt;br/&gt;值: 5.0&quot;]
+    B --&gt;|&quot;* 2&quot;| C[&quot;z&lt;br/&gt;(grad_fn=MulBackward)&lt;br/&gt;值: 10.0&quot;]
+    C --&gt;|&quot;^ 2&quot;| D[&quot;w&lt;br/&gt;(grad_fn=PowBackward)&lt;br/&gt;值: 100.0&quot;]
+    
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#fff3e0
+    style D fill:#e8f5e9
+</code></pre></div>
+<p><strong>说明</strong>：
+- 绿色节点 = 叶子节点（输入 Tensor）
+- 橙色节点 = 中间节点（由操作生成）
+- 箭头 = 数据流向和梯度传播方向</p>
+<hr>
+<h2 id="2">2. 反向传播过程</h2>
+<p>反向传播从损失函数开始，沿计算图反向传播梯度。</p>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[&quot;Loss = 100.0&quot;] --&gt;|&quot;∂Loss/∂z = 2z = 20.0&quot;| B[&quot;z = 10.0&quot;]
+    B --&gt;|&quot;∂z/∂y = 2&quot;| C[&quot;y = 5.0&quot;]
+    C --&gt;|&quot;∂y/∂x = 1&quot;| D[&quot;x = 2.0&quot;]
+    
+    A -.-&gt;|&quot;backward()&quot;| E[&quot;∂Loss/∂w&lt;br/&gt;= 20.0&quot;]
+    B -.-&gt;|&quot;grad_fn 计算&quot;| F[&quot;∂Loss/∂z&quot;]
+    C -.-&gt;|&quot;grad_fn 计算&quot;| G[&quot;∂Loss/∂y&quot;]
+    D -.-&gt;|&quot;grad_fn 计算&quot;| H[&quot;∂Loss/∂x&quot;]
+    
+    style A fill:#ffcdd2
+    style D fill:#c8e6c9
+    style E fill:#ffcdd2
+    style H fill:#c8e6c9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[&quot;Loss = 100.0&quot;] --&gt;|&quot;∂Loss/∂z = 2z = 20.0&quot;| B[&quot;z = 10.0&quot;]
+    B --&gt;|&quot;∂z/∂y = 2&quot;| C[&quot;y = 5.0&quot;]
+    C --&gt;|&quot;∂y/∂x = 1&quot;| D[&quot;x = 2.0&quot;]
+    
+    A -.-&gt;|&quot;backward()&quot;| E[&quot;∂Loss/∂w&lt;br/&gt;= 20.0&quot;]
+    B -.-&gt;|&quot;grad_fn 计算&quot;| F[&quot;∂Loss/∂z&quot;]
+    C -.-&gt;|&quot;grad_fn 计算&quot;| G[&quot;∂Loss/∂y&quot;]
+    D -.-&gt;|&quot;grad_fn 计算&quot;| H[&quot;∂Loss/∂x&quot;]
+    
+    style A fill:#ffcdd2
+    style D fill:#c8e6c9
+    style E fill:#ffcdd2
+    style H fill:#c8e6c9
+</code></pre></div>
+<p><strong>反向传播公式</strong>：
+$$
+\frac{\partial L}{\partial x} = \frac{\partial L}{\partial z} \cdot \frac{\partial z}{\partial y} \cdot \frac{\partial y}{\partial x}
+$$</p>
+<hr>
+<h2 id="3-autograd">3. Autograd 自动求导流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;创建 Tensor&lt;br/&gt;requires_grad=True&quot;] --&gt; B[&quot;执行前向运算&lt;br/&gt;(构建计算图)&quot;]
+    B --&gt; C[&quot;计算损失&lt;br/&gt;(Loss)&quot;]
+    C --&gt; D[&quot;调用 loss.backward()&lt;br/&gt;(反向传播)&quot;]
+    D --&gt; E[&quot;访问 .grad 属性&lt;br/&gt;(获取梯度)&quot;]
+    E --&gt; F[&quot;更新参数&lt;br/&gt;(torch.no_grad)&quot;]
+    F --&gt; G[&quot;清零梯度&lt;br/&gt;(grad.zero_())&quot;]
+    G --&gt; B
+    
+    style A fill:#e1f5fe
+    style C fill:#ffcdd2
+    style D fill:#fff3e0
+    style E fill:#e8f5e9
+    style G fill:#f3e5f5
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;创建 Tensor&lt;br/&gt;requires_grad=True&quot;] --&gt; B[&quot;执行前向运算&lt;br/&gt;(构建计算图)&quot;]
+    B --&gt; C[&quot;计算损失&lt;br/&gt;(Loss)&quot;]
+    C --&gt; D[&quot;调用 loss.backward()&lt;br/&gt;(反向传播)&quot;]
+    D --&gt; E[&quot;访问 .grad 属性&lt;br/&gt;(获取梯度)&quot;]
+    E --&gt; F[&quot;更新参数&lt;br/&gt;(torch.no_grad)&quot;]
+    F --&gt; G[&quot;清零梯度&lt;br/&gt;(grad.zero_())&quot;]
+    G --&gt; B
+    
+    style A fill:#e1f5fe
+    style C fill:#ffcdd2
+    style D fill:#fff3e0
+    style E fill:#e8f5e9
+    style G fill:#f3e5f5
+</code></pre></div>
+<hr>
+<h2 id="4">4. 梯度下降流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[&quot;初始化参数&lt;br/&gt;w, b&quot;] --&gt; B[&quot;前向传播&lt;br/&gt;y = wx + b&quot;]
+    B --&gt; C[&quot;计算损失&lt;br/&gt;MSE = mean((y-y_true)²)&quot;]
+    C --&gt; D[&quot;反向传播&lt;br/&gt;loss.backward()&quot;]
+    D --&gt; E[&quot;获取梯度&lt;br/&gt;w.grad, b.grad&quot;]
+    E --&gt; F[&quot;更新参数&lt;br/&gt;w = w - lr * w.grad&quot;]
+    F --&gt; G[&quot;清零梯度&lt;br/&gt;grad.zero_()&quot;]
+    G --&gt; B
+    
+    style A fill:#e1f5fe
+    style C fill:#ffcdd2
+    style D fill:#fff3e0
+    style F fill:#e8f5e9
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[&quot;初始化参数&lt;br/&gt;w, b&quot;] --&gt; B[&quot;前向传播&lt;br/&gt;y = wx + b&quot;]
+    B --&gt; C[&quot;计算损失&lt;br/&gt;MSE = mean((y-y_true)²)&quot;]
+    C --&gt; D[&quot;反向传播&lt;br/&gt;loss.backward()&quot;]
+    D --&gt; E[&quot;获取梯度&lt;br/&gt;w.grad, b.grad&quot;]
+    E --&gt; F[&quot;更新参数&lt;br/&gt;w = w - lr * w.grad&quot;]
+    F --&gt; G[&quot;清零梯度&lt;br/&gt;grad.zero_()&quot;]
+    G --&gt; B
+    
+    style A fill:#e1f5fe
+    style C fill:#ffcdd2
+    style D fill:#fff3e0
+    style F fill:#e8f5e9
+</code></pre></div>
+<hr>
+<h2 id="5-tensor">5. Tensor 设备迁移</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;创建 Tensor&lt;br/&gt;(默认 CPU)&quot;] --&gt; B{&quot;有 GPU 可用?&quot;}
+    B --&gt;|&quot;是&quot;| C[&quot;x.to(&#x27;cuda&#x27;)&lt;br/&gt;或&lt;br/&gt;x.cuda()&quot;]
+    B --&gt;|&quot;否&quot;| D[&quot;留在 CPU&lt;br/&gt;x.to(&#x27;cpu&#x27;)&quot;]
+    C --&gt; E[&quot;GPU 上计算&lt;br/&gt;(数千核心并行)&quot;]
+    D --&gt; F[&quot;CPU 上计算&lt;br/&gt;(多核并行)&quot;]
+    E --&gt; G[&quot;结果&lt;br/&gt;(仍在 GPU)&quot;]
+    F --&gt; H[&quot;结果&lt;br/&gt;(仍在 CPU)&quot;]
+    
+    style C fill:#e8f5e9
+    style E fill:#e8f5e9
+    style D fill:#fff3e0
+    style F fill:#fff3e0
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;创建 Tensor&lt;br/&gt;(默认 CPU)&quot;] --&gt; B{&quot;有 GPU 可用?&quot;}
+    B --&gt;|&quot;是&quot;| C[&quot;x.to(&#x27;cuda&#x27;)&lt;br/&gt;或&lt;br/&gt;x.cuda()&quot;]
+    B --&gt;|&quot;否&quot;| D[&quot;留在 CPU&lt;br/&gt;x.to(&#x27;cpu&#x27;)&quot;]
+    C --&gt; E[&quot;GPU 上计算&lt;br/&gt;(数千核心并行)&quot;]
+    D --&gt; F[&quot;CPU 上计算&lt;br/&gt;(多核并行)&quot;]
+    E --&gt; G[&quot;结果&lt;br/&gt;(仍在 GPU)&quot;]
+    F --&gt; H[&quot;结果&lt;br/&gt;(仍在 CPU)&quot;]
+    
+    style C fill:#e8f5e9
+    style E fill:#e8f5e9
+    style D fill:#fff3e0
+    style F fill:#fff3e0
+</code></pre></div>
+<hr>
+<h2 id="6">6. 线性回归模型结构</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    X[&quot;输入 x&lt;br/&gt;(特征)&quot;] --&gt;|&quot;× w&lt;br/&gt;(权重)&quot;| Y[&quot;中间结果&lt;br/&gt;wx&quot;]
+    B[&quot;偏置 b&quot;] --&gt;|&quot;+&quot;| Y
+    Y --&gt;|&quot;预测值&lt;br/&gt;ŷ = wx + b&quot;| YP[&quot;ŷ&lt;br/&gt;(预测输出)&quot;]
+    YT[&quot;y&lt;br/&gt;(真实值)&quot;] --&gt; LOSS[&quot;损失函数&lt;br/&gt;MSE = mean((ŷ-y)²)&quot;]
+    YP --&gt; LOSS
+    LOSS --&gt;|&quot;backward()&quot;| G[&quot;梯度&lt;br/&gt;∂L/∂w, ∂L/∂b&quot;]
+    G --&gt;|&quot;更新&quot;| W[&quot;w = w - lr·∂L/∂w&quot;]
+    G --&gt;|&quot;更新&quot;| B2[&quot;b = b - lr·∂L/∂b&quot;]
+    W -.-&gt;|&quot;下次迭代&quot;| X
+    B2 -.-&gt;|&quot;下次迭代&quot;| B
+    
+    style X fill:#e1f5fe
+    style YP fill:#c8e6c9
+    style LOSS fill:#ffcdd2
+    style G fill:#fff3e0
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    X[&quot;输入 x&lt;br/&gt;(特征)&quot;] --&gt;|&quot;× w&lt;br/&gt;(权重)&quot;| Y[&quot;中间结果&lt;br/&gt;wx&quot;]
+    B[&quot;偏置 b&quot;] --&gt;|&quot;+&quot;| Y
+    Y --&gt;|&quot;预测值&lt;br/&gt;ŷ = wx + b&quot;| YP[&quot;ŷ&lt;br/&gt;(预测输出)&quot;]
+    YT[&quot;y&lt;br/&gt;(真实值)&quot;] --&gt; LOSS[&quot;损失函数&lt;br/&gt;MSE = mean((ŷ-y)²)&quot;]
+    YP --&gt; LOSS
+    LOSS --&gt;|&quot;backward()&quot;| G[&quot;梯度&lt;br/&gt;∂L/∂w, ∂L/∂b&quot;]
+    G --&gt;|&quot;更新&quot;| W[&quot;w = w - lr·∂L/∂w&quot;]
+    G --&gt;|&quot;更新&quot;| B2[&quot;b = b - lr·∂L/∂b&quot;]
+    W -.-&gt;|&quot;下次迭代&quot;| X
+    B2 -.-&gt;|&quot;下次迭代&quot;| B
+    
+    style X fill:#e1f5fe
+    style YP fill:#c8e6c9
+    style LOSS fill:#ffcdd2
+    style G fill:#fff3e0
+</code></pre></div>
+<hr>
+<h2 id="7">7. 梯度累积与清零</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Opt as 优化器
+    participant Grad as 梯度 (w.grad)
+    participant Model as 模型参数 (w)
+    
+    Note over Opt: 第1次迭代
+    Opt-&gt;&gt;Grad: loss.backward() → grad += Δ₁
+    Note over Grad: w.grad = Δ₁
+    Opt-&gt;&gt;Model: w -= lr * w.grad
+    
+    Note over Opt: 第2次迭代 (不清零!)
+    Opt-&gt;&gt;Grad: loss.backward() → grad += Δ₂
+    Note over Grad: w.grad = Δ₁ + Δ₂ ⚠️ 累积!
+    Opt-&gt;&gt;Model: w -= lr * (Δ₁ + Δ₂) ❌ 错误!
+    
+    Note over Opt: 第3次迭代 (正确: 先清零)
+    Opt-&gt;&gt;Grad: grad.zero_()
+    Note over Grad: w.grad = 0 ✓
+    Opt-&gt;&gt;Grad: loss.backward() → grad = Δ₃
+    Note over Grad: w.grad = Δ₃ ✓
+    Opt-&gt;&gt;Model: w -= lr * Δ₃ ✓ 正确!
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Opt as 优化器
+    participant Grad as 梯度 (w.grad)
+    participant Model as 模型参数 (w)
+    
+    Note over Opt: 第1次迭代
+    Opt-&gt;&gt;Grad: loss.backward() → grad += Δ₁
+    Note over Grad: w.grad = Δ₁
+    Opt-&gt;&gt;Model: w -= lr * w.grad
+    
+    Note over Opt: 第2次迭代 (不清零!)
+    Opt-&gt;&gt;Grad: loss.backward() → grad += Δ₂
+    Note over Grad: w.grad = Δ₁ + Δ₂ ⚠️ 累积!
+    Opt-&gt;&gt;Model: w -= lr * (Δ₁ + Δ₂) ❌ 错误!
+    
+    Note over Opt: 第3次迭代 (正确: 先清零)
+    Opt-&gt;&gt;Grad: grad.zero_()
+    Note over Grad: w.grad = 0 ✓
+    Opt-&gt;&gt;Grad: loss.backward() → grad = Δ₃
+    Note over Grad: w.grad = Δ₃ ✓
+    Opt-&gt;&gt;Model: w -= lr * Δ₃ ✓ 正确!
+</code></pre></div>
+<hr>
+<h2 id="8-vs">8. 计算图 vs 命令式编程对比</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph &quot;PyTorch (动态图/命令式)&quot;
+        A1[&quot;x = Tensor(...)&quot;] --&gt; B1[&quot;y = f(x)&quot;]
+        B1 --&gt; C1[&quot;z = g(y)&quot;]
+        C1 --&gt; D1[&quot;loss.backward()&quot;]
+        Note1[&quot;每次前向传播&lt;br/&gt;重新构建计算图&quot;]
+    end
+    
+    subgraph &quot;TensorFlow 1.x (静态图/声明式)&quot;
+        A2[&quot;构建图: x → f → g → loss&quot;] --&gt; B2[&quot;session.run(loss)&quot;]
+        B2 --&gt; C2[&quot;一次性执行整个图&quot;]
+        Note2[&quot;图只构建一次&lt;br/&gt;重复执行&quot;]
+    end
+    
+    style A1 fill:#e1f5fe
+    style A2 fill:#f3e5f5
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph &quot;PyTorch (动态图/命令式)&quot;
+        A1[&quot;x = Tensor(...)&quot;] --&gt; B1[&quot;y = f(x)&quot;]
+        B1 --&gt; C1[&quot;z = g(y)&quot;]
+        C1 --&gt; D1[&quot;loss.backward()&quot;]
+        Note1[&quot;每次前向传播&lt;br/&gt;重新构建计算图&quot;]
+    end
+    
+    subgraph &quot;TensorFlow 1.x (静态图/声明式)&quot;
+        A2[&quot;构建图: x → f → g → loss&quot;] --&gt; B2[&quot;session.run(loss)&quot;]
+        B2 --&gt; C2[&quot;一次性执行整个图&quot;]
+        Note2[&quot;图只构建一次&lt;br/&gt;重复执行&quot;]
+    end
+    
+    style A1 fill:#e1f5fe
+    style A2 fill:#f3e5f5
+</code></pre></div>
+<p><strong>PyTorch 优势</strong>：动态图更灵活，便于调试，支持动态控制流（if/for）。</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 94 — 安全编程</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 94 — 安全编程</h1>
+  <div class="lmeta">
+    <span class="badge">进阶与性能优化</span>
+    <span class="badge">421 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-094-安全编程" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 今日目标</a>
+<a class="toc-l2" href="#1">1. 输入验证与注入防护</a>
+<a class="toc-l3" href="#11">1.1 常见注入攻击</a>
+<a class="toc-l3" href="#12">1.2 防护方法</a>
+<a class="toc-l3" href="#13">1.3 输入验证库</a>
+<a class="toc-l2" href="#2">2. 密码学基础</a>
+<a class="toc-l3" href="#21">2.1 哈希算法</a>
+<a class="toc-l3" href="#22">2.2 常用哈希算法对比</a>
+<a class="toc-l3" href="#23">2.3 密码存储最佳实践</a>
+<a class="toc-l3" href="#24-hmac">2.4 HMAC — 带密钥的哈希</a>
+<a class="toc-l2" href="#3">3. 对称加密与非对称加密</a>
+<a class="toc-l3" href="#31">3.1 对称加密</a>
+<a class="toc-l3" href="#32">3.2 非对称加密</a>
+<a class="toc-l3" href="#33-cryptography">3.3 使用 cryptography 库</a>
+<a class="toc-l2" href="#4-jwt-json-web-token">4. JWT (JSON Web Token)</a>
+<a class="toc-l3" href="#41-jwt">4.1 JWT 结构</a>
+<a class="toc-l3" href="#42-jwt">4.2 JWT 实现</a>
+<a class="toc-l2" href="#5">5. 安全最佳实践清单</a>
+<a class="toc-l2" href="#6">6. 思考题</a>
+<a class="toc-l2" href="#_2">📚 扩展阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-094">Day 094 — 安全编程</h1>
+<blockquote>
+<p><strong>输入验证与注入防护 | 密码学基础 | 安全最佳实践 | 安全认证系统</strong></p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 今日目标</h2>
+<ol>
+<li>掌握常见安全漏洞及防护方法</li>
+<li>学习 hashlib 和 cryptography 密码学库</li>
+<li>理解认证与授权机制</li>
+<li>实战：构建安全认证系统</li>
+</ol>
+<hr>
+<h2 id="1">1. 输入验证与注入防护</h2>
+<h3 id="11">1.1 常见注入攻击</h3>
+<pre class="plain"><code>注入攻击的本质: 用户输入被当作代码执行
+
+SQL 注入:
+  输入: &#x27; OR &#x27;1&#x27;=&#x27;1&#x27; --
+  生成: SELECT * FROM users WHERE name=&#x27;&#x27; OR &#x27;1&#x27;=&#x27;1&#x27; --&#x27; AND pass=&#x27;xxx&#x27;
+  结果: 绕过认证，返回所有用户
+
+命令注入:
+  输入: ; rm -rf /
+  生成: ls ; rm -rf /
+  结果: 删除所有文件
+
+路径遍历:
+  输入: ../../etc/passwd
+  结果: 读取系统敏感文件
+
+XSS (跨站脚本):
+  输入: &lt;script&gt;alert(&#x27;XSS&#x27;)&lt;/script&gt;
+  结果: 在其他用户浏览器执行恶意脚本
+</code></pre>
+<h3 id="12">1.2 防护方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1. SQL 注入防护 — 参数化查询</span>
+<span class="kn">import</span> <span class="nn">sqlite3</span>
+
+<span class="c1"># ❌ 危险：直接拼接 SQL</span>
+<span class="k">def</span> <span class="nf">unsafe_query</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+    <span class="n">sql</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;SELECT * FROM users WHERE name=&#39;</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;&quot;</span>
+    <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">sql</span><span class="p">)</span>
+
+<span class="c1"># ✅ 安全：参数化查询</span>
+<span class="k">def</span> <span class="nf">safe_query</span><span class="p">(</span><span class="n">name</span><span class="p">):</span>
+    <span class="n">sql</span> <span class="o">=</span> <span class="s2">&quot;SELECT * FROM users WHERE name=?&quot;</span>
+    <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="n">sql</span><span class="p">,</span> <span class="p">(</span><span class="n">name</span><span class="p">,))</span>
+
+<span class="c1"># 2. 命令注入防护 — 避免 shell=True</span>
+<span class="kn">import</span> <span class="nn">subprocess</span>
+
+<span class="c1"># ❌ 危险</span>
+<span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;ls </span><span class="si">{</span><span class="n">user_input</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># ✅ 安全：使用列表传递参数</span>
+<span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;ls&quot;</span><span class="p">,</span> <span class="n">user_input</span><span class="p">],</span> <span class="n">shell</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+
+<span class="c1"># 3. 路径遍历防护</span>
+<span class="kn">import</span> <span class="nn">os</span>
+
+<span class="c1"># ❌ 危险</span>
+<span class="n">path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">base_dir</span><span class="p">,</span> <span class="n">user_input</span><span class="p">)</span>
+
+<span class="c1"># ✅ 安全：规范化路径并验证</span>
+<span class="n">safe_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">normpath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">base_dir</span><span class="p">,</span> <span class="n">user_input</span><span class="p">))</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">safe_path</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">normpath</span><span class="p">(</span><span class="n">base_dir</span><span class="p">)):</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;路径越界&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="13">1.3 输入验证库</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Optional</span>
+
+<span class="k">class</span> <span class="nc">InputValidator</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;输入验证工具类&quot;&quot;&quot;</span>
+    
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">validate_email</span><span class="p">(</span><span class="n">email</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;验证邮箱格式&quot;&quot;&quot;</span>
+        <span class="n">pattern</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">&#39;^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$&#39;</span>
+        <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">email</span><span class="p">))</span>
+    
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">validate_username</span><span class="p">(</span><span class="n">username</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;验证用户名（3-20位字母数字下划线）&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">username</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">3</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;用户名至少3个字符&quot;</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">username</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">20</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;用户名最多20个字符&quot;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;^[a-zA-Z0-9_]+$&#39;</span><span class="p">,</span> <span class="n">username</span><span class="p">):</span>
+            <span class="k">return</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;用户名只能包含字母、数字和下划线&quot;</span>
+        <span class="k">return</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;&quot;</span>
+    
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">sanitize_html</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;HTML 转义（防 XSS）&quot;&quot;&quot;</span>
+        <span class="kn">import</span> <span class="nn">html</span>
+        <span class="k">return</span> <span class="n">html</span><span class="o">.</span><span class="n">escape</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">validate_json</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">required_fields</span><span class="p">:</span> <span class="nb">list</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;验证 JSON 数据包含必要字段&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="n">required_fields</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">field</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">data</span><span class="p">:</span>
+                <span class="k">return</span> <span class="kc">False</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;缺少字段: </span><span class="si">{</span><span class="n">field</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;&quot;</span>
+</code></pre></div>
+<hr>
+<h2 id="2">2. 密码学基础</h2>
+<h3 id="21">2.1 哈希算法</h3>
+<p>哈希是单向函数，不可逆，用于验证数据完整性。</p>
+<pre class="plain"><code>输入 ──► [哈希函数] ──► 固定长度的摘要 (256bit)
+&quot;Hello&quot; ──► SHA-256 ──► 185f8db32271fe25f561a6fc938b2e26...
+
+特点:
+  - 相同输入 → 相同输出
+  - 不同输入 → 不同输出（概率极高）
+  - 不可逆（无法从输出推出输入）
+  - 雪崩效应（输入改变1位，输出变化巨大）
+</code></pre>
+<h3 id="22">2.2 常用哈希算法对比</h3>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th>输出长度</th>
+<th>速度</th>
+<th>安全性</th>
+<th>推荐场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MD5</td>
+<td>128 bit</td>
+<td>快</td>
+<td>❌ 已破解</td>
+<td>文件校验（非安全场景）</td>
+</tr>
+<tr>
+<td>SHA-1</td>
+<td>160 bit</td>
+<td>快</td>
+<td>❌ 已破解</td>
+<td>不推荐</td>
+</tr>
+<tr>
+<td>SHA-256</td>
+<td>256 bit</td>
+<td>中</td>
+<td>✅ 安全</td>
+<td>密码存储、数字签名</td>
+</tr>
+<tr>
+<td>SHA-512</td>
+<td>512 bit</td>
+<td>较慢</td>
+<td>✅ 安全</td>
+<td>高安全要求场景</td>
+</tr>
+<tr>
+<td>bcrypt</td>
+<td>可变</td>
+<td>慢</td>
+<td>✅ 安全</td>
+<td>密码存储（推荐）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23">2.3 密码存储最佳实践</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">import</span> <span class="nn">secrets</span>
+<span class="kn">import</span> <span class="nn">base64</span>
+
+<span class="c1"># ❌ 错误：明文存储密码</span>
+<span class="n">password</span> <span class="o">=</span> <span class="s2">&quot;my_secret_123&quot;</span>
+<span class="n">store_to_db</span><span class="p">(</span><span class="n">password</span><span class="p">)</span>  <span class="c1"># 数据库泄露 = 所有密码泄露</span>
+
+<span class="c1"># ❌ 错误：简单哈希（无盐）</span>
+<span class="n">hashed</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">password</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+<span class="c1"># 彩虹表攻击可以反推</span>
+
+<span class="c1"># ❌ 错误：自创哈希算法</span>
+<span class="n">hashed</span> <span class="o">=</span> <span class="n">my_custom_hash</span><span class="p">(</span><span class="n">password</span><span class="p">)</span>
+
+<span class="c1"># ✅ 正确：使用专业密码哈希算法</span>
+<span class="kn">import</span> <span class="nn">bcrypt</span>
+
+<span class="c1"># 生成盐并哈希密码</span>
+<span class="n">password</span> <span class="o">=</span> <span class="s2">&quot;my_secret_123&quot;</span>
+<span class="n">salt</span> <span class="o">=</span> <span class="n">bcrypt</span><span class="o">.</span><span class="n">gensalt</span><span class="p">(</span><span class="n">rounds</span><span class="o">=</span><span class="mi">12</span><span class="p">)</span>  <span class="c1"># rounds 越高越安全，但越慢</span>
+<span class="n">hashed</span> <span class="o">=</span> <span class="n">bcrypt</span><span class="o">.</span><span class="n">hashpw</span><span class="p">(</span><span class="n">password</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span> <span class="n">salt</span><span class="p">)</span>
+<span class="c1"># 存储: hashed</span>
+
+<span class="c1"># 验证密码</span>
+<span class="k">if</span> <span class="n">bcrypt</span><span class="o">.</span><span class="n">checkpw</span><span class="p">(</span><span class="n">password</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span> <span class="n">hashed</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;密码正确&quot;</span><span class="p">)</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;密码错误&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="24-hmac">2.4 HMAC — 带密钥的哈希</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">hmac</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+
+<span class="c1"># HMAC 用于验证消息完整性和真实性</span>
+<span class="c1"># 需要密钥才能生成/验证</span>
+
+<span class="n">secret_key</span> <span class="o">=</span> <span class="sa">b</span><span class="s1">&#39;my-secret-key&#39;</span>
+<span class="n">message</span> <span class="o">=</span> <span class="sa">b</span><span class="s1">&#39;important data&#39;</span>
+
+<span class="c1"># 生成 HMAC</span>
+<span class="n">hmac_signature</span> <span class="o">=</span> <span class="n">hmac</span><span class="o">.</span><span class="n">new</span><span class="p">(</span>
+    <span class="n">secret_key</span><span class="p">,</span>
+    <span class="n">message</span><span class="p">,</span>
+    <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span>
+<span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+
+<span class="c1"># 验证 HMAC</span>
+<span class="k">def</span> <span class="nf">verify_hmac</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">signature</span><span class="p">):</span>
+    <span class="n">expected</span> <span class="o">=</span> <span class="n">hmac</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">hmac</span><span class="o">.</span><span class="n">compare_digest</span><span class="p">(</span><span class="n">expected</span><span class="p">,</span> <span class="n">signature</span><span class="p">)</span>  <span class="c1"># 防时序攻击</span>
+
+<span class="c1"># 常见用途：API 签名、Webhook 验证、JWT 签名</span>
+</code></pre></div>
+<hr>
+<h2 id="3">3. 对称加密与非对称加密</h2>
+<h3 id="31">3.1 对称加密</h3>
+<p>同一个密钥用于加密和解密。</p>
+<pre class="plain"><code>明文 ──► [加密] ──► 密文
+         ↑ 密钥K
+         
+密文 ──► [解密] ──► 明文
+         ↑ 密钥K
+
+AES: 最常用的对称加密算法
+  - AES-128: 128位密钥
+  - AES-256: 256位密钥（推荐）
+  - 分组大小: 128位
+  - 模式: CBC, GCM (推荐 GCM，带认证)
+</code></pre>
+<h3 id="32">3.2 非对称加密</h3>
+<p>公钥加密，私钥解密（或反过来）。</p>
+<pre class="plain"><code>公钥 (公开)           私钥 (保密)
+    │                    │
+    ▼                    ▼
+明文 ──► [公钥加密] ──► 密文 ──► [私钥解密] ──► 明文
+
+RSA: 最常用的非对称加密算法
+  - 密钥长度: 2048位 或 4096位
+  - 速度慢，适合加密小数据（如密钥交换）
+  
+Ed25519: 现代非对称签名算法
+  - 密钥短（32字节）
+  - 速度快
+  - 适合数字签名
+</code></pre>
+<h3 id="33-cryptography">3.3 使用 cryptography 库</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 安装: pip install cryptography</span>
+
+<span class="c1"># ========== AES-GCM 对称加密 ==========</span>
+<span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives.ciphers.aead</span> <span class="kn">import</span> <span class="n">AESGCM</span>
+<span class="kn">import</span> <span class="nn">os</span>
+
+<span class="c1"># 加密</span>
+<span class="k">def</span> <span class="nf">encrypt_aes</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">plaintext</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+    <span class="n">aesgcm</span> <span class="o">=</span> <span class="n">AESGCM</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="n">nonce</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">urandom</span><span class="p">(</span><span class="mi">12</span><span class="p">)</span>  <span class="c1"># 12 字节随机 nonce</span>
+    <span class="n">ciphertext</span> <span class="o">=</span> <span class="n">aesgcm</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span><span class="n">nonce</span><span class="p">,</span> <span class="n">plaintext</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">nonce</span> <span class="o">+</span> <span class="n">ciphertext</span>
+
+<span class="c1"># 解密</span>
+<span class="k">def</span> <span class="nf">decrypt_aes</span><span class="p">(</span><span class="n">key</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+    <span class="n">nonce</span> <span class="o">=</span> <span class="n">data</span><span class="p">[:</span><span class="mi">12</span><span class="p">]</span>
+    <span class="n">ciphertext</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">12</span><span class="p">:]</span>
+    <span class="n">aesgcm</span> <span class="o">=</span> <span class="n">AESGCM</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">aesgcm</span><span class="o">.</span><span class="n">decrypt</span><span class="p">(</span><span class="n">nonce</span><span class="p">,</span> <span class="n">ciphertext</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+<span class="c1"># 生成密钥</span>
+<span class="n">key</span> <span class="o">=</span> <span class="n">AESGCM</span><span class="o">.</span><span class="n">generate_key</span><span class="p">(</span><span class="n">bit_length</span><span class="o">=</span><span class="mi">256</span><span class="p">)</span>
+
+<span class="c1"># 使用</span>
+<span class="n">encrypted</span> <span class="o">=</span> <span class="n">encrypt_aes</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="sa">b</span><span class="s2">&quot;Hello, Security!&quot;</span><span class="p">)</span>
+<span class="n">decrypted</span> <span class="o">=</span> <span class="n">decrypt_aes</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">encrypted</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">decrypted</span><span class="p">)</span>  <span class="c1"># b&#39;Hello, Security!&#39;</span>
+
+<span class="c1"># ========== RSA 非对称加密 ==========</span>
+<span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives.asymmetric</span> <span class="kn">import</span> <span class="n">rsa</span><span class="p">,</span> <span class="n">padding</span>
+<span class="kn">from</span> <span class="nn">cryptography.hazmat.primitives</span> <span class="kn">import</span> <span class="n">hashes</span>
+
+<span class="c1"># 生成密钥对</span>
+<span class="n">private_key</span> <span class="o">=</span> <span class="n">rsa</span><span class="o">.</span><span class="n">generate_private_key</span><span class="p">(</span>
+    <span class="n">public_exponent</span><span class="o">=</span><span class="mi">65537</span><span class="p">,</span>
+    <span class="n">key_size</span><span class="o">=</span><span class="mi">2048</span>
+<span class="p">)</span>
+<span class="n">public_key</span> <span class="o">=</span> <span class="n">private_key</span><span class="o">.</span><span class="n">public_key</span><span class="p">()</span>
+
+<span class="c1"># 加密（用公钥）</span>
+<span class="n">ciphertext</span> <span class="o">=</span> <span class="n">public_key</span><span class="o">.</span><span class="n">encrypt</span><span class="p">(</span>
+    <span class="sa">b</span><span class="s2">&quot;Secret message&quot;</span><span class="p">,</span>
+    <span class="n">padding</span><span class="o">.</span><span class="n">OAEP</span><span class="p">(</span>
+        <span class="n">mgf</span><span class="o">=</span><span class="n">padding</span><span class="o">.</span><span class="n">MGF1</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">()),</span>
+        <span class="n">algorithm</span><span class="o">=</span><span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">(),</span>
+        <span class="n">label</span><span class="o">=</span><span class="kc">None</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># 解密（用私钥）</span>
+<span class="n">plaintext</span> <span class="o">=</span> <span class="n">private_key</span><span class="o">.</span><span class="n">decrypt</span><span class="p">(</span>
+    <span class="n">ciphertext</span><span class="p">,</span>
+    <span class="n">padding</span><span class="o">.</span><span class="n">OAEP</span><span class="p">(</span>
+        <span class="n">mgf</span><span class="o">=</span><span class="n">padding</span><span class="o">.</span><span class="n">MGF1</span><span class="p">(</span><span class="n">algorithm</span><span class="o">=</span><span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">()),</span>
+        <span class="n">algorithm</span><span class="o">=</span><span class="n">hashes</span><span class="o">.</span><span class="n">SHA256</span><span class="p">(),</span>
+        <span class="n">label</span><span class="o">=</span><span class="kc">None</span>
+    <span class="p">)</span>
+<span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">plaintext</span><span class="p">)</span>  <span class="c1"># b&#39;Secret message&#39;</span>
+</code></pre></div>
+<hr>
+<h2 id="4-jwt-json-web-token">4. JWT (JSON Web Token)</h2>
+<h3 id="41-jwt">4.1 JWT 结构</h3>
+<pre class="plain"><code>Header.Payload.Signature
+
+Header: {&quot;alg&quot;: &quot;HS256&quot;, &quot;typ&quot;: &quot;JWT&quot;}
+Payload: {&quot;sub&quot;: &quot;1234567890&quot;, &quot;name&quot;: &quot;John&quot;, &quot;iat&quot;: 1516239022}
+Signature: HMACSHA256(base64(header) + &quot;.&quot; + base64(payload), secret)
+
+base64(Header).base64(Payload).base64(Signature)
+eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+</code></pre>
+<h3 id="42-jwt">4.2 JWT 实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">jwt</span>
+<span class="kn">import</span> <span class="nn">datetime</span>
+
+<span class="n">SECRET_KEY</span> <span class="o">=</span> <span class="s2">&quot;your-secret-key-keep-it-safe&quot;</span>
+
+<span class="k">def</span> <span class="nf">create_token</span><span class="p">(</span><span class="n">user_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">username</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;创建 JWT Token&quot;&quot;&quot;</span>
+    <span class="n">payload</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">&quot;sub&quot;</span><span class="p">:</span> <span class="n">user_id</span><span class="p">,</span>
+        <span class="s2">&quot;username&quot;</span><span class="p">:</span> <span class="n">username</span><span class="p">,</span>
+        <span class="s2">&quot;iat&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">utcnow</span><span class="p">(),</span>
+        <span class="s2">&quot;exp&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="o">.</span><span class="n">utcnow</span><span class="p">()</span> <span class="o">+</span> <span class="n">datetime</span><span class="o">.</span><span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="mi">24</span><span class="p">),</span>
+        <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="s2">&quot;access&quot;</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">jwt</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">SECRET_KEY</span><span class="p">,</span> <span class="n">algorithm</span><span class="o">=</span><span class="s2">&quot;HS256&quot;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">verify_token</span><span class="p">(</span><span class="n">token</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;验证 JWT Token&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">payload</span> <span class="o">=</span> <span class="n">jwt</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">SECRET_KEY</span><span class="p">,</span> <span class="n">algorithms</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;HS256&quot;</span><span class="p">])</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;valid&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;payload&quot;</span><span class="p">:</span> <span class="n">payload</span><span class="p">}</span>
+    <span class="k">except</span> <span class="n">jwt</span><span class="o">.</span><span class="n">ExpiredSignatureError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;valid&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;Token 已过期&quot;</span><span class="p">}</span>
+    <span class="k">except</span> <span class="n">jwt</span><span class="o">.</span><span class="n">InvalidTokenError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;valid&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;error&quot;</span><span class="p">:</span> <span class="s2">&quot;无效 Token&quot;</span><span class="p">}</span>
+
+<span class="c1"># 使用</span>
+<span class="n">token</span> <span class="o">=</span> <span class="n">create_token</span><span class="p">(</span><span class="s2">&quot;user_001&quot;</span><span class="p">,</span> <span class="s2">&quot;张三&quot;</span><span class="p">)</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">verify_token</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># {&#39;valid&#39;: True, &#39;payload&#39;: {...}}</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 安全最佳实践清单</h2>
+<pre class="plain"><code>输入验证:
+  ✅ 永远不要信任用户输入
+  ✅ 白名单验证（允许的格式）而非黑名单
+  ✅ 对所有输出进行转义
+  ✅ 使用参数化查询防止 SQL 注入
+
+密码安全:
+  ✅ 使用 bcrypt/argon2 存储密码
+  ✅ 每个密码使用独立的盐
+  ✅ 密码强度要求（最少 8 位，包含大小写+数字）
+  ❌ 不要用 MD5/SHA 存储密码
+  ❌ 不要用自创加密算法
+
+传输安全:
+  ✅ 使用 TLS/HTTPS
+  ✅ 验证证书
+  ✅ 使用现代密码套件
+
+认证授权:
+  ✅ 使用 JWT 或 Session 管理登录状态
+  ✅ 设置 Token 过期时间
+  ✅ 实现速率限制（防暴力破解）
+  ✅ 记录安全日志
+
+密钥管理:
+  ✅ 密钥存储在环境变量或密钥管理服务中
+  ✅ 不要硬编码密钥
+  ✅ 定期轮换密钥
+  ❌ 不要把密钥提交到 Git
+</code></pre>
+<hr>
+<h2 id="6">6. 思考题</h2>
+<ol>
+<li><strong>为什么 bcrypt 比 SHA-256 更适合存储密码？</strong> 提示：考虑彩虹表和暴力破解</li>
+<li><strong>JWT Token 过期后如何实现无感刷新？</strong> 提示：双 Token 机制</li>
+<li><strong>如何防止 JWT 被盗用？</strong> 提示：考虑 HTTPS、HttpOnly Cookie、Token 绑定</li>
+<li><strong>对称加密和非对称加密分别适合什么场景？为什么？</strong></li>
+<li><strong>如何设计一个安全的密码重置流程？</strong> 提示：考虑时序、一次性 Token、通知用户</li>
+</ol>
+<hr>
+<h2 id="_2">📚 扩展阅读</h2>
+<ul>
+<li><a href="https://docs.python.org/3/library/hashlib.html">Python hashlib 官方文档</a></li>
+<li><a href="https://cryptography.io/en/latest/">cryptography 库文档</a></li>
+<li><a href="https://owasp.org/www-project-top-ten/">OWASP Top 10 安全风险</a></li>
+<li><a href="https://tools.ietf.org/html/rfc7519">JWT 规范 (RFC 7519)</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-093/index.html">← Day 93 网络编程深入</a><a class="nav-next" href="../day-095/index.html">Day 95 函数式编程深入 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

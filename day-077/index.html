@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 77 — 请求调度与数据管道</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 77 — 请求调度与数据管道</h1>
+  <div class="lmeta">
+    <span class="badge">实战项目（一）</span>
+    <span class="badge">555 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-077-请求调度与数据管道" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#1-scheduler">1. 请求调度器（Scheduler）</a>
+<a class="toc-l3" href="#11">1.1 什么是调度器？</a>
+<a class="toc-l3" href="#12">1.2 调度器的两种实现</a>
+<a class="toc-l3" href="#13">1.3 调度优先级</a>
+<a class="toc-l2" href="#2-duplicate-filter">2. 去重机制（Duplicate Filter）</a>
+<a class="toc-l3" href="#21">2.1 为什么需要去重？</a>
+<a class="toc-l3" href="#22">2.2 默认去重原理</a>
+<a class="toc-l3" href="#23">2.3 自定义去重</a>
+<a class="toc-l3" href="#24">2.4 关闭去重</a>
+<a class="toc-l2" href="#3-pipeline">3. 数据管道（Pipeline）</a>
+<a class="toc-l3" href="#31">3.1 管道是什么？</a>
+<a class="toc-l3" href="#32">3.2 管道类的基本结构</a>
+<a class="toc-l3" href="#33-pipeline">3.3 启用与排序 Pipeline</a>
+<a class="toc-l3" href="#34-dropitem">3.4 DropItem：丢弃不合格数据</a>
+<a class="toc-l3" href="#35">3.5 管道间的通信</a>
+<a class="toc-l2" href="#4">4. 实战：电商价格监控系统的数据管道</a>
+<a class="toc-l3" href="#41">4.1 项目结构</a>
+<a class="toc-l3" href="#42-item">4.2 Item 定义</a>
+<a class="toc-l3" href="#43-pipeline">4.3 完整 Pipeline 实现</a>
+<a class="toc-l2" href="#5">5. 调度器与去重的高级技巧</a>
+<a class="toc-l3" href="#51">5.1 断点续爬</a>
+<a class="toc-l3" href="#52">5.2 深度限制</a>
+<a class="toc-l3" href="#53">5.3 域名限制</a>
+<a class="toc-l2" href="#6">6. 常见问题与避坑</a>
+<a class="toc-l3" href="#61-pipeline">6.1 Pipeline 执行顺序问题</a>
+<a class="toc-l3" href="#62-return-item">6.2 忘记 return item</a>
+<a class="toc-l3" href="#63">6.3 去重过于激进</a>
+<a class="toc-l3" href="#64">6.4 内存泄漏</a>
+<a class="toc-l2" href="#7">7. 思考题</a>
+<a class="toc-l2" href="#_2">总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-077">Day 077 — 请求调度与数据管道</h1>
+<h2 id="_1">概述</h2>
+<p>Day 076 我们学会了 Scrapy 的基本架构和第一个爬虫的编写。今天深入<strong>核心机制</strong>——请求调度（Scheduler）、去重（Duplicate Filter）和数据管道（Pipeline）。这些是 Scrapy 从"能跑"到"能用"的关键。</p>
+<p><strong>今天你将学到：</strong><br>
+1. Scrapy 调度器的工作原理与调度策略<br>
+2. 去重机制：基于什么去重？如何自定义？<br>
+3. 数据管道（Pipeline）的完整生命周期<br>
+4. 多管道协作：清洗 → 验证 → 存储<br>
+5. 电商价格监控系统的数据管道实战</p>
+<hr>
+<h2 id="1-scheduler">1. 请求调度器（Scheduler）</h2>
+<h3 id="11">1.1 什么是调度器？</h3>
+<p>调度器是 Scrapy 引擎中的"交通指挥官"。它决定：<br>
+- <strong>哪个请求先发出去</strong>（优先级）<br>
+- <strong>哪些请求该跳过</strong>（去重）<br>
+- <strong>请求失败后怎么办</strong>（重试策略）</p>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────┐
+│                    Scrapy 引擎                            │
+│                                                          │
+│   Spider 发出请求 ──→ 调度器（入队） ──→ 下载器（执行）    │
+│         ↑                                    │            │
+│         └──── 响应回来 ←── 中间件 ←──────────┘            │
+│                                                          │
+│   调度器内部：                                            │
+│   ┌────────────┐    ┌────────────┐    ┌────────────┐    │
+│   │  请求队列   │ ←→ │  去重过滤器 │ ←→ │  优先级堆   │    │
+│   │ (pending)  │    │ (dupefilter)│   │  (heap)    │    │
+│   └────────────┘    └────────────┘    └────────────┘    │
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="12">1.2 调度器的两种实现</h3>
+<p>Scrapy 默认使用两种调度器后端：</p>
+<table>
+<thead>
+<tr>
+<th>后端</th>
+<th>存储位置</th>
+<th>特点</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MemoryQueue</code></td>
+<td>内存</td>
+<td>速度快，重启丢失</td>
+<td>小规模爬虫</td>
+</tr>
+<tr>
+<td><code>DiskQueue</code></td>
+<td>磁盘文件</td>
+<td>持久化，可恢复</td>
+<td>大规模/长时间爬虫</td>
+</tr>
+</tbody>
+</table>
+<p>在 <code>settings.py</code> 中配置：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 默认使用内存队列</span>
+<span class="n">SCHEDULER</span> <span class="o">=</span> <span class="s1">&#39;scrapy.core.scheduler.Scheduler&#39;</span>
+
+<span class="c1"># 如需磁盘持久化（断点续爬）</span>
+<span class="c1"># SCHEDULER = &#39;scrapy.core.scheduler.Scheduler&#39;</span>
+<span class="c1"># QUEUE_CLASS = &#39;scrapy.utils.job.FilePath&#39;  # 或自定义</span>
+</code></pre></div>
+<h3 id="13">1.3 调度优先级</h3>
+<p>每个 Request 都可以设置 <code>priority</code>（整数，越大越优先）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 高优先级：首页</span>
+<span class="k">yield</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Request</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">callback</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parse</span><span class="p">,</span> <span class="n">priority</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+
+<span class="c1"># 低优先级：详情页</span>
+<span class="k">yield</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Request</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">callback</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parse_detail</span><span class="p">,</span> <span class="n">priority</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>原理</strong>：调度器内部使用<strong>优先级堆（heapq）</strong>管理请求队列，priority 越大的请求越先被取出发送。</p>
+<hr>
+<h2 id="2-duplicate-filter">2. 去重机制（Duplicate Filter）</h2>
+<h3 id="21">2.1 为什么需要去重？</h3>
+<p>爬虫最常见的问题之一就是<strong>重复爬取同一个 URL</strong>。原因包括：<br>
+- 多个页面都链接到同一个 URL<br>
+- 响应中解析出重复的链接<br>
+- 重试机制导致重复请求</p>
+<p>去重能避免浪费带宽和时间，同时降低被目标网站封禁的风险。</p>
+<h3 id="22">2.2 默认去重原理</h3>
+<p>Scrapy 默认使用 <code>RFPDupeFilter</code>（Request Fingerprint Filter）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 默认去重基于请求指纹（Fingerprint）</span>
+<span class="c1"># 指纹 = hash(request.url + request.method + request.body)</span>
+</code></pre></div>
+<p><strong>指纹生成流程</strong>：</p>
+<pre class="plain"><code>Request 对象
+    │
+    ├─ url: &quot;https://example.com/page/1&quot;
+    ├─ method: &quot;GET&quot;
+    ├─ body: b&quot;&quot;  (GET 请求通常为空)
+    │
+    ▼
+fingerprint = hashlib.sha1(
+    url + method + body
+).hexdigest()
+    │
+    ▼
+检查 fingerprint 是否在已见集合中
+    ├─ 不在 → 允许通过，记录指纹
+    └─ 在 → 过滤掉，跳过请求
+</code></pre>
+<h3 id="23">2.3 自定义去重</h3>
+<p>有时默认的 URL 去重不够用。比如：<br>
+- 同一个 URL，不同的 Cookie/Referer 应该算不同请求<br>
+- 需要基于参数值去重（忽略参数顺序）</p>
+<p>自定义去重过滤器：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># myproject/dupefilters.py</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">from</span> <span class="nn">scrapy.dupefilters</span> <span class="kn">import</span> <span class="n">RFPDupeFilter</span>
+
+<span class="k">class</span> <span class="nc">CustomDupeFilter</span><span class="p">(</span><span class="n">RFPDupeFilter</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;自定义去重：忽略某些查询参数&quot;&quot;&quot;</span>
+
+    <span class="n">IGNORE_PARAMS</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;timestamp&#39;</span><span class="p">,</span> <span class="s1">&#39;nonce&#39;</span><span class="p">,</span> <span class="s1">&#39;session_id&#39;</span><span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">request_fingerprint</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;重写指纹生成逻辑&quot;&quot;&quot;</span>
+        <span class="kn">from</span> <span class="nn">urllib.parse</span> <span class="kn">import</span> <span class="n">urlparse</span><span class="p">,</span> <span class="n">parse_qs</span><span class="p">,</span> <span class="n">urlencode</span><span class="p">,</span> <span class="n">urlunparse</span>
+
+        <span class="n">parsed</span> <span class="o">=</span> <span class="n">urlparse</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">url</span><span class="p">)</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="n">parse_qs</span><span class="p">(</span><span class="n">parsed</span><span class="o">.</span><span class="n">query</span><span class="p">,</span> <span class="n">keep_blank_values</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># 移除忽略的参数</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">IGNORE_PARAMS</span><span class="p">:</span>
+            <span class="n">params</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+
+        <span class="c1"># 重新排序参数</span>
+        <span class="n">sorted_query</span> <span class="o">=</span> <span class="n">urlencode</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">params</span><span class="o">.</span><span class="n">items</span><span class="p">()),</span> <span class="n">doseq</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="c1"># 重建 URL</span>
+        <span class="n">new_url</span> <span class="o">=</span> <span class="n">urlunparse</span><span class="p">(</span><span class="n">parsed</span><span class="o">.</span><span class="n">_replace</span><span class="p">(</span><span class="n">query</span><span class="o">=</span><span class="n">sorted_query</span><span class="p">))</span>
+
+        <span class="c1"># 生成指纹</span>
+        <span class="n">fp</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha1</span><span class="p">()</span>
+        <span class="n">fp</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">method</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span>
+        <span class="n">fp</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">new_url</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span>
+        <span class="n">fp</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">request</span><span class="o">.</span><span class="n">body</span> <span class="ow">or</span> <span class="sa">b</span><span class="s1">&#39;&#39;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">fp</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+</code></pre></div>
+<p>在 <code>settings.py</code> 中启用：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">DUPEFILTER_CLASS</span> <span class="o">=</span> <span class="s1">&#39;myproject.dupefilters.CustomDupeFilter&#39;</span>
+</code></pre></div>
+<h3 id="24">2.4 关闭去重</h3>
+<p>某些场景（如监控数据变化）需要重复爬取：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 方式 1：单个请求关闭去重</span>
+<span class="k">yield</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Request</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">callback</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parse</span><span class="p">,</span> <span class="n">dont_filter</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># 方式 2：全局关闭（不推荐）</span>
+<span class="c1"># DUPEFILTER_CLASS = &#39;scrapy.dupefilters.BaseDupeFilter&#39;</span>
+</code></pre></div>
+<hr>
+<h2 id="3-pipeline">3. 数据管道（Pipeline）</h2>
+<h3 id="31">3.1 管道是什么？</h3>
+<p>Pipeline 是 Scrapy 中处理爬取数据的<strong>流水线</strong>。每个 Item 会依次经过所有启用的 Pipeline，就像工厂的流水线：</p>
+<pre class="plain"><code>Spider 产出 Item
+    │
+    ▼
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  清洗管道     │ → │  验证管道    │ → │  存储管道    │
+│ (Clean)     │   │ (Validate)  │   │ (Store)     │
+└─────────────┘   └─────────────┘   └─────────────┘
+    │                  │                  │
+    ▼                  ▼                  ▼
+  去除空字段         检查必填字段       写入数据库
+  格式化数据         类型校验           保存到文件
+</code></pre>
+<h3 id="32">3.2 管道类的基本结构</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">MyPipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;每个 Pipeline 都是实现了特定方法的类&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">open_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;爬虫启动时调用一次。适合做初始化：打开文件、连接数据库等&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="s1">&#39;output.json&#39;</span><span class="p">,</span> <span class="s1">&#39;w&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">close_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;爬虫关闭时调用一次。适合做清理：关闭文件、断开连接等&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        每个 Item 都会经过这里。</span>
+<span class="sd">        必须返回 Item（或 DropItem 丢弃它）。</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1"># 处理 item...</span>
+        <span class="k">return</span> <span class="n">item</span>
+</code></pre></div>
+<h3 id="33-pipeline">3.3 启用与排序 Pipeline</h3>
+<p>在 <code>settings.py</code> 中：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">ITEM_PIPELINES</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s1">&#39;myproject.pipelines.CleanPipeline&#39;</span><span class="p">:</span> <span class="mi">100</span><span class="p">,</span>      <span class="c1"># 先清洗</span>
+    <span class="s1">&#39;myproject.pipelines.ValidatePipeline&#39;</span><span class="p">:</span> <span class="mi">200</span><span class="p">,</span>    <span class="c1"># 再验证</span>
+    <span class="s1">&#39;myproject.pipelines.StorePipeline&#39;</span><span class="p">:</span> <span class="mi">300</span><span class="p">,</span>       <span class="c1"># 最后存储</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>数字越小，越先执行。</strong> 这就是流水线的执行顺序。</p>
+<h3 id="34-dropitem">3.4 DropItem：丢弃不合格数据</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">scrapy.exceptions</span> <span class="kn">import</span> <span class="n">DropItem</span>
+
+<span class="k">class</span> <span class="nc">ValidatePipeline</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;price&#39;</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;缺少价格字段，丢弃: </span><span class="si">{</span><span class="n">item</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">],</span> <span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">)):</span>
+            <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;价格类型错误: </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">item</span>
+</code></pre></div>
+<h3 id="35">3.5 管道间的通信</h3>
+<p>有时后续管道需要前序管道的信息：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">EnrichPipeline</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="c1"># 添加处理时间戳</span>
+        <span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+        <span class="n">item</span><span class="p">[</span><span class="s1">&#39;crawled_at&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="c1"># 添加处理阶段标记</span>
+        <span class="n">item</span><span class="p">[</span><span class="s1">&#39;_pipeline_stage&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;enriched&#39;</span>
+        <span class="k">return</span> <span class="n">item</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 实战：电商价格监控系统的数据管道</h2>
+<h3 id="41">4.1 项目结构</h3>
+<pre class="plain"><code>ecommerce_monitor/
+├── scrapy.cfg
+├── ecommerce_monitor/
+│   ├── __init__.py
+│   ├── items.py          # 定义数据结构
+│   ├── pipelines.py      # 数据管道
+│   ├── dupefilters.py    # 自定义去重
+│   ├── middlewares.py
+│   ├── settings.py
+│   └── spiders/
+│       └── price_spider.py
+└── data/                 # 数据输出目录
+</code></pre>
+<h3 id="42-item">4.2 Item 定义</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># items.py</span>
+<span class="kn">import</span> <span class="nn">scrapy</span>
+
+<span class="k">class</span> <span class="nc">ProductItem</span><span class="p">(</span><span class="n">scrapy</span><span class="o">.</span><span class="n">Item</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;电商商品数据结构&quot;&quot;&quot;</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>           <span class="c1"># 商品名称</span>
+    <span class="n">price</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>          <span class="c1"># 当前价格</span>
+    <span class="n">original_price</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span> <span class="c1"># 原价</span>
+    <span class="n">url</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>            <span class="c1"># 商品链接</span>
+    <span class="n">shop</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>           <span class="c1"># 店铺名称</span>
+    <span class="n">category</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>       <span class="c1"># 商品分类</span>
+    <span class="n">rating</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>         <span class="c1"># 评分</span>
+    <span class="n">reviews</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>        <span class="c1"># 评价数</span>
+    <span class="n">crawled_at</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>     <span class="c1"># 爬取时间</span>
+</code></pre></div>
+<h3 id="43-pipeline">4.3 完整 Pipeline 实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># pipelines.py</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span> <span class="nn">scrapy.exceptions</span> <span class="kn">import</span> <span class="n">DropItem</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">CleanPipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    第一步：数据清洗</span>
+<span class="sd">    - 去除空白字符</span>
+<span class="sd">    - 标准化价格格式</span>
+<span class="sd">    - 过滤无效数据</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="c1"># 清洗商品名称</span>
+        <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">):</span>
+            <span class="n">item</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">item</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="c1"># 移除多余空格</span>
+            <span class="n">item</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">())</span>
+
+        <span class="c1"># 标准化价格</span>
+        <span class="k">if</span> <span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;price&#39;</span><span class="p">):</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="c1"># 去除货币符号和逗号</span>
+                <span class="n">price_str</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">])</span>
+                <span class="n">price_str</span> <span class="o">=</span> <span class="n">price_str</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;¥&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;$&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+                <span class="n">price_str</span> <span class="o">=</span> <span class="n">price_str</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39; &#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+                <span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">price_str</span><span class="p">)</span>
+            <span class="k">except</span> <span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="ne">TypeError</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;价格格式无效: </span><span class="si">{</span><span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;price&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># 添加爬取时间</span>
+        <span class="n">item</span><span class="p">[</span><span class="s1">&#39;crawled_at&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">item</span>
+
+
+<span class="k">class</span> <span class="nc">ValidatePipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    第二步：数据验证</span>
+<span class="sd">    - 检查必填字段</span>
+<span class="sd">    - 类型校验</span>
+<span class="sd">    - 业务规则校验</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="c1"># 必填字段检查</span>
+        <span class="n">required_fields</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">,</span> <span class="s1">&#39;price&#39;</span><span class="p">,</span> <span class="s1">&#39;url&#39;</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">field</span> <span class="ow">in</span> <span class="n">required_fields</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">item</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">field</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;缺少必填字段 &#39;</span><span class="si">{</span><span class="n">field</span><span class="si">}</span><span class="s2">&#39;: </span><span class="si">{</span><span class="n">item</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># 价格合理性检查</span>
+        <span class="k">if</span> <span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;价格必须大于 0: </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">1000000</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;价格异常偏高，可能解析错误: </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="c1"># URL 格式检查</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">item</span><span class="p">[</span><span class="s1">&#39;url&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;http&#39;</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="n">DropItem</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;URL 格式无效: </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;url&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">item</span>
+
+
+<span class="k">class</span> <span class="nc">AlertPipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    第三步：价格预警</span>
+<span class="sd">    - 与历史价格对比</span>
+<span class="sd">    - 触发降价提醒</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># {url: [price1, price2, ...]}</span>
+
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="n">url</span> <span class="o">=</span> <span class="n">item</span><span class="p">[</span><span class="s1">&#39;url&#39;</span><span class="p">]</span>
+        <span class="n">current_price</span> <span class="o">=</span> <span class="n">item</span><span class="p">[</span><span class="s1">&#39;price&#39;</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="n">url</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span><span class="p">:</span>
+            <span class="n">last_price</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span><span class="p">[</span><span class="n">url</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">current_price</span> <span class="o">&lt;</span> <span class="n">last_price</span><span class="p">:</span>
+                <span class="n">discount</span> <span class="o">=</span> <span class="p">(</span><span class="n">last_price</span> <span class="o">-</span> <span class="n">current_price</span><span class="p">)</span> <span class="o">/</span> <span class="n">last_price</span> <span class="o">*</span> <span class="mi">100</span>
+                <span class="n">item</span><span class="p">[</span><span class="s1">&#39;alert&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;降价 </span><span class="si">{</span><span class="n">discount</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%！&quot;</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;🔔 降价提醒: </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> &quot;</span>
+                           <span class="sa">f</span><span class="s2">&quot;¥</span><span class="si">{</span><span class="n">last_price</span><span class="si">}</span><span class="s2"> → ¥</span><span class="si">{</span><span class="n">current_price</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">current_price</span> <span class="o">&gt;</span> <span class="n">last_price</span><span class="p">:</span>
+                <span class="n">item</span><span class="p">[</span><span class="s1">&#39;alert&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;涨价！&quot;</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;📈 涨价: </span><span class="si">{</span><span class="n">item</span><span class="p">[</span><span class="s1">&#39;name&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2"> &quot;</span>
+                           <span class="sa">f</span><span class="s2">&quot;¥</span><span class="si">{</span><span class="n">last_price</span><span class="si">}</span><span class="s2"> → ¥</span><span class="si">{</span><span class="n">current_price</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">item</span><span class="p">[</span><span class="s1">&#39;alert&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;价格不变&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">item</span><span class="p">[</span><span class="s1">&#39;alert&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;首次记录&quot;</span>
+
+        <span class="c1"># 更新历史</span>
+        <span class="k">if</span> <span class="n">url</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span><span class="p">[</span><span class="n">url</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">price_history</span><span class="p">[</span><span class="n">url</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">current_price</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">item</span>
+
+
+<span class="k">class</span> <span class="nc">JsonExportPipeline</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    第四步：导出为 JSON 文件</span>
+<span class="sd">    每个商品一行（JSON Lines 格式），方便追加写入</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">open_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="n">today</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s1">&#39;%Y%m</span><span class="si">%d</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">filename</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;data/prices_</span><span class="si">{</span><span class="n">today</span><span class="si">}</span><span class="s1">.jsonl&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">filename</span><span class="p">,</span> <span class="s1">&#39;a&#39;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span> <span class="nf">close_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;共导出 </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">count</span><span class="si">}</span><span class="s2"> 条商品数据到 </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">filename</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="n">line</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="nb">dict</span><span class="p">(</span><span class="n">item</span><span class="p">),</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">line</span> <span class="o">+</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">file</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">item</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 调度器与去重的高级技巧</h2>
+<h3 id="51">5.1 断点续爬</h3>
+<p>利用 <code>JOBDIR</code> 参数，Scrapy 可以持久化调度器状态：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 首次运行，保存状态</span>
+scrapy<span class="w"> </span>crawl<span class="w"> </span>price_monitor<span class="w"> </span>-o<span class="w"> </span>prices.json<span class="w"> </span>--jobdir<span class="o">=</span>crawl_jobs/001
+
+<span class="c1"># 中断后恢复</span>
+scrapy<span class="w"> </span>crawl<span class="w"> </span>price_monitor<span class="w"> </span>-o<span class="w"> </span>prices.json<span class="w"> </span>--jobdir<span class="o">=</span>crawl_jobs/001
+</code></pre></div>
+<p><strong>原理</strong>：JOBDIR 会保存调度器的请求队列和去重集合到磁盘，下次运行时自动恢复。</p>
+<h3 id="52">5.2 深度限制</h3>
+<p>防止爬虫陷入无限深度：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># settings.py</span>
+<span class="n">DEPTH_LIMIT</span> <span class="o">=</span> <span class="mi">10</span>          <span class="c1"># 最大爬取深度</span>
+<span class="n">CLOSESPIDER_PAGECOUNT</span> <span class="o">=</span> <span class="mi">1000</span>  <span class="c1"># 最大页面数</span>
+<span class="n">CLOSESPIDER_TIMEOUT</span> <span class="o">=</span> <span class="mi">3600</span>    <span class="c1"># 最大运行时间（秒）</span>
+</code></pre></div>
+<h3 id="53">5.3 域名限制</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># settings.py</span>
+<span class="c1"># 限制只爬取特定域名</span>
+<span class="n">CLOSESPIDER_ITEMCOUNT</span> <span class="o">=</span> <span class="mi">500</span>  <span class="c1"># 最大 Item 数</span>
+
+<span class="c1"># 或在 Spider 中控制</span>
+<span class="k">class</span> <span class="nc">MySpider</span><span class="p">(</span><span class="n">scrapy</span><span class="o">.</span><span class="n">Spider</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">start_requests</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">start_urls</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Request</span><span class="p">(</span>
+                <span class="n">url</span><span class="p">,</span>
+                <span class="n">callback</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">parse</span><span class="p">,</span>
+                <span class="n">dont_filter</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>  <span class="c1"># 启用去重（默认）</span>
+                <span class="n">errback</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">errback</span><span class="p">,</span>  <span class="c1"># 错误处理</span>
+                <span class="n">meta</span><span class="o">=</span><span class="p">{</span><span class="s1">&#39;depth&#39;</span><span class="p">:</span> <span class="mi">0</span><span class="p">},</span>  <span class="c1"># 初始深度</span>
+            <span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="6">6. 常见问题与避坑</h2>
+<h3 id="61-pipeline">6.1 Pipeline 执行顺序问题</h3>
+<p><strong>错误现象</strong>：存储管道先执行了，数据还是脏的。</p>
+<p><strong>原因</strong>：<code>ITEM_PIPELINES</code> 中数字设反了。</p>
+<p><strong>解决</strong>：确保清洗（100） &lt; 验证（200） &lt; 存储（300）。</p>
+<h3 id="62-return-item">6.2 忘记 return item</h3>
+<p><strong>错误现象</strong>：后续管道收不到数据，整个链路断裂。</p>
+<p><strong>解决</strong>：<code>process_item</code> 必须 <code>return item</code>（或 <code>raise DropItem</code>）。</p>
+<h3 id="63">6.3 去重过于激进</h3>
+<p><strong>错误现象</strong>：明明是不同的数据，但因为 URL 相同被过滤了。</p>
+<p><strong>场景</strong>：分页参数在 fragment（# 后面）中，Scrapy 默认不处理 fragment。</p>
+<p><strong>解决</strong>：自定义去重过滤器，或者用 <code>dont_filter=True</code>。</p>
+<h3 id="64">6.4 内存泄漏</h3>
+<p><strong>错误现象</strong>：爬虫运行时间越长，内存占用越高。</p>
+<p><strong>原因</strong>：在 Pipeline 或 Spider 中用列表/字典缓存数据，没有清理。</p>
+<p><strong>解决</strong>：<br>
+- Pipeline 中避免无限增长的缓存<br>
+- 用 <code>open_spider/close_spider</code> 做资源生命周期管理<br>
+- 大数据量考虑用数据库而非内存</p>
+<hr>
+<h2 id="7">7. 思考题</h2>
+<ol>
+<li>
+<p><strong>调度器优先级</strong>：如果你在爬取一个电商网站，首页、分类页、商品详情页应该分别设置什么优先级？为什么？</p>
+</li>
+<li>
+<p><strong>去重策略</strong>：假设你要爬取一个新闻网站，同一个新闻可能出现在首页、分类页、搜索结果中。默认的 URL 去重能正确处理吗？如果不能，你会怎么设计去重逻辑？</p>
+</li>
+<li>
+<p><strong>管道顺序</strong>：如果你有三个管道——存储到数据库、发送告警邮件、数据统计，它们的执行顺序应该怎么安排？为什么？</p>
+</li>
+<li>
+<p><strong>断点续爬</strong>：JOBDIR 机制是如何实现断点续爬的？它保存了哪些状态？有什么局限性？</p>
+</li>
+<li>
+<p><strong>性能优化</strong>：当爬虫需要处理 10 万条数据时，Pipeline 中的数据库写入会成为瓶颈吗？你会怎么优化？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_2">总结</h2>
+<p>今天深入学习了 Scrapy 的核心机制：</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>核心要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>调度器</strong></td>
+<td>管理请求队列，支持内存/磁盘两种后端，基于优先级堆调度</td>
+</tr>
+<tr>
+<td><strong>去重</strong></td>
+<td>基于请求指纹（URL+Method+Body）去重，支持自定义指纹逻辑</td>
+</tr>
+<tr>
+<td><strong>Pipeline</strong></td>
+<td>数据处理流水线，按数字顺序依次执行，必须 return item</td>
+</tr>
+<tr>
+<td><strong>DropItem</strong></td>
+<td>丢弃不合格数据的机制</td>
+</tr>
+<tr>
+<td><strong>断点续爬</strong></td>
+<td>JOBDIR 持久化调度器状态，支持中断恢复</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>🎯 <strong>明天预告</strong>：Day 078 将学习反爬策略的应对——UA 轮换、IP 代理池、验证码处理、Cookie 管理，让我们的爬虫更健壮。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-076/index.html">← Day 76 Web 爬虫系统：Scrapy 框架入门</a><a class="nav-next" href="../day-078/index.html">Day 78 爬虫部署、监控与优化 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

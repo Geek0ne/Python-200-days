@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 71 — 日志与调试：logging 模块与 pdb</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 71 — 日志与调试：logging 模块与 pdb</h1>
+  <div class="lmeta">
+    <span class="badge">标准库与生态系统</span>
+    <span class="badge">803 行</span>
+    <span class="badge">6 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（6 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-071-日志与调试" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#1-logging">1. logging 模块详解</a>
+<a class="toc-l3" href="#11-logging">1.1 为什么需要 logging？</a>
+<a class="toc-l3" href="#12">1.2 日志级别</a>
+<a class="toc-l3" href="#13">1.3 基础用法</a>
+<a class="toc-l3" href="#14-loggerhandlerformatter">1.4 Logger、Handler、Formatter 的关系</a>
+<a class="toc-l3" href="#15">1.5 日志格式变量速查</a>
+<a class="toc-l2" href="#2">2. 日志配置</a>
+<a class="toc-l3" href="#21">2.1 字典配置（推荐）</a>
+<a class="toc-l3" href="#22">2.2 针对第三方库的日志</a>
+<a class="toc-l3" href="#23">2.3 日志轮转</a>
+<a class="toc-l2" href="#3-pdb">3. pdb 调试器</a>
+<a class="toc-l3" href="#31-pdb">3.1 什么是 pdb？</a>
+<a class="toc-l3" href="#32-pdb">3.2 pdb 常用命令</a>
+<a class="toc-l3" href="#33-pdb">3.3 代码内嵌 pdb</a>
+<a class="toc-l2" href="#4">4. 现代调试工具</a>
+<a class="toc-l3" href="#41-ipdb-pdb">4.1 ipdb（增强版 pdb）</a>
+<a class="toc-l3" href="#42-ide">4.2 IDE 调试</a>
+<a class="toc-l3" href="#43-logging-pdb">4.3 logging + pdb 组合</a>
+<a class="toc-l2" href="#5">5. 日志最佳实践</a>
+<a class="toc-l3" href="#51">5.1 该用什么级别？</a>
+<a class="toc-l3" href="#52">5.2 敏感信息处理</a>
+<a class="toc-l3" href="#53">5.3 性能考虑</a>
+<a class="toc-l2" href="#_2">实战项目：生产级日志配置</a>
+<a class="toc-l3" href="#_3">完整代码</a>
+<a class="toc-l2" href="#_4">今日总结</a>
+<a class="toc-l2" href="#_5">练习题</a>
+<a class="toc-l3" href="#1">练习 1：日志配置 ⭐⭐</a>
+<a class="toc-l3" href="#2pdb">练习 2：pdb 调试实践 ⭐⭐</a>
+<a class="toc-l3" href="#3">练习 3：日志分析脚本 ⭐⭐⭐</a>
+<a class="toc-l3" href="#4_1">练习 4：结构化日志 ⭐⭐⭐</a>
+<a class="toc-l3" href="#5_1">练习 5：分布式日志 ⭐⭐⭐⭐</a>
+<a class="toc-l2" href="#phase-5">🎉 恭喜完成 Phase 5！</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-071-logging-pdb">Day 071 — 日志与调试：logging 模块与 pdb</h1>
+<h2 id="_1">概述</h2>
+<p>写代码难免会出 Bug，程序出了问题怎么排查？答案是<strong>日志 + 调试</strong>。</p>
+<ul>
+<li><strong>日志（logging）</strong>：在代码中埋点记录关键信息，出了问题可以回溯</li>
+<li><strong>调试（debugging）</strong>：暂停程序，一步步检查变量状态，定位问题根源</li>
+</ul>
+<p><strong>今天你将学到：</strong><br>
+1. logging 模块详解——Logger、Handler、Formatter 的关系<br>
+2. 日志级别与配置——字典配置、文件配置<br>
+3. pdb 调试器——断点、单步执行、变量检查<br>
+4. <strong>实战：生产级日志配置</strong>——为真实项目配置日志系统</p>
+<blockquote>
+<p>💡 <strong>日志 vs print</strong>：<br>
+- <code>print</code> 只能在开发时看，生产环境看不到<br>
+- <code>logging</code> 可以控制级别、输出到文件、远程收集<br>
+- 生产代码<strong>禁止使用 print</strong>，全部用 logging</p>
+</blockquote>
+<hr>
+<h2 id="1-logging">1. logging 模块详解</h2>
+<h3 id="11-logging">1.1 为什么需要 logging？</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 新手写法：用 print 调试</span>
+<span class="k">def</span> <span class="nf">process_order</span><span class="p">(</span><span class="n">order</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;收到订单: </span><span class="si">{</span><span class="n">order</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 生产环境看不到！</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">calculate_total</span><span class="p">(</span><span class="n">order</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;总价: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># 出了问题无法回溯</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+<span class="c1"># ✅ 正确写法：用 logging</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">process_order</span><span class="p">(</span><span class="n">order</span><span class="p">):</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;收到订单: </span><span class="si">{</span><span class="n">order</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">calculate_total</span><span class="p">(</span><span class="n">order</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;总价: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+</code></pre></div>
+<h3 id="12">1.2 日志级别</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">logging</span>
+
+<span class="c1"># 从低到高：</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;调试信息&quot;</span><span class="p">)</span>      <span class="c1"># 10 - 开发时详细信息</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;一般信息&quot;</span><span class="p">)</span>       <span class="c1"># 20 - 确认程序按预期运行</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;警告&quot;</span><span class="p">)</span>        <span class="c1"># 30 - 意外但不影响运行</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;错误&quot;</span><span class="p">)</span>          <span class="c1"># 40 - 某个功能失败</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s2">&quot;严重错误&quot;</span><span class="p">)</span>   <span class="c1"># 50 - 程序可能无法继续运行</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>级别</th>
+<th>数值</th>
+<th>使用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DEBUG</td>
+<td>10</td>
+<td>详细的调试信息，变量值、函数调用</td>
+</tr>
+<tr>
+<td>INFO</td>
+<td>20</td>
+<td>确认程序正常运行的关键节点</td>
+</tr>
+<tr>
+<td>WARNING</td>
+<td>30</td>
+<td>潜在问题，但程序还能运行</td>
+</tr>
+<tr>
+<td>ERROR</td>
+<td>40</td>
+<td>某个功能失败，需要关注</td>
+</tr>
+<tr>
+<td>CRITICAL</td>
+<td>50</td>
+<td>严重错误，程序可能崩溃</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13">1.3 基础用法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># code/01-logging-basics.py</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+
+<span class="c1"># ========== 1. basicConfig 快速配置 ==========</span>
+<span class="c1"># 最简单的配置方式（只能调用一次）</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span>
+    <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">,</span>  <span class="c1"># 最低级别</span>
+    <span class="nb">format</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> [</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="c1"># 格式：时间 [级别] 消息</span>
+    <span class="n">datefmt</span><span class="o">=</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2"> %H:%M:%S&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="c1"># 创建 logger</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1"># 使用不同级别</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;这是调试信息&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;程序启动成功&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;磁盘空间不足&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;文件不存在: data.csv&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s2">&quot;数据库连接失败&quot;</span><span class="p">)</span>
+
+<span class="c1"># ========== 2. 输出到文件 ==========</span>
+<span class="c1"># basicConfig 也可以输出到文件</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span>
+    <span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">,</span>
+    <span class="nb">format</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> [</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(name)s</span><span class="s2"> - </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="n">filename</span><span class="o">=</span><span class="s2">&quot;app.log&quot;</span><span class="p">,</span>  <span class="c1"># 输出到文件</span>
+    <span class="n">filemode</span><span class="o">=</span><span class="s2">&quot;w&quot;</span><span class="p">,</span>        <span class="c1"># &#39;w&#39; 覆盖, &#39;a&#39; 追加</span>
+<span class="p">)</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;file_logger&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;这条日志会写入 app.log&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="14-loggerhandlerformatter">1.4 Logger、Handler、Formatter 的关系</h3>
+<pre class="plain"><code>Logger（日志记录器）
+  ├── Handler（处理器）──→ 控制台输出
+  ├── Handler（处理器）──→ 文件输出
+  └── Handler（处理器）──→ 邮件发送
+
+Formatter（格式器）──→ 定义每条日志的格式
+</code></pre>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># code/02-logging-components.py</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+
+<span class="c1"># ========== 创建 Logger ==========</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;my_app&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>  <span class="c1"># 设置最低级别</span>
+
+<span class="c1"># ========== 创建 Formatter ==========</span>
+<span class="c1"># 详细格式</span>
+<span class="n">detailed_formatter</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span>
+    <span class="n">fmt</span><span class="o">=</span><span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> [</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(name)s</span><span class="s2">:</span><span class="si">%(lineno)d</span><span class="s2"> - </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">,</span>
+    <span class="n">datefmt</span><span class="o">=</span><span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2"> %H:%M:%S&quot;</span>
+<span class="p">)</span>
+<span class="c1"># %(lineno)d 表示行号，方便定位问题</span>
+
+<span class="c1"># 简洁格式</span>
+<span class="n">simple_formatter</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span>
+    <span class="n">fmt</span><span class="o">=</span><span class="s2">&quot;[</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(message)s</span><span class="s2">&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># ========== 创建 Handler ==========</span>
+<span class="c1"># 控制台 Handler</span>
+<span class="n">console_handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">()</span>
+<span class="n">console_handler</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>  <span class="c1"># 控制台只显示 INFO 及以上</span>
+<span class="n">console_handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">simple_formatter</span><span class="p">)</span>
+
+<span class="c1"># 文件 Handler</span>
+<span class="n">file_handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">FileHandler</span><span class="p">(</span><span class="s2">&quot;app.log&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+<span class="n">file_handler</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">)</span>  <span class="c1"># 文件记录所有级别</span>
+<span class="n">file_handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">detailed_formatter</span><span class="p">)</span>
+
+<span class="c1"># 错误文件 Handler（只记录 ERROR 及以上）</span>
+<span class="n">error_handler</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">FileHandler</span><span class="p">(</span><span class="s2">&quot;error.log&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+<span class="n">error_handler</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">ERROR</span><span class="p">)</span>
+<span class="n">error_handler</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">detailed_formatter</span><span class="p">)</span>
+
+<span class="c1"># ========== 组装 ==========</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">console_handler</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">file_handler</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">error_handler</span><span class="p">)</span>
+
+<span class="c1"># ========== 使用 ==========</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;详细调试信息&quot;</span><span class="p">)</span>     <span class="c1"># 只写入 app.log</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;一般信息&quot;</span><span class="p">)</span>          <span class="c1"># 写入控制台 + app.log</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;警告&quot;</span><span class="p">)</span>          <span class="c1"># 写入控制台 + app.log</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;错误信息&quot;</span><span class="p">)</span>        <span class="c1"># 写入控制台 + app.log + error.log</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s2">&quot;严重错误&quot;</span><span class="p">)</span>     <span class="c1"># 写入控制台 + app.log + error.log</span>
+</code></pre></div>
+<h3 id="15">1.5 日志格式变量速查</h3>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>含义</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>%(asctime)s</td>
+<td>时间</td>
+<td>2024-01-01 12:00:00</td>
+</tr>
+<tr>
+<td>%(levelname)s</td>
+<td>级别</td>
+<td>INFO, ERROR</td>
+</tr>
+<tr>
+<td>%(name)s</td>
+<td>Logger 名称</td>
+<td>my_app.views</td>
+</tr>
+<tr>
+<td>%(message)s</td>
+<td>日志消息</td>
+<td>用户登录成功</td>
+</tr>
+<tr>
+<td>%(filename)s</td>
+<td>文件名</td>
+<td>views.py</td>
+</tr>
+<tr>
+<td>%(lineno)d</td>
+<td>行号</td>
+<td>42</td>
+</tr>
+<tr>
+<td>%(funcName)s</td>
+<td>函数名</td>
+<td>login</td>
+</tr>
+<tr>
+<td>%(thread)d</td>
+<td>线程 ID</td>
+<td>140234567890</td>
+</tr>
+<tr>
+<td>%(process)d</td>
+<td>进程 ID</td>
+<td>12345</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2">2. 日志配置</h2>
+<h3 id="21">2.1 字典配置（推荐）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># code/03-dict-config.py</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">logging.config</span>
+
+<span class="c1"># 用字典一次性配置整个日志系统</span>
+<span class="n">LOGGING_CONFIG</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="s2">&quot;disable_existing_loggers&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>  <span class="c1"># 保留已有 logger</span>
+
+    <span class="c1"># 格式器</span>
+    <span class="s2">&quot;formatters&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;standard&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> [</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(name)s</span><span class="s2"> - </span><span class="si">%(message)s</span><span class="s2">&quot;</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;detailed&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> [</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(name)s</span><span class="s2">:</span><span class="si">%(lineno)d</span><span class="s2"> &quot;</span>
+                      <span class="s2">&quot;</span><span class="si">%(funcName)s</span><span class="s2">() - </span><span class="si">%(message)s</span><span class="s2">&quot;</span>
+        <span class="p">},</span>
+    <span class="p">},</span>
+
+    <span class="c1"># 处理器</span>
+    <span class="s2">&quot;handlers&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;console&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;logging.StreamHandler&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;INFO&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;formatter&quot;</span><span class="p">:</span> <span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;file&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;logging.FileHandler&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;DEBUG&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;formatter&quot;</span><span class="p">:</span> <span class="s2">&quot;detailed&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;filename&quot;</span><span class="p">:</span> <span class="s2">&quot;app.log&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;encoding&quot;</span><span class="p">:</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;error_file&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;logging.FileHandler&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;ERROR&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;formatter&quot;</span><span class="p">:</span> <span class="s2">&quot;detailed&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;filename&quot;</span><span class="p">:</span> <span class="s2">&quot;error.log&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;encoding&quot;</span><span class="p">:</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">},</span>
+
+    <span class="c1"># 日志记录器</span>
+    <span class="s2">&quot;loggers&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;&quot;</span><span class="p">:</span> <span class="p">{</span>  <span class="c1"># 根 logger</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;DEBUG&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;handlers&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;console&quot;</span><span class="p">,</span> <span class="s2">&quot;file&quot;</span><span class="p">,</span> <span class="s2">&quot;error_file&quot;</span><span class="p">],</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;my_app&quot;</span><span class="p">:</span> <span class="p">{</span>  <span class="c1"># 特定模块</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;DEBUG&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;handlers&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;console&quot;</span><span class="p">,</span> <span class="s2">&quot;file&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;propagate&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>  <span class="c1"># 不传播到根 logger</span>
+        <span class="p">},</span>
+    <span class="p">},</span>
+<span class="p">}</span>
+
+<span class="c1"># 应用配置</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">dictConfig</span><span class="p">(</span><span class="n">LOGGING_CONFIG</span><span class="p">)</span>
+
+<span class="c1"># 使用</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;my_app&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;日志系统配置完成&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="22">2.2 针对第三方库的日志</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 减少第三方库的日志输出</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;urllib3&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">)</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;sqlalchemy.engine&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">)</span>
+<span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;uvicorn.access&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="23">2.3 日志轮转</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># code/04-log-rotation.py</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">from</span> <span class="nn">logging.handlers</span> <span class="kn">import</span> <span class="n">RotatingFileHandler</span><span class="p">,</span> <span class="n">TimedRotatingFileHandler</span>
+
+<span class="c1"># ========== 按大小轮转 ==========</span>
+<span class="c1"># 每个文件最大 5MB，保留 5 个备份</span>
+<span class="n">handler</span> <span class="o">=</span> <span class="n">RotatingFileHandler</span><span class="p">(</span>
+    <span class="s2">&quot;app.log&quot;</span><span class="p">,</span>
+    <span class="n">maxBytes</span><span class="o">=</span><span class="mi">5</span><span class="o">*</span><span class="mi">1024</span><span class="o">*</span><span class="mi">1024</span><span class="p">,</span>  <span class="c1"># 5MB</span>
+    <span class="n">backupCount</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># ========== 按时间轮转 ==========</span>
+<span class="c1"># 每天轮转一次，保留 30 天</span>
+<span class="n">handler</span> <span class="o">=</span> <span class="n">TimedRotatingFileHandler</span><span class="p">(</span>
+    <span class="s2">&quot;app.log&quot;</span><span class="p">,</span>
+    <span class="n">when</span><span class="o">=</span><span class="s2">&quot;midnight&quot;</span><span class="p">,</span>       <span class="c1"># 每天午夜轮转</span>
+    <span class="n">interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">backupCount</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+    <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span>
+<span class="p">)</span>
+
+<span class="c1"># 其他 when 选项：</span>
+<span class="c1"># &quot;S&quot; - 秒</span>
+<span class="c1"># &quot;M&quot; - 分钟</span>
+<span class="c1"># &quot;H&quot; - 小时</span>
+<span class="c1"># &quot;D&quot; - 天</span>
+<span class="c1"># &quot;W0&quot;-&quot;W6&quot; - 周一到周日</span>
+<span class="c1"># &quot;midnight&quot; - 午夜</span>
+
+<span class="c1"># 添加到 logger</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;my_app&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">handler</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="3-pdb">3. pdb 调试器</h2>
+<h3 id="31-pdb">3.1 什么是 pdb？</h3>
+<p>pdb 是 Python <strong>内置</strong>的调试器，可以在代码中设置断点，暂停程序执行，检查变量状态。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># code/05-pdb-basics.py</span>
+<span class="k">def</span> <span class="nf">calculate_discount</span><span class="p">(</span><span class="n">price</span><span class="p">,</span> <span class="n">quantity</span><span class="p">,</span> <span class="n">is_vip</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;计算折扣价格&quot;&quot;&quot;</span>
+    <span class="n">subtotal</span> <span class="o">=</span> <span class="n">price</span> <span class="o">*</span> <span class="n">quantity</span>          <span class="c1"># 行 4</span>
+    
+    <span class="k">if</span> <span class="n">is_vip</span><span class="p">:</span>                           <span class="c1"># 行 6</span>
+        <span class="n">discount</span> <span class="o">=</span> <span class="mf">0.2</span>                   <span class="c1"># 行 7</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">discount</span> <span class="o">=</span> <span class="mf">0.1</span>                   <span class="c1"># 行 9</span>
+    
+    <span class="n">total</span> <span class="o">=</span> <span class="n">subtotal</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">discount</span><span class="p">)</span>    <span class="c1"># 行 12</span>
+    
+    <span class="c1"># 设置断点——程序会在这里暂停</span>
+    <span class="kn">import</span> <span class="nn">pdb</span><span class="p">;</span> <span class="n">pdb</span><span class="o">.</span><span class="n">set_trace</span><span class="p">()</span>          <span class="c1"># 行 15</span>
+    
+    <span class="k">return</span> <span class="n">total</span>                         <span class="c1"># 行 17</span>
+
+<span class="c1"># Python 3.7+ 可以直接用 breakpoint()</span>
+<span class="k">def</span> <span class="nf">calculate_discount_v2</span><span class="p">(</span><span class="n">price</span><span class="p">,</span> <span class="n">quantity</span><span class="p">,</span> <span class="n">is_vip</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+    <span class="n">subtotal</span> <span class="o">=</span> <span class="n">price</span> <span class="o">*</span> <span class="n">quantity</span>
+    <span class="k">if</span> <span class="n">is_vip</span><span class="p">:</span>
+        <span class="n">discount</span> <span class="o">=</span> <span class="mf">0.2</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">discount</span> <span class="o">=</span> <span class="mf">0.1</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="n">subtotal</span> <span class="o">*</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">discount</span><span class="p">)</span>
+    <span class="nb">breakpoint</span><span class="p">()</span>  <span class="c1"># 等价于 import pdb; pdb.set_trace()</span>
+    <span class="k">return</span> <span class="n">total</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">calculate_discount</span><span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="n">is_vip</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;总价: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="32-pdb">3.2 pdb 常用命令</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 运行后进入 pdb 调试模式</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>
+
+<span class="c1"># ========== 查看代码 ==========</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>l<span class="w">          </span><span class="c1"># list - 显示当前位置前后 11 行</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>l<span class="w"> </span><span class="m">10</span>,20<span class="w">    </span><span class="c1"># 显示第 10-20 行</span>
+
+<span class="c1"># ========== 控制执行 ==========</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>n<span class="w">          </span><span class="c1"># next - 执行下一行（不进入函数）</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>s<span class="w">          </span><span class="c1"># step - 执行下一行（进入函数）</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>c<span class="w">          </span><span class="c1"># continue - 继续执行到下一个断点</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>r<span class="w">          </span><span class="c1"># return - 执行到当前函数返回</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>q<span class="w">          </span><span class="c1"># quit - 退出调试器</span>
+
+<span class="c1"># ========== 检查变量 ==========</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>variable<span class="w">     </span><span class="c1"># 打印变量值</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>locals<span class="o">()</span><span class="w">     </span><span class="c1"># 打印所有局部变量</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>dir<span class="o">()</span><span class="w">        </span><span class="c1"># 打印当前作用域</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>p<span class="w"> </span>type<span class="o">(</span>obj<span class="o">)</span><span class="w">    </span><span class="c1"># 打印对象类型</span>
+
+<span class="c1"># ========== 设置断点 ==========</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>b<span class="w"> </span><span class="m">15</span><span class="w">           </span><span class="c1"># 在第 15 行设置断点</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>b<span class="w"> </span>function_name<span class="w"> </span><span class="c1"># 在函数入口设置断点</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>b<span class="w">              </span><span class="c1"># 查看所有断点</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>cl<span class="w"> </span><span class="m">15</span><span class="w">          </span><span class="c1"># 清除第 15 行的断点</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>cl<span class="w">             </span><span class="c1"># 清除所有断点</span>
+
+<span class="c1"># ========== 条件断点 ==========</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>b<span class="w"> </span><span class="m">15</span>,<span class="w"> </span>price<span class="w"> </span>&gt;<span class="w"> </span><span class="m">100</span><span class="w">  </span><span class="c1"># 只在 price &gt; 100 时中断</span>
+
+<span class="c1"># ========== 执行表达式 ==========</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>!import<span class="w"> </span>pdb<span class="p">;</span><span class="w"> </span>pdb.set_trace<span class="o">()</span><span class="w">  </span><span class="c1"># 在调试中设置新断点</span>
+<span class="o">(</span>pdb<span class="o">)</span><span class="w"> </span>e<span class="w"> </span>import<span class="w"> </span>json<span class="p">;</span><span class="w"> </span>json.dumps<span class="o">(</span>locals<span class="o">())</span><span class="w">  </span><span class="c1"># 执行任意表达式</span>
+</code></pre></div>
+<h3 id="33-pdb">3.3 代码内嵌 pdb</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 方式 1：传统写法</span>
+<span class="kn">import</span> <span class="nn">pdb</span><span class="p">;</span> <span class="n">pdb</span><span class="o">.</span><span class="n">set_trace</span><span class="p">()</span>
+
+<span class="c1"># 方式 2：Python 3.7+ 推荐</span>
+<span class="nb">breakpoint</span><span class="p">()</span>
+
+<span class="c1"># 方式 3：条件断点</span>
+<span class="k">if</span> <span class="n">some_condition</span><span class="p">:</span>
+    <span class="nb">breakpoint</span><span class="p">()</span>
+
+<span class="c1"># 方式 4：在 except 中调试</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">dangerous_operation</span><span class="p">()</span>
+<span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+    <span class="nb">breakpoint</span><span class="p">()</span>  <span class="c1"># 异常发生时暂停，检查错误</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 现代调试工具</h2>
+<h3 id="41-ipdb-pdb">4.1 ipdb（增强版 pdb）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>ipdb
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ipdb 提供语法高亮、自动补全</span>
+<span class="kn">import</span> <span class="nn">ipdb</span><span class="p">;</span> <span class="n">ipdb</span><span class="o">.</span><span class="n">set_trace</span><span class="p">()</span>
+<span class="c1"># 或</span>
+<span class="nb">breakpoint</span><span class="p">()</span>  <span class="c1"># 如果配置了 PYTHONBREAKPOINT=ipdb.set_trace</span>
+</code></pre></div>
+<h3 id="42-ide">4.2 IDE 调试</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># VS Code / PyCharm 的图形化调试更友好：</span>
+<span class="c1"># 1. 在代码行号左侧点击设置断点</span>
+<span class="c1"># 2. 点击调试按钮启动</span>
+<span class="c1"># 3. 悬停查看变量值</span>
+<span class="c1"># 4. 步进、步过、步出</span>
+<span class="c1"># 5. 查看调用栈</span>
+<span class="c1"># 6. 条件断点</span>
+</code></pre></div>
+<h3 id="43-logging-pdb">4.3 logging + pdb 组合</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">logging</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">process_order</span><span class="p">(</span><span class="n">order</span><span class="p">):</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;收到订单: </span><span class="si">{</span><span class="n">order</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">calculate_total</span><span class="p">(</span><span class="n">order</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;订单处理成功: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;订单处理失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="c1"># exc_info=True 会记录完整的堆栈信息</span>
+        <span class="k">raise</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 日志最佳实践</h2>
+<h3 id="51">5.1 该用什么级别？</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># DEBUG: 开发时的详细信息</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;SQL: SELECT * FROM users WHERE id=</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># INFO: 关键业务事件</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;用户 </span><span class="si">{</span><span class="n">username</span><span class="si">}</span><span class="s2"> 登录成功&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;订单 #</span><span class="si">{</span><span class="n">order_id</span><span class="si">}</span><span class="s2"> 已创建&quot;</span><span class="p">)</span>
+
+<span class="c1"># WARNING: 潜在问题</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;磁盘空间不足: </span><span class="si">{</span><span class="n">free_space</span><span class="si">}</span><span class="s2">MB&quot;</span><span class="p">)</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;API 响应慢: </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">秒&quot;</span><span class="p">)</span>
+
+<span class="c1"># ERROR: 功能失败</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;发送邮件失败: </span><span class="si">{</span><span class="n">recipient</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># CRITICAL: 系统级故障</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;数据库连接池耗尽!&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="52">5.2 敏感信息处理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 不要记录敏感信息</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;用户密码: </span><span class="si">{</span><span class="n">password</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 千万不要！</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;信用卡号: </span><span class="si">{</span><span class="n">card_number</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 违反 PCI DSS！</span>
+
+<span class="c1"># ✅ 脱敏处理</span>
+<span class="k">def</span> <span class="nf">mask_email</span><span class="p">(</span><span class="n">email</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;邮箱脱敏&quot;&quot;&quot;</span>
+    <span class="n">local</span><span class="p">,</span> <span class="n">domain</span> <span class="o">=</span> <span class="n">email</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;@&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">local</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">***@</span><span class="si">{</span><span class="n">domain</span><span class="si">}</span><span class="s2">&quot;</span>
+
+<span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;用户邮箱: </span><span class="si">{</span><span class="n">mask_email</span><span class="p">(</span><span class="n">user</span><span class="o">.</span><span class="n">email</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="53">5.3 性能考虑</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 避免不必要的字符串拼接</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Processing item </span><span class="si">{</span><span class="n">item</span><span class="o">.</span><span class="n">id</span><span class="si">}</span><span class="s2"> with name </span><span class="si">{</span><span class="n">item</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 即使 DEBUG 级别被禁用，字符串拼接仍然会执行！</span>
+
+<span class="c1"># ✅ 使用延迟格式化</span>
+<span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s2">&quot;Processing item </span><span class="si">%s</span><span class="s2"> with name </span><span class="si">%s</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">item</span><span class="o">.</span><span class="n">id</span><span class="p">,</span> <span class="n">item</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+<span class="c1"># 只有在需要输出时才格式化字符串</span>
+
+<span class="c1"># ✅ 或者使用 isEnabledFor 检查</span>
+<span class="k">if</span> <span class="n">logger</span><span class="o">.</span><span class="n">isEnabledFor</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">):</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;详细信息: </span><span class="si">{</span><span class="n">expensive_computation</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_2">实战项目：生产级日志配置</h2>
+<h3 id="_3">完整代码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># code/06-production-logging.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">📝 生产级日志配置 —— 完整实战项目</span>
+<span class="sd">功能：多 Handler、日志轮转、格式化、性能优化</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">logging.config</span>
+<span class="kn">import</span> <span class="nn">logging.handlers</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+
+<span class="c1"># ========== 日志配置字典 ==========</span>
+<span class="n">LOGGING_CONFIG</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;version&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+    <span class="s2">&quot;disable_existing_loggers&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+
+    <span class="c1"># 格式器</span>
+    <span class="s2">&quot;formatters&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;standard&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> [</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(name)s</span><span class="s2"> - </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;datefmt&quot;</span><span class="p">:</span> <span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2"> %H:%M:%S&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;detailed&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;</span><span class="si">%(asctime)s</span><span class="s2"> [</span><span class="si">%(levelname)s</span><span class="s2">] </span><span class="si">%(name)s</span><span class="s2">:</span><span class="si">%(lineno)d</span><span class="s2"> &quot;</span>
+                       <span class="s2">&quot;</span><span class="si">%(funcName)s</span><span class="s2">() [</span><span class="si">%(process)d</span><span class="s2">:</span><span class="si">%(thread)d</span><span class="s2">] - </span><span class="si">%(message)s</span><span class="s2">&quot;</span><span class="p">),</span>
+            <span class="s2">&quot;datefmt&quot;</span><span class="p">:</span> <span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2"> %H:%M:%S&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;json&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="c1"># JSON 格式（方便 ELK 等日志系统收集）</span>
+            <span class="s2">&quot;format&quot;</span><span class="p">:</span> <span class="s1">&#39;{&quot;time&quot;:&quot;</span><span class="si">%(asctime)s</span><span class="s1">&quot;,&quot;level&quot;:&quot;</span><span class="si">%(levelname)s</span><span class="s1">&quot;,&#39;</span>
+                      <span class="s1">&#39;&quot;logger&quot;:&quot;</span><span class="si">%(name)s</span><span class="s1">&quot;,&quot;line&quot;:</span><span class="si">%(lineno)d</span><span class="s1">,&#39;</span>
+                      <span class="s1">&#39;&quot;function&quot;:&quot;</span><span class="si">%(funcName)s</span><span class="s1">&quot;,&quot;message&quot;:&quot;</span><span class="si">%(message)s</span><span class="s1">&quot;}&#39;</span><span class="p">,</span>
+            <span class="s2">&quot;datefmt&quot;</span><span class="p">:</span> <span class="s2">&quot;%Y-%m-</span><span class="si">%d</span><span class="s2">T%H:%M:%S&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">},</span>
+
+    <span class="c1"># 过滤器</span>
+    <span class="s2">&quot;filters&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;context_filter&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;()&quot;</span><span class="p">:</span> <span class="s2">&quot;production_logging.ContextFilter&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">},</span>
+
+    <span class="c1"># 处理器</span>
+    <span class="s2">&quot;handlers&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;console&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;logging.StreamHandler&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;INFO&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;formatter&quot;</span><span class="p">:</span> <span class="s2">&quot;standard&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;file&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;logging.handlers.RotatingFileHandler&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;DEBUG&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;formatter&quot;</span><span class="p">:</span> <span class="s2">&quot;detailed&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;filename&quot;</span><span class="p">:</span> <span class="s2">&quot;logs/app.log&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;maxBytes&quot;</span><span class="p">:</span> <span class="mi">10</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span>  <span class="c1"># 10MB</span>
+            <span class="s2">&quot;backupCount&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>
+            <span class="s2">&quot;encoding&quot;</span><span class="p">:</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;error_file&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;logging.handlers.RotatingFileHandler&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;ERROR&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;formatter&quot;</span><span class="p">:</span> <span class="s2">&quot;detailed&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;filename&quot;</span><span class="p">:</span> <span class="s2">&quot;logs/error.log&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;maxBytes&quot;</span><span class="p">:</span> <span class="mi">10</span> <span class="o">*</span> <span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">,</span>
+            <span class="s2">&quot;backupCount&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">,</span>
+            <span class="s2">&quot;encoding&quot;</span><span class="p">:</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;timed_file&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;class&quot;</span><span class="p">:</span> <span class="s2">&quot;logging.handlers.TimedRotatingFileHandler&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;INFO&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;formatter&quot;</span><span class="p">:</span> <span class="s2">&quot;detailed&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;filename&quot;</span><span class="p">:</span> <span class="s2">&quot;logs/timed.log&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;when&quot;</span><span class="p">:</span> <span class="s2">&quot;midnight&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;interval&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+            <span class="s2">&quot;backupCount&quot;</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span>
+            <span class="s2">&quot;encoding&quot;</span><span class="p">:</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">},</span>
+
+    <span class="c1"># 日志记录器</span>
+    <span class="s2">&quot;loggers&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;&quot;</span><span class="p">:</span> <span class="p">{</span>  <span class="c1"># 根 logger</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;DEBUG&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;handlers&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;console&quot;</span><span class="p">,</span> <span class="s2">&quot;file&quot;</span><span class="p">,</span> <span class="s2">&quot;error_file&quot;</span><span class="p">],</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;my_app&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;DEBUG&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;handlers&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;console&quot;</span><span class="p">,</span> <span class="s2">&quot;file&quot;</span><span class="p">,</span> <span class="s2">&quot;error_file&quot;</span><span class="p">,</span> <span class="s2">&quot;timed_file&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;propagate&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="p">},</span>
+        <span class="s2">&quot;my_app.api&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;INFO&quot;</span><span class="p">,</span>
+            <span class="s2">&quot;handlers&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;console&quot;</span><span class="p">,</span> <span class="s2">&quot;file&quot;</span><span class="p">],</span>
+            <span class="s2">&quot;propagate&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="p">},</span>
+    <span class="p">},</span>
+
+    <span class="c1"># 根 logger 兜底</span>
+    <span class="s2">&quot;root&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;level&quot;</span><span class="p">:</span> <span class="s2">&quot;WARNING&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;handlers&quot;</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;console&quot;</span><span class="p">],</span>
+    <span class="p">},</span>
+<span class="p">}</span>
+
+
+<span class="c1"># ========== 自定义过滤器 ==========</span>
+<span class="k">class</span> <span class="nc">ContextFilter</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">Filter</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;添加上下文信息到日志&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">request_id</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">user_id</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">filter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">):</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">request_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">request_id</span> <span class="ow">or</span> <span class="s2">&quot;N/A&quot;</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">user_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">user_id</span> <span class="ow">or</span> <span class="s2">&quot;N/A&quot;</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+
+<span class="c1"># ========== 初始化 ==========</span>
+<span class="k">def</span> <span class="nf">setup_logging</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;初始化日志系统&quot;&quot;&quot;</span>
+    <span class="c1"># 创建日志目录</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># 应用配置</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">dictConfig</span><span class="p">(</span><span class="n">LOGGING_CONFIG</span><span class="p">)</span>
+
+    <span class="c1"># 添加自定义过滤器</span>
+    <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;my_app&quot;</span><span class="p">)</span>
+    <span class="n">context_filter</span> <span class="o">=</span> <span class="n">ContextFilter</span><span class="p">()</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">addFilter</span><span class="p">(</span><span class="n">context_filter</span><span class="p">)</span>
+
+    <span class="c1"># 减少第三方库的日志噪音</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;urllib3&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">)</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;sqlalchemy.engine&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">context_filter</span>
+
+
+<span class="c1"># ========== 业务代码示例 ==========</span>
+<span class="k">def</span> <span class="nf">setup_logging</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;初始化日志系统&quot;&quot;&quot;</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="s2">&quot;logs&quot;</span><span class="p">,</span> <span class="n">exist_ok</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="n">logging</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">dictConfig</span><span class="p">(</span><span class="n">LOGGING_CONFIG</span><span class="p">)</span>
+    <span class="n">context_filter</span> <span class="o">=</span> <span class="n">ContextFilter</span><span class="p">()</span>
+    <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;my_app&quot;</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">addFilter</span><span class="p">(</span><span class="n">context_filter</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">context_filter</span>
+
+
+<span class="k">class</span> <span class="nc">OrderService</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;订单服务——展示日志使用方式&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;my_app.order&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">create_order</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">user_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;创建订单&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;创建订单: user_id=</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">, items=</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个&quot;</span><span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># 业务逻辑</span>
+            <span class="n">order_id</span> <span class="o">=</span> <span class="mi">1001</span>
+            <span class="n">total</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="s2">&quot;price&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">item</span><span class="p">[</span><span class="s2">&quot;qty&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">items</span><span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;订单创建成功: order_id=</span><span class="si">{</span><span class="n">order_id</span><span class="si">}</span><span class="s2">, total=</span><span class="si">{</span><span class="n">total</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;order_id&quot;</span><span class="p">:</span> <span class="n">order_id</span><span class="p">,</span> <span class="s2">&quot;total&quot;</span><span class="p">:</span> <span class="n">total</span><span class="p">}</span>
+
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;订单创建失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="k">raise</span>
+
+
+<span class="k">class</span> <span class="nc">UserService</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用户服务&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;my_app.user&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">login</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">username</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">password</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;用户登录&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;用户登录尝试: </span><span class="si">{</span><span class="n">username</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">username</span> <span class="o">==</span> <span class="s2">&quot;admin&quot;</span> <span class="ow">and</span> <span class="n">password</span> <span class="o">==</span> <span class="s2">&quot;123456&quot;</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;用户 </span><span class="si">{</span><span class="n">username</span><span class="si">}</span><span class="s2"> 登录成功&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;用户 </span><span class="si">{</span><span class="n">username</span><span class="si">}</span><span class="s2"> 登录失败: 密码错误&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+
+<span class="c1"># ========== 运行示例 ==========</span>
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">context_filter</span> <span class="o">=</span> <span class="n">setup_logging</span><span class="p">()</span>
+    <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">&quot;my_app&quot;</span><span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;🚀 应用启动&quot;</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+
+    <span class="c1"># 模拟请求上下文</span>
+    <span class="n">context_filter</span><span class="o">.</span><span class="n">request_id</span> <span class="o">=</span> <span class="s2">&quot;req-12345&quot;</span>
+    <span class="n">context_filter</span><span class="o">.</span><span class="n">user_id</span> <span class="o">=</span> <span class="s2">&quot;user-001&quot;</span>
+
+    <span class="c1"># 用户服务</span>
+    <span class="n">user_service</span> <span class="o">=</span> <span class="n">UserService</span><span class="p">()</span>
+    <span class="n">user_service</span><span class="o">.</span><span class="n">login</span><span class="p">(</span><span class="s2">&quot;admin&quot;</span><span class="p">,</span> <span class="s2">&quot;123456&quot;</span><span class="p">)</span>
+    <span class="n">user_service</span><span class="o">.</span><span class="n">login</span><span class="p">(</span><span class="s2">&quot;hacker&quot;</span><span class="p">,</span> <span class="s2">&quot;wrong&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 订单服务</span>
+    <span class="n">order_service</span> <span class="o">=</span> <span class="n">OrderService</span><span class="p">()</span>
+    <span class="n">order_service</span><span class="o">.</span><span class="n">create_order</span><span class="p">(</span>
+        <span class="n">user_id</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+        <span class="n">items</span><span class="o">=</span><span class="p">[</span>
+            <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Python书&quot;</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mf">59.9</span><span class="p">,</span> <span class="s2">&quot;qty&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span>
+            <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;键盘&quot;</span><span class="p">,</span> <span class="s2">&quot;price&quot;</span><span class="p">:</span> <span class="mi">299</span><span class="p">,</span> <span class="s2">&quot;qty&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+
+    <span class="c1"># 测试异常日志</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="mi">1</span> <span class="o">/</span> <span class="mi">0</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;数学运算错误&quot;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;🛑 应用关闭&quot;</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">50</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_4">今日总结</h2>
+<ul>
+<li><strong>logging 模块</strong>是 Python 标准的日志方案，替代 print</li>
+<li><strong>五个日志级别</strong>：DEBUG &lt; INFO &lt; WARNING &lt; ERROR &lt; CRITICAL</li>
+<li><strong>三大组件</strong>：Logger（记录器）→ Handler（处理器）→ Formatter（格式器）</li>
+<li><strong>字典配置</strong> <code>logging.config.dictConfig()</code> 是最灵活的配置方式</li>
+<li><strong>日志轮转</strong>防止日志文件无限增长（RotatingFileHandler / TimedRotatingFileHandler）</li>
+<li><strong>pdb 调试器</strong>：<code>breakpoint()</code> 暂停程序，<code>n</code> 下一步，<code>p</code> 打印变量</li>
+<li><strong>生产环境</strong>：记录到文件、轮转备份、避免敏感信息、延迟格式化</li>
+</ul>
+<h2 id="_5">练习题</h2>
+<h3 id="1">练习 1：日志配置 ⭐⭐</h3>
+<p>为一个 Web 应用配置日志系统：<br>
+- 控制台输出 INFO 及以上<br>
+- 文件记录 DEBUG 及以上（带行号和函数名）<br>
+- 错误文件只记录 ERROR 及以上<br>
+- 日志轮转：每个文件最大 5MB，保留 10 个备份</p>
+<h3 id="2pdb">练习 2：pdb 调试实践 ⭐⭐</h3>
+<p>使用 pdb 调试以下代码：<br>
+- 找出 bug 并修复<br>
+- 练习设置条件断点<br>
+- 练习检查调用栈</p>
+<h3 id="3">练习 3：日志分析脚本 ⭐⭐⭐</h3>
+<p>编写一个日志分析脚本：<br>
+- 读取日志文件<br>
+- 统计每种级别的日志数量<br>
+- 查找所有 ERROR 日志<br>
+- 按时间范围过滤日志<br>
+- 生成分析报告</p>
+<h3 id="4_1">练习 4：结构化日志 ⭐⭐⭐</h3>
+<p>实现 JSON 格式的结构化日志：<br>
+- 每条日志是一个 JSON 对象<br>
+- 包含时间、级别、模块、消息、上下文<br>
+- 可以直接被 ELK 等日志系统收集</p>
+<h3 id="5_1">练习 5：分布式日志 ⭐⭐⭐⭐</h3>
+<p>设计一个分布式日志方案：<br>
+- 不同服务的日志统一收集<br>
+- 使用 request_id 关联同一请求的日志<br>
+- 实现日志聚合和查询<br>
+- 告警机制（ERROR 数量超过阈值时通知）</p>
+<h2 id="phase-5">🎉 恭喜完成 Phase 5！</h2>
+<p>你已经完成了标准库与生态系统的学习：<br>
+- Day 067: FastAPI 入门<br>
+- Day 068: 数据库基础<br>
+- Day 069: ORM 深入（SQLAlchemy）<br>
+- Day 070: 测试基础<br>
+- Day 071: 日志与调试</p>
+<p>接下来将进入 <strong>Phase 6: 高级主题与项目实战</strong>，学习更高级的 Python 特性和真实项目开发！</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-070/index.html">← Day 70 测试基础：unittest、pytest 与 Mock</a><a class="nav-next" href="../day-072/index.html">Day 72 正则表达式深入 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,872 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 87 — 状态机对话管理</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 87 — 状态机对话管理</h1>
+  <div class="lmeta">
+    <span class="badge">实战项目（一）</span>
+    <span class="badge">758 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-087-状态机对话管理" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 今日目标</a>
+<a class="toc-l2" href="#_2">一、为什么聊天机器人需要状态机？</a>
+<a class="toc-l3" href="#11-vs">1.1 无状态 vs 有状态</a>
+<a class="toc-l3" href="#12">1.2 状态机的核心思想</a>
+<a class="toc-l2" href="#_3">二、从零实现状态机</a>
+<a class="toc-l3" href="#21">2.1 最简状态机</a>
+<a class="toc-l3" href="#22">2.2 带动作的状态机</a>
+<a class="toc-l3" href="#23">2.3 状态转移表（可视化）</a>
+<a class="toc-l2" href="#_4">三、对话状态机设计</a>
+<a class="toc-l3" href="#31">3.1 对话状态定义</a>
+<a class="toc-l3" href="#32-slot">3.2 槽位（Slot）概念</a>
+<a class="toc-l3" href="#33">3.3 意图识别 + 槽位填充流程</a>
+<a class="toc-l2" href="#_5">四、完整实战：客服聊天机器人</a>
+<a class="toc-l3" href="#41">4.1 架构设计</a>
+<a class="toc-l3" href="#42">4.2 核心组件</a>
+<a class="toc-l3" href="#43">4.3 运行效果</a>
+<a class="toc-l2" href="#_6">五、进阶：状态机的高级用法</a>
+<a class="toc-l3" href="#51">5.1 状态嵌套（层级状态机）</a>
+<a class="toc-l3" href="#52">5.2 并行状态机</a>
+<a class="toc-l3" href="#53">5.3 状态机可视化</a>
+<a class="toc-l2" href="#_7">六、状态机设计模式</a>
+<a class="toc-l3" href="#61">6.1 常见模式对比</a>
+<a class="toc-l3" href="#62-state-pattern">6.2 状态模式（State Pattern）</a>
+<a class="toc-l2" href="#_8">七、思考题</a>
+<a class="toc-l2" href="#_9">📚 扩展阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-087">Day 087 — 状态机对话管理</h1>
+<blockquote>
+<p>🤖 项目四（聊天机器人）第 3 天：用状态机管理对话流程</p>
+</blockquote>
+<h2 id="_1">📋 今日目标</h2>
+<table>
+<thead>
+<tr>
+<th>目标</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>理解状态机</td>
+<td>什么是有限状态机（FSM），为什么聊天机器人需要它</td>
+</tr>
+<tr>
+<td>实现 FSM</td>
+<td>从零实现一个轻量状态机</td>
+</tr>
+<tr>
+<td>对话管理</td>
+<td>用状态机管理多轮对话的状态流转</td>
+</tr>
+<tr>
+<td>上下文维护</td>
+<td>对话上下文、槽位填充、意图识别的整合</td>
+</tr>
+<tr>
+<td>实战项目</td>
+<td>构建一个完整的客服聊天机器人</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_2">一、为什么聊天机器人需要状态机？</h2>
+<h3 id="11-vs">1.1 无状态 vs 有状态</h3>
+<p><strong>无状态机器人</strong>（如 Day 086 的简单 NLP）：</p>
+<pre class="plain"><code>用户：我想订机票
+机器人：请问出发城市？
+用户：北京
+机器人：请问目的地？
+用户：上海
+机器人：请问日期？
+用户：明天
+机器人：好的，已为您查询！
+</code></pre>
+<p>看似正常，但问题是——<strong>机器人并不"记住"之前的对话</strong>。如果用户突然说：</p>
+<pre class="plain"><code>用户：改成后天
+</code></pre>
+<p>无状态机器人会完全困惑，因为它不知道"后天"指的是哪个字段。</p>
+<p><strong>有状态机器人</strong>：</p>
+<pre class="plain"><code>用户：我想订机票
+机器人：请问出发城市？ [状态：等待出发城市]
+用户：北京
+机器人：请问目的地？ [状态：等待目的地，已记录出发=北京]
+用户：上海
+机器人：请问日期？ [状态：等待日期，已记录出发=北京，目的=上海]
+用户：明天
+机器人：好的，北京→上海，明天的机票已查询到！ [状态：完成]
+用户：改成后天
+机器人：好的，已改为北京→上海，后天的机票。 [状态：已完成修改]
+</code></pre>
+<h3 id="12">1.2 状态机的核心思想</h3>
+<p><strong>有限状态机（Finite State Machine, FSM）</strong> 是一种数学模型，由以下部分组成：</p>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────┐
+│                    FSM 五元组                         │
+│                                                     │
+│  S  = 有限状态集合        (States)                   │
+│  Σ  = 输入符号集合        (Inputs/Events)            │
+│  δ  = 状态转移函数        (Transition Function)       │
+│  s₀ = 初始状态            (Initial State)            │
+│  F  = 终止状态集合        (Final/Accepting States)    │
+│                                                     │
+│  简化版：                                            │
+│  δ: S × Σ → S   当前状态 + 输入事件 → 下一个状态      │
+└─────────────────────────────────────────────────────┘
+</code></pre>
+<p>用一个经典的例子——红绿灯：</p>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; 红灯
+    红灯 --&gt; 绿灯 : timer
+    绿灯 --&gt; 黄灯 : timer
+    黄灯 --&gt; 红灯 : timer
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; 红灯
+    红灯 --&gt; 绿灯 : timer
+    绿灯 --&gt; 黄灯 : timer
+    黄灯 --&gt; 红灯 : timer
+</code></pre></div>
+<hr>
+<h2 id="_3">二、从零实现状态机</h2>
+<h3 id="21">2.1 最简状态机</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">SimpleFSM</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;最简有限状态机&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">initial_state</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">initial_state</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">transitions</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># {(当前状态, 事件): 下一状态}</span>
+
+    <span class="k">def</span> <span class="nf">add_transition</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">from_state</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">to_state</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;添加状态转移规则&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">transitions</span><span class="p">[(</span><span class="n">from_state</span><span class="p">,</span> <span class="n">event</span><span class="p">)]</span> <span class="o">=</span> <span class="n">to_state</span>
+
+    <span class="k">def</span> <span class="nf">trigger</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;触发事件，返回新状态&quot;&quot;&quot;</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="n">event</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">transitions</span><span class="p">:</span>
+            <span class="n">old_state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transitions</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+            <span class="k">return</span> <span class="n">old_state</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;非法转移: 状态=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="si">}</span><span class="s2">, 事件=</span><span class="si">{</span><span class="n">event</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">is_in</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">==</span> <span class="n">state</span>
+</code></pre></div>
+<p><strong>使用示例——红绿灯：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">light</span> <span class="o">=</span> <span class="n">SimpleFSM</span><span class="p">(</span><span class="s2">&quot;红灯&quot;</span><span class="p">)</span>
+<span class="n">light</span><span class="o">.</span><span class="n">add_transition</span><span class="p">(</span><span class="s2">&quot;红灯&quot;</span><span class="p">,</span> <span class="s2">&quot;timer&quot;</span><span class="p">,</span> <span class="s2">&quot;绿灯&quot;</span><span class="p">)</span>
+<span class="n">light</span><span class="o">.</span><span class="n">add_transition</span><span class="p">(</span><span class="s2">&quot;绿灯&quot;</span><span class="p">,</span> <span class="s2">&quot;timer&quot;</span><span class="p">,</span> <span class="s2">&quot;黄灯&quot;</span><span class="p">)</span>
+<span class="n">light</span><span class="o">.</span><span class="n">add_transition</span><span class="p">(</span><span class="s2">&quot;黄灯&quot;</span><span class="p">,</span> <span class="s2">&quot;timer&quot;</span><span class="p">,</span> <span class="s2">&quot;红灯&quot;</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">light</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>  <span class="c1"># 红灯</span>
+<span class="n">light</span><span class="o">.</span><span class="n">trigger</span><span class="p">(</span><span class="s2">&quot;timer&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">light</span><span class="o">.</span><span class="n">state</span><span class="p">)</span>  <span class="c1"># 绿灯</span>
+</code></pre></div>
+<h3 id="22">2.2 带动作的状态机</h3>
+<p>实际应用中，状态转移时通常需要执行一些动作（回调函数）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">ActionFSM</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;带动作回调的状态机&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">initial_state</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">initial_state</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">transitions</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># {(state, event): (new_state, callback)}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">callbacks</span> <span class="o">=</span> <span class="p">{}</span>    <span class="c1"># {state: on_enter_callback}</span>
+
+    <span class="k">def</span> <span class="nf">add_transition</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">from_state</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">to_state</span><span class="p">,</span> <span class="n">action</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">transitions</span><span class="p">[(</span><span class="n">from_state</span><span class="p">,</span> <span class="n">event</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span><span class="n">to_state</span><span class="p">,</span> <span class="n">action</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_enter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span><span class="p">,</span> <span class="n">callback</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;注册进入状态时的回调&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">callbacks</span><span class="p">[</span><span class="n">state</span><span class="p">]</span> <span class="o">=</span> <span class="n">callback</span>
+
+    <span class="k">def</span> <span class="nf">trigger</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">):</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="n">event</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">transitions</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;非法转移: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="si">}</span><span class="s2"> + </span><span class="si">{</span><span class="n">event</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="n">new_state</span><span class="p">,</span> <span class="n">action</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">transitions</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+        <span class="n">old_state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span>
+
+        <span class="c1"># 执行转移时的动作</span>
+        <span class="k">if</span> <span class="n">action</span><span class="p">:</span>
+            <span class="n">action</span><span class="p">(</span><span class="n">old_state</span><span class="p">,</span> <span class="n">new_state</span><span class="p">,</span> <span class="n">event</span><span class="p">)</span>
+
+        <span class="c1"># 执行进入新状态的回调</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">new_state</span>
+        <span class="k">if</span> <span class="n">new_state</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">callbacks</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">callbacks</span><span class="p">[</span><span class="n">new_state</span><span class="p">](</span><span class="n">new_state</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">new_state</span>
+</code></pre></div>
+<h3 id="23">2.3 状态转移表（可视化）</h3>
+<table>
+<thead>
+<tr>
+<th>当前状态</th>
+<th>事件</th>
+<th>下一状态</th>
+<th>动作</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>等待出发</td>
+<td>输入城市</td>
+<td>等待目的</td>
+<td>保存出发城市</td>
+</tr>
+<tr>
+<td>等待目的</td>
+<td>输入城市</td>
+<td>等待日期</td>
+<td>保存目的城市</td>
+</tr>
+<tr>
+<td>等待日期</td>
+<td>输入日期</td>
+<td>确认订单</td>
+<td>保存日期</td>
+</tr>
+<tr>
+<td>确认订单</td>
+<td>确认</td>
+<td>完成</td>
+<td>提交订单</td>
+</tr>
+<tr>
+<td>确认订单</td>
+<td>取消</td>
+<td>初始</td>
+<td>清空数据</td>
+</tr>
+<tr>
+<td>任何状态</td>
+<td>退出</td>
+<td>结束</td>
+<td>清理资源</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">三、对话状态机设计</h2>
+<h3 id="31">3.1 对话状态定义</h3>
+<p>一个典型的客服机器人需要以下状态：</p>
+<pre class="plain"><code>                         ┌─────────────┐
+                         │   初始状态   │
+                         │   GREET     │
+                         └──────┬──────┘
+                                │ 用户发消息
+                                ▼
+                         ┌─────────────┐
+                    ┌───▶│  理解意图    │
+                    │    │  UNDERSTAND │
+                    │    └──────┬──────┘
+                    │           │ 识别到意图
+                    │           ▼
+                    │    ┌─────────────┐
+                    │    │  收集信息    │◀─────┐
+                    │    │  COLLECT     │      │ 信息不完整
+                    │    └──────┬──────┘      │
+                    │           │ 信息完整      │
+                    │           ▼              │
+                    │    ┌─────────────┐      │
+                    │    │  执行操作    │      │
+                    │    │  EXECUTE     │      │
+                    │    └──────┬──────┘      │
+                    │           │ 执行失败      │
+                    │           └──────────────┘
+                    │
+                    │ 用户重新提问
+                    └──────────────────────────┘
+</code></pre>
+<h3 id="32-slot">3.2 槽位（Slot）概念</h3>
+<p>槽位是对话中需要填充的信息字段，类似函数的参数：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 订机票场景的槽位定义</span>
+<span class="n">SLOTS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;book_flight&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;departure&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>  <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;请问出发城市？&quot;</span><span class="p">},</span>
+        <span class="s2">&quot;destination&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;请问目的地？&quot;</span><span class="p">},</span>
+        <span class="s2">&quot;date&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span>       <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;请问出发日期？&quot;</span><span class="p">},</span>
+        <span class="s2">&quot;passengers&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;请问几位乘客？&quot;</span><span class="p">,</span> <span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">},</span>
+    <span class="p">},</span>
+    <span class="s2">&quot;check_order&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;order_id&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;请提供订单号？&quot;</span><span class="p">},</span>
+    <span class="p">},</span>
+    <span class="s2">&quot;cancel_order&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="s2">&quot;order_id&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;请提供要取消的订单号？&quot;</span><span class="p">},</span>
+        <span class="s2">&quot;reason&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;required&quot;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span> <span class="s2">&quot;question&quot;</span><span class="p">:</span> <span class="s2">&quot;取消原因是什么？&quot;</span><span class="p">},</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="33">3.3 意图识别 + 槽位填充流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[用户输入] --&gt; B[NLP 意图识别]
+    B --&gt; C{识别到意图?}
+    C --&gt;|是| D[加载对应槽位定义]
+    C --&gt;|否| E[闲聊/兜底回复]
+    D --&gt; F[从输入提取槽位值]
+    F --&gt; G{所有必填槽位已填充?}
+    G --&gt;|是| H[执行操作]
+    G --&gt;|否| I[追问缺失槽位]
+    I --&gt; J[用户回复]
+    J --&gt; F
+    H --&gt; K{操作成功?}
+    K --&gt;|是| L[回复结果]
+    K --&gt;|否| M[回复错误]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[用户输入] --&gt; B[NLP 意图识别]
+    B --&gt; C{识别到意图?}
+    C --&gt;|是| D[加载对应槽位定义]
+    C --&gt;|否| E[闲聊/兜底回复]
+    D --&gt; F[从输入提取槽位值]
+    F --&gt; G{所有必填槽位已填充?}
+    G --&gt;|是| H[执行操作]
+    G --&gt;|否| I[追问缺失槽位]
+    I --&gt; J[用户回复]
+    J --&gt; F
+    H --&gt; K{操作成功?}
+    K --&gt;|是| L[回复结果]
+    K --&gt;|否| M[回复错误]
+</code></pre></div>
+<hr>
+<h2 id="_5">四、完整实战：客服聊天机器人</h2>
+<h3 id="41">4.1 架构设计</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────┐
+│                  ChatBot                         │
+│                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
+│  │ NLP 引擎  │→│ 状态管理器 │→│ 动作执行器    │   │
+│  │ (意图+NER)│  │ (FSM)    │  │ (业务逻辑)   │   │
+│  └──────────┘  └──────────┘  └──────────────┘   │
+│       ↑              │              ↓            │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
+│  │ 用户输入  │  │ 对话历史  │  │ 回复生成     │   │
+│  └──────────┘  └──────────┘  └──────────────┘   │
+└─────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="42">4.2 核心组件</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">enum</span> <span class="kn">import</span> <span class="n">Enum</span><span class="p">,</span> <span class="n">auto</span>
+<span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Any</span>
+<span class="kn">import</span> <span class="nn">re</span>
+
+
+<span class="k">class</span> <span class="nc">Intent</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;用户意图&quot;&quot;&quot;</span>
+    <span class="n">GREET</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>          <span class="c1"># 打招呼</span>
+    <span class="n">BOOK_FLIGHT</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>    <span class="c1"># 订机票</span>
+    <span class="n">CHECK_ORDER</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>    <span class="c1"># 查询订单</span>
+    <span class="n">CANCEL_ORDER</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>   <span class="c1"># 取消订单</span>
+    <span class="n">BYE</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>            <span class="c1"># 再见</span>
+    <span class="n">UNKNOWN</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>        <span class="c1"># 未知意图</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Slot</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;槽位定义&quot;&quot;&quot;</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">required</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="n">question</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">default</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">value</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">is_filled</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">DialogueState</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;对话状态&quot;&quot;&quot;</span>
+    <span class="n">current_intent</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Intent</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">slots</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Slot</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+    <span class="n">history</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">Dict</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+    <span class="n">context</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">add_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">role</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">content</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">history</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">&quot;role&quot;</span><span class="p">:</span> <span class="n">role</span><span class="p">,</span> <span class="s2">&quot;content&quot;</span><span class="p">:</span> <span class="n">content</span><span class="p">})</span>
+
+    <span class="k">def</span> <span class="nf">get_next_slot</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Slot</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;获取下一个需要填充的槽位&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">slot</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">slots</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">slot</span><span class="o">.</span><span class="n">required</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">slot</span><span class="o">.</span><span class="n">is_filled</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">slot</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">all_slots_filled</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">all</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">is_filled</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">slots</span><span class="o">.</span><span class="n">values</span><span class="p">()</span> <span class="k">if</span> <span class="n">s</span><span class="o">.</span><span class="n">required</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">NLPProcessor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;简化版 NLP 处理器&quot;&quot;&quot;</span>
+
+    <span class="c1"># 意图关键词映射</span>
+    <span class="n">INTENT_KEYWORDS</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">Intent</span><span class="o">.</span><span class="n">BOOK_FLIGHT</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;订机票&quot;</span><span class="p">,</span> <span class="s2">&quot;买机票&quot;</span><span class="p">,</span> <span class="s2">&quot;航班&quot;</span><span class="p">,</span> <span class="s2">&quot;飞&quot;</span><span class="p">],</span>
+        <span class="n">Intent</span><span class="o">.</span><span class="n">CHECK_ORDER</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;查询订单&quot;</span><span class="p">,</span> <span class="s2">&quot;查订单&quot;</span><span class="p">,</span> <span class="s2">&quot;订单状态&quot;</span><span class="p">,</span> <span class="s2">&quot;我的订单&quot;</span><span class="p">],</span>
+        <span class="n">Intent</span><span class="o">.</span><span class="n">CANCEL_ORDER</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;取消订单&quot;</span><span class="p">,</span> <span class="s2">&quot;退票&quot;</span><span class="p">,</span> <span class="s2">&quot;不要了&quot;</span><span class="p">],</span>
+        <span class="n">Intent</span><span class="o">.</span><span class="n">GREET</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;你好&quot;</span><span class="p">,</span> <span class="s2">&quot;嗨&quot;</span><span class="p">,</span> <span class="s2">&quot;您好&quot;</span><span class="p">,</span> <span class="s2">&quot;hi&quot;</span><span class="p">,</span> <span class="s2">&quot;hello&quot;</span><span class="p">],</span>
+        <span class="n">Intent</span><span class="o">.</span><span class="n">BYE</span><span class="p">:</span> <span class="p">[</span><span class="s2">&quot;再见&quot;</span><span class="p">,</span> <span class="s2">&quot;拜拜&quot;</span><span class="p">,</span> <span class="s2">&quot;bye&quot;</span><span class="p">,</span> <span class="s2">&quot;quit&quot;</span><span class="p">,</span> <span class="s2">&quot;退出&quot;</span><span class="p">],</span>
+    <span class="p">}</span>
+
+    <span class="c1"># 城市识别（简化）</span>
+    <span class="n">CITIES</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;北京&quot;</span><span class="p">,</span> <span class="s2">&quot;上海&quot;</span><span class="p">,</span> <span class="s2">&quot;广州&quot;</span><span class="p">,</span> <span class="s2">&quot;深圳&quot;</span><span class="p">,</span> <span class="s2">&quot;成都&quot;</span><span class="p">,</span> <span class="s2">&quot;杭州&quot;</span><span class="p">,</span> <span class="s2">&quot;武汉&quot;</span><span class="p">,</span> <span class="s2">&quot;重庆&quot;</span><span class="p">,</span> <span class="s2">&quot;西安&quot;</span><span class="p">,</span> <span class="s2">&quot;南京&quot;</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">identify_intent</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Intent</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;识别用户意图&quot;&quot;&quot;</span>
+        <span class="n">text_lower</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">intent</span><span class="p">,</span> <span class="n">keywords</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">INTENT_KEYWORDS</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">for</span> <span class="n">kw</span> <span class="ow">in</span> <span class="n">keywords</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">kw</span> <span class="ow">in</span> <span class="n">text_lower</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="n">intent</span>
+        <span class="k">return</span> <span class="n">Intent</span><span class="o">.</span><span class="n">UNKNOWN</span>
+
+    <span class="k">def</span> <span class="nf">extract_entities</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">slot_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;提取实体（简化版 NER）&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">slot_name</span> <span class="o">==</span> <span class="s2">&quot;departure&quot;</span> <span class="ow">or</span> <span class="n">slot_name</span> <span class="o">==</span> <span class="s2">&quot;destination&quot;</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">city</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">CITIES</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">city</span> <span class="ow">in</span> <span class="n">text</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="n">city</span>
+        <span class="k">elif</span> <span class="n">slot_name</span> <span class="o">==</span> <span class="s2">&quot;date&quot;</span><span class="p">:</span>
+            <span class="c1"># 简单日期提取</span>
+            <span class="n">date_patterns</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="sa">r</span><span class="s2">&quot;(\d{1,2})月(\d{1,2})[日号]&quot;</span><span class="p">,</span>
+                <span class="sa">r</span><span class="s2">&quot;(明天|后天|大后天|今天)&quot;</span><span class="p">,</span>
+                <span class="sa">r</span><span class="s2">&quot;(下[一二三四五六日天])&quot;</span><span class="p">,</span>
+                <span class="sa">r</span><span class="s2">&quot;(\d</span><span class="si">{4}</span><span class="s2">[-/]\d{1,2}[-/]\d{1,2})&quot;</span><span class="p">,</span>
+            <span class="p">]</span>
+            <span class="k">for</span> <span class="n">pattern</span> <span class="ow">in</span> <span class="n">date_patterns</span><span class="p">:</span>
+                <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">match</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">slot_name</span> <span class="o">==</span> <span class="s2">&quot;order_id&quot;</span><span class="p">:</span>
+            <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;[A-Za-z0-9]{8,}&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">match</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">slot_name</span> <span class="o">==</span> <span class="s2">&quot;passengers&quot;</span><span class="p">:</span>
+            <span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;(\d+)\s*[位个名人]&quot;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">match</span><span class="p">:</span>
+                <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">))</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">class</span> <span class="nc">ChatBot</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;客服聊天机器人&quot;&quot;&quot;</span>
+
+    <span class="c1"># 意图对应的槽位模板</span>
+    <span class="n">SLOT_TEMPLATES</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">Intent</span><span class="o">.</span><span class="n">BOOK_FLIGHT</span><span class="p">:</span> <span class="p">[</span>
+            <span class="n">Slot</span><span class="p">(</span><span class="s2">&quot;departure&quot;</span><span class="p">,</span> <span class="n">question</span><span class="o">=</span><span class="s2">&quot;请问从哪个城市出发？&quot;</span><span class="p">),</span>
+            <span class="n">Slot</span><span class="p">(</span><span class="s2">&quot;destination&quot;</span><span class="p">,</span> <span class="n">question</span><span class="o">=</span><span class="s2">&quot;请问目的地是哪里？&quot;</span><span class="p">),</span>
+            <span class="n">Slot</span><span class="p">(</span><span class="s2">&quot;date&quot;</span><span class="p">,</span> <span class="n">question</span><span class="o">=</span><span class="s2">&quot;请问出发日期？&quot;</span><span class="p">),</span>
+            <span class="n">Slot</span><span class="p">(</span><span class="s2">&quot;passengers&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">question</span><span class="o">=</span><span class="s2">&quot;请问几位乘客？&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">Intent</span><span class="o">.</span><span class="n">CHECK_ORDER</span><span class="p">:</span> <span class="p">[</span>
+            <span class="n">Slot</span><span class="p">(</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="n">question</span><span class="o">=</span><span class="s2">&quot;请提供订单号？&quot;</span><span class="p">),</span>
+        <span class="p">],</span>
+        <span class="n">Intent</span><span class="o">.</span><span class="n">CANCEL_ORDER</span><span class="p">:</span> <span class="p">[</span>
+            <span class="n">Slot</span><span class="p">(</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="n">question</span><span class="o">=</span><span class="s2">&quot;请提供要取消的订单号？&quot;</span><span class="p">),</span>
+            <span class="n">Slot</span><span class="p">(</span><span class="s2">&quot;reason&quot;</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">question</span><span class="o">=</span><span class="s2">&quot;取消原因是什么？&quot;</span><span class="p">),</span>
+        <span class="p">],</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">nlp</span> <span class="o">=</span> <span class="n">NLPProcessor</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">DialogueState</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_init_state</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">_init_state</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;初始化/重置对话状态&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="n">DialogueState</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">process_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">user_input</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;处理用户消息，返回回复&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">add_message</span><span class="p">(</span><span class="s2">&quot;user&quot;</span><span class="p">,</span> <span class="n">user_input</span><span class="p">)</span>
+
+        <span class="c1"># 1. 识别意图</span>
+        <span class="n">intent</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">nlp</span><span class="o">.</span><span class="n">identify_intent</span><span class="p">(</span><span class="n">user_input</span><span class="p">)</span>
+
+        <span class="c1"># 2. 处理特殊意图</span>
+        <span class="k">if</span> <span class="n">intent</span> <span class="o">==</span> <span class="n">Intent</span><span class="o">.</span><span class="n">GREET</span><span class="p">:</span>
+            <span class="n">reply</span> <span class="o">=</span> <span class="s2">&quot;您好！我是智能客服，可以帮您订机票、查询订单、取消订单。请问有什么可以帮您？&quot;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">add_message</span><span class="p">(</span><span class="s2">&quot;bot&quot;</span><span class="p">,</span> <span class="n">reply</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">reply</span>
+
+        <span class="k">if</span> <span class="n">intent</span> <span class="o">==</span> <span class="n">Intent</span><span class="o">.</span><span class="n">BYE</span><span class="p">:</span>
+            <span class="n">reply</span> <span class="o">=</span> <span class="s2">&quot;感谢您的咨询，再见！👋&quot;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_init_state</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">add_message</span><span class="p">(</span><span class="s2">&quot;bot&quot;</span><span class="p">,</span> <span class="n">reply</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">reply</span>
+
+        <span class="c1"># 3. 如果当前正在收集信息（有未完成的槽位），继续填充</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">current_intent</span> <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">all_slots_filled</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_fill_slots</span><span class="p">(</span><span class="n">user_input</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_continue_collection</span><span class="p">()</span>
+
+        <span class="c1"># 4. 新意图</span>
+        <span class="k">if</span> <span class="n">intent</span> <span class="o">==</span> <span class="n">Intent</span><span class="o">.</span><span class="n">UNKNOWN</span><span class="p">:</span>
+            <span class="n">reply</span> <span class="o">=</span> <span class="s2">&quot;抱歉，我没理解您的意思。我可以帮您：</span><span class="se">\n</span><span class="s2">1. 订机票</span><span class="se">\n</span><span class="s2">2. 查询订单</span><span class="se">\n</span><span class="s2">3. 取消订单</span><span class="se">\n</span><span class="s2">请问您需要什么服务？&quot;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">add_message</span><span class="p">(</span><span class="s2">&quot;bot&quot;</span><span class="p">,</span> <span class="n">reply</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">reply</span>
+
+        <span class="c1"># 5. 开始新的意图处理</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">current_intent</span> <span class="o">=</span> <span class="n">intent</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">slots</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">slot_template</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">SLOT_TEMPLATES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">intent</span><span class="p">,</span> <span class="p">[]):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">slots</span><span class="p">[</span><span class="n">slot_template</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">Slot</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="n">slot_template</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                <span class="n">required</span><span class="o">=</span><span class="n">slot_template</span><span class="o">.</span><span class="n">required</span><span class="p">,</span>
+                <span class="n">question</span><span class="o">=</span><span class="n">slot_template</span><span class="o">.</span><span class="n">question</span><span class="p">,</span>
+                <span class="n">default</span><span class="o">=</span><span class="n">slot_template</span><span class="o">.</span><span class="n">default</span><span class="p">,</span>
+            <span class="p">)</span>
+
+        <span class="c1"># 尝试从当前输入提取槽位</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_fill_slots</span><span class="p">(</span><span class="n">user_input</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_continue_collection</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">_fill_slots</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;从文本中提取槽位值&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">slot</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">slots</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">slot</span><span class="o">.</span><span class="n">is_filled</span><span class="p">:</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">nlp</span><span class="o">.</span><span class="n">extract_entities</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">slot</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">slot</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">value</span>
+
+    <span class="k">def</span> <span class="nf">_continue_collection</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;继续收集信息或执行操作&quot;&quot;&quot;</span>
+        <span class="n">next_slot</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">get_next_slot</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">next_slot</span><span class="p">:</span>
+            <span class="n">reply</span> <span class="o">=</span> <span class="n">next_slot</span><span class="o">.</span><span class="n">question</span>
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">all_slots_filled</span><span class="p">():</span>
+            <span class="n">reply</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_execute_action</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">reply</span> <span class="o">=</span> <span class="s2">&quot;抱歉，处理中遇到问题。&quot;</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">add_message</span><span class="p">(</span><span class="s2">&quot;bot&quot;</span><span class="p">,</span> <span class="n">reply</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">reply</span>
+
+    <span class="k">def</span> <span class="nf">_execute_action</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;执行业务操作&quot;&quot;&quot;</span>
+        <span class="n">intent</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">current_intent</span>
+        <span class="n">slots</span> <span class="o">=</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span><span class="o">.</span><span class="n">value</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="o">.</span><span class="n">slots</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+        <span class="k">if</span> <span class="n">intent</span> <span class="o">==</span> <span class="n">Intent</span><span class="o">.</span><span class="n">BOOK_FLIGHT</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;✅ 订票成功！</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;  出发：</span><span class="si">{</span><span class="n">slots</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;departure&#39;</span><span class="p">)</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;  目的地：</span><span class="si">{</span><span class="n">slots</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;destination&#39;</span><span class="p">)</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;  日期：</span><span class="si">{</span><span class="n">slots</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;date&#39;</span><span class="p">)</span><span class="si">}</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;  乘客：</span><span class="si">{</span><span class="n">slots</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;passengers&#39;</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">)</span><span class="si">}</span><span class="s2"> 位</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;  订单号：FL</span><span class="si">{</span><span class="nb">hash</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">slots</span><span class="p">))</span><span class="w"> </span><span class="o">%</span><span class="w"> </span><span class="mi">100000</span><span class="si">:</span><span class="s2">06d</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+        <span class="k">elif</span> <span class="n">intent</span> <span class="o">==</span> <span class="n">Intent</span><span class="o">.</span><span class="n">CHECK_ORDER</span><span class="p">:</span>
+            <span class="n">order_id</span> <span class="o">=</span> <span class="n">slots</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;order_id&#39;</span><span class="p">,</span> <span class="s1">&#39;未知&#39;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;📋 订单 </span><span class="si">{</span><span class="n">order_id</span><span class="si">}</span><span class="s2"> 状态：已支付，等待出票&quot;</span>
+        <span class="k">elif</span> <span class="n">intent</span> <span class="o">==</span> <span class="n">Intent</span><span class="o">.</span><span class="n">CANCEL_ORDER</span><span class="p">:</span>
+            <span class="n">order_id</span> <span class="o">=</span> <span class="n">slots</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;order_id&#39;</span><span class="p">,</span> <span class="s1">&#39;未知&#39;</span><span class="p">)</span>
+            <span class="n">reason</span> <span class="o">=</span> <span class="n">slots</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;reason&#39;</span><span class="p">,</span> <span class="s1">&#39;未说明&#39;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;❌ 订单 </span><span class="si">{</span><span class="n">order_id</span><span class="si">}</span><span class="s2"> 已取消（原因：</span><span class="si">{</span><span class="n">reason</span><span class="si">}</span><span class="s2">）&quot;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;操作已完成。&quot;</span>
+
+        <span class="c1"># 重置状态，准备下一轮对话</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_init_state</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="43">4.3 运行效果</h3>
+<pre class="plain"><code>🤖 智能客服已启动！输入 quit 退出。
+
+你: 你好
+机器人: 您好！我是智能客服，可以帮您订机票、查询订单、取消订单。请问有什么可以帮您？
+
+你: 我要订机票
+机器人: 请问从哪个城市出发？
+
+你: 北京
+机器人: 请问目的地是哪里？
+
+你: 上海
+机器人: 请问出发日期？
+
+你: 明天
+机器人: ✅ 订票成功！
+  出发：北京
+  目的地：上海
+  日期：明天
+  乘客：1 位
+  订单号：FL482917
+
+你: 我要查订单
+机器人: 请提供订单号？
+
+你: FL482917
+机器人: 📋 订单 FL482917 状态：已支付，等待出票
+
+你: 再见
+机器人: 感谢您的咨询，再见！👋
+</code></pre>
+<hr>
+<h2 id="_6">五、进阶：状态机的高级用法</h2>
+<h3 id="51">5.1 状态嵌套（层级状态机）</h3>
+<p>复杂对话可能有嵌套状态：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">HierarchicalState</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;层级状态机 - 支持子状态&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">parent</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="n">parent</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">children</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">current_child</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">add_child</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">child_state</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="n">child_state</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">child_state</span>
+
+    <span class="k">def</span> <span class="nf">enter</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;进入状态时调用&quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  → 进入状态: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">exit</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;退出状态时调用&quot;&quot;&quot;</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  ← 退出状态: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">current_child</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">current_child</span><span class="p">]</span><span class="o">.</span><span class="n">exit</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">current_child</span> <span class="o">=</span> <span class="kc">None</span>
+
+
+<span class="k">class</span> <span class="nc">HierarchicalFSM</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;层级状态机&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">root</span> <span class="o">=</span> <span class="n">HierarchicalState</span><span class="p">(</span><span class="s2">&quot;root&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">current</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">root</span>
+
+    <span class="k">def</span> <span class="nf">add_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">parent_name</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">state</span> <span class="o">=</span> <span class="n">HierarchicalState</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">parent_name</span><span class="p">:</span>
+            <span class="n">parent</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_find_state</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">root</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">parent</span><span class="p">:</span>
+                <span class="n">parent</span><span class="o">.</span><span class="n">add_child</span><span class="p">(</span><span class="n">state</span><span class="p">)</span>
+                <span class="n">state</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="n">parent</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">root</span><span class="o">.</span><span class="n">add_child</span><span class="p">(</span><span class="n">state</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">state</span>
+
+    <span class="k">def</span> <span class="nf">_find_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="n">name</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">node</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">children</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_find_state</span><span class="p">(</span><span class="n">child</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">result</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">result</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">transition_to</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state_name</span><span class="p">):</span>
+        <span class="c1"># 退出当前状态链</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">current</span><span class="o">.</span><span class="n">exit</span><span class="p">()</span>
+        <span class="c1"># 进入新状态链</span>
+        <span class="n">new_state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_find_state</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">root</span><span class="p">,</span> <span class="n">state_name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">new_state</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">current</span> <span class="o">=</span> <span class="n">new_state</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">current</span><span class="o">.</span><span class="n">enter</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="52">5.2 并行状态机</h3>
+<p>某些场景下，机器人需要同时处理多个状态（如等待用户输入的同时处理超时）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+
+<span class="k">class</span> <span class="nc">ParallelFSM</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;并行状态机 - 支持多个并发状态机&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state_machines</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">locks</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span> <span class="nf">add_machine</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">initial_state</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state_machines</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">SimpleFSM</span><span class="p">(</span><span class="n">initial_state</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">locks</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">trigger</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">machine_name</span><span class="p">,</span> <span class="n">event</span><span class="p">):</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">locks</span><span class="p">[</span><span class="n">machine_name</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">state_machines</span><span class="p">[</span><span class="n">machine_name</span><span class="p">]</span><span class="o">.</span><span class="n">trigger</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get_state</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">machine_name</span><span class="p">):</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">locks</span><span class="p">[</span><span class="n">machine_name</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">state_machines</span><span class="p">[</span><span class="n">machine_name</span><span class="p">]</span><span class="o">.</span><span class="n">state</span>
+</code></pre></div>
+<h3 id="53">5.3 状态机可视化</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">visualize_fsm</span><span class="p">(</span><span class="n">fsm</span><span class="p">,</span> <span class="n">title</span><span class="o">=</span><span class="s2">&quot;FSM&quot;</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;将状态机导出为 Mermaid 图&quot;&quot;&quot;</span>
+    <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;stateDiagram-v2&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;    title </span><span class="si">{</span><span class="n">title</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
+    <span class="k">for</span> <span class="p">(</span><span class="n">from_state</span><span class="p">,</span> <span class="n">event</span><span class="p">),</span> <span class="n">to_state</span> <span class="ow">in</span> <span class="n">fsm</span><span class="o">.</span><span class="n">transitions</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;    </span><span class="si">{</span><span class="n">from_state</span><span class="si">}</span><span class="s2"> --&gt; </span><span class="si">{</span><span class="n">to_state</span><span class="si">}</span><span class="s2"> : </span><span class="si">{</span><span class="n">event</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_7">六、状态机设计模式</h2>
+<h3 id="61">6.1 常见模式对比</h3>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>适用场景</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>查表法</td>
+<td>简单状态机</td>
+<td>直观、易维护</td>
+<td>状态多时表格庞大</td>
+</tr>
+<tr>
+<td>状态模式（OOP）</td>
+<td>复杂状态逻辑</td>
+<td>每个状态独立封装</td>
+<td>类数量多</td>
+</tr>
+<tr>
+<td>表驱动</td>
+<td>规则明确的系统</td>
+<td>数据驱动、易配置</td>
+<td>灵活性较低</td>
+</tr>
+<tr>
+<td>行为树</td>
+<td>游戏 AI</td>
+<td>可视化、易调试</td>
+<td>学习成本高</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-state-pattern">6.2 状态模式（State Pattern）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+
+
+<span class="k">class</span> <span class="nc">State</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;状态基类&quot;&quot;&quot;</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">user_input</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span> <span class="nf">get_prompt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+
+<span class="k">class</span> <span class="nc">IdleState</span><span class="p">(</span><span class="n">State</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;空闲状态&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">user_input</span><span class="p">):</span>
+        <span class="n">intent</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">nlp</span><span class="o">.</span><span class="n">identify_intent</span><span class="p">(</span><span class="n">user_input</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">intent</span> <span class="ow">in</span> <span class="n">context</span><span class="o">.</span><span class="n">SLOT_TEMPLATES</span><span class="p">:</span>
+            <span class="n">context</span><span class="o">.</span><span class="n">current_intent</span> <span class="o">=</span> <span class="n">intent</span>
+            <span class="n">context</span><span class="o">.</span><span class="n">slots</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="n">s</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">Slot</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">s</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">required</span><span class="o">=</span><span class="n">s</span><span class="o">.</span><span class="n">required</span><span class="p">,</span>
+                           <span class="n">question</span><span class="o">=</span><span class="n">s</span><span class="o">.</span><span class="n">question</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">s</span><span class="o">.</span><span class="n">default</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="n">context</span><span class="o">.</span><span class="n">SLOT_TEMPLATES</span><span class="p">[</span><span class="n">intent</span><span class="p">]</span>
+            <span class="p">}</span>
+            <span class="k">return</span> <span class="n">CollectingState</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="nf">get_prompt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;您好！请问有什么可以帮您？&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">CollectingState</span><span class="p">(</span><span class="n">State</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;收集信息状态&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">user_input</span><span class="p">):</span>
+        <span class="n">context</span><span class="o">.</span><span class="n">fill_slots</span><span class="p">(</span><span class="n">user_input</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">context</span><span class="o">.</span><span class="n">all_slots_filled</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">ExecutingState</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="nf">get_prompt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="n">next_slot</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">get_next_slot</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">next_slot</span><span class="o">.</span><span class="n">question</span> <span class="k">if</span> <span class="n">next_slot</span> <span class="k">else</span> <span class="s2">&quot;处理中...&quot;</span>
+
+
+<span class="k">class</span> <span class="nc">ExecutingState</span><span class="p">(</span><span class="n">State</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;执行操作状态&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">handle</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">user_input</span><span class="p">):</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">execute_action</span><span class="p">()</span>
+        <span class="n">context</span><span class="o">.</span><span class="n">last_result</span> <span class="o">=</span> <span class="n">result</span>
+        <span class="k">return</span> <span class="n">IdleState</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">get_prompt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">context</span><span class="o">.</span><span class="n">last_result</span> <span class="ow">or</span> <span class="s2">&quot;操作完成&quot;</span>
+</code></pre></div>
+<hr>
+<h2 id="_8">七、思考题</h2>
+<ol>
+<li>
+<p><strong>状态爆炸问题</strong>：如果一个聊天机器人要支持 10 种意图，每种意图平均 4 个槽位，理论上需要多少个状态？如何用层级状态机减少状态数量？</p>
+</li>
+<li>
+<p><strong>并发处理</strong>：当用户在等待系统响应时发来新消息，你的状态机应该如何处理？设计一个"中断-恢复"机制。</p>
+</li>
+<li>
+<p><strong>错误恢复</strong>：用户输入了一个无效的城市名（如"火星"），状态机应该如何优雅地处理？设计一个错误恢复流程。</p>
+</li>
+<li>
+<p><strong>持久化</strong>：对话状态需要保存到数据库以便会话恢复，你会如何序列化状态机的状态？哪些信息需要持久化，哪些可以丢弃？</p>
+</li>
+<li>
+<p><strong>多用户并发</strong>：一个服务器上运行的状态机需要同时服务 1000 个用户，如何设计才能保证每个用户的会话互不干扰？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_9">📚 扩展阅读</h2>
+<ul>
+<li><a href="https://refactoring.guru/design-patterns/state">经典状态模式 - Refactoring.Guru</a></li>
+<li><a href="https://rasa.com/docs/rasa/">对话系统架构 - Rasa 文档</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Finite-state_machine">有限状态机 - Wikipedia</a></li>
+<li><a href="http://www.gameaipro.com/">行为树 vs 状态机 - Game AI Pro</a></li>
+</ul>
+<hr>
+<blockquote>
+<p>💡 <strong>今日关键点</strong>：状态机是管理复杂对话流程的核心工具。它让机器人从"一问一答"进化到"理解上下文的多轮对话"。掌握状态机设计，是构建真正智能对话系统的基础。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-086/index.html">← Day 86 NLP 基础：NLTK 与 spaCy</a><a class="nav-next" href="../day-088/index.html">Day 88 Pygame 框架入门 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

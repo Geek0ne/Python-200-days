@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 55 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 55 正文</a>
+  <h1>Day 55 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-055">Day 055 — 进程并发图解</h1>
+<h2 id="1-vs">1. 进程 vs 线程架构对比</h2>
+<pre class="plain"><code>┌───────────────────────────────────────────────────────────┐
+│                    线程模型 (Threading)                     │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │              进程 (Process)                           │  │
+│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐    │  │
+│  │  │ Thread 1   │  │ Thread 2   │  │ Thread 3   │    │  │
+│  │  │            │  │            │  │            │    │  │
+│  │  │  堆内存    │  │  堆内存    │  │  堆内存    │    │  │
+│  │  │  (共享)    │  │  (共享)    │  │  (共享)    │    │  │
+│  │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘    │  │
+│  │        │               │               │            │  │
+│  │        └───────────────┼───────────────┘            │  │
+│  │                        ▼                            │  │
+│  │              ┌─────────────────┐                    │  │
+│  │              │  🔒 GIL (全局锁) │                    │  │
+│  │              │  同一时刻只有     │                    │  │
+│  │              │  一个线程执行     │                    │  │
+│  │              └─────────────────┘                    │  │
+│  └──────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────┐
+│                    进程模型 (Multiprocessing)               │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐         │
+│  │ Process 1  │  │ Process 2  │  │ Process 3  │         │
+│  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │         │
+│  │ │ 🐍 Py  │ │  │ │ 🐍 Py  │ │  │ │ 🐍 Py  │ │         │
+│  │ │ 解释器 │ │  │ │ 解释器 │ │  │ │ 解释器 │ │         │
+│  │ │ + GIL  │ │  │ │ + GIL  │ │  │ │ + GIL  │ │         │
+│  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │         │
+│  │ ┌────────┐ │  │ ┌────────┐ │  │ ┌────────┐ │         │
+│  │ │ 独立   │ │  │ │ 独立   │ │  │ │ 独立   │ │         │
+│  │ │ 内存   │ │  │ │ 内存   │ │  │ │ 内存   │ │         │
+│  │ └────────┘ │  │ └────────┘ │  │ └────────┘ │         │
+│  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘         │
+│        │               │               │                  │
+│        └───────────────┼───────────────┘                  │
+│                        ▼                                  │
+│              ┌─────────────────┐                          │
+│              │  📡 IPC 通信     │                          │
+│              │  Queue/Pipe/    │                          │
+│              │  SharedMem      │                          │
+│              └─────────────────┘                          │
+│                                                           │
+│  ✅ 各进程 GIL 独立 → 多核并行                           │
+└───────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="2-multiprocessingprocess">2. multiprocessing.Process 生命周期</h2>
+<pre class="plain"><code>创建 Process 对象
+        │
+        ▼
+    start() ──────────────────────────────────────┐
+        │                                          │
+        ▼                                          ▼
+  ┌──────────┐                            ┌──────────────┐
+  │ 主进程   │                            │   子进程     │
+  │ 继续执行 │                            │ 执行 target  │
+  └────┬─────┘                            └──────┬───────┘
+       │                                         │
+       │ join() ───→ 阻塞等待                     │ 完成/异常
+       │                                         │
+       ▼                                         ▼
+  ┌──────────┐                            ┌──────────────┐
+  │ 获取     │                            │ exitcode:    │
+  │ exitcode │                            │  0  = 正常   │
+  │          │                            │ &gt;0 = 异常    │
+  └──────────┘                            │ &lt;0 = 被终止  │
+                                          └──────────────┘
+
+  terminate() ──→ 强制终止子进程（发送 SIGTERM）
+  kill()       ──→ 强制杀死子进程（发送 SIGKILL）
+</code></pre>
+<h2 id="3-queue">3. Queue 内部结构</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────────┐
+│                multiprocessing.Queue              │
+│                                                   │
+│  生产者进程                   消费者进程           │
+│      │                            │               │
+│      │  put(item)                 │  get()        │
+│      ▼                            ▲               │
+│  ┌──────────┐   ┌──────┐   ┌──────────┐         │
+│  │ Buffer   │──▶│ Pipe │──▶│ Buffer   │         │
+│  │ (feeder) │   │      │   │ (reader) │         │
+│  └──────────┘   └──────┘   └──────────┘         │
+│       │                            │               │
+│       └────────┬───────────────────┘               │
+│                ▼                                   │
+│         ┌────────────┐                            │
+│         │  🔒 Lock   │  线程安全 &amp; 进程安全        │
+│         └────────────┘                            │
+│                                                   │
+│  put_nowait() → 队列满抛 Full                     │
+│  get_nowait() → 队列空抛 Empty                    │
+│  qsize()/empty()/full() → 近似值，不可靠          │
+└─────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="4-pool">4. Pool 工作流程</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────┐
+│                    Pool 进程池                        │
+│                                                      │
+│  主进程                                              │
+│    │                                                 │
+│    │  pool = Pool(4)                                 │
+│    │                                                 │
+│    │  pool.map(func, [1,2,3,4,5,6,7,8])             │
+│    │         │                                       │
+│    │         ▼                                       │
+│    │  ┌─────────────────────────────────────────┐   │
+│    │  │  任务分发器 (Task Distributor)           │   │
+│    │  └──┬────────┬────────┬────────┬──────────┘   │
+│    │     │        │        │        │               │
+│    │     ▼        ▼        ▼        ▼               │
+│    │  ┌──────┐┌──────┐┌──────┐┌──────┐            │
+│    │  │W-1   ││W-2   ││W-3   ││W-4   │            │
+│    │  │func(1)││func(2)││func(3)││func(4)│            │
+│    │  └──┬───┘└──┬───┘└──┬───┘└──┬───┘            │
+│    │     │       │       │       │                  │
+│    │     ▼       ▼       ▼       ▼                  │
+│    │  ┌─────────────────────────────────────────┐   │
+│    │  │  结果收集器 (Result Collector)          │   │
+│    │  └────────────────┬────────────────────────┘   │
+│    │                   │                            │
+│    │                   ▼                            │
+│    │  返回 [r1, r2, r3, r4, r5, r6, r7, r8]       │
+│    │                                                 │
+│    └── pool.map() 阻塞直到全部完成                  │
+└──────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="5">5. 进程间通信方式选择</h2>
+<pre class="plain"><code>需要进程间通信？
+        │
+        ▼
+   ┌────────────┐
+   │ 数据量大小？│
+   └─────┬──────┘
+         │
+    ┌────┴────┐
+    ▼         ▼
+  小数据    大数据
+    │         │
+    ▼         ▼
+┌────────┐ ┌────────────┐
+│简单数值│ │复杂对象？   │
+└───┬────┘ └──────┬─────┘
+    │              │
+    ▼         ┌────┴────┐
+┌────────┐   ▼         ▼
+│Value/  │  是        否
+│Array   │   │         │
+│(共享   │   ▼         ▼
+│ 内存)  │ ┌──────┐ ┌──────┐
+└────────┘ │Queue │ │Pipe  │
+           │(多对 │ │(点对 │
+           │ 多)  │ │ 点)  │
+           └──────┘ └──────┘
+               │
+               ▼
+          ┌────────┐
+          │需要共享│
+          │Python  │
+          │对象？  │
+          └───┬────┘
+              ▼
+          ┌────────┐
+          │Manager │
+          └────────┘
+</code></pre>
+<h2 id="6-fork-vs-spawn-vs-forkserver">6. fork vs spawn vs forkserver</h2>
+<pre class="plain"><code>fork（Linux 默认）              spawn（Windows/macOS 默认）
+┌──────────────┐              ┌──────────────┐
+│  父进程      │              │  父进程      │
+│  ┌────────┐  │              │  ┌────────┐  │
+│  │内存空间│  │              │  │内存空间│  │
+│  └───┬────┘  │              │  └────────┘  │
+└──────┼───────┘              └──────┬───────┘
+       │                             │
+       │ fork()                      │ 创建新解释器
+       ▼                             ▼
+┌──────────────┐              ┌──────────────┐
+│  子进程      │              │  子进程      │
+│  ┌────────┐  │              │  ┌────────┐  │
+│  │复制的  │  │              │  │全新的  │  │
+│  │内存空间│  │              │  │内存空间│  │
+│  └────────┘  │              │  └────────┘  │
+└──────────────┘              └──────────────┘
+
+✅ 快（直接复制）              ✅ 安全（无残留状态）
+❌ 不安全（继承锁/线程）       ❌ 慢（重新加载模块）
+</code></pre>
+<hr>
+<h2 id="7">7. 常用代码片段速查</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 创建子进程</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">mp</span><span class="o">.</span><span class="n">Process</span><span class="p">(</span><span class="n">target</span><span class="o">=</span><span class="n">func</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">arg1</span><span class="p">,))</span>
+<span class="n">p</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">p</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+
+<span class="c1"># 进程池</span>
+<span class="k">with</span> <span class="n">mp</span><span class="o">.</span><span class="n">Pool</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="n">iterable</span><span class="p">)</span>
+
+<span class="c1"># Queue 通信</span>
+<span class="n">queue</span> <span class="o">=</span> <span class="n">mp</span><span class="o">.</span><span class="n">Queue</span><span class="p">()</span>
+<span class="n">queue</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>  <span class="c1"># 生产</span>
+<span class="n">queue</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>      <span class="c1"># 消费</span>
+
+<span class="c1"># Pipe 通信</span>
+<span class="n">parent</span><span class="p">,</span> <span class="n">child</span> <span class="o">=</span> <span class="n">mp</span><span class="o">.</span><span class="n">Pipe</span><span class="p">()</span>
+<span class="n">parent</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+<span class="n">child</span><span class="o">.</span><span class="n">recv</span><span class="p">()</span>
+
+<span class="c1"># 共享内存</span>
+<span class="n">counter</span> <span class="o">=</span> <span class="n">mp</span><span class="o">.</span><span class="n">Value</span><span class="p">(</span><span class="s1">&#39;i&#39;</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">mp</span><span class="o">.</span><span class="n">Lock</span><span class="p">():</span>
+    <span class="n">counter</span><span class="o">.</span><span class="n">value</span> <span class="o">+=</span> <span class="mi">1</span>
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

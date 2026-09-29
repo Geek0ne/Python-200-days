@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 44 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 44 正文</a>
+  <h1>Day 44 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-44">Day 44：枚举与常量 — 图解</h1>
+<hr>
+<h2 id="1">1. 枚举底层实现原理</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────────────┐
+│                    Enum 底层实现 (EnumMeta 元类)                  │
+└─────────────────────────────────────────────────────────────────┘
+
+  class Color(Enum):         ← class Color(metaclass=EnumMeta)
+      RED = 1
+      GREEN = 2
+      BLUE = 3
+
+│
+▼ EnumMeta.__new__(mcs, name, bases, classdict)
+
+┌──────────────────────────────────────────────────────────────┐
+│ 1. 收集所有成员定义                                           │
+│    classdict = { RED: 1, GREEN: 2, BLUE: 3 }                │
+│                                                              │
+│ 2. 移除非枚举成员（方法、描述符等保留）                         │
+│                                                              │
+│ 3. 为每个成员创建实例（单例）                                   │
+│    Color.RED   = Color.__new__(Color, 1); __init__(&quot;RED&quot;)    │
+│    Color.GREEN = Color.__new__(Color, 2); __init__(&quot;GREEN&quot;)  │
+│    Color.BLUE  = Color.__new__(Color, 3); __init__(&quot;BLUE&quot;)   │
+│                                                              │
+│ 4. 将原始类属性替换为枚举成员实例                               │
+│    Color.RED   → &lt;Color.RED: 1&gt;  (单例)                       │
+│    Color.GREEN → &lt;Color.GREEN: 2&gt; (单例)                      │
+│    Color.BLUE  → &lt;Color.BLUE: 3&gt;  (单例)                      │
+│                                                              │
+│ 5. 构建反向查找映射                                            │
+│    _value2member_map_ = {1: Color.RED, 2: Color.GREEN,       │
+│                          3: Color.BLUE}                       │
+│                                                              │
+│ 6. 冻结枚举类，禁止修改成员                                    │
+└──────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="2">2. 枚举基类选择</h2>
+<pre class="plain"><code>需要哪种枚举？
+      │
+      ├── 基本命名常量集 ──────────► Enum（最常用）
+      │
+      ├── 需要与整数兼容 ──────────► IntEnum
+      │    （HTTP 状态码、协议字段）
+      │
+      ├── 需要字符串兼容 ──────────► StrEnum（Python 3.11+）
+      │    （配置键、JSON 字段名）
+      │
+      └── 需要位标志运算 ──────────► IntFlag
+           （权限组合、选项标志）
+</code></pre>
+<hr>
+<h2 id="3">3. 枚举成员查找方式</h2>
+<pre class="plain"><code>三种查找方式：
+
+  按名称查找          按值查找            按成员查找
+  Color[&quot;RED&quot;]        Color(1)            Color(Color.RED)
+       │                  │                    │
+       ▼                  ▼                    ▼
+    _member_names_    _value2member_map_      返回自身
+    [ &quot;RED&quot;,            { 1: Color.RED,
+      &quot;GREEN&quot;,           2: Color.GREEN,
+      &quot;BLUE&quot; ]           3: Color.BLUE  }
+</code></pre>
+<hr>
+<h2 id="4-auto">4. auto() 赋值机制</h2>
+<pre class="plain"><code>auto() 内部计数器（全局）：
+
+  _auto_number_incrementer = 0
+
+  每次调用 auto():
+      _auto_number_incrementer += 1
+      return _auto_number_incrementer
+
+  所以：
+      class Color(Enum):
+          RED = auto()    # → 1
+          GREEN = auto()  # → 2
+          BLUE = auto()   # → 3
+
+  注意：不同枚举类的计数器是独立的！
+</code></pre>
+<hr>
+<h2 id="5">5. 订单状态机流转图</h2>
+<pre class="plain"><code>          ┌──────────────────┐
+          │    PENDING       │
+          │    ⏳ 待处理      │
+          └────────┬─────────┘
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+  ┌───────────────┐  ┌───────────────┐
+  │  PROCESSING   │  │  CANCELLED    │
+  │  🔄 处理中     │  │  ❌ 已取消    │
+  └───────┬───────┘  └───────────────┘
+          │                    ▲
+   ┌──────┴──────┐             │
+   ▼             ▼             │
+┌─────────┐ ┌──────────┐      │
+│ SHIPPED │ │CANCELLED │      │
+│ 📦 已发货│ │ ❌ 已取消 │──────┘
+└────┬────┘ └──────────┘
+     │
+     ▼
+┌───────────┐
+│ DELIVERED │
+│ ✅ 已签收  │
+└───────────┘
+
+终态：DELIVERED, CANCELLED（不可再转换）
+</code></pre>
+<hr>
+<h2 id="6-unique">6. @unique 装饰器行为</h2>
+<pre class="plain"><code>不加 @unique:                   加 @unique:
+
+class Color(Enum):             @unique
+    RED = 1                    class Color(Enum):
+    CRIMSON = 1   ← 别名          RED = 1
+    GREEN = 2                   CRIMSON = 1   ← ValueError!
+    BLUE = 3                    GREEN = 2
+                                BLUE = 3
+
+Color(1) → Color.RED           Color(1) → 编译失败
+Color.CRIMSON is Color.RED     @unique 防止了别名定义
+  → True
+</code></pre>
+<hr>
+<h2 id="7-vs">7. 枚举 vs 常量的决策树</h2>
+<pre class="plain"><code>需要一组命名的关联值？
+      │
+      ├── &lt; 3 个值，无关联逻辑 ────► 普通模块常量
+      │       STATUS_OK = 200
+      │
+      ├── 3+ 个值，同语义 ────────► Enum 🌟
+      │       class Status(Enum):
+      │           OK = 200
+      │           NOT_FOUND = 404
+      │
+      ├── 需要整数运算兼容 ───────► IntEnum
+      │       class Code(IntEnum):
+      │           OK = 200
+      │
+      ├── 需要位运算组合 ────────► IntFlag
+      │       class Perm(IntFlag):
+      │           READ = 4
+      │
+      └── 需要状态机逻辑 ────────► Enum + 转移表
+              class OrderStatus(Enum):
+                  PENDING = auto()
+                  ...
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

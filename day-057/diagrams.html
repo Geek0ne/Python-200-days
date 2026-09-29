@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 57 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 57 正文</a>
+  <h1>Day 57 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-057-asyncio">Day 057 — 图解：asyncio 进阶</h1>
+<h2 id="1">1. 异步上下文管理器执行流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;async with Resource() as res:&quot;] --&gt; B[&quot;调用 __aenter__()&quot;]
+    B --&gt; C{&quot;__aenter__ 完成&quot;}
+    C --&gt; D[&quot;执行 async with 块内代码&quot;]
+    D --&gt; E{&quot;是否有异常?&quot;}
+    E --&gt;|否| F[&quot;调用 __aexit__(None, None, None)&quot;]
+    E --&gt;|是| G[&quot;调用 __aexit__(exc_type, exc_val, exc_tb)&quot;]
+    F --&gt; H[&quot;资源已释放&quot;]
+    G --&gt; I{&quot;__aexit__ 返回 True?&quot;}
+    I --&gt;|是| H
+    I --&gt;|否| J[&quot;异常继续传播&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;async with Resource() as res:&quot;] --&gt; B[&quot;调用 __aenter__()&quot;]
+    B --&gt; C{&quot;__aenter__ 完成&quot;}
+    C --&gt; D[&quot;执行 async with 块内代码&quot;]
+    D --&gt; E{&quot;是否有异常?&quot;}
+    E --&gt;|否| F[&quot;调用 __aexit__(None, None, None)&quot;]
+    E --&gt;|是| G[&quot;调用 __aexit__(exc_type, exc_val, exc_tb)&quot;]
+    F --&gt; H[&quot;资源已释放&quot;]
+    G --&gt; I{&quot;__aexit__ 返回 True?&quot;}
+    I --&gt;|是| H
+    I --&gt;|否| J[&quot;异常继续传播&quot;]
+</code></pre></div>
+<h2 id="2-vs">2. 同步 vs 异步迭代对比</h2>
+<pre class="plain"><code>同步迭代器                    异步迭代器
+─────────────                ─────────────
+for item in iterator:        async for item in async_iterator:
+    │                            │
+    ▼                            ▼
+__next__() 返回值             __anext__() 返回协程
+    │                            │
+    ▼                            ▼
+raise StopIteration           raise StopAsyncIteration
+
+特点：同步阻塞               特点：异步非阻塞
+      无法等待 I/O                  可以 await I/O
+      适用于内存数据                适用于异步数据源
+</code></pre>
+<h2 id="3-aiohttp">3. aiohttp 请求生命周期</h2>
+<pre class="plain"><code>┌────────────────────────────────────────────────────────┐
+│                    Event Loop                          │
+│                                                        │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
+│  │  协程 1   │  │  协程 2   │  │  协程 3   │   ← 任务    │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘             │
+│       │             │             │                    │
+│       ▼             ▼             ▼                    │
+│  ┌─────────────────────────────────────────┐           │
+│  │          aiohttp.ClientSession          │           │
+│  │  ┌───────┐  ┌───────┐  ┌───────┐       │           │
+│  │  │ TCP   │  │ TCP   │  │ TCP   │  ...  │  连接池    │
+│  │  │Conn 1 │  │Conn 2 │  │Conn 3 │       │           │
+│  │  └───┬───┘  └───┬───┘  └───┬───┘       │           │
+│  └──────┼──────────┼──────────┼────────────┘           │
+│         │          │          │                        │
+└─────────┼──────────┼──────────┼────────────────────────┘
+          ▼          ▼          ▼
+       Server 1  Server 2  Server 3
+</code></pre>
+<h2 id="4">4. 异步数据处理管道</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[&quot;异步数据源\n(数据库/API/文件)&quot;] --&gt;|async for| B[&quot;异步生成器\n(数据流)&quot;]
+    B --&gt;|async for| C[&quot;处理函数\n(转换/过滤)&quot;]
+    C --&gt;|yield| D[&quot;异步消费者\n(存储/输出)&quot;]
+
+    style A fill:#e1f5fe
+    style B fill:#f3e5f5
+    style C fill:#e8f5e9
+    style D fill:#fff3e0
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[&quot;异步数据源\n(数据库/API/文件)&quot;] --&gt;|async for| B[&quot;异步生成器\n(数据流)&quot;]
+    B --&gt;|async for| C[&quot;处理函数\n(转换/过滤)&quot;]
+    C --&gt;|yield| D[&quot;异步消费者\n(存储/输出)&quot;]
+
+    style A fill:#e1f5fe
+    style B fill:#f3e5f5
+    style C fill:#e8f5e9
+    style D fill:#fff3e0
+</code></pre></div>
+<h2 id="5">5. 并发控制模型</h2>
+<pre class="plain"><code>无限制并发              Semaphore 限流           连接池限流
+─────────────          ─────────────           ─────────────
+请求1 ──►              请求1 ──►               请求1 ──►
+请求2 ──►              请求2 ──►               请求2 ──►
+请求3 ──►              ─── 等待 ───            ─── 等待 ───
+请求4 ──►              ─── 等待 ───            请求3 ──►
+请求5 ──►              请求3 ──►               ─── 等待 ───
+...                    ─── 等待 ───            ...
+
+风险：服务器过载        安全：控制并发数          安全：控制连接数
+                      Semaphore(N)             TCPConnector(limit=N)
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

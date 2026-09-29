@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 17 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 17 正文</a>
+  <h1>Day 17 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-017">Day 017 — 异常处理：图解与分析</h1>
+<h2 id="1">1️⃣ 异常处理完整执行流</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    Start([&quot;程序执行 try 子句&quot;]) --&gt; TryBlock[&quot;执行 try 代码块&quot;]
+
+    TryBlock --&gt; Check{是否抛出异常?}
+
+    Check --&gt;|否| ElseBlock[&quot;执行 else 子句&quot;]
+    ElseBlock --&gt; FinallyBlock[&quot;执行 finally 子句&quot;]
+    FinallyBlock --&gt; End([&quot;继续后续代码&quot;])
+
+    Check --&gt;|是| Match{except 匹配?}
+    Match --&gt;|是| ExceptBlock[&quot;执行 except 处理&quot;]
+    ExceptBlock --&gt; FinallyBlock
+
+    Match --&gt;|否| FinallyBlock2[&quot;执行 finally 子句&quot;]
+    FinallyBlock2 --&gt; Propagate([&quot;异常继续向上传播&quot;])
+
+    style Start fill:#4a9,color:#fff
+    style End fill:#4a9,color:#fff
+    style Propagate fill:#e55,color:#fff
+    style Check fill:#fa0,color:#000
+    style Match fill:#fa0,color:#000
+    style FinallyBlock fill:#67b,color:#fff
+    style FinallyBlock2 fill:#67b,color:#fff
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    Start([&quot;程序执行 try 子句&quot;]) --&gt; TryBlock[&quot;执行 try 代码块&quot;]
+
+    TryBlock --&gt; Check{是否抛出异常?}
+
+    Check --&gt;|否| ElseBlock[&quot;执行 else 子句&quot;]
+    ElseBlock --&gt; FinallyBlock[&quot;执行 finally 子句&quot;]
+    FinallyBlock --&gt; End([&quot;继续后续代码&quot;])
+
+    Check --&gt;|是| Match{except 匹配?}
+    Match --&gt;|是| ExceptBlock[&quot;执行 except 处理&quot;]
+    ExceptBlock --&gt; FinallyBlock
+
+    Match --&gt;|否| FinallyBlock2[&quot;执行 finally 子句&quot;]
+    FinallyBlock2 --&gt; Propagate([&quot;异常继续向上传播&quot;])
+
+    style Start fill:#4a9,color:#fff
+    style End fill:#4a9,color:#fff
+    style Propagate fill:#e55,color:#fff
+    style Check fill:#fa0,color:#000
+    style Match fill:#fa0,color:#000
+    style FinallyBlock fill:#67b,color:#fff
+    style FinallyBlock2 fill:#67b,color:#fff
+</code></pre></div>
+<h2 id="2">2️⃣ 异常传播链</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Main as Main
+    participant FuncA as function A
+    participant FuncB as function B
+    participant FuncC as function C
+
+    Main-&gt;&gt;FuncA: call A()
+    FuncA-&gt;&gt;FuncB: call B()
+    FuncB-&gt;&gt;FuncC: call C()
+
+    Note over FuncC: 💥 发生异常
+    FuncC--&gt;&gt;FuncB: 异常向上传播
+    Note over FuncB: except? ❌ 不处理
+    FuncB--&gt;&gt;FuncA: 异常继续传播
+    Note over FuncA: except? ✅ 捕获
+    Note over FuncA: 处理完毕
+
+    FuncA--&gt;&gt;Main: 正常返回
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Main as Main
+    participant FuncA as function A
+    participant FuncB as function B
+    participant FuncC as function C
+
+    Main-&gt;&gt;FuncA: call A()
+    FuncA-&gt;&gt;FuncB: call B()
+    FuncB-&gt;&gt;FuncC: call C()
+
+    Note over FuncC: 💥 发生异常
+    FuncC--&gt;&gt;FuncB: 异常向上传播
+    Note over FuncB: except? ❌ 不处理
+    FuncB--&gt;&gt;FuncA: 异常继续传播
+    Note over FuncA: except? ✅ 捕获
+    Note over FuncA: 处理完毕
+
+    FuncA--&gt;&gt;Main: 正常返回
+</code></pre></div>
+<h2 id="3">3️⃣ 异常链关系</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph &quot;异常链 (raise ... from)&quot;
+        Original[&quot;FileNotFoundError&lt;br&gt;文件不存在&quot;] --&gt;|from| Business[&quot;ConfigError&lt;br&gt;配置加载失败&quot;]
+        Business --&gt;|传播| Handler[&quot;try/except ConfigError&lt;br&gt;统一处理&quot;]
+    end
+
+    subgraph &quot;抑制链 (raise ... from None)&quot;
+        Original2[&quot;JSONDecodeError&quot;] -.-&gt;|from None| Business2[&quot;ParseError&quot;]
+        Handler2[&quot;捕获 ParseError&quot;] -.-&gt; Hidden[&quot;(底层细节&lt;br&gt;被隐藏)&quot;]
+    end
+
+    subgraph &quot;裸重抛 (raise)&quot;
+        Original3[&quot;PermissionError&quot;] --&gt; Reraise[&quot;记录日志&quot;]
+        Reraise --&gt;|裸 raise| Propagate[&quot;继续传播&lt;br&gt;保留完整 traceback&quot;]
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph &quot;异常链 (raise ... from)&quot;
+        Original[&quot;FileNotFoundError&lt;br&gt;文件不存在&quot;] --&gt;|from| Business[&quot;ConfigError&lt;br&gt;配置加载失败&quot;]
+        Business --&gt;|传播| Handler[&quot;try/except ConfigError&lt;br&gt;统一处理&quot;]
+    end
+
+    subgraph &quot;抑制链 (raise ... from None)&quot;
+        Original2[&quot;JSONDecodeError&quot;] -.-&gt;|from None| Business2[&quot;ParseError&quot;]
+        Handler2[&quot;捕获 ParseError&quot;] -.-&gt; Hidden[&quot;(底层细节&lt;br&gt;被隐藏)&quot;]
+    end
+
+    subgraph &quot;裸重抛 (raise)&quot;
+        Original3[&quot;PermissionError&quot;] --&gt; Reraise[&quot;记录日志&quot;]
+        Reraise --&gt;|裸 raise| Propagate[&quot;继续传播&lt;br&gt;保留完整 traceback&quot;]
+    end
+</code></pre></div>
+<h2 id="4">4️⃣ 自定义异常层次结构</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    Exception[&quot;Exception&lt;br&gt;(内置基类)&quot;] --&gt; AppError[&quot;AppError&lt;br&gt;项目基异常&quot;]
+    AppError --&gt; DataError[&quot;DataError&lt;br&gt;数据层&quot;]
+    AppError --&gt; ValidationError[&quot;ValidationError&lt;br&gt;验证层&quot;]
+    AppError --&gt; NetworkError[&quot;NetworkError&lt;br&gt;网络层&quot;]
+    AppError --&gt; AuthError[&quot;AuthError&lt;br&gt;认证授权&quot;]
+    AppError --&gt; RetryableError[&quot;RetryableError&lt;br&gt;可重试(临时故障)&quot;]
+
+    DataError --&gt; DatabaseError[&quot;DatabaseError&lt;br&gt;数据库操作&quot;]
+    DatabaseError --&gt; ConnErr[&quot;ConnectionError&lt;br&gt;连接失败&quot;]
+    DatabaseError --&gt; QueryErr[&quot;QueryError&lt;br&gt;查询异常&quot;]
+
+    ValidationError --&gt; FieldErr[&quot;FieldError&lt;br&gt;字段验证&quot;]
+
+    NetworkError --&gt; TimeoutErr[&quot;TimeoutError&lt;br&gt;请求超时&quot;]
+
+    AppError --&gt; RetryErr[&quot;RetryError&lt;br&gt;重试耗尽&quot;]
+
+    style Exception fill:#95a5a6,color:#fff
+    style AppError fill:#3498db,color:#fff
+    style ConnErr fill:#e74c3c,color:#fff
+    style FieldErr fill:#e67e22,color:#fff
+    style TimeoutErr fill:#9b59b6,color:#fff
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    Exception[&quot;Exception&lt;br&gt;(内置基类)&quot;] --&gt; AppError[&quot;AppError&lt;br&gt;项目基异常&quot;]
+    AppError --&gt; DataError[&quot;DataError&lt;br&gt;数据层&quot;]
+    AppError --&gt; ValidationError[&quot;ValidationError&lt;br&gt;验证层&quot;]
+    AppError --&gt; NetworkError[&quot;NetworkError&lt;br&gt;网络层&quot;]
+    AppError --&gt; AuthError[&quot;AuthError&lt;br&gt;认证授权&quot;]
+    AppError --&gt; RetryableError[&quot;RetryableError&lt;br&gt;可重试(临时故障)&quot;]
+
+    DataError --&gt; DatabaseError[&quot;DatabaseError&lt;br&gt;数据库操作&quot;]
+    DatabaseError --&gt; ConnErr[&quot;ConnectionError&lt;br&gt;连接失败&quot;]
+    DatabaseError --&gt; QueryErr[&quot;QueryError&lt;br&gt;查询异常&quot;]
+
+    ValidationError --&gt; FieldErr[&quot;FieldError&lt;br&gt;字段验证&quot;]
+
+    NetworkError --&gt; TimeoutErr[&quot;TimeoutError&lt;br&gt;请求超时&quot;]
+
+    AppError --&gt; RetryErr[&quot;RetryError&lt;br&gt;重试耗尽&quot;]
+
+    style Exception fill:#95a5a6,color:#fff
+    style AppError fill:#3498db,color:#fff
+    style ConnErr fill:#e74c3c,color:#fff
+    style FieldErr fill:#e67e22,color:#fff
+    style TimeoutErr fill:#9b59b6,color:#fff
+</code></pre></div>
+<h2 id="5-eafp-vs-lbyl">5️⃣ EAFP vs LBYL 对比</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph &quot;EAFP 风格 (Pythonic)&quot;
+        E1[&quot;尝试执行&quot;] --&gt; E2{&quot;异常?&quot;}
+        E2 --&gt;|否| E3[&quot;使用结果&quot;]
+        E2 --&gt;|是| E4[&quot;处理异常&quot;]
+    end
+
+    subgraph &quot;LBYL 风格&quot;
+        L1[&quot;检查条件&quot;] --&gt; L2{&quot;检查通过?&quot;}
+        L2 --&gt;|是| L3[&quot;执行操作&quot;]
+        L2 --&gt;|否| L4[&quot;跳过或报错&quot;]
+    end
+
+    style E1 fill:#2ecc71,color:#fff
+    style L1 fill:#f1c40f,color:#000
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph &quot;EAFP 风格 (Pythonic)&quot;
+        E1[&quot;尝试执行&quot;] --&gt; E2{&quot;异常?&quot;}
+        E2 --&gt;|否| E3[&quot;使用结果&quot;]
+        E2 --&gt;|是| E4[&quot;处理异常&quot;]
+    end
+
+    subgraph &quot;LBYL 风格&quot;
+        L1[&quot;检查条件&quot;] --&gt; L2{&quot;检查通过?&quot;}
+        L2 --&gt;|是| L3[&quot;执行操作&quot;]
+        L2 --&gt;|否| L4[&quot;跳过或报错&quot;]
+    end
+
+    style E1 fill:#2ecc71,color:#fff
+    style L1 fill:#f1c40f,color:#000
+</code></pre></div>
+<h2 id="6-finally">6️⃣ finally 执行保证</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Try as try
+    participant Except as except/else
+    participant Finally as finally
+    participant Return as return/break
+
+    Note over Try: try 中执行 return
+    Try-&gt;&gt;Finally: ⚡ 先暂停 return
+    Note over Finally: finally 执行
+    Finally-&gt;&gt;Return: ✅ finally 完毕
+    Note over Return: return 生效
+
+    Note over Try: try 中发生异常
+    Try-&gt;&gt;Except: 跳转
+    Except-&gt;&gt;Finally: ⚡ 转至清理
+    Finally-&gt;&gt;Try: 异常继续传播
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Try as try
+    participant Except as except/else
+    participant Finally as finally
+    participant Return as return/break
+
+    Note over Try: try 中执行 return
+    Try-&gt;&gt;Finally: ⚡ 先暂停 return
+    Note over Finally: finally 执行
+    Finally-&gt;&gt;Return: ✅ finally 完毕
+    Note over Return: return 生效
+
+    Note over Try: try 中发生异常
+    Try-&gt;&gt;Except: 跳转
+    Except-&gt;&gt;Finally: ⚡ 转至清理
+    Finally-&gt;&gt;Try: 异常继续传播
+</code></pre></div>
+<h2 id="7">7️⃣ 异常处理流程图</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph Input[&quot;用户输入验证&quot;]
+        direction TB
+        I1[&quot;获取原始输入&quot;] --&gt; I2[&quot;Required 检查&quot;]
+        I2 --&gt;|必填| I3[&quot;格式/类型验证&quot;]
+        I3 --&gt;|有效| I4[&quot;范围验证&quot;]
+        I4 --&gt;|通过| I5[&quot;✅ 返回清洗值&quot;]
+        I2 --&gt;|空| I6[&quot;❌ RequiredFieldError&quot;]
+        I3 --&gt;|无效| I7[&quot;❌ FormatError&quot;]
+        I4 --&gt;|超范围| I8[&quot;❌ RangeError&quot;]
+        I5 --&gt; InputEnd
+        I6 --&gt; Retry{{&quot;剩余重试次数?&quot;}}
+        I7 --&gt; Retry
+        I8 --&gt; Retry
+        Retry --&gt;|有| I1
+        Retry --&gt;|无| Fail[&quot;❌ 最终失败&quot;]
+    end
+
+    InputEnd([&quot;结束&quot;])
+    Fail --&gt; InputEnd
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph Input[&quot;用户输入验证&quot;]
+        direction TB
+        I1[&quot;获取原始输入&quot;] --&gt; I2[&quot;Required 检查&quot;]
+        I2 --&gt;|必填| I3[&quot;格式/类型验证&quot;]
+        I3 --&gt;|有效| I4[&quot;范围验证&quot;]
+        I4 --&gt;|通过| I5[&quot;✅ 返回清洗值&quot;]
+        I2 --&gt;|空| I6[&quot;❌ RequiredFieldError&quot;]
+        I3 --&gt;|无效| I7[&quot;❌ FormatError&quot;]
+        I4 --&gt;|超范围| I8[&quot;❌ RangeError&quot;]
+        I5 --&gt; InputEnd
+        I6 --&gt; Retry{{&quot;剩余重试次数?&quot;}}
+        I7 --&gt; Retry
+        I8 --&gt; Retry
+        Retry --&gt;|有| I1
+        Retry --&gt;|无| Fail[&quot;❌ 最终失败&quot;]
+    end
+
+    InputEnd([&quot;结束&quot;])
+    Fail --&gt; InputEnd
+</code></pre></div>
+<h2 id="8">8️⃣ 资源管理最佳实践</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph &quot;❌ 手动管理&quot;
+        A1[&quot;手动 open()&quot;] --&gt; A2[&quot;try...finally&quot;]
+        A2 --&gt; A3[&quot;手动 close()&quot;]
+        A3 --&gt; A4[&quot;容易忘记 or 异常路径漏关&quot;]
+    end
+
+    subgraph &quot;✅ with 语句&quot;
+        B1[&quot;with open() as f:&quot;] --&gt; B2[&quot;自动 __enter__&quot;]
+        B2 --&gt; B3[&quot;代码块执行&quot;]
+        B3 --&gt; B4[&quot;自动 __exit__&lt;br&gt;(即使异常也执行)&quot;]
+    end
+
+    style A4 fill:#e74c3c,color:#fff
+    style B4 fill:#2ecc71,color:#fff
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph &quot;❌ 手动管理&quot;
+        A1[&quot;手动 open()&quot;] --&gt; A2[&quot;try...finally&quot;]
+        A2 --&gt; A3[&quot;手动 close()&quot;]
+        A3 --&gt; A4[&quot;容易忘记 or 异常路径漏关&quot;]
+    end
+
+    subgraph &quot;✅ with 语句&quot;
+        B1[&quot;with open() as f:&quot;] --&gt; B2[&quot;自动 __enter__&quot;]
+        B2 --&gt; B3[&quot;代码块执行&quot;]
+        B3 --&gt; B4[&quot;自动 __exit__&lt;br&gt;(即使异常也执行)&quot;]
+    end
+
+    style A4 fill:#e74c3c,color:#fff
+    style B4 fill:#2ecc71,color:#fff
+</code></pre></div>
+<h2 id="9-tryexceptelsefinally">9️⃣ try/except/else/finally 决策树</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    Start[&quot;执行 try 代码块&quot;] --&gt; ExceptOccurred{&quot;异常发生?&quot;}
+
+    ExceptOccurred --&gt;|否| ElseBlock[&quot;执行 else 块&quot;]
+    ElseBlock --&gt; FinallyBlock[&quot;执行 finally 块&quot;]
+    FinallyBlock --&gt; Continue[&quot;继续程序&quot;]
+
+    ExceptOccurred --&gt;|是| MatchType{&quot;匹配 except?&quot;}
+    MatchType --&gt;|匹配| Handle[&quot;执行 except 块&quot;]
+    Handle --&gt; FinallyBlock
+
+    MatchType --&gt;|不匹配| FinallyProp[&quot;执行 finally 块&quot;]
+    FinallyProp --&gt; Propagate[&quot;异常向上传播&quot;]
+
+    style Start fill:#3498db,color:#fff
+    style ExceptOccurred fill:#f39c12,color:#fff
+    style MatchType fill:#f39c12,color:#fff
+    style Propagate fill:#e74c3c,color:#fff
+    style Continue fill:#2ecc71,color:#fff
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    Start[&quot;执行 try 代码块&quot;] --&gt; ExceptOccurred{&quot;异常发生?&quot;}
+
+    ExceptOccurred --&gt;|否| ElseBlock[&quot;执行 else 块&quot;]
+    ElseBlock --&gt; FinallyBlock[&quot;执行 finally 块&quot;]
+    FinallyBlock --&gt; Continue[&quot;继续程序&quot;]
+
+    ExceptOccurred --&gt;|是| MatchType{&quot;匹配 except?&quot;}
+    MatchType --&gt;|匹配| Handle[&quot;执行 except 块&quot;]
+    Handle --&gt; FinallyBlock
+
+    MatchType --&gt;|不匹配| FinallyProp[&quot;执行 finally 块&quot;]
+    FinallyProp --&gt; Propagate[&quot;异常向上传播&quot;]
+
+    style Start fill:#3498db,color:#fff
+    style ExceptOccurred fill:#f39c12,color:#fff
+    style MatchType fill:#f39c12,color:#fff
+    style Propagate fill:#e74c3c,color:#fff
+    style Continue fill:#2ecc71,color:#fff
+</code></pre></div>
+<h2 id="_1">🔟 异常链决策流</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 异常发生
+        E1[&quot;异常 A 发生&quot;]
+    end
+
+    subgraph 异常链策略
+        Decide{选择策略}
+        Decide --&gt;|简单抛出| R1[&quot;raise A&quot;]
+        Decide --&gt;|保留因果| R2[&quot;raise B from A&quot;]
+        Decide --&gt;|隐藏细节| R3[&quot;raise B from None&quot;]
+        Decide --&gt;|重抛| R4[&quot;raise (裸)&quot;]
+    end
+
+    subgraph 结果
+        R1 --&gt; C1[&quot;新异常，无上下文&quot;]
+        R2 --&gt; C2[&quot;__cause__ = A&lt;br&gt;保留完整链&quot;]
+        R3 --&gt; C3[&quot;__cause__ = None&lt;br&gt;隐藏底层细节&quot;]
+        R4 --&gt; C4[&quot;保留原始 traceback&lt;br&gt;和异常类型&quot;]
+    end
+
+    E1 --&gt; Decide
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 异常发生
+        E1[&quot;异常 A 发生&quot;]
+    end
+
+    subgraph 异常链策略
+        Decide{选择策略}
+        Decide --&gt;|简单抛出| R1[&quot;raise A&quot;]
+        Decide --&gt;|保留因果| R2[&quot;raise B from A&quot;]
+        Decide --&gt;|隐藏细节| R3[&quot;raise B from None&quot;]
+        Decide --&gt;|重抛| R4[&quot;raise (裸)&quot;]
+    end
+
+    subgraph 结果
+        R1 --&gt; C1[&quot;新异常，无上下文&quot;]
+        R2 --&gt; C2[&quot;__cause__ = A&lt;br&gt;保留完整链&quot;]
+        R3 --&gt; C3[&quot;__cause__ = None&lt;br&gt;隐藏底层细节&quot;]
+        R4 --&gt; C4[&quot;保留原始 traceback&lt;br&gt;和异常类型&quot;]
+    end
+
+    E1 --&gt; Decide
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

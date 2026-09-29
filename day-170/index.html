@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 170 — 定时任务</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 170 — 定时任务</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">642 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-170-定时任务" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21-timesleep">2.1 先问：为什么不能直接 time.sleep？</a>
+<a class="toc-l3" href="#22">2.2 调度的三要素</a>
+<a class="toc-l3" href="#23-schedule">2.3 schedule 库：把&quot;人话&quot;编译成触发器</a>
+<a class="toc-l3" href="#24-apscheduler">2.4 APScheduler：四件套对应四种自由</a>
+<a class="toc-l3" href="#25-jobstore">2.5 任务持久化：JobStore 到底存了什么</a>
+<a class="toc-l3" href="#26">2.6 多实例部署的经典事故</a>
+<a class="toc-l2" href="#3">3. 原理深入</a>
+<a class="toc-l3" href="#31">3.1 一次触发，内部到底发生了什么</a>
+<a class="toc-l3" href="#32-next_run_time">3.2 next_run_time 是整个系统的中枢</a>
+<a class="toc-l3" href="#33-coalesce-max_instances">3.3 为什么 coalesce 和 max_instances 不是一回事</a>
+<a class="toc-l3" href="#34">3.4 持久化到底解决了什么，没解决什么</a>
+<a class="toc-l2" href="#4-api">4. 定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#41-schedule">4.1 schedule 常用调用</a>
+<a class="toc-l3" href="#42-apscheduler-scheduler">4.2 APScheduler Scheduler</a>
+<a class="toc-l3" href="#43-add_job">4.3 add_job 常用参数</a>
+<a class="toc-l3" href="#44-trigger">4.4 Trigger 对象</a>
+<a class="toc-l3" href="#45-jobstore">4.5 JobStore</a>
+<a class="toc-l3" href="#46-executor">4.6 Executor</a>
+<a class="toc-l3" href="#47">4.7 事件监听</a>
+<a class="toc-l2" href="#5">5. 图解</a>
+<a class="toc-l2" href="#6-top-11">6. 常见陷阱 Top 11</a>
+<a class="toc-l3" href="#1get_next_fire_timenone-now">陷阱 1：get_next_fire_time(None, now) 原地打转</a>
+<a class="toc-l3" href="#2naive-vs-aware-datetime-typeerror">陷阱 2：naive vs aware datetime 直接 TypeError</a>
+<a class="toc-l3" href="#3intervaltrigger-start_date">陷阱 3：IntervalTrigger 不给 start_date 就不可预测</a>
+<a class="toc-l3" href="#4max_instances1">陷阱 4：max_instances=1 是丢弃，不是排队</a>
+<a class="toc-l3" href="#5misfire_grace_time">陷阱 5：misfire_grace_time 决定了&quot;错过&quot;和&quot;补跑&quot;的分界</a>
+<a class="toc-l3" href="#6job_state-pickle">陷阱 6：job_state 是 pickle → 函数必须模块顶层</a>
+<a class="toc-l3" href="#7add_job-id-n-n">陷阱 7：add_job 不给 id + 持久化 → 重启 N 次注册 N 遍</a>
+<a class="toc-l3" href="#8schedule">陷阱 8：schedule 只有一个线程，一个慢任务堵死全部</a>
+<a class="toc-l3" href="#9-n">陷阱 9：多实例部署 → 同一任务跑 N 遍</a>
+<a class="toc-l3" href="#10">陷阱 10：任务抛异常被静默吞掉</a>
+<a class="toc-l3" href="#11andtrigger-cron">陷阱 11（本日最坑）：AndTrigger 拼两个 cron → 调度器死循环</a>
+<a class="toc-l2" href="#7">7. 实战项目：定时备份系统</a>
+<a class="toc-l2" href="#8">8. 思考题</a>
+<a class="toc-l2" href="#9">9. 小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-170">Day 170 — 定时任务</h1>
+<blockquote>
+<p><strong>一句话定义</strong>：定时任务 = <strong>在正确的时间点，可靠地执行一段代码</strong>。<br>
+难点不在"怎么定时"，而在于 <strong>错过怎么办、重复启动怎么办、重启后还记得吗、跑太久撞车了怎么办</strong>。<br>
+本课用两个库把这件事讲透：<code>schedule</code>（极简玩具→小工具）与 <code>APScheduler</code>（生产级四件套）。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>学完本课，你应该能够：</p>
+<ul>
+<li>[ ] 说清"调度"要解决的 4 个真问题：<strong>触发、并发、持久化、错过补偿</strong></li>
+<li>[ ] 用 <code>schedule</code> 写出最小可跑的定时器，并说清它<strong>为什么不能用于生产</strong></li>
+<li>[ ] 用 <code>APScheduler</code> 的 <strong>Trigger / JobStore / Executor / Scheduler</strong> 四件套组织一个调度程序</li>
+<li>[ ] 用 <code>cron</code> / <code>interval</code> / <code>date</code> 三种触发器分别表达"每天 3 点""每 30 秒""某年某月某日一次"</li>
+<li>[ ] 正确设置 <code>misfire_grace_time</code>、<code>coalesce</code>、<code>max_instances</code>，并说清三者各自防的是哪种事故</li>
+<li>[ ] 用 <code>SQLAlchemyJobStore</code> 做任务持久化，做到"进程重启后任务不丢、也不会重复补跑"</li>
+<li>[ ] 独立写出一个<strong>定时备份系统</strong>：备份 → 校验 → 保留策略 → 报告</li>
+<li>[ ] 识别多实例部署下的"重复执行"事故，并知道至少 3 种解法（单实例 / 分布式锁 / 外部编排）</li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21-timesleep">2.1 先问：为什么不能直接 <code>time.sleep</code>？</h3>
+<p>初学者最常见的"定时"写法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="n">do_something</span><span class="p">()</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">3600</span><span class="p">)</span>   <span class="c1"># 睡一小时</span>
+</code></pre></div>
+<p>这段代码有 4 个致命问题，它们正好对应本课的 4 个核心概念：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">问题</th>
+<th style="text-align: left;">具体表现</th>
+<th style="text-align: left;">对应的概念</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>漂移（drift）</strong></td>
+<td style="text-align: left;"><code>do_something()</code> 花了 5 分钟，那实际间隔变成 65 分钟，日积月累会越偏越远</td>
+<td style="text-align: left;">触发（Trigger）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>阻塞</strong></td>
+<td style="text-align: left;">睡眠期间什么都干不了，多个任务只能排队</td>
+<td style="text-align: left;">执行器（Executor）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>丢失</strong></td>
+<td style="text-align: left;">进程重启，任务表回到零点，今天的备份没了</td>
+<td style="text-align: left;">持久化（JobStore）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>错过即无</strong></td>
+<td style="text-align: left;">机器 3:00 关机、3:05 开机，3:00 的任务永远不跑</td>
+<td style="text-align: left;">错过补偿（misfire / coalesce）</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>设计原理</strong>：一个"调度器"的本质就是把这 4 件事从业务代码里抽出来，<br>
+交给一个专职组件管理。你只声明"什么时候做什么"，剩下的边界情况由框架兜底。</p>
+</blockquote>
+<h3 id="22">2.2 调度的三要素</h3>
+<p>任何调度系统都可以拆成三个概念（<code>cron</code> 也是，只不过它写死在配置里）：</p>
+<pre class="plain"><code>        ┌──────────────┐
+        │   Trigger    │  「什么时候执行？」
+        │ 触发器        │  cron: 0 3 * * *  → 每天 03:00
+        └──────┬───────┘  interval: 每 30 秒
+               │ 算出下一次触发时间 next_run_time
+               ▼
+        ┌──────────────┐
+        │  Scheduler   │  「谁来决定现在该不该跑？」
+        │ 调度器        │  主循环：不断比对 now 与 next_run_time
+        └──────┬───────┘
+               │ 到期就提交
+               ▼
+        ┌──────────────┐
+        │  Executor    │  「用什么去跑？」
+        │ 执行器        │  线程池 / 进程池 / asyncio 事件循环
+        └──────┬───────┘
+               │ 跑完回写结果
+               ▼
+        ┌──────────────┐
+        │  JobStore    │  「任务记在哪？」
+        │ 作业存储      │  内存字典 / SQLite / PostgreSQL / Redis
+        └──────────────┘
+</code></pre>
+<p><strong>为什么叫"作业"（Job）而不是"函数"</strong>：一个 Job = <strong>函数引用 + 触发器 + 参数 + 状态（上次运行、下次运行、运行次数）</strong>。<br>
+持久化保存的就是这个"状态对象"，所以 Job 的函数必须是<strong>可以被重新导入的顶层函数</strong>（不能是 lambda 或局部函数）——这是第 6 节最重要的坑。</p>
+<h3 id="23-schedule">2.3 <code>schedule</code> 库：把"人话"编译成触发器</h3>
+<p><code>schedule</code> 的卖点是<strong>读起来像英语</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">schedule</span><span class="o">,</span> <span class="nn">time</span>
+
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">minutes</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">backup</span><span class="p">)</span>          <span class="c1"># 每 10 分钟</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">()</span><span class="o">.</span><span class="n">day</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="s2">&quot;03:00&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">backup</span><span class="p">)</span>    <span class="c1"># 每天 03:00</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">()</span><span class="o">.</span><span class="n">monday</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="s2">&quot;08:30&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">report</span><span class="p">)</span> <span class="c1"># 每周一 08:30</span>
+
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="n">schedule</span><span class="o">.</span><span class="n">run_pending</span><span class="p">()</span>   <span class="c1"># 检查有没有到期的任务</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>            <span class="c1"># 自己睡 1 秒，再检查</span>
+</code></pre></div>
+<p><strong>它的内部实现极其简单</strong>，简单到你应该"看穿"它：</p>
+<ul>
+<li><code>schedule.every(10).minutes</code> 返回一个 <strong>Job 构造器</strong>，<code>.do(f)</code> 把 <code>f</code> 注册进 <code>schedule.default_scheduler.jobs</code> 列表；</li>
+<li>每个 Job 记录 <code>interval</code>（间隔秒数）+ <code>next_run</code>（下次运行时间戳）+ <code>last_run</code>；</li>
+<li><code>run_pending()</code> 遍历所有 Job，<code>now &gt;= next_run</code> 就执行，并把 <code>next_run</code> <strong>对齐到整点倍数</strong>（所以它不像 <code>sleep</code> 那样漂移）。</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">特性</th>
+<th style="text-align: left;"><code>schedule</code></th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">触发器</td>
+<td style="text-align: left;">interval + day/time</td>
+<td style="text-align: left;">只有这两种，没有秒级 cron</td>
+</tr>
+<tr>
+<td style="text-align: left;">持久化</td>
+<td style="text-align: left;">❌ 无</td>
+<td style="text-align: left;">重启即丢</td>
+</tr>
+<tr>
+<td style="text-align: left;">并发</td>
+<td style="text-align: left;">❌ 单线程串行</td>
+<td style="text-align: left;">一个任务卡住，后面全堵</td>
+</tr>
+<tr>
+<td style="text-align: left;">错过补偿</td>
+<td style="text-align: left;">❌ 无</td>
+<td style="text-align: left;">停机期间的任务直接跳过</td>
+</tr>
+<tr>
+<td style="text-align: left;">依赖</td>
+<td style="text-align: left;">0（纯标准库）</td>
+<td style="text-align: left;">复制一个文件就能用</td>
+</tr>
+<tr>
+<td style="text-align: left;">适用</td>
+<td style="text-align: left;">单体小脚本、树莓派灯控、本地定时提醒</td>
+<td style="text-align: left;"><strong>别用来跑生产关键任务</strong></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>一句话结论</strong>：<code>schedule</code> 是"带索引的闹钟"，<code>APScheduler</code> 是"带值班表的调度中心"。</p>
+</blockquote>
+<h3 id="24-apscheduler">2.4 <code>APScheduler</code>：四件套对应四种自由</h3>
+<p><code>APScheduler</code> 把它自己的架构直接暴露给你，于是每一种需求都对应一个可替换组件：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">组件</th>
+<th style="text-align: left;">可选实现</th>
+<th style="text-align: left;">什么时候换</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Trigger</strong></td>
+<td style="text-align: left;"><code>cron</code> / <code>interval</code> / <code>date</code> / <code>and</code> / <code>or</code></td>
+<td style="text-align: left;">需要"工作日 9-18 点每 5 分钟"</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>JobStore</strong></td>
+<td style="text-align: left;"><code>MemoryJobStore</code> / <code>SQLAlchemyJobStore</code> / <code>RedisJobStore</code> / <code>MongoJobStore</code></td>
+<td style="text-align: left;">需要重启不丢</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Executor</strong></td>
+<td style="text-align: left;"><code>ThreadPoolExecutor</code> / <code>ProcessPoolExecutor</code> / <code>AsyncIOExecutor</code> / <code>GeventExecutor</code></td>
+<td style="text-align: left;">任务 CPU 密集 / 是 async 函数</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Scheduler</strong></td>
+<td style="text-align: left;"><code>BlockingScheduler</code> / <code>BackgroundScheduler</code> / <code>AsyncIOScheduler</code> / <code>GeventScheduler</code></td>
+<td style="text-align: left;">主线程要不要被占住</td>
+</tr>
+</tbody>
+</table>
+<p>最小的生产级骨架（<strong>记住这个模板，它能覆盖 80% 场景</strong>）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">apscheduler.schedulers.background</span> <span class="kn">import</span> <span class="n">BackgroundScheduler</span>
+<span class="kn">from</span> <span class="nn">apscheduler.jobstores.sqlalchemy</span> <span class="kn">import</span> <span class="n">SQLAlchemyJobStore</span>
+<span class="kn">from</span> <span class="nn">apscheduler.executors.pool</span> <span class="kn">import</span> <span class="n">ThreadPoolExecutor</span>
+
+<span class="n">scheduler</span> <span class="o">=</span> <span class="n">BackgroundScheduler</span><span class="p">(</span>
+    <span class="n">jobstores</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="n">SQLAlchemyJobStore</span><span class="p">(</span><span class="n">url</span><span class="o">=</span><span class="s2">&quot;sqlite:///jobs.sqlite&quot;</span><span class="p">)},</span>
+    <span class="n">executors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">10</span><span class="p">)},</span>
+    <span class="n">job_defaults</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;coalesce&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;max_instances&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;misfire_grace_time&quot;</span><span class="p">:</span> <span class="mi">60</span><span class="p">},</span>
+<span class="p">)</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">backup</span><span class="p">,</span> <span class="s2">&quot;cron&quot;</span><span class="p">,</span> <span class="n">hour</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">minute</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;daily-backup&quot;</span><span class="p">,</span> <span class="n">replace_existing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">scheduler</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>      <span class="c1"># 后台线程开始调度，主线程继续干别的</span>
+</code></pre></div>
+<p><strong>为什么 <code>id</code> 和 <code>replace_existing=True</code> 这么重要</strong>：定时任务程序经常被重启。<br>
+如果代码里每次都 <code>add_job</code> 一次而 JobStore 又持久化，就会出现<strong>同一任务被注册 N 次</strong>，<br>
+重启 10 次就每天备份 10 次。给任务一个稳定 <code>id</code> + <code>replace_existing=True</code> 让它变成<strong>幂等注册</strong>。</p>
+<h3 id="25-jobstore">2.5 任务持久化：JobStore 到底存了什么</h3>
+<p>以 <code>SQLAlchemyJobStore</code> 为例，它只建<strong>一张表</strong> <code>apscheduler_jobs</code>：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">列</th>
+<th style="text-align: left;">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>id</code></td>
+<td style="text-align: left;">任务的唯一标识（你给的那个 <code>id</code>，不给则自动生成 UUID）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>next_run_time</code></td>
+<td style="text-align: left;">下次运行时间（<strong>调度器就是按这一列排序取任务的</strong>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>job_state</code></td>
+<td style="text-align: left;">Pickle 序列化后的整个 Job 对象（函数引用、参数、trigger 配置）</td>
+</tr>
+</tbody>
+</table>
+<p>两个由此推出的<strong>硬约束</strong>：</p>
+<ol>
+<li><strong><code>job_state</code> 是 pickle</strong>，所以被调用的函数必须<strong>在模块顶层可导入</strong>。<br>
+   把函数写在 <code>if __name__ == "__main__":</code> 里、或写成本地函数，重启后反序列化会 <code>ModuleNotFoundError</code> / <code>AttributeError</code>。</li>
+<li><strong>数据库中 <code>next_run_time</code> 是共享状态</strong>，所以多个进程连同一个库时会<strong>互相抢任务</strong>——<br>
+   这正是"多实例重复执行"问题的根源，也是我们能拿它做<strong>互斥</strong>的原因。</li>
+</ol>
+<h3 id="26">2.6 多实例部署的经典事故</h3>
+<pre class="plain"><code>        ┌─────────────┐        ┌─────────────┐
+        │ 容器 A       │        │ 容器 B       │
+        │ Scheduler   │        │ Scheduler   │
+        └──────┬──────┘        └──────┬──────┘
+               │                      │
+               └────────┬─────────────┘
+                        ▼
+              ┌──────────────────┐
+              │  同一个任务：       │
+              │  每天 03:00 备份   │  ← 3:00 时 A、B 同时认为自己该跑
+              └──────────────────┘
+                        ▼
+              💥 备份了两个文件 / 文件互相覆盖 / 邮件发了两封
+</code></pre>
+<p><strong>三种标准解法</strong>：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">方案</th>
+<th style="text-align: left;">做法</th>
+<th style="text-align: left;">代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">单实例</td>
+<td style="text-align: left;">调度器只部署 1 个副本（web 多副本，scheduler 单独一份）</td>
+<td style="text-align: left;">有单点，但要可靠简单</td>
+</tr>
+<tr>
+<td style="text-align: left;">分布式锁</td>
+<td style="text-align: left;">任务开头抢一把锁（Redis <code>SET NX</code> / 数据库行锁），抢不到就退出</td>
+<td style="text-align: left;">需要外部依赖</td>
+</tr>
+<tr>
+<td style="text-align: left;">外部编排</td>
+<td style="text-align: left;">交给 <code>cron</code>、K8s CronJob、Airflow 等"只管触发"的系统</td>
+<td style="text-align: left;">要接受它的世界观</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>记一条经验：<strong>"调度"本身几乎不花资源，"可靠地只执行一次"才是难点。</strong> 生产上 90% 的调度事故都出在这里。</p>
+</blockquote>
+<hr>
+<h2 id="3">3. 原理深入</h2>
+<h3 id="31">3.1 一次触发，内部到底发生了什么</h3>
+<p>从 <code>scheduler.start()</code> 到你的函数被调用，中间经过这些步骤：</p>
+<pre class="plain"><code>  1. 主循环（_process_jobs）每隔 wakeup_interval（默认 10s，可调）醒来
+  2. 从 JobStore 取出所有 next_run_time 非空的任务
+  3. 逐个比较 now &gt;= next_run_time
+  4. 命中的：检查 misfire_grace_time → 决定跳过还是执行
+  5. 抢 max_instances 名额（用 job 自身的锁），抢不到就记 warning 跳过
+  6. 交给 Executor（线程池 submit）
+  7. Executor 线程里真正调用你的函数
+  8. 回调：更新 last_run_time、算下一次 next_run_time、写回 JobStore
+  9. 派发 EVENT_JOB_EXECUTED 或 EVENT_JOB_ERROR
+</code></pre>
+<p><strong>注意第 4 步在第 5 步之前</strong>。也就是说：一个迟到的任务，<strong>先</strong>因为 misfire 被跳过，<br>
+才轮到 max_instances 判断。反过来，如果你两者都设成很宽容，<br>
+一个卡了 10 分钟的调度器醒来时可能一次性补跑一大批任务——这就是"惊群"。</p>
+<h3 id="32-next_run_time">3.2 <code>next_run_time</code> 是整个系统的中枢</h3>
+<p>调度器本身不记任何东西，它只是<strong>反复地把 now 和 next_run_time 做比较</strong>。<br>
+所以：</p>
+<ul>
+<li>任务会不会跑，<strong>只取决于</strong> <code>next_run_time</code> 是不是过去时间</li>
+<li>想手动触发一次 → 直接 <code>job.modify(next_run_time=datetime.now())</code></li>
+<li>想暂停 → <code>job.pause()</code>（把 <code>next_run_time</code> 置为 <code>None</code>）</li>
+<li>想恢复 → <code>job.resume()</code>（重算下一次）</li>
+<li>持久化 JobStore 存的就是 <code>next_run_time</code> + 整个 Job 的 pickle</li>
+</ul>
+<p><strong>推论</strong>：所有"任务没按预期跑"的故障，最终都要问一个问题——<br>
+<strong><code>next_run_time</code> 当时是什么值？</strong> 这也是排错第一句话。</p>
+<h3 id="33-coalesce-max_instances">3.3 为什么 <code>coalesce</code> 和 <code>max_instances</code> 不是一回事</h3>
+<p>这两个词都跟"重复"有关，但管的是不同维度：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;"></th>
+<th style="text-align: left;"><code>max_instances</code></th>
+<th style="text-align: left;"><code>coalesce</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">管的是</td>
+<td style="text-align: left;"><strong>同时</strong>能跑几个</td>
+<td style="text-align: left;">积压的触发<strong>怎么处理</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;">默认</td>
+<td style="text-align: left;">1</td>
+<td style="text-align: left;">True</td>
+</tr>
+<tr>
+<td style="text-align: left;">场景</td>
+<td style="text-align: left;">上一轮还没结束</td>
+<td style="text-align: left;">调度器卡了 10 分钟，期间积压 5 次</td>
+</tr>
+<tr>
+<td style="text-align: left;">行为</td>
+<td style="text-align: left;">第 2 个并发直接丢弃</td>
+<td style="text-align: left;">5 次补跑 1 次（合并）</td>
+</tr>
+<tr>
+<td style="text-align: left;">类比</td>
+<td style="text-align: left;">餐厅只有 1 张桌子</td>
+<td style="text-align: left;">5 个人排队，只做 1 桌饭</td>
+</tr>
+</tbody>
+</table>
+<p>一个任务慢导致<strong>当前</strong>多出来的触发，是 <code>max_instances</code> 管；<br>
+一个任务不慢但<strong>调度器</strong>卡住导致的历史积压，是 <code>coalesce</code> 管。<br>
+两个都默认开启，所以大多数时候你不会注意到它们。</p>
+<h3 id="34">3.4 持久化到底解决了什么，没解决什么</h3>
+<p><strong>解决了</strong>：<br>
+- 进程重启后任务不丢<br>
+- 不用每次启动都重新注册（配合幂等注册后，代码里 <code>add_job</code> 可以放在启动流程）<br>
+- 多进程共享任务表（<code>next_run_time</code> 变成跨进程的协调点）</p>
+<p><strong>没解决</strong>：<br>
+- <strong>停机期间的任务不会补跑</strong>。因为 <code>next_run_time</code> 是被持久化的，<br>
+  停机 3 小时再起来，它还指着那 3 小时前的时间点——但那时已经"迟到"，<br>
+  落在 <code>misfire_grace_time</code> 之外就被跳过。<br>
+- <strong>多实例不会自动互斥</strong>。持久化只是让它们<strong>看得到同一张表</strong>，<br>
+  至于谁真的去跑，得靠 <code>next_run_time</code> 竞争（不安全）或显式加锁（安全）。</p>
+<blockquote>
+<p>一句话：<strong>持久化解决"记忆"，不解决"互斥"，也不解决"补偿"。</strong><br>
+后两件事必须你自己做。</p>
+</blockquote>
+<hr>
+<h2 id="4-api">4. 定义与使用方法（API 速查表）</h2>
+<h3 id="41-schedule">4.1 <code>schedule</code> 常用调用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">schedule</span><span class="o">,</span> <span class="nn">time</span>
+
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">seconds</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">minutes</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">()</span><span class="o">.</span><span class="n">hour</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">()</span><span class="o">.</span><span class="n">day</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="s2">&quot;03:00&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">()</span><span class="o">.</span><span class="n">monday</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="s2">&quot;08:30&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">()</span><span class="o">.</span><span class="n">wednesday</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="s2">&quot;13:15&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">task</span><span class="p">)</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">every</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">seconds</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="n">arg1</span><span class="p">,</span> <span class="n">kwarg</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>     <span class="c1"># 带参数</span>
+
+<span class="c1"># 修饰器写法</span>
+<span class="nd">@schedule</span><span class="o">.</span><span class="n">every</span><span class="p">()</span><span class="o">.</span><span class="n">day</span><span class="o">.</span><span class="n">at</span><span class="p">(</span><span class="s2">&quot;03:00&quot;</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">nightly</span><span class="p">():</span> <span class="o">...</span>
+
+<span class="c1"># 主循环（必须你自己写）</span>
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="n">schedule</span><span class="o">.</span><span class="n">run_pending</span><span class="p">()</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># 其他方法</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">clear</span><span class="p">(</span><span class="n">tag</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>          <span class="c1"># 清空</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">next_run</span><span class="p">()</span>               <span class="c1"># 下一个任务的 datetime</span>
+<span class="n">schedule</span><span class="o">.</span><span class="n">idle_seconds</span><span class="p">()</span>           <span class="c1"># 距离下次触发还有几秒</span>
+</code></pre></div>
+<h3 id="42-apscheduler-scheduler">4.2 <code>APScheduler</code> Scheduler</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">apscheduler.schedulers.background</span> <span class="kn">import</span> <span class="n">BackgroundScheduler</span>
+<span class="kn">from</span> <span class="nn">apscheduler.schedulers.blocking</span> <span class="kn">import</span> <span class="n">BlockingScheduler</span>
+<span class="kn">from</span> <span class="nn">apscheduler.schedulers.asyncio</span> <span class="kn">import</span> <span class="n">AsyncIOScheduler</span>
+
+<span class="c1"># Background：主线程继续干别的</span>
+<span class="n">sched</span> <span class="o">=</span> <span class="n">BackgroundScheduler</span><span class="p">(</span>
+    <span class="n">jobstores</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="n">SQLAlchemyJobStore</span><span class="p">(</span><span class="n">url</span><span class="o">=</span><span class="s2">&quot;sqlite:///jobs.sqlite&quot;</span><span class="p">)},</span>
+    <span class="n">executors</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;default&quot;</span><span class="p">:</span> <span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">10</span><span class="p">)},</span>
+    <span class="n">job_defaults</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;coalesce&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">,</span> <span class="s2">&quot;max_instances&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">&quot;misfire_grace_time&quot;</span><span class="p">:</span> <span class="mi">60</span><span class="p">},</span>
+    <span class="n">timezone</span><span class="o">=</span><span class="s2">&quot;Asia/Shanghai&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">pause</span><span class="p">()</span>            <span class="c1"># 暂停调度（不影响已注册任务）</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">resume</span><span class="p">()</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">shutdown</span><span class="p">(</span><span class="n">wait</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># 优雅关闭：等正在跑的任务结束</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">get_jobs</span><span class="p">()</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">get_job</span><span class="p">(</span><span class="s2">&quot;id&quot;</span><span class="p">)</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">remove_all_jobs</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="43-add_job">4.3 <code>add_job</code> 常用参数</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">sched</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span>
+    <span class="n">func</span><span class="p">,</span>                    <span class="c1"># 必须是模块顶层可导入的函数</span>
+    <span class="n">trigger</span><span class="p">,</span>                 <span class="c1"># &quot;cron&quot; / &quot;interval&quot; / &quot;date&quot; / 或 Trigger 对象</span>
+    <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="n">kwargs</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;k&quot;</span><span class="p">:</span> <span class="mi">3</span><span class="p">},</span>
+    <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;stable-id&quot;</span><span class="p">,</span>          <span class="c1"># 幂等注册的前提</span>
+    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;给人看的名字&quot;</span><span class="p">,</span>
+    <span class="n">replace_existing</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>   <span class="c1"># 同 id 覆盖</span>
+    <span class="n">coalesce</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+    <span class="n">max_instances</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">misfire_grace_time</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span>   <span class="c1"># 秒；None = 无限宽容</span>
+    <span class="n">next_run_time</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(),</span>   <span class="c1"># 手动指定首次触发</span>
+    <span class="n">timezone</span><span class="o">=</span><span class="s2">&quot;Asia/Shanghai&quot;</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+<h3 id="44-trigger">4.4 Trigger 对象</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">apscheduler.triggers.cron</span> <span class="kn">import</span> <span class="n">CronTrigger</span>
+<span class="kn">from</span> <span class="nn">apscheduler.triggers.interval</span> <span class="kn">import</span> <span class="n">IntervalTrigger</span>
+<span class="kn">from</span> <span class="nn">apscheduler.triggers.date</span> <span class="kn">import</span> <span class="n">DateTrigger</span>
+<span class="kn">from</span> <span class="nn">apscheduler.triggers.combining</span> <span class="kn">import</span> <span class="n">OrTrigger</span>     <span class="c1"># ⚠️ 别用 AndTrigger 拼 cron</span>
+
+<span class="c1"># cron 常用字段</span>
+<span class="n">CronTrigger</span><span class="p">(</span><span class="n">hour</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">minute</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>                       <span class="c1"># 每天 03:00</span>
+<span class="n">CronTrigger</span><span class="p">(</span><span class="n">day_of_week</span><span class="o">=</span><span class="s2">&quot;mon-fri&quot;</span><span class="p">,</span> <span class="n">hour</span><span class="o">=</span><span class="s2">&quot;9-18&quot;</span><span class="p">)</span>     <span class="c1"># 工作日 9-18 点整</span>
+<span class="n">CronTrigger</span><span class="p">(</span><span class="n">day</span><span class="o">=</span><span class="s2">&quot;last&quot;</span><span class="p">)</span>                             <span class="c1"># 每月最后一天</span>
+<span class="n">CronTrigger</span><span class="p">(</span><span class="n">month</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">day</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">hour</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>                 <span class="c1"># 每年元旦</span>
+
+<span class="c1"># interval</span>
+<span class="n">IntervalTrigger</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span> <span class="n">start_date</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">())</span>  <span class="c1"># start_date 建议显式给</span>
+<span class="n">IntervalTrigger</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+
+<span class="c1"># date（一次性）</span>
+<span class="n">DateTrigger</span><span class="p">(</span><span class="n">run_date</span><span class="o">=</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+
+<span class="c1"># 复合</span>
+<span class="n">OrTrigger</span><span class="p">([</span><span class="n">CronTrigger</span><span class="p">(</span><span class="n">day_of_week</span><span class="o">=</span><span class="s2">&quot;sat&quot;</span><span class="p">),</span> <span class="n">CronTrigger</span><span class="p">(</span><span class="n">day_of_week</span><span class="o">=</span><span class="s2">&quot;sun&quot;</span><span class="p">)])</span>
+</code></pre></div>
+<h3 id="45-jobstore">4.5 JobStore</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">apscheduler.jobstores.memory</span> <span class="kn">import</span> <span class="n">MemoryJobStore</span>
+<span class="kn">from</span> <span class="nn">apscheduler.jobstores.sqlalchemy</span> <span class="kn">import</span> <span class="n">SQLAlchemyJobStore</span>
+<span class="kn">from</span> <span class="nn">apscheduler.jobstores.redis</span> <span class="kn">import</span> <span class="n">RedisJobStore</span>
+
+<span class="n">SQLAlchemyJobStore</span><span class="p">(</span><span class="n">url</span><span class="o">=</span><span class="s2">&quot;sqlite:///jobs.sqlite&quot;</span><span class="p">)</span>
+<span class="n">SQLAlchemyJobStore</span><span class="p">(</span><span class="n">url</span><span class="o">=</span><span class="s2">&quot;postgresql+psycopg://u:p@h/db&quot;</span><span class="p">,</span> <span class="n">tablename</span><span class="o">=</span><span class="s2">&quot;my_jobs&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="46-executor">4.6 Executor</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">apscheduler.executors.pool</span> <span class="kn">import</span> <span class="n">ThreadPoolExecutor</span><span class="p">,</span> <span class="n">ProcessPoolExecutor</span>
+<span class="kn">from</span> <span class="nn">apscheduler.executors.asyncio</span> <span class="kn">import</span> <span class="n">AsyncIOExecutor</span>
+<span class="kn">from</span> <span class="nn">apscheduler.executors.gevent</span> <span class="kn">import</span> <span class="n">GeventExecutor</span>
+
+<span class="n">ThreadPoolExecutor</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>          <span class="c1"># IO 密集</span>
+<span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span>         <span class="c1"># CPU 密集（参数必须可 pickle）</span>
+<span class="n">AsyncIOExecutor</span><span class="p">()</span>              <span class="c1"># 任务是 async 函数</span>
+</code></pre></div>
+<h3 id="47">4.7 事件监听</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">apscheduler.events</span> <span class="kn">import</span> <span class="n">EVENT_JOB_ERROR</span><span class="p">,</span> <span class="n">EVENT_JOB_MISSED</span><span class="p">,</span> <span class="n">EVENT_JOB_EXECUTED</span>
+
+<span class="k">def</span> <span class="nf">on_error</span><span class="p">(</span><span class="n">event</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;任务 </span><span class="si">{</span><span class="n">event</span><span class="o">.</span><span class="n">job_id</span><span class="si">}</span><span class="s2"> 失败：</span><span class="si">{</span><span class="n">event</span><span class="o">.</span><span class="n">exception</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">sched</span><span class="o">.</span><span class="n">add_listener</span><span class="p">(</span><span class="n">on_error</span><span class="p">,</span> <span class="n">EVENT_JOB_ERROR</span><span class="p">)</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">add_listener</span><span class="p">(</span><span class="k">lambda</span> <span class="n">e</span><span class="p">:</span> <span class="nb">print</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">job_id</span><span class="p">),</span> <span class="n">EVENT_JOB_EXECUTED</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 图解</h2>
+<p>完整的 11 张图（ASCII + Mermaid）在 <code>diagrams/README.md</code>，包括：<br>
+调度器四件套数据流、三个防重复参数的时间轴对照、<code>AndTrigger</code> 死循环推演、<br>
+多实例重复执行的三种解法、备份任务时序图、锁 TTL 的必要性。</p>
+<hr>
+<h2 id="6-top-11">6. 常见陷阱 Top 11</h2>
+<h3 id="1get_next_fire_timenone-now">陷阱 1：<code>get_next_fire_time(None, now)</code> 原地打转</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ previous 一直传 None → now 命中 cron 时返回 now 本身，永远不推进</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">base</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">trig</span><span class="o">.</span><span class="n">get_next_fire_time</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span>   <span class="c1"># 三次都是同一个时间</span>
+
+<span class="c1"># ✅ 把上一次结果传回去</span>
+<span class="n">prev</span><span class="p">,</span> <span class="n">now</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">base</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+    <span class="n">nxt</span> <span class="o">=</span> <span class="n">trig</span><span class="o">.</span><span class="n">get_next_fire_time</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">now</span><span class="p">)</span>
+    <span class="n">prev</span> <span class="o">=</span> <span class="n">now</span> <span class="o">=</span> <span class="n">nxt</span>
+</code></pre></div>
+<p><strong>症状</strong>：写"推算未来几次触发时间"的工具时，死循环或输出全一样。<br>
+<strong>实测</strong>：见 <code>02-pitfalls.py</code> 坑 ①。</p>
+<h3 id="2naive-vs-aware-datetime-typeerror">陷阱 2：naive vs aware datetime 直接 TypeError</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌</span>
+<span class="n">IntervalTrigger</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span><span class="o">.</span><span class="n">get_next_fire_time</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">30</span><span class="p">))</span>
+<span class="c1"># TypeError: can&#39;t compare offset-naive and offset-aware datetimes</span>
+
+<span class="c1"># ✅ 调度器返回的时间带 tzinfo，基准点也要带</span>
+<span class="n">base</span> <span class="o">=</span> <span class="n">datetime</span><span class="p">(</span><span class="mi">2026</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">30</span><span class="p">,</span> <span class="n">tzinfo</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">astimezone</span><span class="p">()</span><span class="o">.</span><span class="n">tzinfo</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>根因</strong>：<code>IntervalTrigger</code> 内部拿 <code>start_date</code>（默认是带时区的"现在"）<br>
+和 <code>now</code> 比较。<strong>症状</strong>：写测试时莫名 TypeError，但手动跑又没事。</p>
+<h3 id="3intervaltrigger-start_date">陷阱 3：<code>IntervalTrigger</code> 不给 <code>start_date</code> 就不可预测</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 默认 start_date =「此刻 + interval」，跟你的基准点无关</span>
+<span class="n">IntervalTrigger</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span><span class="o">.</span><span class="n">start_date</span>   <span class="c1"># → 2026-09-29 16:33（真实现在）</span>
+
+<span class="c1"># ✅ 显式指定</span>
+<span class="n">IntervalTrigger</span><span class="p">(</span><span class="n">minutes</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span> <span class="n">start_date</span><span class="o">=</span><span class="n">base</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>症状</strong>：单元测试里"下次运行是 30 分钟后"这种断言永远写不稳。</p>
+<h3 id="4max_instances1">陷阱 4：<code>max_instances=1</code> 是丢弃，不是排队</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">sched</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">slow_job</span><span class="p">,</span> <span class="s2">&quot;interval&quot;</span><span class="p">,</span> <span class="n">seconds</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">max_instances</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="c1"># slow_job 要跑 1.5 秒</span>
+</code></pre></div>
+<p><strong>症状</strong>：日志出现 <code>Execution of job ... skipped: maximum number of running
+instances reached (1)</code>，任务"明明该跑却没跑"。<br>
+<strong>要点</strong>：默认 1，且是<strong>丢弃</strong>。要排队得显式调大。<br>
+<strong>实测</strong>：见 <code>03-advanced-scheduler.py</code> 的 max_instances 用例（3.2 秒内只跑 1 次）。</p>
+<h3 id="5misfire_grace_time">陷阱 5：<code>misfire_grace_time</code> 决定了"错过"和"补跑"的分界</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">job_defaults</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;misfire_grace_time&quot;</span><span class="p">:</span> <span class="mi">1</span><span class="p">}</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="s2">&quot;interval&quot;</span><span class="p">,</span> <span class="n">seconds</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span>
+              <span class="n">next_run_time</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="mi">5</span><span class="p">))</span>
+<span class="c1"># → 迟到 5 秒 &gt; 容忍 1 秒 → 直接跳过，不补跑</span>
+</code></pre></div>
+<p><strong>要点</strong>：<code>None</code> = 来者不拒（但会把积压全补一遍）；<code>0</code> = 严格准点。<br>
+<strong>别指望调度器帮你补跑</strong>——需要"一天都不能少"的任务，<br>
+正确做法是任务自己记录 <code>last_success</code> 并在醒来时检查缺口（拉取式）。</p>
+<h3 id="6job_state-pickle">陷阱 6：<code>job_state</code> 是 pickle → 函数必须模块顶层</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 重启后反序列化直接炸</span>
+<span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">sched</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="n">backup</span><span class="p">(),</span> <span class="o">...</span><span class="p">)</span>   <span class="c1"># pickle.dumps 就已经报错了</span>
+    <span class="k">def</span> <span class="nf">local</span><span class="p">():</span> <span class="o">...</span>
+    <span class="n">sched</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">local</span><span class="p">,</span> <span class="o">...</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>症状</strong>：配置了持久化 JobStore，重启后任务消失或 <code>ModuleNotFoundError</code>。<br>
+<strong>正解</strong>：把任务函数提到模块顶层。</p>
+<h3 id="7add_job-id-n-n">陷阱 7：<code>add_job</code> 不给 id + 持久化 → 重启 N 次注册 N 遍</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 无 id：内存里 5 个任务；配上持久化后重启几次就是几个任务</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">backup</span><span class="p">,</span> <span class="s2">&quot;cron&quot;</span><span class="p">,</span> <span class="n">hour</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="c1"># ✅ 稳定 id + replace_existing=True = 幂等注册</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">backup</span><span class="p">,</span> <span class="s2">&quot;cron&quot;</span><span class="p">,</span> <span class="n">hour</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="nb">id</span><span class="o">=</span><span class="s2">&quot;daily-backup&quot;</span><span class="p">,</span> <span class="n">replace_existing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>症状</strong>：每天凌晨备份跑了 5 遍，邮件发 5 封。<br>
+<strong>实测</strong>：<code>02-pitfalls.py</code> 坑 ⑦ / <code>03-advanced-scheduler.py</code> 持久化用例。</p>
+<h3 id="8schedule">陷阱 8：<code>schedule</code> 只有一个线程，一个慢任务堵死全部</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">sched</span><span class="o">.</span><span class="n">every</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span><span class="o">.</span><span class="n">seconds</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">slow</span><span class="p">)</span>   <span class="c1"># 睡 0.6s</span>
+<span class="n">sched</span><span class="o">.</span><span class="n">every</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span><span class="o">.</span><span class="n">seconds</span><span class="o">.</span><span class="n">do</span><span class="p">(</span><span class="n">fast</span><span class="p">)</span>
+<span class="c1"># 实际顺序：slow → fast（快的被堵在慢的后面）</span>
+</code></pre></div>
+<p><strong>要点</strong>：<code>schedule</code> 无并发。<code>run_pending()</code> 串行执行所有到期任务。</p>
+<h3 id="9-n">陷阱 9：多实例部署 → 同一任务跑 N 遍</h3>
+<p><strong>症状</strong>：备份出现多份、告警发多条、写入互相覆盖。<br>
+<strong>三种解法</strong>（详见 2.6）：单实例 / 分布式锁 / 外部编排。</p>
+<h3 id="10">陷阱 10：任务抛异常被静默吞掉</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">sched</span><span class="o">.</span><span class="n">add_job</span><span class="p">(</span><span class="n">always_fails</span><span class="p">,</span> <span class="s2">&quot;interval&quot;</span><span class="p">,</span> <span class="n">seconds</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<span class="c1"># 不抛到你的主线程，只写 APScheduler 内部日志</span>
+<span class="c1"># 而且任务**依然留在表里**，会一直静默地失败下去</span>
+</code></pre></div>
+<p><strong>正解</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">sched</span><span class="o">.</span><span class="n">add_listener</span><span class="p">(</span><span class="k">lambda</span> <span class="n">e</span><span class="p">:</span> <span class="n">alert</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">job_id</span><span class="p">,</span> <span class="n">e</span><span class="o">.</span><span class="n">exception</span><span class="p">),</span> <span class="n">EVENT_JOB_ERROR</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="11andtrigger-cron">陷阱 11（本日最坑）：<code>AndTrigger</code> 拼两个 cron → 调度器死循环</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 会把整个调度器卡死，CPU 100%，其他任务全部不再执行</span>
+<span class="n">AndTrigger</span><span class="p">([</span><span class="n">CronTrigger</span><span class="p">(</span><span class="n">day_of_week</span><span class="o">=</span><span class="s2">&quot;mon-fri&quot;</span><span class="p">),</span> <span class="n">CronTrigger</span><span class="p">(</span><span class="n">hour</span><span class="o">=</span><span class="mi">9</span><span class="p">)])</span>
+</code></pre></div>
+<p><strong>根因</strong>：官方实现是 <code>while True</code>，要求各子触发器产出<strong>完全相同</strong>的时间戳<br>
+才返回。而 cron 永远不会对齐（一个给 00:00、一个给 09:00）→ 永不收敛。<br>
+官方 docstring 其实警告了（说混 <code>IntervalTrigger</code> 会挂起调度器）。</p>
+<p><strong>正解</strong>：条件过滤写进<strong>同一个</strong> cron 表达式：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">CronTrigger</span><span class="p">(</span><span class="n">day_of_week</span><span class="o">=</span><span class="s2">&quot;mon-fri&quot;</span><span class="p">,</span> <span class="n">hour</span><span class="o">=</span><span class="mi">9</span><span class="p">)</span>   <span class="c1"># 安全，一次返回</span>
+</code></pre></div>
+<blockquote>
+<p>⚠️ 编写这一课时我就是先写了 <code>AndTrigger</code> 版本，self-test 跑到这一步直接<br>
+卡死，进程占满一个核停不下来。最后用 <code>faulthandler.dump_traceback_later</code><br>
+打出栈才发现是 <code>combining.py</code> 的 <code>while True</code>。所以 <code>03</code> 里<strong>故意不导入</strong><br>
+<code>AndTrigger</code>，只留注释警告——避免有人照抄。</p>
+</blockquote>
+<hr>
+<h2 id="7">7. 实战项目：定时备份系统</h2>
+<p>需求（<code>code/04-backup-scheduler.py</code> 的完整实现）：</p>
+<blockquote>
+<p>每天 03:00 打包 <code>data/</code>，保留最近 7 天，校验失败要立刻知道，<br>
+多实例部署下只跑一次。</p>
+</blockquote>
+<p><strong>备份 → 校验 → 保留 → 报告</strong> 四步，每步都要考虑"失败了怎么办"：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">步骤</th>
+<th style="text-align: left;">做法</th>
+<th style="text-align: left;">关键决策</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>互斥</strong></td>
+<td style="text-align: left;">SQLite 行锁 <code>job_lock</code>，带 TTL</td>
+<td style="text-align: left;">多实例只跑一次；TTL 防死锁</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>幂等</strong></td>
+<td style="text-align: left;"><code>backup_log</code> 表记 <code>day</code>，当天已成功就跳过</td>
+<td style="text-align: left;">挡跨时间的重复</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>备份</strong></td>
+<td style="text-align: left;"><code>tarfile</code> 打包，<code>%Y%m%d-%H%M%S</code> 命名</td>
+<td style="text-align: left;">同名时加序号防覆盖</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>校验</strong></td>
+<td style="text-align: left;">立刻解包，算 sha256 + 数文件</td>
+<td style="text-align: left;">失败当场删掉坏包，不冒充成功</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>落账</strong></td>
+<td style="text-align: left;">写 <code>backup_log</code></td>
+<td style="text-align: left;">记录 size/sha256/文件数/耗时</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>保留</strong></td>
+<td style="text-align: left;">按文件名日期删超期的</td>
+<td style="text-align: left;">解析失败要报错不能静默</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>报告</strong></td>
+<td style="text-align: left;"><code>render_report</code> 输出可读摘要</td>
+<td style="text-align: left;">失败必须被看见</td>
+</tr>
+</tbody>
+</table>
+<p><strong>运行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-backup-scheduler.py<span class="w"> </span>--self-test<span class="w">     </span><span class="c1"># 33 项断言</span>
+python3<span class="w"> </span><span class="m">04</span>-backup-scheduler.py<span class="w"> </span>--dry-run<span class="w">       </span><span class="c1"># 走完整流程</span>
+python3<span class="w"> </span><span class="m">04</span>-backup-scheduler.py<span class="w"> </span>--selftest-job<span class="w">  </span><span class="c1"># 每 2s 真实触发</span>
+python3<span class="w"> </span><span class="m">04</span>-backup-scheduler.py<span class="w"> </span>--register<span class="w">      </span><span class="c1"># 真正注册 cron(03:00)</span>
+</code></pre></div>
+<p><strong>开发过程中抓到的 3 个真 bug</strong>（都写进了代码注释和陷阱节）：</p>
+<ol>
+<li><strong>同秒运行静默覆盖</strong> —— 时间戳只到秒，<code>run(force=True)</code> 在同一秒内<br>
+   再跑会算出完全相同的文件名，把上一个归档覆盖掉，"成功两次最后剩一个包"。</li>
+<li><strong><code>prune()</code> 从来没删过任何文件</strong> —— 把 <code>backup-20260929-161234</code> 整体<br>
+   用 <code>%Y%m%d</code> 解析必然 <code>ValueError</code>，而这个异常被 <code>except: continue</code> 吞掉，<br>
+   于是保留策略形同虚设且<strong>没有任何报错</strong>。</li>
+<li><strong><code>AndTrigger</code> 死循环</strong> —— 见陷阱 11。</li>
+</ol>
+<blockquote>
+<p>这三个 bug 的共同点：<strong>都是"看起来成功、实际没做事"</strong>。<br>
+这正是定时任务最危险的地方——它不崩，它只是悄悄地不工作。</p>
+</blockquote>
+<hr>
+<h2 id="8">8. 思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 cron 不会漂移而 <code>sleep</code> 会？</strong> 从"计算下一次触发的绝对时刻"<br>
+   vs "睡 N 秒"这个区别解释，并说明为什么"对齐到网格"在多任务场景尤其重要。</p>
+</li>
+<li>
+<p><strong><code>coalesce=True</code> 和"任务幂等"是同一件事吗？</strong> 如果你的任务是"每天给<br>
+   1000 个用户各发一封邮件"（不可重复），coalesce 够吗？还需要什么？</p>
+</li>
+<li>
+<p><strong>多实例部署下，为什么"用 <code>next_run_time</code> 竞争"是不安全的？</strong><br>
+   两个进程同时读到"该跑了"，会同时执行——这个 TOCTOU 竞态怎么破？</p>
+</li>
+<li>
+<p><strong>假设你的任务要"每分钟检查一次，发现过期就清理"</strong>，为什么这比<br>
+   "每天凌晨清理一次"更健壮？反过来，什么场景下"每天一次"反而更好？</p>
+</li>
+<li>
+<p><strong>设计一个"绝不重复扣款"的定时任务。</strong> 从幂等键、事务边界、<br>
+   唯一索引三个角度给出方案，并说明为什么光靠"加锁"不够。</p>
+</li>
+<li>
+<p><strong>心跳 <code>activeHours</code> 配错（窗口写反），会在任务面板留下一堆 <code>failed</code><br>
+   噪音记录。</strong> 想想为什么系统把"静默跳过"记成"失败"而不是"跳过"，<br>
+   以及这个设计对监控告警意味着什么。</p>
+</li>
+</ol>
+<hr>
+<h2 id="9">9. 小结</h2>
+<pre class="plain"><code>  一句话记住定时任务：
+    调度本身不花资源，&quot;可靠地只执行一次&quot;才是难点。
+
+  五条铁律：
+    ① 别用 while True + sleep（有漂移、有丢失、不能并发）
+    ② add_job 一律给稳定 id + replace_existing=True（幂等注册）
+    ③ 持久化 JobStore → 函数必须模块顶层（pickle 要求）
+    ④ 任务失败要接 EVENT_JOB_ERROR，否则它会静默失败到天荒地老
+    ⑤ 多实例必加互斥，且锁要带 TTL（否则会永久静默失效）
+
+  三个参数的分工：
+    max_instances     管&quot;同时&quot;跑几个（默认 1，超了丢弃）
+    coalesce          管积压几次合并成几次（默认 True）
+    misfire_grace_time 管迟到多久还算数（默认无，即严格准点）
+
+  最危险的三种&quot;假成功&quot;：
+    · AndTrigger 死循环 → 调度器卡死
+    · 保留策略解析失败被吞 → 永远不清理
+    · 任务抛异常无人监听 → 一直失败但没人知道
+</code></pre>
+<blockquote>
+<p>下一课 Day 171：<strong>消息队列</strong> —— 解耦、削峰、可靠投递的三种姿势，<br>
+以及"消费幂等"这个和今天一脉相承的话题。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-169/index.html">← Day 169 Fabric 批量执行</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

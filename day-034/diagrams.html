@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 34 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 34 正文</a>
+  <h1>Day 34 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-034">Day 034 — 多态与鸭子类型：图解</h1>
+<blockquote>
+<p>Mermaid 与 ASCII 示意图，帮助理解多态、鸭子类型、EAFP 和插件系统</p>
+</blockquote>
+<hr>
+<h2 id="1">1️⃣ 多态原理</h2>
+<pre class="plain"><code>方法调用时的动态绑定:
+
+    调用: animal.speak()
+                    │
+                    ▼
+          ┌─────────────────┐
+          │  vtable 查找    │ ← 运行时根据对象实际类型查找
+          └────────┬────────┘
+                   │
+         ┌─────────┼──────────┐
+         ▼                    ▼
+    ┌──────────┐        ┌──────────┐
+    │ Dog      │        │ Cat      │
+    │ speak()  │        │ speak()  │
+    │ → &quot;汪汪!&quot; │         │ → &quot;喵喵~&quot; │
+    └──────────┘        └──────────┘
+</code></pre>
+<h3 id="vs">继承体系 vs 鸭子类型</h3>
+<pre class="plain"><code>传统继承多态:                  鸭子类型多态:
+
+    ┌─────────┐             ┌─────────┐   ┌─────────┐
+    │ Animal  │             │ Duck    │   │ Person  │
+    │ speak() │             │ quack() │   │ quack() │
+    └────┬────┘             │ walk()  │   │ walk()  │
+         │                  │ swim()  │   │ swim()  │
+    ┌────┼────┐             └─────────┘   └─────────┘
+    ▼    ▼    ▼                  │              │
+  ┌──┐ ┌──┐ ┌──┐                └──────┬───────┘
+  │Dog│ │Cat│ │Bird│                     │
+  └──┘ └──┘ └──┘                  duck_test()
+ 必须继承 Animal              只要有这些方法就行
+</code></pre>
+<hr>
+<h2 id="2-duck-typing">2️⃣ 鸭子类型（Duck Typing）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[&quot;🐦 鸟&quot;] --&gt; B{会像鸭子叫?}
+    B --&gt;|是| C{会像鸭子走?}
+    B --&gt;|否| D[不是鸭子]
+    C --&gt;|是| E{会像鸭子游泳?}
+    C --&gt;|否| D
+    E --&gt;|是| F[&quot;🦆 这是鸭子!&quot;]
+    E --&gt;|否| D
+
+    style F fill:#90EE90
+    style D fill:#FFB6C1
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[&quot;🐦 鸟&quot;] --&gt; B{会像鸭子叫?}
+    B --&gt;|是| C{会像鸭子走?}
+    B --&gt;|否| D[不是鸭子]
+    C --&gt;|是| E{会像鸭子游泳?}
+    C --&gt;|否| D
+    E --&gt;|是| F[&quot;🦆 这是鸭子!&quot;]
+    E --&gt;|否| D
+
+    style F fill:#90EE90
+    style D fill:#FFB6C1
+</code></pre></div>
+<h3 id="python">Python 中的鸭子类型</h3>
+<pre class="plain"><code>  def duck_test(thing):
+      thing.quack()    # 不关心类型
+      thing.walk()     # 只关心有没有这个方法
+      thing.swim()
+
+  duck_test(Duck)       # ✅ &quot;嘎嘎!&quot;
+  duck_test(Person)     # ✅ &quot;嘎嘎!&quot; （人在学鸭子）
+  duck_test(RobotDuck)  # ✅ &quot;哔——嘎嘎!&quot;
+</code></pre>
+<hr>
+<h2 id="3-eafp-lbyl">3️⃣ EAFP 与 LBYL 对比</h2>
+<h3 id="_1">执行流程对比</h3>
+<pre class="plain"><code>LBYL (先检查后操作):
+
+    检查条件 ──不满足──→ 返回/跳过
+        │
+       满足
+        │
+       执行操作 ──仍可能失败──→ 未处理!
+
+    问题: 检查到执行之间，状态可能变化
+          (TOCTOU 竞态条件)
+
+
+EAFP (先操作后处理):
+
+    执行操作 ──成功──→ 返回结果
+        │
+       失败
+        │
+       捕获异常 ───→ 处理错误
+
+    优势: 没有竞态条件窗口
+          代码更简洁
+</code></pre>
+<h3 id="_2">常见场景</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>LBYL</th>
+<th>EAFP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>文件访问</td>
+<td><code>os.path.exists()</code> + <code>open()</code></td>
+<td><code>try: open()</code></td>
+</tr>
+<tr>
+<td>字典访问</td>
+<td><code>if 'k' in d: d['k']</code></td>
+<td><code>try: d['k']</code></td>
+</tr>
+<tr>
+<td>属性访问</td>
+<td><code>if hasattr(o, 'x'): o.x</code></td>
+<td><code>try: o.x</code></td>
+</tr>
+<tr>
+<td>类型检查</td>
+<td><code>isinstance(x, (int, float))</code></td>
+<td><code>try: x + 1</code></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="4-abc">4️⃣ 抽象基类（ABC）体系</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class ABC {
+        &lt;&lt;metaclass&gt;&gt;
+        __subclasshook__()
+    }
+
+    class DataSource {
+        &lt;&lt;abstract&gt;&gt;
+        +connect() bool
+        +read() str
+        +close() None
+    }
+
+    class DatabaseSource {
+        -host: str
+        -db: str
+        +connect() bool
+        +read() str
+        +close() None
+    }
+
+    class FileSource {
+        -path: str
+        -file: TextIO
+        +connect() bool
+        +read() str
+        +close() None
+    }
+
+    class APISource {
+        -url: str
+        -session: dict
+        +connect() bool
+        +read() str
+        +close() None
+    }
+
+    DataSource &lt;|-- DatabaseSource : 继承
+    DataSource &lt;|-- FileSource : 继承
+    DataSource &lt;|-- APISource : 继承
+    ABC &lt;|-- DataSource : 元类
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class ABC {
+        &lt;&lt;metaclass&gt;&gt;
+        __subclasshook__()
+    }
+
+    class DataSource {
+        &lt;&lt;abstract&gt;&gt;
+        +connect() bool
+        +read() str
+        +close() None
+    }
+
+    class DatabaseSource {
+        -host: str
+        -db: str
+        +connect() bool
+        +read() str
+        +close() None
+    }
+
+    class FileSource {
+        -path: str
+        -file: TextIO
+        +connect() bool
+        +read() str
+        +close() None
+    }
+
+    class APISource {
+        -url: str
+        -session: dict
+        +connect() bool
+        +read() str
+        +close() None
+    }
+
+    DataSource &lt;|-- DatabaseSource : 继承
+    DataSource &lt;|-- FileSource : 继承
+    DataSource &lt;|-- APISource : 继承
+    ABC &lt;|-- DataSource : 元类
+</code></pre></div>
+<h3 id="python-abc">Python 内置 ABC 层次结构</h3>
+<pre class="plain"><code>collections.abc
+
+    Iterable         ← 需要 __iter__()
+        │
+    Iterator         ← 需要 __next__() + __iter__()
+        │
+    Collection       ← 需要 __contains__() + __iter__() + __len__()
+       ─┼─
+    Sequence         ← 需要 __getitem__() + __len__()
+        │
+    MutableSequence  ← Sequence + __setitem__() + __delitem__() + insert()
+        │
+    list/bytearray
+
+    Mapping          ← 需要 __getitem__() + __len__() + __iter__()
+        │
+    MutableMapping   ← Mapping + __setitem__() + __delitem__()
+        │
+    dict
+
+    Set              ← 需要 __contains__() + __iter__() + __len__()
+        │
+    MutableSet       ← Set + add() + discard()
+</code></pre>
+<hr>
+<h2 id="5">5️⃣ 插件系统架构</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TB
+    subgraph 插件系统
+        PM[PluginManager]
+        PB[PluginBase&lt;br/&gt;抽象基类]
+    end
+
+    subgraph 具体插件
+        T[TrimPlugin&lt;br/&gt;优先级: HIGHEST]
+        C[CleanPlugin&lt;br/&gt;优先级: HIGH]
+        U[UpperCasePlugin&lt;br/&gt;优先级: NORMAL]
+        S[StatPlugin&lt;br/&gt;优先级: LOW]
+        R[ReversePlugin&lt;br/&gt;优先级: LOWEST]
+    end
+
+    PB --&gt;|定义接口| T
+    PB --&gt;|定义接口| C
+    PB --&gt;|定义接口| U
+    PB --&gt;|定义接口| S
+    PB --&gt;|定义接口| R
+
+    T --&gt;|依赖| C
+    C --&gt;|依赖| U
+
+    PM --&gt;|注册| T
+    PM --&gt;|注册| C
+    PM --&gt;|注册| U
+    PM --&gt;|注册| S
+    PM --&gt;|注册| R
+
+    PM --&gt;|按优先级排序执行| ORDER[执行顺序:&lt;br/&gt;Trim → Clean → UpperCase → Stats → Reverse]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TB
+    subgraph 插件系统
+        PM[PluginManager]
+        PB[PluginBase&lt;br/&gt;抽象基类]
+    end
+
+    subgraph 具体插件
+        T[TrimPlugin&lt;br/&gt;优先级: HIGHEST]
+        C[CleanPlugin&lt;br/&gt;优先级: HIGH]
+        U[UpperCasePlugin&lt;br/&gt;优先级: NORMAL]
+        S[StatPlugin&lt;br/&gt;优先级: LOW]
+        R[ReversePlugin&lt;br/&gt;优先级: LOWEST]
+    end
+
+    PB --&gt;|定义接口| T
+    PB --&gt;|定义接口| C
+    PB --&gt;|定义接口| U
+    PB --&gt;|定义接口| S
+    PB --&gt;|定义接口| R
+
+    T --&gt;|依赖| C
+    C --&gt;|依赖| U
+
+    PM --&gt;|注册| T
+    PM --&gt;|注册| C
+    PM --&gt;|注册| U
+    PM --&gt;|注册| S
+    PM --&gt;|注册| R
+
+    PM --&gt;|按优先级排序执行| ORDER[执行顺序:&lt;br/&gt;Trim → Clean → UpperCase → Stats → Reverse]
+</code></pre></div>
+<h3 id="_3">执行流程</h3>
+<pre class="plain"><code>输入: &quot;   Hello   World!   &quot;
+
+  ① TrimPlugin (HIGHEST)
+     &quot;Hello   World!&quot;
+        ↓
+  ② CleanPlugin (HIGH, 依赖 Trim)
+     &quot;Hello World!&quot;
+        ↓
+  ③ UpperCasePlugin (NORMAL, 依赖 Clean)
+     &quot;HELLO WORLD!&quot;
+        ↓
+  ④ StatPlugin (LOW)
+     { chars: 12, words: 2, ... }
+        ↓
+  ⑤ ReversePlugin (LOWEST)
+     &quot;!DLROW OLLEH&quot;
+
+输出: &quot;!DLROW OLLEH&quot;
+</code></pre>
+<h3 id="_4">依赖解析（拓扑排序）</h3>
+<pre class="plain"><code>插件依赖图:
+    Reverse → (无依赖)
+    Stats → (无依赖)
+    UpperCase → Clean
+    Clean → Trim
+    Trim → (无依赖)
+
+拓扑排序过程:
+    1. 从 Reverse 开始: visited{Reverse}
+    2. 从 Stats 开始: visited{Reverse, Stats}
+    3. 从 UpperCase 开始: 需要 Clean
+    4. 从 Clean 开始: 需要 Trim
+    5. 从 Trim 开始: 无依赖, 加入
+    6. 回到 Clean: 加入
+    7. 回到 UpperCase: 加入
+    8. 加入 Stats, Reverse
+
+最终执行顺序 (按优先级):
+    Trim(HIGHEST) &gt; Clean(HIGH) &gt; UpperCase(NORMAL)
+    &gt; Stats(LOW) &gt; Reverse(LOWEST)
+</code></pre>
+<hr>
+<h2 id="6">6️⃣ 注册与虚拟子类机制</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as 自定义类
+    participant ABC as 抽象基类
+    participant Check as isinstance/issubclass
+
+    Note over C,ABC: 方式一：显式继承
+
+    C-&gt;&gt;ABC: class MyClass(ABC)
+    C-&gt;&gt;ABC: 实现抽象方法
+    Check-&gt;&gt;ABC: isinstance(obj, ABC)?
+    ABC-&gt;&gt;Check: 检查 MRO → True
+
+    Note over C,ABC: 方式二：虚拟注册
+
+    ABC-&gt;&gt;ABC: ABC.register(C)
+    Check-&gt;&gt;ABC: isinstance(obj, ABC)?
+    ABC-&gt;&gt;Check: 检查注册表 → True
+    Note over C: 但 issubclass(C, ABC) 为 False&lt;br/&gt;for obj in __subclasshook__
+
+    Note over C,ABC: 方式三：__subclasshook__
+
+    C-&gt;&gt;C: class C: def quack(self): ...
+    Check-&gt;&gt;ABC: issubclass(C, ABC)?
+    ABC-&gt;&gt;C: __subclasshook__ 检查
+    C-&gt;&gt;ABC: 有 quack 方法 → True
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as 自定义类
+    participant ABC as 抽象基类
+    participant Check as isinstance/issubclass
+
+    Note over C,ABC: 方式一：显式继承
+
+    C-&gt;&gt;ABC: class MyClass(ABC)
+    C-&gt;&gt;ABC: 实现抽象方法
+    Check-&gt;&gt;ABC: isinstance(obj, ABC)?
+    ABC-&gt;&gt;Check: 检查 MRO → True
+
+    Note over C,ABC: 方式二：虚拟注册
+
+    ABC-&gt;&gt;ABC: ABC.register(C)
+    Check-&gt;&gt;ABC: isinstance(obj, ABC)?
+    ABC-&gt;&gt;Check: 检查注册表 → True
+    Note over C: 但 issubclass(C, ABC) 为 False&lt;br/&gt;for obj in __subclasshook__
+
+    Note over C,ABC: 方式三：__subclasshook__
+
+    C-&gt;&gt;C: class C: def quack(self): ...
+    Check-&gt;&gt;ABC: issubclass(C, ABC)?
+    ABC-&gt;&gt;C: __subclasshook__ 检查
+    C-&gt;&gt;ABC: 有 quack 方法 → True
+</code></pre></div>
+<hr>
+<h2 id="7-vs">7️⃣ 多态 vs 类型检查对比</h2>
+<pre class="plain"><code>        传统语言 (Java/C++)            Python
+        ═══════════════════            ═══════════════════════
+
+  声明:  Duck d = new Duck();          d = Duck()
+  调用:  d.quack();                    d.quack()
+
+  多态:  需要接口 or 继承              鸭子类型 —— 不需要继承
+         必须显式 implements           只要方法存在就行
+
+  类型:  编译时检查                    运行时检查
+  检查:  编译器保证类型安全            isinstance/duck typing
+
+  优势:  更安全，IDE 支持更好           更灵活，代码更简洁
+  劣势:  样板代码多                    错误发现较晚
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

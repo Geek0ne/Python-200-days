@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 167 — 文件监控（watchdog）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 167 — 文件监控（watchdog）</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">647 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-167-文件监控-watchdog" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 文件监控解决什么问题</a>
+<a class="toc-l3" href="#22-vs">2.2 两条路线：轮询 vs 事件驱动</a>
+<a class="toc-l3" href="#23-watchdog">2.3 watchdog 三件套</a>
+<a class="toc-l3" href="#24">2.4 五类事件与它们的&quot;组合关系&quot;</a>
+<a class="toc-l2" href="#3">3. 原理解析</a>
+<a class="toc-l3" href="#31-linux-inotify">3.1 Linux inotify 到底做了什么</a>
+<a class="toc-l3" href="#32-watchdog">3.2 watchdog 的线程模型</a>
+<a class="toc-l3" href="#33-emitterpollingobserver">3.3 轮询背后的 Emitter：PollingObserver</a>
+<a class="toc-l3" href="#34-vim-36">3.4 为什么 vim 保存一个文件会产生 3~6 条事件</a>
+<a class="toc-l3" href="#35-debouncethrottle">3.5 防抖（debounce）与节流（throttle）</a>
+<a class="toc-l3" href="#36">3.6 文件自动分类的思路</a>
+<a class="toc-l2" href="#4-api">4. 定义与使用方法（API 速查表）</a>
+<a class="toc-l3" href="#41-observer">4.1 观察者 Observer</a>
+<a class="toc-l3" href="#42-filesystemevent">4.2 事件对象 FileSystemEvent</a>
+<a class="toc-l3" href="#43">4.3 处理器回调</a>
+<a class="toc-l3" href="#44-api">4.4 常用配套 API</a>
+<a class="toc-l3" href="#45">4.5 一个可复制的&quot;防抖处理器&quot;模板</a>
+<a class="toc-l2" href="#5">5. 图解</a>
+<a class="toc-l3" href="#51">5.1 两条路线对比</a>
+<a class="toc-l3" href="#52-inotify">5.2 inotify 递归监控的真实结构</a>
+<a class="toc-l3" href="#53">5.3 一次&quot;保存文件&quot;的完整事件流水</a>
+<a class="toc-l3" href="#54-mermaid">5.4 Mermaid：事件流的时序图</a>
+<a class="toc-l3" href="#55-mermaid">5.5 Mermaid：自动分类流水线</a>
+<a class="toc-l2" href="#6">6. 实战代码案例</a>
+<a class="toc-l3" href="#61-04-auto-classifypy">6.1 实战场景：04-auto-classify.py</a>
+<a class="toc-l3" href="#62">6.2 运行方法</a>
+<a class="toc-l2" href="#7">7. 思考题</a>
+<a class="toc-l2" href="#8">8. 小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-167-watchdog">Day 167 — 文件监控（watchdog）</h1>
+<blockquote>
+<p><strong>Phase 11 — 自动化运维与 DevOps（Day 166–185）</strong> · 主题：文件监控 · 子主题：实战</p>
+<p><strong>安全与边界声明</strong>：<br>
+- 本课所有代码只在<strong>你自己的目录</strong>里创建/删除/移动文件，监控范围由 <code>--path</code> 显式指定。<br>
+- <strong>绝不</strong>建议、也不演示对 <code>/</code>、<code>/etc</code>、<code>/usr</code> 等系统目录做递归监控（会吃掉 inotify 配额）。<br>
+- 演示文件一律写在 <code>./sandbox/</code> 或 <code>tempfile.mkdtemp()</code> 生成的临时目录里，脚本结束自动清理。<br>
+- 想在生产机上用，请先用 <code>--dry-run</code> 与 <code>--duration 10</code> 小范围试跑。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>说清 <strong>轮询（polling）</strong> 与 <strong>事件驱动（event-driven）</strong> 两种文件监控路线的本质差别、各自代价与适用边界</li>
+<li>解释 Linux <strong>inotify</strong> 的工作模型（watch descriptor、事件队列、<code>IN_Q_OVERFLOW</code>），并说清"递归监控"在底层到底做了什么</li>
+<li>说清 watchdog 的三件套 <strong>Observer / EventHandler / FileSystemEvent</strong> 各自负责什么，以及它们跑在哪个线程里</li>
+<li>准确区分 <code>created</code> / <code>deleted</code> / <code>modified</code> / <code>moved</code> / <code>closed</code> 五类事件，并知道<strong>哪几类事件永远不会单独出现</strong></li>
+<li>解释为什么用 vim / VSCode 保存一个文件，会一次性产生 <strong>3~6 条</strong> 事件，以及如何用 <strong>防抖（debounce）</strong> 收敛</li>
+<li>说清 <strong>原子写（write temp + rename）</strong> 为什么会让 <code>moved</code> 事件看起来"凭空多出来一个文件"</li>
+<li>说清 watchdog 的<strong>三个经典陷阱</strong>：递归监控后新建子目录不触发、handler 里抛异常导致监听静默失效、事件队列溢出丢事件</li>
+<li>能独立写出一个 <strong>带防抖、支持规则匹配、可输出 JSON 报告</strong> 的文件变化监控/自动分类工具</li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 文件监控解决什么问题</h3>
+<p>先想清楚"为什么要监控文件"，而不是先想 API：</p>
+<pre class="plain"><code>        ┌──────────────── 文件监控的典型用途 ────────────────┐
+        │                                                   │
+   ①  自动化触发        ②  数据管道          ③  安全审计
+   有新文件就处理       目录即队列          谁动了我的配置
+   (上传→转码/入库)     (落地→解析→归档)    (篡改/删除留痕)
+        │                     │                    │
+        └─────────────────────┴────────────────────┘
+                   共同点：**不能靠人盯着**
+</code></pre>
+<p>三种用途都指向同一个需求：<strong>在文件系统发生变化的那一瞬间，被通知到</strong>。<br>
+差别只在于对<strong>延迟</strong>和<strong>可靠性</strong>的要求不同：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">用途</th>
+<th style="text-align: left;">可接受延迟</th>
+<th style="text-align: left;">关键要求</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">上传即处理</td>
+<td style="text-align: left;">秒级</td>
+<td style="text-align: left;">必须拿到<strong>完整的</strong>文件（写入结束才处理）</td>
+</tr>
+<tr>
+<td style="text-align: left;">数据管道</td>
+<td style="text-align: left;">亚秒级</td>
+<td style="text-align: left;">不能丢事件，顺序要大致正确</td>
+</tr>
+<tr>
+<td style="text-align: left;">安全审计</td>
+<td style="text-align: left;">毫秒级</td>
+<td style="text-align: left;">不能漏，尤其是 <code>deleted</code> / <code>moved</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-vs">2.2 两条路线：轮询 vs 事件驱动</h3>
+<p><strong>轮询（polling）</strong>：每隔 N 秒扫描一次目录，和上次的快照对比，算出"变了什么"。</p>
+<pre class="plain"><code>t=0s   扫描 → {a.py, b.py}           快照 S0
+t=5s   扫描 → {a.py, b.py, c.py}     快照 S1  → diff: +c.py
+t=10s  扫描 → {a.py}                 快照 S2  → diff: -b.py, -c.py
+</code></pre>
+<p>优点：<strong>跨平台、实现简单、不需要任何权限</strong>（只要有读目录权限）。<br>
+缺点：<strong>延迟 = 轮询间隔</strong>，且<strong>间隔内"创建又删除"的文件永远看不到</strong>（漏事件）；<br>
+扫描大目录树本身要花 CPU 和 IO（100 万文件 × 每 5 秒 = 磁盘被你和自己打爆）。</p>
+<p><strong>事件驱动（event-driven）</strong>：把目录注册给内核，内核在变化发生时<strong>主动通知</strong>你。</p>
+<pre class="plain"><code>注册: 内核(IN_CREATE 监听 /data)
+        │
+        │  某个进程 write(&quot;/data/x.csv&quot;)
+        ▼
+内核 → [ IN_CREATE x.csv ] → 你的进程（阻塞的 read() 被唤醒）
+</code></pre>
+<p>优点：<strong>零轮询开销</strong>（空闲时完全不吃 CPU），<strong>延迟毫秒级</strong>，<strong>不漏事件</strong>。<br>
+缺点：<strong>依赖操作系统能力</strong>，各平台实现完全不同：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">平台</th>
+<th style="text-align: left;">机制</th>
+<th style="text-align: left;">精度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">Linux</td>
+<td style="text-align: left;"><strong>inotify</strong></td>
+<td style="text-align: left;">最细，能区分 create/delete/modify/attrib</td>
+</tr>
+<tr>
+<td style="text-align: left;">macOS</td>
+<td style="text-align: left;"><strong>FSEvents</strong></td>
+<td style="text-align: left;">目录级粗粒度，自带合并，"延迟投递"</td>
+</tr>
+<tr>
+<td style="text-align: left;">Windows</td>
+<td style="text-align: left;"><strong>ReadDirectoryChangesW</strong></td>
+<td style="text-align: left;">类似 inotify，但缓冲区是<strong>每次调用</strong>传的</td>
+</tr>
+<tr>
+<td style="text-align: left;">网络盘 (NFS/SMB)</td>
+<td style="text-align: left;">❌ 通常不支持</td>
+<td style="text-align: left;">远端内核看不到你的 watch，只能轮询</td>
+</tr>
+</tbody>
+</table>
+<p><strong>这就是 watchdog 存在的理由</strong>：它把上面 4 套 API 抽象成<strong>同一套 Python 事件模型</strong>，<br>
+你写 <code>observer.schedule(handler, path, recursive=True)</code> 就能跨平台跑。</p>
+<blockquote>
+<p>⚠️ <strong>新手最容易犯的错</strong>：在 Docker 容器里监控<strong>宿主机 bind mount 进来的目录</strong>。<br>
+宿主机上别人改文件，容器里的 inotify <strong>收不到</strong>（事件是在宿主机内核里产生的，<br>
+但 masquerade 了的 mount 有时不转发）。这种场景只能轮询。</p>
+</blockquote>
+<h3 id="23-watchdog">2.3 watchdog 三件套</h3>
+<p>watchdog 的 API 只有三个核心角色，先记住这张表，后面全部代码都是它的组合：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">角色</th>
+<th style="text-align: left;">类</th>
+<th style="text-align: left;">职责</th>
+<th style="text-align: left;">关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>观察者</strong></td>
+<td style="text-align: left;"><code>Observer</code></td>
+<td style="text-align: left;">起一个后台线程，把内核事件读出来、投递出去</td>
+<td style="text-align: left;">一个 Observer 可以调度<strong>多个</strong> watch</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>处理器</strong></td>
+<td style="text-align: left;"><code>FileSystemEventHandler</code></td>
+<td style="text-align: left;">收到事件后<strong>你要做什么</strong></td>
+<td style="text-align: left;">每个回调在 Observer 线程里执行</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>事件</strong></td>
+<td style="text-align: left;"><code>FileSystemEvent</code></td>
+<td style="text-align: left;">一次变化的<strong>不可变描述</strong></td>
+<td style="text-align: left;">有 <code>src_path</code> / <code>dest_path</code> / <code>is_directory</code> / <code>event_type</code></td>
+</tr>
+</tbody>
+</table>
+<p>最小骨架（这就是本课 <code>code/01-basic-watch.py</code> 的核心）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">watchdog.observers</span> <span class="kn">import</span> <span class="n">Observer</span>
+<span class="kn">from</span> <span class="nn">watchdog.events</span> <span class="kn">import</span> <span class="n">FileSystemEventHandler</span>
+
+<span class="k">class</span> <span class="nc">MyHandler</span><span class="p">(</span><span class="n">FileSystemEventHandler</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">on_created</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;created:&quot;</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">src_path</span><span class="p">)</span>
+
+<span class="n">observer</span> <span class="o">=</span> <span class="n">Observer</span><span class="p">()</span>
+<span class="n">observer</span><span class="o">.</span><span class="n">schedule</span><span class="p">(</span><span class="n">MyHandler</span><span class="p">(),</span> <span class="n">path</span><span class="o">=</span><span class="s2">&quot;/data&quot;</span><span class="p">,</span> <span class="n">recursive</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">observer</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>          <span class="c1"># 起后台线程</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>     <span class="c1"># 主线程干别的（或 join）</span>
+<span class="k">finally</span><span class="p">:</span>
+    <span class="n">observer</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>
+    <span class="n">observer</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>       <span class="c1"># 必须 join，否则可能丢最后一波事件</span>
+</code></pre></div>
+<p>四个回调名分别是 <code>on_created</code> / <code>on_deleted</code> / <code>on_modified</code> / <code>on_moved</code>，<br>
+另外还有一个"全量入口" <code>on_any_event(event)</code>（<strong>它先于具体回调被调用</strong>，适合统一日志）。</p>
+<h3 id="24">2.4 五类事件与它们的"组合关系"</h3>
+<p>watchdog 定义的事件类型（<code>event.event_type</code> 字符串）：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">event_type</th>
+<th style="text-align: left;">触发条件</th>
+<th style="text-align: left;">载体类</th>
+<th style="text-align: left;">有 <code>dest_path</code> 吗</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>created</code></td>
+<td style="text-align: left;">新建文件/目录</td>
+<td style="text-align: left;"><code>FileCreatedEvent</code> / <code>DirCreatedEvent</code></td>
+<td style="text-align: left;">❌</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>deleted</code></td>
+<td style="text-align: left;">删除文件/目录</td>
+<td style="text-align: left;"><code>FileDeletedEvent</code> / <code>DirDeletedEvent</code></td>
+<td style="text-align: left;">❌</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>modified</code></td>
+<td style="text-align: left;">内容被写入（<strong>不带元数据变更</strong>）</td>
+<td style="text-align: left;"><code>FileModifiedEvent</code></td>
+<td style="text-align: left;">❌</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>moved</code></td>
+<td style="text-align: left;">重命名 / 移动</td>
+<td style="text-align: left;"><code>FileMovedEvent</code> / <code>DirMovedEvent</code></td>
+<td style="text-align: left;">✅</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>closed</code></td>
+<td style="text-align: left;">文件句柄关闭（仅 inotify 支持）</td>
+<td style="text-align: left;"><code>FileClosedEvent</code></td>
+<td style="text-align: left;">❌</td>
+</tr>
+</tbody>
+</table>
+<p><strong>关键认知</strong>：这些事件<strong>不是互斥的"状态"，而是内核视角的"动作流水"</strong>。<br>
+你脑海里想的是"文件从 A 变成 B"（状态差），内核给你的是一串动作：</p>
+<pre class="plain"><code>你的心智模型：            a.txt 内容变了
+内核实际给你的流水：      MODIFY a.txt
+                         MODIFY a.txt
+                         CLOSE_WRITE a.txt
+</code></pre>
+<p>所以<strong>永远不要去"猜"事件的含义，要去"聚合"事件</strong>。这就是下一节要讲的防抖。</p>
+<hr>
+<h2 id="3">3. 原理解析</h2>
+<h3 id="31-linux-inotify">3.1 Linux inotify 到底做了什么</h3>
+<p>inotify 是内核提供的一套<strong>文件系统事件通知接口</strong>，用户态通过三个系统调用使用它：</p>
+<pre class="plain"><code>inotify_init1()          创建一个 inotify 实例 → 返回一个 fd
+inotify_add_watch(fd, path, mask)   给某个 path 注册监听 → 返回 wd (watch descriptor)
+read(fd, buf, len)       阻塞读，内核把事件结构体塞进这个 fd
+</code></pre>
+<p>关键点，逐条说清：</p>
+<ol>
+<li>
+<p><strong>watch 挂在"inode/目录项"上，不是挂在路径字符串上</strong>。<br>
+   你 <code>add_watch("/data")</code> 之后把 <code>/data</code> 改名成 <code>/data2</code>，<br>
+   watch <strong>仍然有效</strong>（wd 不变），但事件里的路径是内核按当前 dentry 拼出来的，可能已经变成 <code>/data2/...</code>。<br>
+   → <strong>陷阱</strong>：日志里打印的路径和你注册时的路径可能不一致。</p>
+</li>
+<li>
+<p><strong><code>recursive=True</code> 不是内核特性，是 watchdog 自己走出来的</strong>。<br>
+   内核的 inotify <strong>不支持递归</strong>。watchdog 在 <code>schedule(recursive=True)</code> 时会：<br>
+   - 对目标目录本身 <code>add_watch</code><br>
+   - <strong>遍历所有子目录</strong>，每个目录<strong>再 <code>add_watch</code> 一次</strong><br>
+   - 当收到 <code>IN_CREATE</code> 且 <code>is_directory=True</code> 时，<strong>再给新目录补一个 watch</strong></p>
+</li>
+</ol>
+<p>→ <strong>陷阱</strong>：这个"补 watch"动作在 watchdog 里是<strong>异步</strong>的（走 emitter 内部队列）。<br>
+   在目录刚创建、文件已经写进去的<strong>极短窗口</strong>内，可能漏掉文件事件。<br>
+   → 于是就有了"新建目录然后立刻 cp 一堆文件进去，结果只收到目录 created"的经典 bug。</p>
+<ol start="3">
+<li><strong>每个 watch 消耗一份内核配额</strong>。<br>
+   检查与调整：</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="w">   </span>cat<span class="w"> </span>/proc/sys/fs/inotify/max_user_watches<span class="w">    </span><span class="c1"># 默认常见 8192 / 65536 / 524288</span>
+<span class="w">   </span>cat<span class="w"> </span>/proc/sys/fs/inotify/max_user_instances<span class="w">  </span><span class="c1"># 默认 128，Observer 数量受它限制</span>
+<span class="w">   </span>cat<span class="w"> </span>/proc/sys/fs/inotify/max_queued_events<span class="w">   </span><span class="c1"># 默认 16384</span>
+</code></pre></div>
+<p>监控一个 <code>node_modules</code>（20 万目录）会直接 <code>OSError: inotify watch limit reached</code>。<br>
+   → <strong>这不是 watchdog 的锅，是内核配额</strong>。要么调大，要么<strong>别递归监控这种东西</strong>（加 ignore）。</p>
+<ol start="4">
+<li><strong>事件队列有限，会溢出</strong>。内核把事件放进与 fd 关联的队列，容量 = <code>max_queued_events</code>。<br>
+   你的进程读得不够快 → 队列满 → 内核<strong>丢弃事件</strong>并投递一个特殊的 <code>IN_Q_OVERFLOW</code>。<br>
+   watchdog 会把它转成 <code>event.event_type == 'closed_no_write'</code> 之类不常见形态，<br>
+<strong>更常见的是你压根不知道丢了事件</strong>。</li>
+</ol>
+<h3 id="32-watchdog">3.2 watchdog 的线程模型</h3>
+<pre class="plain"><code>主线程
+ │
+ ├── Observer.start()
+ │       │
+ │       ├── 线程 A: Emitter（真实实现是 InotifyEmitter，内含 select/poll）
+ │       │       │  阻塞 read(inotify_fd) → 解析 inotify_event → 转成 FileSystemEvent
+ │       │       └→ 放入 event_queue (queue.Queue)
+ │       │
+ │       └── 线程 B: dispatch 线程
+ │               └→ queue.get() → 遍历所有已注册 handler → 调用你的 on_xxx()
+ │
+ └── observer.join()  ← 等线程结束
+</code></pre>
+<p><strong>由此推出三条实战结论</strong>：</p>
+<ul>
+<li><strong>你的 handler 跑在 Observer 的 dispatch 线程里</strong>。handler 一慢，<br>
+  整个 observer 的事件消费就慢 → 队列堆积 → 溢出丢事件。<br>
+<strong>handler 里不要做重活</strong>（转码、上传、大文件解析）→ 丢给 <code>queue.Queue</code> 或线程池。</li>
+<li><strong>Observer 线程默认是 <code>daemon=True</code></strong>？不是。watchdog 的 Observer 是<strong>非守护线程</strong>，<br>
+  你自己不 <code>stop()</code>，程序<strong>不会退出</strong>（Ctrl+C 都可能卡住）。<br>
+  所以 <code>finally: observer.stop(); observer.join()</code> 是<strong>必写</strong>的。</li>
+<li><strong>一个 Observer 可以 schedule 多个 path / 多个 handler</strong>，<br>
+  事件会分发给<strong>所有匹配的 handler</strong>（不是就近匹配），别指望"handler 只收自己目录的"。</li>
+</ul>
+<h3 id="33-emitterpollingobserver">3.3 轮询背后的 Emitter：<code>PollingObserver</code></h3>
+<p>watchdog 还提供一个 <strong><code>watchdog.observers.polling.PollingObserver</code></strong>，<br>
+它<strong>不用 inotify</strong>，而是"扫目录 + 比 mtime/size"。</p>
+<p><strong>什么时候必须用它</strong>：</p>
+<ul>
+<li>监控 NFS / SMB / CIFS 挂载（远端内核 != 本机内核）</li>
+<li>监控 Docker bind mount 且宿主改动</li>
+<li>容器里 <code>inotify</code> 被 seccomp 限制</li>
+</ul>
+<p>代价：<code>PollingObserver(timeout=1)</code> 就是<strong>每秒全树扫描一次</strong>。<br>
+默认 <code>timeout</code> 是 <strong>1 秒</strong>，大目录树上会非常耗 IO —— 必须显式调大（如 <code>timeout=5</code>）。</p>
+<h3 id="34-vim-36">3.4 为什么 vim 保存一个文件会产生 3~6 条事件</h3>
+<p>因为现代编辑器普遍用 <strong>原子写（atomic write）</strong>：</p>
+<pre class="plain"><code>vim 保存 a.txt 的实际动作：
+  1. write  a.txt.swp / a.txt.tmp       → IN_CREATE  a.txt.tmp
+  2. write  内容到 tmp                  → IN_MODIFY  a.txt.tmp
+  3. close(tmp)                        → IN_CLOSE_WRITE a.txt.tmp
+  4. rename(a.txt.tmp → a.txt)          → IN_MOVED_FROM a.txt.tmp + IN_MOVED_TO a.txt
+  5. 可能还要 chmod / 更新备份           → IN_ATTRIB
+</code></pre>
+<p>于是你的 handler 会收到：</p>
+<pre class="plain"><code>created  /dir/a.txt.tmp
+modified /dir/a.txt.tmp
+closed   /dir/a.txt.tmp
+moved    /dir/a.txt.tmp → /dir/a.txt     ← 注意：watchdog 用 FileMovedEvent 表示
+</code></pre>
+<p><strong>为什么编辑器要这么做</strong>：rename 在 POSIX 上是<strong>原子</strong>的。<br>
+如果直接覆盖写原文件，另一个正在读的进程可能读到<strong>写了一半的内容</strong>；<br>
+rename 则保证"要么旧文件、要么新文件"，永远不会读到半成品。<br>
+<strong>编辑器是对的，我们的监控代码必须适配它。</strong></p>
+<p>→ 由此引出两个设计：</p>
+<ul>
+<li><strong><code>.tmp</code> / <code>.swp</code> / <code>~</code> / <code>#...#</code> 结尾的文件必须默认忽略</strong>，否则你会处理一堆垃圾。</li>
+<li><strong>必须做防抖</strong>：同一个 <code>dest_path</code> 在 T 毫秒内的重复事件合并成一次业务动作。</li>
+</ul>
+<h3 id="35-debouncethrottle">3.5 防抖（debounce）与节流（throttle）</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">策略</th>
+<th style="text-align: left;">行为</th>
+<th style="text-align: left;">适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>防抖 debounce</strong></td>
+<td style="text-align: left;">事件持续到来 → <strong>一直推迟</strong>，直到<strong>静默 T 毫秒</strong>后才执行一次</td>
+<td style="text-align: left;">"写完了再处理"</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>节流 throttle</strong></td>
+<td style="text-align: left;">每 T 毫秒<strong>最多</strong>执行一次</td>
+<td style="text-align: left;">"边写边采样"</td>
+</tr>
+</tbody>
+</table>
+<p>文件场景几乎总是<strong>防抖</strong>：因为你要的是"写入结束"这个时刻。</p>
+<p>一个最小的防抖实现（<code>code/03-advanced-watch.py</code> 里用的就是这个思路）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">threading</span><span class="o">,</span> <span class="nn">time</span>
+
+<span class="k">class</span> <span class="nc">Debouncer</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">delay</span><span class="p">,</span> <span class="n">action</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">delay</span> <span class="o">=</span> <span class="n">delay</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">action</span> <span class="o">=</span> <span class="n">action</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">timers</span> <span class="o">=</span> <span class="p">{}</span>            <span class="c1"># key -&gt; threading.Timer</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">trigger</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+            <span class="n">old</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">timers</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">old</span><span class="p">:</span>
+                <span class="n">old</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>        <span class="c1"># 取消上一次未触发的动作</span>
+            <span class="n">t</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Timer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">delay</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_fire</span><span class="p">,</span> <span class="n">args</span><span class="o">=</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">args</span><span class="p">))</span>
+            <span class="n">t</span><span class="o">.</span><span class="n">daemon</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">timers</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">t</span>
+            <span class="n">t</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">_fire</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">args</span><span class="p">):</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">timers</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">action</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>三个必须注意的点</strong>：</p>
+<ol>
+<li><strong><code>Timer.cancel()</code> 只在定时器还没触发时有效</strong>，已经触发的取消不掉 → 所以 <code>_fire</code> 要先把自己从字典里摘掉。</li>
+<li><strong><code>timers</code> 字典要被多线程访问</strong>（dispatch 线程 trigger、Timer 线程 fire）→ 必须加锁，<br>
+   否则会出现"两个动作同时跑"或字典 size 变化异常。</li>
+<li><strong>防抖键（key）要用绝对路径</strong>，否则 <code>./a.txt</code> 和 <code>/data/a.txt</code> 会被当成两个文件。</li>
+</ol>
+<h3 id="36">3.6 文件自动分类的思路</h3>
+<p>"文件自动分类"不是 watchdog 的功能，而是<strong>你在 handler 里写的业务规则</strong>。<br>
+一个靠谱的分类器要回答四个问题：</p>
+<pre class="plain"><code>   ① 匹配规则是什么？        扩展名 / MIME / 文件名正则 / 内容嗅探
+   ② 冲突怎么办？            同扩展名多规则 → 优先级 / 先匹配先赢
+   ③ 目标是哪里？            目标目录不存在自动建？跨设备移动会退化成复制
+   ④ 可逆吗？                要不要写操作日志，方便撤销
+</code></pre>
+<p>扩展名匹配的<strong>坑</strong>：<code>.tar.gz</code> 用 <code>endswith('.gz')</code> 会被归到"压缩包-gz"，<br>
+但你其实想要"tar.gz"。→ <strong>规则要按扩展名长度倒序匹配</strong>（长的优先）。<br>
+另外一个常见的错误：用 <code>os.rename</code> 跨文件系统移动会抛 <code>OSError: [Errno 18] Invalid cross-device link</code>，<br>
+必须 <code>shutil.move</code>（它内部会退回 copy+unlink）。</p>
+<hr>
+<h2 id="4-api">4. 定义与使用方法（API 速查表）</h2>
+<h3 id="41-observer">4.1 观察者 Observer</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">类</th>
+<th style="text-align: left;">导入</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>Observer</code></td>
+<td style="text-align: left;"><code>from watchdog.observers import Observer</code></td>
+<td style="text-align: left;">自动选平台后端</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>PollingObserver</code></td>
+<td style="text-align: left;"><code>from watchdog.observers.polling import PollingObserver</code></td>
+<td style="text-align: left;">纯轮询，跨网络盘必用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>InotifyObserver</code></td>
+<td style="text-align: left;"><code>from watchdog.observers.inotify import InotifyObserver</code></td>
+<td style="text-align: left;">强制 Linux 后端</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">方法</th>
+<th style="text-align: left;">签名</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>schedule</code></td>
+<td style="text-align: left;"><code>schedule(handler, path, recursive=False, event_filter=None)</code></td>
+<td style="text-align: left;">注册；<code>path</code> 必须是<strong>已存在</strong>的目录，否则抛 <code>OSError</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>start</code></td>
+<td style="text-align: left;"><code>start()</code></td>
+<td style="text-align: left;">起线程，返回 <code>self</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>stop</code></td>
+<td style="text-align: left;"><code>stop()</code></td>
+<td style="text-align: left;">通知线程退出（<strong>不阻塞</strong>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>join</code></td>
+<td style="text-align: left;"><code>join(timeout=None)</code></td>
+<td style="text-align: left;"><strong>阻塞</strong>等线程结束；收尾必调</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>unschedule</code></td>
+<td style="text-align: left;"><code>unschedule(watch)</code></td>
+<td style="text-align: left;">取消某个 watch（需保存 schedule 的返回值）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>unschedule_all</code></td>
+<td style="text-align: left;"><code>unschedule_all()</code></td>
+<td style="text-align: left;">取消全部</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>add_handler_for_watch</code></td>
+<td style="text-align: left;"><code>add_handler_for_watch(handler, watch)</code></td>
+<td style="text-align: left;">给已存在的 watch 加 handler</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><code>schedule()</code> 的返回值是 <code>ObservedWatch</code>，<code>watch.path</code> / <code>watch.is_recursive</code> 可取。<br>
+<strong>保存它</strong>，否则运行时想关掉某些目录只能全关。</p>
+</blockquote>
+<h3 id="42-filesystemevent">4.2 事件对象 FileSystemEvent</h3>
+<p>所有事件都有的属性：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">属性</th>
+<th style="text-align: left;">类型</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>event_type</code></td>
+<td style="text-align: left;"><code>str</code></td>
+<td style="text-align: left;"><code>'created'</code> / <code>'deleted'</code> / <code>'modified'</code> / <code>'moved'</code> / <code>'closed'</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>src_path</code></td>
+<td style="text-align: left;"><code>str</code></td>
+<td style="text-align: left;">事件主体路径（<strong>绝对路径</strong>，watchdog 已 normalize）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>dest_path</code></td>
+<td style="text-align: left;"><code>str</code></td>
+<td style="text-align: left;">仅 <code>moved</code> 事件有；其余是 <code>''</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>is_directory</code></td>
+<td style="text-align: left;"><code>bool</code></td>
+<td style="text-align: left;">目录事件为 <code>True</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>is_synthetic</code></td>
+<td style="text-align: left;"><code>bool</code></td>
+<td style="text-align: left;">是否为合成事件（<code>on_any_event</code> 的兜底/文件关闭合成）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>event_type</code> 载体类</td>
+<td style="text-align: left;"><code>FileCreatedEvent</code> / <code>DirModifiedEvent</code> / <code>FileMovedEvent</code> …</td>
+<td style="text-align: left;">想 <code>isinstance</code> 判断时用</td>
+</tr>
+</tbody>
+</table>
+<p>速查：<strong>哪些事件有 <code>dest_path</code></strong> → 只有 <code>moved</code> 有。</p>
+<h3 id="43">4.3 处理器回调</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">回调</th>
+<th style="text-align: left;">触发时机</th>
+<th style="text-align: left;">备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>on_any_event(event)</code></td>
+<td style="text-align: left;"><strong>所有</strong>事件，<strong>先于</strong>具体回调</td>
+<td style="text-align: left;">统一日志/统计挂这里</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>on_created(event)</code></td>
+<td style="text-align: left;">新建</td>
+<td style="text-align: left;">目录新建也走这里（<code>is_directory=True</code>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>on_deleted(event)</code></td>
+<td style="text-align: left;">删除</td>
+<td style="text-align: left;">删除时 <code>src_path</code> 可能已不存在</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>on_modified(event)</code></td>
+<td style="text-align: left;">内容修改</td>
+<td style="text-align: left;"><strong>目录的 modified 也会来</strong>（子项增删导致 mtime 变）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>on_moved(event)</code></td>
+<td style="text-align: left;">重命名/移动</td>
+<td style="text-align: left;">有 <code>dest_path</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>on_closed(event)</code></td>
+<td style="text-align: left;">句柄关闭</td>
+<td style="text-align: left;">仅 inotify；用它判断"写完了"比防抖更精确</td>
+</tr>
+</tbody>
+</table>
+<p><strong>经验法则</strong>：判断"文件写完了"有两种思路 ——<br>
+<code>on_closed</code>（精确，但平台相关）或 <strong>debounce</strong>（通用，但要多等 T 毫秒）。<br>
+<strong>生产代码建议 debounce 为主、on_closed 为辅</strong>。</p>
+<h3 id="44-api">4.4 常用配套 API</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">需求</th>
+<th style="text-align: left;">API</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">递归遍历目录</td>
+<td style="text-align: left;"><code>os.walk(path)</code> / <code>pathlib.Path.rglob('*')</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">读一行式路径匹配</td>
+<td style="text-align: left;"><code>fnmatch.fnmatch(name, '*.log')</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">正则匹配</td>
+<td style="text-align: left;"><code>re.fullmatch(pattern, name)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">拿到最后修改时间</td>
+<td style="text-align: left;"><code>os.path.getmtime(p)</code> / <code>Path(p).stat().st_mtime</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">安全移动（跨设备）</td>
+<td style="text-align: left;"><code>shutil.move(src, dst)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">唯一化重名</td>
+<td style="text-align: left;"><code>Path(dst).with_stem(name + '_' + ts)</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">临时目录</td>
+<td style="text-align: left;"><code>tempfile.mkdtemp(prefix='wm-')</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">立即让 stdout 可见</td>
+<td style="text-align: left;"><code>print(..., flush=True)</code> 或 <code>python3 -u</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="45">4.5 一个可复制的"防抖处理器"模板</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">DebouncedHandler</span><span class="p">(</span><span class="n">FileSystemEventHandler</span><span class="p">):</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">delay</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">ignore</span><span class="o">=</span><span class="p">(</span><span class="s1">&#39;.tmp&#39;</span><span class="p">,</span> <span class="s1">&#39;.swp&#39;</span><span class="p">,</span> <span class="s1">&#39;~&#39;</span><span class="p">)):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">deb</span> <span class="o">=</span> <span class="n">Debouncer</span><span class="p">(</span><span class="n">delay</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">on_settled</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ignore</span> <span class="o">=</span> <span class="n">ignore</span>
+
+    <span class="k">def</span> <span class="nf">_skip</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">p</span><span class="p">):</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+        <span class="k">return</span> <span class="ow">not</span> <span class="n">name</span> <span class="ow">or</span> <span class="nb">any</span><span class="p">(</span><span class="n">name</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="n">s</span><span class="p">)</span> <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">ignore</span><span class="p">)</span> \
+               <span class="ow">or</span> <span class="s1">&#39;/__pycache__/&#39;</span> <span class="ow">in</span> <span class="n">p</span> <span class="ow">or</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_any_event</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">is_directory</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_skip</span><span class="p">(</span><span class="n">event</span><span class="o">.</span><span class="n">src_path</span><span class="p">):</span>
+            <span class="k">return</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">event</span><span class="o">.</span><span class="n">dest_path</span> <span class="ow">or</span> <span class="n">event</span><span class="o">.</span><span class="n">src_path</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">deb</span><span class="o">.</span><span class="n">trigger</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">event_type</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">on_settled</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">,</span> <span class="n">last_event_type</span><span class="p">):</span>
+        <span class="c1"># 到这一步说明该文件已静默 delay 秒，可以安全处理了</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;[settled] </span><span class="si">{</span><span class="n">last_event_type</span><span class="si">:</span><span class="s2">9s</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 图解</h2>
+<h3 id="51">5.1 两条路线对比</h3>
+<pre class="plain"><code>        ┌──────────────────── 轮询 Polling ─────────────────────┐
+        │                                                        │
+  time  │  t0        t1        t2        t3        t4            │
+        │  ●         ●         ●         ●         ●   ← 扫描点  │
+        │  │←─ Δt ─→│←─ Δt ─→│←─ Δt ─→│←─ Δt ─→│              │
+        │                                                        │
+        │  文件在 (t1, t2) 之间 创建→删除 →  永远发现不了 ❌      │
+        │  空闲也要扫 → 100W 文件 = 100W 次 stat()               │
+        └────────────────────────────────────────────────────────┘
+
+        ┌──────────────────── 事件 Event ──────────────────────┐
+        │                                                        │
+  kernel│  write() ──► IN_MODIFY ──► 队列 ──► read() 唤醒         │
+        │                                                        │
+        │  空闲 0 CPU ✅  延迟 ms 级 ✅  不漏事件 ✅              │
+        │  依赖平台：inotify / FSEvents / RDCW                    │
+        │  网络盘 ❌（要用 PollingObserver）                      │
+        └────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="52-inotify">5.2 inotify 递归监控的真实结构</h3>
+<pre class="plain"><code>  你在应用层写的：
+      observer.schedule(handler, &quot;/data&quot;, recursive=True)
+
+  内核里实际发生的（每个目录一个 watch）：
+
+      /data            wd=1
+        ├── a/         wd=2      ← Observer 启动时遍历补上的
+        │    └── x/    wd=5      ← 运行时 IN_CREATE(is_dir) 后异步补上
+        ├── b/         wd=3
+        └── c/         wd=4
+             └── (新建) ──► IN_CREATE is_directory=True
+                              └─► emitter 内部下发 add_watch(c/d)
+                                  ⚠ 在补 watch 完成前写入 c/d 的文件 → 漏事件
+
+  watch 上限：
+      /proc/sys/fs/inotify/max_user_watches = 65536（示例）
+      20 万目录 → OSError: inotify watch limit reached
+</code></pre>
+<h3 id="53">5.3 一次"保存文件"的完整事件流水</h3>
+<pre class="plain"><code> 应用层                内核事件                watchdog 事件
+ ─────────────────────────────────────────────────────────────
+ write tmp          → IN_CREATE            → FileCreatedEvent
+ write tmp          → IN_MODIFY            → FileModifiedEvent
+ write tmp          → IN_MODIFY            → FileModifiedEvent
+ close(tmp)         → IN_CLOSE_WRITE       → FileClosedEvent
+ rename(tmp→real)   → IN_MOVED_FROM/TO     → FileMovedEvent(dest_path=real)
+ chmod              → IN_ATTRIB            → FileModifiedEvent(合成/忽略)
+
+ 你的弱 handler：        6 次 on_any_event  → 6 次业务动作 ❌ 灾难
+ 你的 debounced handler：6 次 trigger 全部被 cancel，只剩 1 次 settled ✅
+</code></pre>
+<h3 id="54-mermaid">5.4 Mermaid：事件流的时序图</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant U as 用户/程序
+    participant K as Linux 内核 (inotify)
+    participant E as Emitter 线程
+    participant D as dispatch 线程
+    participant H as 你的 Handler
+    participant W as 工作线程/队列
+
+    U-&gt;&gt;K: write(&quot;/data/a.csv&quot;)
+    K--&gt;&gt;E: IN_CREATE / IN_MODIFY
+    E-&gt;&gt;E: 解析 inotify_event
+    E-&gt;&gt;D: event_queue.put(FileSystemEvent)
+    D-&gt;&gt;H: on_any_event(event)
+    H-&gt;&gt;H: 过滤临时文件 / 防抖定时器
+    H-&gt;&gt;W: 静默 0.5s 后投递任务
+    W-&gt;&gt;W: 真正处理（解析/上传/归档）
+    Note over H: ⚠ handler 里做重活会让队列溢出
+    Note over W: ✅ 重活丢出 dispatch 线程
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant U as 用户/程序
+    participant K as Linux 内核 (inotify)
+    participant E as Emitter 线程
+    participant D as dispatch 线程
+    participant H as 你的 Handler
+    participant W as 工作线程/队列
+
+    U-&gt;&gt;K: write(&quot;/data/a.csv&quot;)
+    K--&gt;&gt;E: IN_CREATE / IN_MODIFY
+    E-&gt;&gt;E: 解析 inotify_event
+    E-&gt;&gt;D: event_queue.put(FileSystemEvent)
+    D-&gt;&gt;H: on_any_event(event)
+    H-&gt;&gt;H: 过滤临时文件 / 防抖定时器
+    H-&gt;&gt;W: 静默 0.5s 后投递任务
+    W-&gt;&gt;W: 真正处理（解析/上传/归档）
+    Note over H: ⚠ handler 里做重活会让队列溢出
+    Note over W: ✅ 重活丢出 dispatch 线程
+</code></pre></div>
+<h3 id="55-mermaid">5.5 Mermaid：自动分类流水线</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[新文件落到 inbox/] --&gt; B{忽略规则?}
+    B -- 是 .tmp/.swp/隐藏 --&gt; Z[丢弃]
+    B -- 否 --&gt; C[防抖 0.5s]
+    C --&gt; D[按扩展名长度倒序匹配规则表]
+    D --&gt; E{匹配到?}
+    E -- 否 --&gt; F[others/]
+    E -- 是 --&gt; G[目标目录 images/ docs/ archives/...]
+    G --&gt; H{目标已存在同名?}
+    H -- 是 --&gt; I[加时间戳后缀]
+    H -- 否 --&gt; J[shutil.move]
+    I --&gt; J
+    J --&gt; K[写 operations.jsonl 审计日志]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[新文件落到 inbox/] --&gt; B{忽略规则?}
+    B -- 是 .tmp/.swp/隐藏 --&gt; Z[丢弃]
+    B -- 否 --&gt; C[防抖 0.5s]
+    C --&gt; D[按扩展名长度倒序匹配规则表]
+    D --&gt; E{匹配到?}
+    E -- 否 --&gt; F[others/]
+    E -- 是 --&gt; G[目标目录 images/ docs/ archives/...]
+    G --&gt; H{目标已存在同名?}
+    H -- 是 --&gt; I[加时间戳后缀]
+    H -- 否 --&gt; J[shutil.move]
+    I --&gt; J
+    J --&gt; K[写 operations.jsonl 审计日志]
+</code></pre></div>
+<hr>
+<h2 id="6">6. 实战代码案例</h2>
+<p>本课 <code>code/</code> 下共 4 个脚本，建议按顺序读：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">文件</th>
+<th style="text-align: left;">定位</th>
+<th style="text-align: left;">学什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>01-basic-watch.py</code></td>
+<td style="text-align: left;">基础</td>
+<td style="text-align: left;">Observer/Handler 骨架、事件字段打印、优雅退出</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>02-pitfalls.py</code></td>
+<td style="text-align: left;">进阶/避坑</td>
+<td style="text-align: left;">6 个亲手复现的陷阱与修法</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>03-advanced-watch.py</code></td>
+<td style="text-align: left;">进阶</td>
+<td style="text-align: left;">防抖、规则过滤、事件聚合统计、线程池</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>04-auto-classify.py</code></td>
+<td style="text-align: left;">实战</td>
+<td style="text-align: left;">文件自动分类工具 + JSON 审计报告</td>
+</tr>
+</tbody>
+</table>
+<h3 id="61-04-auto-classifypy">6.1 实战场景：<code>04-auto-classify.py</code></h3>
+<p><strong>需求</strong>：给一个 <code>inbox/</code> 目录，谁往里丢文件，就自动分类到 <code>images/</code> / <code>docs/</code><br>
+/ <code>archives/</code> / <code>data/</code> / <code>others/</code>，并且：</p>
+<ul>
+<li>每个文件只处理<strong>一次</strong>（防抖 + 处理后移除 watch 关注）</li>
+<li><code>.tmp</code>、<code>.part</code>、<code>.crdownload</code>（浏览器半成品）必须等"写完"再动</li>
+<li>重名不覆盖，自动加时间戳</li>
+<li>全程写 <code>operations.jsonl</code> 审计日志，失败写 <code>errors.log</code></li>
+<li><code>--dry-run</code> 只打印不移动（<strong>生产上第一次一定要先 dry-run</strong>）</li>
+</ul>
+<p>核心代码骨架：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">RULES</span> <span class="o">=</span> <span class="p">[</span>                       <span class="c1"># ⚠ 长扩展名在前！</span>
+    <span class="p">(</span><span class="s1">&#39;.tar.gz&#39;</span><span class="p">,</span> <span class="s1">&#39;archives&#39;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s1">&#39;.tar.bz2&#39;</span><span class="p">,</span> <span class="s1">&#39;archives&#39;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s1">&#39;.jpg&#39;</span><span class="p">,</span> <span class="s1">&#39;images&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.jpeg&#39;</span><span class="p">,</span> <span class="s1">&#39;images&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.png&#39;</span><span class="p">,</span> <span class="s1">&#39;images&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.webp&#39;</span><span class="p">,</span> <span class="s1">&#39;images&#39;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s1">&#39;.pdf&#39;</span><span class="p">,</span> <span class="s1">&#39;docs&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.md&#39;</span><span class="p">,</span> <span class="s1">&#39;docs&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.txt&#39;</span><span class="p">,</span> <span class="s1">&#39;docs&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.docx&#39;</span><span class="p">,</span> <span class="s1">&#39;docs&#39;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s1">&#39;.csv&#39;</span><span class="p">,</span> <span class="s1">&#39;data&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.json&#39;</span><span class="p">,</span> <span class="s1">&#39;data&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.xlsx&#39;</span><span class="p">,</span> <span class="s1">&#39;data&#39;</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;.parquet&#39;</span><span class="p">,</span> <span class="s1">&#39;data&#39;</span><span class="p">),</span>
+<span class="p">]</span>
+<span class="n">PARTIAL</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;.tmp&#39;</span><span class="p">,</span> <span class="s1">&#39;.part&#39;</span><span class="p">,</span> <span class="s1">&#39;.crdownload&#39;</span><span class="p">,</span> <span class="s1">&#39;.swp&#39;</span><span class="p">,</span> <span class="s1">&#39;.swx&#39;</span><span class="p">,</span> <span class="s1">&#39;~&#39;</span><span class="p">,</span> <span class="s1">&#39;.filepart&#39;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">classify</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">low</span> <span class="o">=</span> <span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">ext</span><span class="p">,</span> <span class="n">bucket</span> <span class="ow">in</span> <span class="n">RULES</span><span class="p">:</span>           <span class="c1"># 长的先匹配</span>
+        <span class="k">if</span> <span class="n">low</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="n">ext</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">bucket</span>
+    <span class="k">return</span> <span class="s1">&#39;others&#39;</span>
+</code></pre></div>
+<p><strong>为什么 <code>PARTIAL</code> 要单独处理</strong>：<code>.crdownload</code> 是 Chrome 下载中的临时名，<br>
+它会在下载过程中产生大量 <code>modified</code> 事件。<strong>只看"事件到了"就搬走</strong>，会搬走半个文件。<br>
+正确姿势：<strong>同时忽略 <code>PARTIAL</code> 规则 + 用防抖（静默 1 秒以上）</strong>，双保险。</p>
+<h3 id="62">6.2 运行方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-167-文件监控-watchdog/code
+pip<span class="w"> </span>install<span class="w"> </span>watchdog<span class="w">                     </span><span class="c1"># 唯一依赖</span>
+
+python3<span class="w"> </span><span class="m">01</span>-basic-watch.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">01</span>-basic-watch.py<span class="w"> </span>--path<span class="w"> </span>./sandbox<span class="w"> </span>--duration<span class="w"> </span><span class="m">8</span>
+
+python3<span class="w"> </span><span class="m">02</span>-pitfalls.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">02</span>-pitfalls.py<span class="w">                   </span><span class="c1"># 逐条复现 6 个陷阱</span>
+
+python3<span class="w"> </span><span class="m">03</span>-advanced-watch.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">03</span>-advanced-watch.py<span class="w"> </span>--path<span class="w"> </span>./sandbox<span class="w"> </span>--delay<span class="w"> </span><span class="m">0</span>.5<span class="w"> </span>--duration<span class="w"> </span><span class="m">10</span>
+
+python3<span class="w"> </span><span class="m">04</span>-auto-classify.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">04</span>-auto-classify.py<span class="w"> </span>--inbox<span class="w"> </span>./sandbox/inbox<span class="w"> </span>--out<span class="w"> </span>./sandbox/out<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--duration<span class="w"> </span><span class="m">15</span><span class="w"> </span>--dry-run
+</code></pre></div>
+<p>每个脚本都支持 <code>--self-test</code>（不依赖外部目录，跑完打印 <code>SELF-TEST OK</code>），<br>
+便于你在没有真实业务目录时先验证环境。</p>
+<hr>
+<h2 id="7">7. 思考题</h2>
+<ol>
+<li>
+<p><strong>为什么说"轮询的延迟 = 轮询间隔"是错的？</strong><br>
+   提示：考虑"轮询进行到一半时文件被修改"这种情况。延迟的<strong>期望值</strong>和<strong>上界</strong>分别是多少？</p>
+</li>
+<li>
+<p><strong><code>recursive=True</code> 时，新建目录里的文件为什么可能收不到 created 事件？</strong><br>
+   请从"内核不支持递归"这个事实出发，画出 watch 补齐的时间线，并给出至少两种工程上的缓解办法。<br>
+   （提示：一种和 <strong>先建目录后写文件</strong> 的时序有关，一种和你自己的<strong>兜底扫描</strong>有关。）</p>
+</li>
+<li>
+<p><strong>为什么你的 handler 里不该做耗时操作？</strong><br>
+   把"事件队列容量 16384"和"dispatch 线程只有一个"这两个事实串起来，<br>
+   说明一个耗时 5 秒的 handler 在事件洪峰下会发生什么，以及正确的架构长什么样。</p>
+</li>
+<li>
+<p><strong>假设有人对 <code>/var/log</code> 做递归监控，日志每毫秒写一行，会发生什么？</strong><br>
+   从 inotify 队列、CPU、以及"你到底需不需要每行都知道"三个角度分析，<br>
+   并给出一个更合理的采集方案。</p>
+</li>
+<li>
+<p><strong>防抖的 T 该设多大？</strong><br>
+   如果 T=0.1s，上传 500 MB 文件时会发生什么？如果 T=30s，用户体验如何？<br>
+   有没有一种<strong>不靠猜时间、而是靠信号</strong>（提示：<code>on_closed</code> / 文件大小稳定 / 独占锁）的方案？</p>
+</li>
+<li>
+<p><strong><code>shutil.move</code> 和 <code>os.rename</code> 在跨设备时行为有何不同？</strong><br>
+   为什么"自动分类"工具一旦涉及跨磁盘（比如 <code>/tmp</code> 是 tmpfs）就必须用前者？</p>
+</li>
+</ol>
+<hr>
+<h2 id="8">8. 小结</h2>
+<pre class="plain"><code>  一句话记住 watchdog：
+    它是&quot;内核事件 → 统一 Python 对象&quot;的翻译层，
+    你的业务价值全在 handler 里的过滤 + 聚合 + 处理。
+
+  三条铁律：
+    ① handler 要快，重活丢队列/线程池
+    ② 必须防抖 + 忽略临时文件
+    ③ finally 里 stop() + join()，否则进程不退出
+</code></pre>
+<blockquote>
+<p>下一课 Day 168：<strong>SSH 远程管理（paramiko）</strong> —— 把本课的"本机文件监控"升级成<br>
+"跨机器的远程执行与文件传输"。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-166/index.html">← Day 166 系统监控（psutil）</a><a class="nav-next" href="../day-168/index.html">Day 168 SSH 远程管理（paramiko） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

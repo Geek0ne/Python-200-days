@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 165 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 165 正文</a>
+  <h1>Day 165 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-165">Day 165 — 完成清单与练习（基础）</h1>
+<blockquote>
+<p>主题：阶段项目（四）安全审计工具箱 · 报告生成 + Docker 部署
+使用提醒：所有练习请在 <code>code/</code> 目录下进行，目标数据用 <code>findings.example.json</code>（合成数据）。
+<strong>不要</strong>把任何练习指向你无授权的真实目标。</p>
+</blockquote>
+<hr>
+<h2 id="_1">✅ 今日完成清单</h2>
+<h3 id="_2">概念层（能讲清楚，不是"看过"）</h3>
+<ul>
+<li>[ ] 能说出四天阶段项目（Day 162–165）每一天负责哪一个"面"</li>
+<li>[ ] 能解释为什么报告层才是这个项目的<strong>产品</strong>，而不是附属输出</li>
+<li>[ ] 能说出报告的<strong>三类消费者</strong>及其各自要的格式</li>
+<li>[ ] 能解释"单一数据源"原则，以及为什么渲染器里不许做计算</li>
+<li>[ ] 能说出破坏确定性的三个来源，以及各自的对策</li>
+<li>[ ] 能解释稳定 id 为什么用内容哈希，而不是 UUID / 自增序号</li>
+<li>[ ] 能解释风险分里为什么要乘置信度系数</li>
+<li>[ ] 能说出覆盖缺口为什么必须独立建模，并单独占一个退出码</li>
+<li>[ ] 能说出 SARIF 的信息损失发生在哪里，以及怎么补偿</li>
+<li>[ ] 能解释非 root 容器 + 绑定挂载为什么 EACCES，并说出三种修法</li>
+<li>[ ] 能解释 exec 形式 ENTRYPOINT 与退出码门禁的因果关系</li>
+</ul>
+<h3 id="_3">动手层（跑过才算）</h3>
+<ul>
+<li>[ ] <code>python3 01-basic-report.py</code> 跑通，<code>out/</code> 下生成 <code>.md</code> 与 <code>.json</code></li>
+<li>[ ] 打开生成的 Markdown，确认 <code>Authorization</code> 与 <code>password</code> 的值已被擦除</li>
+<li>[ ] <code>python3 02-determinism-redaction.py</code> 跑通，看到"两次渲染字节一致：True"</li>
+<li>[ ] 在 02 的输出里找到「错误顺序 → 误报凭证复用」那一段，能讲清原因</li>
+<li>[ ] <code>python3 03-toolbox-cli.py --input findings.example.json --format all</code> 跑通</li>
+<li>[ ] 实测退出码 0 / 1 / 2 / 4（<code>echo $?</code> 看结果）</li>
+<li>[ ] <code>docker build -t audit-toolbox:1.0 .</code> 构建成功</li>
+<li>[ ] <code>docker run --rm --entrypoint id audit-toolbox:1.0</code> 看到 <code>uid=10001</code></li>
+<li>[ ] 实测容器里写盘失败 → 退出码 3</li>
+<li>[ ] 用 <code>chown 10001:10001 out</code> 修好后再跑 → 退出码 0</li>
+<li>[ ] <code>docker images</code> 对比基础镜像与自建镜像的体积差</li>
+</ul>
+<h3 id="_4">交付层</h3>
+<ul>
+<li>[ ] 能说出本工具<strong>不做</strong>什么（扫描 / 利用 / 解密 / 改包）</li>
+<li>[ ] 报告里同时包含"发现"和"覆盖缺口"两块</li>
+<li>[ ] 能在报告里指出至少一条"无证据的建议项"，并说明它为什么也值得保留</li>
+</ul>
+<hr>
+<h2 id="3">📝 基础练习（3 道）</h2>
+<h3 id="1">练习 1：给报告加一个"总风险分"门槛（★☆☆）</h3>
+<p><strong>要求</strong>：在 <code>03-toolbox-cli.py</code> 里新增参数 <code>--max-risk N</code>：
+当报告的风险总分 <code>&gt; N</code> 时返回退出码 1，否则正常走后续判断。</p>
+<p><strong>要点</strong>：
+1. 参数加在 <code>argparse</code> 里，默认 <code>None</code>（不启用）
+2. 判定用 <code>report.total_risk()</code>，不要自己再遍历累加（单一数据源）
+3. 打印一行说明：<code>总风险分 105 &gt; 阈值 50</code>
+4. 保持既有优先级：<strong>输入错误(2) &gt; 有发现(1) &gt; 覆盖缺口(4) &gt; 通过(0)</strong>
+   —— 想想 <code>--max-risk</code> 应该插在链条的哪一环？</p>
+<details>
+<summary>参考答案（点开）</summary>
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s2">&quot;--max-risk&quot;</span><span class="p">,</span> <span class="nb">type</span><span class="o">=</span><span class="nb">int</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+                    <span class="n">help</span><span class="o">=</span><span class="s2">&quot;风险总分超过该值即返回退出码 1&quot;</span><span class="p">)</span>
+
+<span class="c1"># ……在 blocking 判定之后：</span>
+<span class="k">if</span> <span class="n">blocking</span> <span class="ow">or</span> <span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">max_risk</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">report</span><span class="o">.</span><span class="n">total_risk</span><span class="p">()</span> <span class="o">&gt;</span> <span class="n">args</span><span class="o">.</span><span class="n">max_risk</span><span class="p">):</span>
+    <span class="o">...</span>
+</code></pre></div>
+
+
+
+插入位置的选择理由：`--max-risk` 和 `--fail-on` 都是"发现类"的门禁，
+应该**合并到同一个判断分支**（退出码 1），而不是新造一个码。
+退出码是稀缺资源——每多一个码，消费它的 CI 就多一条要维护的分支。
+
+</details>
+
+<h3 id="2">练习 2：补一条脱敏规则（★★☆）</h3>
+<p><strong>要求</strong>：为 <code>report_core.py</code> 增加一条规则，
+把 JSON Web Token（<code>eyJ...</code> 开头、两段点号分隔）擦成 <code>&lt;JWT&gt;</code>。</p>
+<p><strong>要点</strong>：
+1. 规则要<strong>幂等</strong>（跑两次结果一样）
+2. 要能命中出现在句子中间的 JWT：<code>token=eyJhbGciOi...</code> → 全部擦掉
+3. 写完用下面这段测试，全部应为 <code>True</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">report_core</span> <span class="k">as</span> <span class="nn">rc</span>
+<span class="n">t</span> <span class="o">=</span> <span class="s2">&quot;token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbGljZSJ9.abc123&quot;</span>
+<span class="k">assert</span> <span class="s2">&quot;eyJ&quot;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">rc</span><span class="o">.</span><span class="n">redact_text</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+<span class="k">assert</span> <span class="n">rc</span><span class="o">.</span><span class="n">redact_text</span><span class="p">(</span><span class="n">rc</span><span class="o">.</span><span class="n">redact_text</span><span class="p">(</span><span class="n">t</span><span class="p">))</span> <span class="o">==</span> <span class="n">rc</span><span class="o">.</span><span class="n">redact_text</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+<span class="c1"># 边界：不要误伤普通文本</span>
+<span class="k">assert</span> <span class="n">rc</span><span class="o">.</span><span class="n">redact_text</span><span class="p">(</span><span class="s2">&quot;see eyJx&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;see eyJx&quot;</span>   <span class="c1"># 段落数不足，不该命中</span>
+</code></pre></div>
+<details>
+<summary>参考答案（点开）</summary>
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;\beyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+&quot;</span><span class="p">),</span> <span class="s2">&quot;&lt;JWT&gt;&quot;</span><span class="p">),</span>
+</code></pre></div>
+
+
+
+放在 `Bearer` 规则**之前**：因为 JWT 常出现在 `Bearer eyJ...` 里，
+先按结构整体擦掉，比依赖前一条规则"吃到行尾"更精确
+（行尾规则会把后面的 Log-Id 之类也一起吃掉）。
+
+</details>
+
+<h3 id="3_1">练习 3：生成"本次新增 / 本次已修复"对比（★★☆）</h3>
+<p><strong>要求</strong>：写一个脚本，读入两份 findings JSON（<code>old</code> / <code>new</code>），
+输出三行：新增 N 条、已修复 M 条、未变 K 条，并列出新增的 rule_id。</p>
+<p><strong>要点</strong>：
+1. 用 <code>Report.model()</code> 拿 id 集合，别自己拼哈希
+2. 用集合运算：<code>new_ids - old_ids</code> / <code>old_ids - new_ids</code> / 交集
+3. 输出要稳定排序（否则每次跑顺序不同，又回到了不确定性问题）</p>
+<details>
+<summary>参考答案（点开）</summary>
+
+
+
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">report_core</span> <span class="kn">import</span> <span class="n">Report</span><span class="p">,</span> <span class="n">Finding</span>
+<span class="kn">import</span> <span class="nn">json</span>
+
+<span class="k">def</span> <span class="nf">ids_of</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">))</span>
+    <span class="n">items</span> <span class="o">=</span> <span class="n">raw</span><span class="p">[</span><span class="s2">&quot;findings&quot;</span><span class="p">]</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="n">raw</span>
+    <span class="n">r</span> <span class="o">=</span> <span class="n">Report</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">&quot;t&quot;</span><span class="p">,</span> <span class="n">scope</span><span class="o">=</span><span class="s2">&quot;s&quot;</span><span class="p">,</span> <span class="n">generated_at</span><span class="o">=</span><span class="s2">&quot;fixed&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">it</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
+        <span class="n">r</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">Finding</span><span class="p">(</span><span class="n">rule_id</span><span class="o">=</span><span class="n">it</span><span class="p">[</span><span class="s2">&quot;rule_id&quot;</span><span class="p">],</span> <span class="n">title</span><span class="o">=</span><span class="n">it</span><span class="p">[</span><span class="s2">&quot;title&quot;</span><span class="p">],</span>
+                      <span class="n">severity</span><span class="o">=</span><span class="n">it</span><span class="p">[</span><span class="s2">&quot;severity&quot;</span><span class="p">],</span> <span class="n">target</span><span class="o">=</span><span class="n">it</span><span class="p">[</span><span class="s2">&quot;target&quot;</span><span class="p">],</span>
+                      <span class="n">reason</span><span class="o">=</span><span class="n">it</span><span class="p">[</span><span class="s2">&quot;reason&quot;</span><span class="p">],</span> <span class="n">confidence</span><span class="o">=</span><span class="n">it</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;confidence&quot;</span><span class="p">,</span> <span class="s2">&quot;high&quot;</span><span class="p">)))</span>
+    <span class="k">return</span> <span class="p">{</span><span class="n">f</span><span class="p">[</span><span class="s2">&quot;id&quot;</span><span class="p">]:</span> <span class="n">f</span><span class="p">[</span><span class="s2">&quot;rule_id&quot;</span><span class="p">]</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">r</span><span class="o">.</span><span class="n">model</span><span class="p">()[</span><span class="s2">&quot;findings&quot;</span><span class="p">]}</span>
+
+<span class="n">old</span><span class="p">,</span> <span class="n">new</span> <span class="o">=</span> <span class="n">ids_of</span><span class="p">(</span><span class="s2">&quot;old.json&quot;</span><span class="p">),</span> <span class="n">ids_of</span><span class="p">(</span><span class="s2">&quot;new.json&quot;</span><span class="p">)</span>
+<span class="n">added</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">new</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="n">new</span><span class="p">)</span> <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="n">old</span><span class="p">))</span>
+<span class="n">fixed</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">old</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="n">old</span><span class="p">)</span> <span class="o">-</span> <span class="nb">set</span><span class="p">(</span><span class="n">new</span><span class="p">))</span>
+<span class="n">same</span>  <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">old</span><span class="p">)</span> <span class="o">&amp;</span> <span class="nb">set</span><span class="p">(</span><span class="n">new</span><span class="p">))</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;新增 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">added</span><span class="p">)</span><span class="si">}</span><span class="s2"> 条：</span><span class="si">{</span><span class="n">added</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;已修复 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">fixed</span><span class="p">)</span><span class="si">}</span><span class="s2"> 条：</span><span class="si">{</span><span class="n">fixed</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;未变 </span><span class="si">{</span><span class="n">same</span><span class="si">}</span><span class="s2"> 条&quot;</span><span class="p">)</span>
+</code></pre></div>
+
+
+
+注意：这一题的答案能成立，完全依赖前一天做的"稳定 id"设计。
+如果 id 用 UUID，`set(new) - set(old)` 会永远等于全部条目。
+
+</details>
+
+<hr>
+<h2 id="_5">🚦 自检：如果你只记住一件事</h2>
+<blockquote>
+<p><strong>报告不是"打印出来的东西"，它是审计的证据链。</strong>
+证据链要能被复核，而复核的前提是：<strong>结果可复现</strong>（确定性）、
+<strong>秘密不外流</strong>（脱敏）、<strong>盲区不隐藏</strong>（覆盖缺口）。
+这三条都比"报告好不好看"重要得多。</p>
+</blockquote></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

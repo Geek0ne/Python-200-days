@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 169 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 169 正文</a>
+  <h1>Day 169 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-169-fabric">Day 169 — Fabric 批量执行 · 完成清单与练习</h1>
+<blockquote>
+<p>先读 <code>README.md</code>（第 2、3 节），再跑 <code>code/</code> 下 4 个脚本，最后做练习。
+<strong>每道题都要能回答"为什么"</strong> —— 尤其"为什么读用并发、写用串行"。</p>
+</blockquote>
+<hr>
+<h2 id="_1">✅ 今日完成清单</h2>
+<h3 id="_2">一、环境与依赖</h3>
+<ul>
+<li>[ ] 已确认 Python ≥ 3.9：<code>python3 -V</code></li>
+<li>[ ] 已安装 Fabric：<code>pip install fabric</code></li>
+<li>[ ] 已验证三个包版本：
+      <code>python3 -c "import fabric, invoke, paramiko; print(fabric.__version__, invoke.__version__, paramiko.__version__)"</code></li>
+<li>[ ] 已确认 <code>Connection</code> / <code>ThreadingGroup</code> / <code>SerialGroup</code> 可导入：
+      <code>python3 -c "from fabric import Connection, ThreadingGroup, SerialGroup; print('ok')"</code></li>
+<li>[ ] 有一台可测目标机（沿用 Day 168 的本地 sshd 或容器即可）</li>
+</ul>
+<h3 id="_3">二、跑通示例代码（先预测输出，再运行验证）</h3>
+<ul>
+<li>[ ] <code>cd days/day-169-fabric-批量执行/code</code></li>
+<li>[ ] <code>python3 01-basic-fabric.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 01-basic-fabric.py --host &lt;h&gt; --user &lt;u&gt; --key &lt;k&gt; --cmd "uname -a" --echo</code>
+      → 看到 <code>[ok] ...</code>，且命令本身被 echo 出来</li>
+<li>[ ] <code>python3 01-basic-fabric.py --host &lt;h&gt; --user &lt;u&gt; --key &lt;k&gt; --cmd "exit 3"</code>
+      → 看到 <code>[FAILED(exit=3)]</code>，且脚本<strong>没有</strong>崩（warn=True）</li>
+<li>[ ] <code>python3 02-pitfalls.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 02-pitfalls.py</code> → 6 个陷阱逐个复现（陷阱 4 要看到 <code>key=&lt;Connection …&gt;</code>）</li>
+<li>[ ] <code>python3 03-advanced-fabric.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 03-advanced-fabric.py --hosts &lt;好主机&gt;,127.0.0.1:9 --user &lt;u&gt; --key &lt;k&gt; --cmd uptime --batch 8</code>
+      → 好主机 <code>ok</code>、坏主机 <code>unreachable</code>，退出码 <strong>2</strong></li>
+<li>[ ] <code>python3 03-advanced-fabric.py --hosts &lt;h&gt; --user &lt;u&gt; --key &lt;k&gt; --rolling --cmd "echo a" --health-cmd "uname -s"</code>
+      → 看到"滚动 1/N → 健康检查通过"</li>
+<li>[ ] <code>python3 04-deploy-tool.py --self-test</code> → <code>SELF-TEST OK</code></li>
+<li>[ ] <code>python3 04-deploy-tool.py --hosts &lt;h&gt; --user &lt;u&gt; --key &lt;k&gt; --artifact &lt;tar.gz&gt; --release r1 --root /tmp/deploy-test</code>
+      → <strong>dry-run</strong> 打印 11 步，远端<strong>没有任何</strong>改动</li>
+<li>[ ] 加 <code>--apply --restart-cmd true --health-cmd true</code> 真跑一次，远端出现
+      <code>releases/r1/</code> 与 <code>current -&gt; releases/r1</code></li>
+</ul>
+<h3 id="_4">三、动手改造（"读懂了"的唯一证明）</h3>
+<ul>
+<li>[ ] 把 <code>04</code> 的 <code>--health-cmd</code> 改成 <code>false</code> 再部署 <code>r2</code>，观察：
+      ① 健康检查失败 → ② 自动回滚 → ③ <code>current</code> 指回 <code>r1</code> → ④ 退出码非 0</li>
+<li>[ ] 用 <code>readlink -f /tmp/deploy-test/current</code> 亲自确认回滚后指向 r1</li>
+<li>[ ] 给 <code>04</code> 增加 <code>--pre-check</code> 参数：部署前先跑一条前置检查命令，失败直接跳过本机</li>
+<li>[ ] 把 <code>03</code> 的 <code>--batch</code> 从 1 调到 16，用 <code>time</code> 对比总耗时，算出加速比</li>
+<li>[ ] 给 <code>03</code> 的 <code>chunked_run()</code> 加一个"失败批次自动重试 1 次"的逻辑，
+      并说明为什么重试只对<strong>读</strong>操作安全</li>
+</ul>
+<h3 id="readme">四、概念自检（不看 README）</h3>
+<ul>
+<li>[ ] 我能说清 Invoke / Fabric / Paramiko 三层各管什么，以及排错顺序</li>
+<li>[ ] 我能解释 <code>Connection(...)</code> 为什么不会立刻报错</li>
+<li>[ ] 我能说出 <code>Result.ok</code> / <code>return_code</code> / <code>exited</code> 三者的关系</li>
+<li>[ ] 我能解释 <code>warn=True</code> 在"读"与"写"场景下为什么结论相反</li>
+<li>[ ] 我能说出 <code>GroupException</code> 的键是什么类型，以及成功主机的信息在哪</li>
+<li>[ ] 我能解释为什么 <code>ThreadingGroup</code> 没有并发上限，以及怎么补</li>
+<li>[ ] 我能解释 <code>ln -sfn</code> 为什么是原子的，<code>rm -f current &amp;&amp; ln -s</code> 差在哪</li>
+<li>[ ] 我能说出健康检查三级各自能发现什么故障</li>
+<li>[ ] 我能说清"什么时候该从 Fabric 换成 Ansible"</li>
+</ul>
+<hr>
+<h2 id="13">📝 基础练习题（1–3）</h2>
+<h3 id="1-result">练习 1：把 <code>Result</code> 翻译成一行运维摘要</h3>
+<p>写一个 <code>summary(r)</code>，对任意 <code>Result</code> 返回一行结构化摘要：</p>
+<pre class="plain"><code>ok    | web-01 | exit=0 | 0.42s | up 3 days, load 0.4
+FAIL  | web-02 | exit=1 | 0.51s | nginx: inactive (dead)
+KILLED| web-03 | exit=137 | 0.09s | (无输出，疑似 OOM)
+ABORT | web-04 | exit=None | 5.00s | (超时/自动应答失败)
+</code></pre>
+<p>要求：</p>
+<ol>
+<li>用 <code>r.exited</code> 区分 ok / FAIL / KILLED（≥128 或 &lt;0 算 KILLED）/ ABORT（<code>None</code>）</li>
+<li>摘要优先取 <code>stdout</code> 第一行，为空时取 <code>stderr</code> 第一行，都空则 <code>(无输出)</code></li>
+<li>写 4 条 <code>--self-test</code> 断言，覆盖四种状态</li>
+<li><strong>说明</strong>：为什么把 KILLED 与 FAIL 分开？（提示：处置动作不同）</li>
+</ol>
+<hr>
+<h3 id="2">练习 2：安全的目标解析（禁止猜用户）</h3>
+<p>写 <code>parse_target(text)</code> 支持：</p>
+<pre class="plain"><code>deploy@web-01:2222   → (deploy, web-01, 2222)
+deploy@web-01        → (deploy, web-01, 22)
+web-01               → ValueError(&quot;必须显式给出用户&quot;)
+</code></pre>
+<p>要求：</p>
+<ol>
+<li>端口范围校验 1~65535</li>
+<li>IPv6 字面量 <code>deploy@[::1]:2222</code> 也要支持</li>
+<li>为什么"必须显式给出用户"？用一句话说清与 <code>sudo</code>/cron 的关系</li>
+</ol>
+<details>
+<summary>💡 提示</summary>
+
+脚本在 CI 或 cron 里跑时，`$USER` 可能是 `root`，也可能为空。
+"不猜"能避免你把变更发到错误的账号上 —— 这类事故在共享跳板机上很常见。
+</details>
+
+<hr>
+<h3 id="3">练习 3：分片并发的最小实现</h3>
+<p>不借助 Fabric 的 <code>Group</code>，用 <code>ThreadPoolExecutor</code> + <code>Connection</code> 自己实现
+<code>run_chunked(hosts, cmd, batch=8)</code>：</p>
+<ol>
+<li>每批最多 <code>batch</code> 台同时执行</li>
+<li>返回 <code>{host: Result | Exception}</code></li>
+<li>任何一台失败都不影响其他机器</li>
+<li>打印每批耗时与累计进度 <code>[3/13]</code></li>
+</ol>
+<p><strong>并说明</strong>：自己实现相比 <code>ThreadingGroup</code> 多得到了什么能力？
+（提示：限流粒度、每台独立超时、失败重试的粒度。）</p>
+<hr>
+<h2 id="45">🚀 进阶挑战题（4–5）</h2>
+<h3 id="4">练习 4：给部署工具加"金丝雀 + 自动决策"</h3>
+<p>在 <code>04</code> 上扩展：</p>
+<ol>
+<li><code>--canary 1</code>：先只发 1 台，等它健康检查通过再发剩余机器</li>
+<li>金丝雀失败 → <strong>直接中止</strong>，不碰剩余主机，退出码 2</li>
+<li><code>--soak 30</code>：金丝雀起来后<strong>持续观察 30 秒</strong>（每 5 秒探一次 <code>/healthz</code>），
+   期间任一次失败 → 回滚金丝雀并中止</li>
+<li>报告里明确标注哪台是金丝雀</li>
+</ol>
+<p><strong>思考并写下</strong>：为什么"金丝雀 + 浸泡观察"比"一次性全量"更值得写进脚本？
+提示从"故障半径"与"回滚成本"两个角度回答。</p>
+<details>
+<summary>💡 提示</summary>
+
+金丝雀的价值不在"少发几台"，而在**把故障暴露在影响半径最小的时候**。
+浸泡观察解决的是"启动成功但 30 秒后崩"这类慢故障 —— 而健康检查只看当下。
+</details>
+
+<hr>
+<h3 id="5">练习 5：把"部署"与"巡检"合成一条流水线</h3>
+<p>写一个 <code>fab</code> 任务（<code>@task</code>），串起三件事：</p>
+<pre class="plain"><code>fab -f ops.py release --rev=20260927 --hosts=h1,h2,h3
+      ① 部署前巡检：磁盘 &lt; 85%、服务当前是 active、目标版本未部署过（幂等）
+      ② 逐步滚动部署（复用 04 的逻辑）
+      ③ 部署后巡检：健康检查 + 版本核对（cat current/VERSION）
+      → 任一步骤失败：打印&quot;停在哪一步/哪一台&quot; + 回滚建议 + 退出码 1
+</code></pre>
+<p>要求：</p>
+<ol>
+<li>用 <code>@task</code> + <code>Context</code>，命令行能传 <code>--rev</code> 与 <code>--hosts</code></li>
+<li>"未部署过"用版本标记文件判断（幂等）</li>
+<li>每一步的结论都写进 <code>deploy-audit.jsonl</code></li>
+<li>说明：为什么"部署前巡检"能省掉很多回滚？（提示：把可预见的失败前置）</li>
+</ol>
+<details>
+<summary>💡 提示</summary>
+
+`@task` 函数的第一个参数是 `Context`（习惯叫 `c`），**不是** `Connection`：
+需要远端连接时要自己 `Connection(host, ...)`。
+`@task(hosts=[...])` 或 `--hosts` 由你自己解析 —— Fabric 只负责把参数传进来。
+</details></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

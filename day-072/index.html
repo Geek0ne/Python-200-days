@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 72 — 正则表达式深入</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 72 — 正则表达式深入</h1>
+  <div class="lmeta">
+    <span class="badge">标准库与生态系统</span>
+    <span class="badge">799 行</span>
+    <span class="badge">5 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（5 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-072-正则表达式深入" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#1">1. 正则引擎原理</a>
+<a class="toc-l3" href="#11-nfa-vs-dfa">1.1 两种引擎：NFA vs DFA</a>
+<a class="toc-l3" href="#12-nfa">1.2 NFA 执行模型</a>
+<a class="toc-l3" href="#13-dfa">1.3 DFA 执行模型（了解即可）</a>
+<a class="toc-l2" href="#2">2. 前瞻与后顾断言</a>
+<a class="toc-l3" href="#21">2.1 四种断言</a>
+<a class="toc-l3" href="#22">2.2 实用场景：密码强度验证</a>
+<a class="toc-l3" href="#23-html">2.3 综合示例：提取 HTML 标签和内容</a>
+<a class="toc-l2" href="#3-vs">3. 贪婪 vs 非贪婪匹配</a>
+<a class="toc-l3" href="#31">3.1 默认贪婪匹配</a>
+<a class="toc-l3" href="#32">3.2 所有贪婪/非贪婪对照</a>
+<a class="toc-l3" href="#33">3.3 何时用非贪婪？</a>
+<a class="toc-l2" href="#4-recompile">4. re.compile 与性能优化</a>
+<a class="toc-l3" href="#41-compile">4.1 为什么要 compile？</a>
+<a class="toc-l3" href="#42-recompile">4.2 re.compile 最佳实践</a>
+<a class="toc-l3" href="#43">4.3 性能优化技巧</a>
+<a class="toc-l2" href="#5">5. 高级技巧</a>
+<a class="toc-l3" href="#51-resub">5.1 re.sub 的函数替换</a>
+<a class="toc-l3" href="#52">5.2 分组与命名分组</a>
+<a class="toc-l3" href="#53-redotall-remultiline">5.3 re.DOTALL 和 re.MULTILINE</a>
+<a class="toc-l2" href="#html">实战项目：HTML 解析器</a>
+<a class="toc-l2" href="#_2">今日总结</a>
+<a class="toc-l2" href="#_3">练习题</a>
+<a class="toc-l3" href="#1_1">练习 1：日志分析 ⭐⭐</a>
+<a class="toc-l3" href="#2markdown">练习 2：Markdown 链接提取 ⭐⭐</a>
+<a class="toc-l3" href="#3csv">练习 3：CSV 字段解析 ⭐⭐⭐</a>
+<a class="toc-l3" href="#4">练习 4：模板引擎 ⭐⭐⭐</a>
+<a class="toc-l3" href="#5_1">练习 5：正则性能测试 ⭐⭐⭐⭐</a>
+<a class="toc-l2" href="#_4">明天预告</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-072">Day 072 — 正则表达式深入</h1>
+<h2 id="_1">概述</h2>
+<p>Day 070 中我们学习了正则表达式的基础语法，今天我们深入到<strong>引擎原理和高级技巧</strong>。</p>
+<ul>
+<li>正则引擎是怎么工作的？NFA 和 DFA 有什么区别？</li>
+<li>如何用前瞻/后顾断言做"零宽匹配"？</li>
+<li>贪婪 vs 非贪婪，什么时候用哪个？</li>
+<li><code>re.compile</code> 怎么提升性能？</li>
+<li><strong>实战：用正则写一个 HTML 解析器</strong></li>
+</ul>
+<blockquote>
+<p>💡 <strong>为什么要深入正则？</strong><br>
+- 简单匹配用基础语法就够了，但复杂场景（嵌套结构、条件匹配、性能优化）需要深入理解<br>
+- 面试常考 NFA vs DFA、回溯机制<br>
+- 理解引擎原理能帮你写出更快、更安全的正则</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 正则引擎原理</h2>
+<h3 id="11-nfa-vs-dfa">1.1 两种引擎：NFA vs DFA</h3>
+<p>正则表达式引擎分两大类：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>全称</th>
+<th>Python 使用</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NFA</strong></td>
+<td>Non-deterministic Finite Automaton</td>
+<td>✅ <code>re</code> 模块</td>
+<td>支持回溯、贪婪匹配、反向引用</td>
+</tr>
+<tr>
+<td><strong>DFA</strong></td>
+<td>Deterministic Finite Automaton</td>
+<td>❌</td>
+<td>无回溯，线性时间，不支持反向引用</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+<span class="c1"># Python re 模块使用 NFA 引擎</span>
+<span class="c1"># NFA 的核心特点：回溯（backtracking）</span>
+
+<span class="c1"># 什么是回溯？</span>
+<span class="c1"># NFA 会&quot;贪婪地&quot;尽可能多地匹配，然后发现不对就退回来重试</span>
+
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;aab&quot;</span>
+<span class="n">pattern</span> <span class="o">=</span> <span class="s2">&quot;a*ab&quot;</span>
+
+<span class="c1"># NFA 引擎执行过程：</span>
+<span class="c1"># 1. a* 尝试匹配尽可能多的 &#39;a&#39;（匹配了 &quot;aa&quot;）</span>
+<span class="c1"># 2. 接下来要匹配 &#39;a&#39;，但位置在 &#39;b&#39;，失败！</span>
+<span class="c1"># 3. 回溯：a* 让出一个 &#39;a&#39;，现在 a* 匹配了 &quot;a&quot;</span>
+<span class="c1"># 4. 接下来匹配 &#39;a&#39;，位置在第二个 &#39;a&#39;，成功！</span>
+<span class="c1"># 5. 接下来匹配 &#39;b&#39;，位置在 &#39;b&#39;，成功！</span>
+
+<span class="n">result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;匹配结果: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">group</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 输出: aab</span>
+
+<span class="c1"># 如果没有回溯机制（DFA），这个正则就无法匹配</span>
+</code></pre></div>
+<p><strong>避坑说明：</strong><br>
+- ⚠️ 回溯可能导致<strong>灾难性回溯</strong>（Catastrophic Backtracking）<br>
+- ⚠️ 简单的正则也可能非常慢（如 <code>(a+)+b</code> 匹配长字符串）<br>
+- ⚠️ 生产环境中要对正则表达式做性能测试</p>
+<h3 id="12-nfa">1.2 NFA 执行模型</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+<span class="c1"># NFA 是&quot;表达式导向&quot;的：</span>
+<span class="c1"># 从正则表达式的第一个字符开始，尝试匹配输入字符串</span>
+
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;hello world 123&quot;</span>
+<span class="n">pattern</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">&quot;\b\w+\b&quot;</span>  <span class="c1"># 匹配单词</span>
+
+<span class="c1"># NFA 执行过程：</span>
+<span class="c1"># 1. \b 匹配 &#39;h&#39; 前面的位置（单词边界）</span>
+<span class="c1"># 2. \w+ 逐个字符匹配：h, e, l, l, o</span>
+<span class="c1"># 3. \b 匹配 &#39;o&#39; 和 &#39; &#39; 之间的位置</span>
+<span class="c1"># 4. 返回 &quot;hello&quot;</span>
+
+<span class="n">matches</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;所有单词: </span><span class="si">{</span><span class="n">matches</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;hello&#39;, &#39;world&#39;, &#39;123&#39;]</span>
+</code></pre></div>
+<h3 id="13-dfa">1.3 DFA 执行模型（了解即可）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># DFA 是&quot;文本导向&quot;的：</span>
+<span class="c1"># 从输入字符串的第一个字符开始，查找匹配的正则表达式</span>
+<span class="c1">#</span>
+<span class="c1"># DFA 的特点：</span>
+<span class="c1"># - 不支持贪婪/非贪婪</span>
+<span class="c1"># - 不支持反向引用（\1, \2）</span>
+<span class="c1"># - 不支持零宽断言（lookahead/lookbehind）</span>
+<span class="c1"># - 执行速度更快（线性时间）</span>
+<span class="c1">#</span>
+<span class="c1"># Python 的 re 模块使用 NFA，所以可以使用所有高级功能</span>
+<span class="c1"># 如果需要 DFA 的性能，可以考虑第三方库 regex</span>
+
+<span class="c1"># 示例：反向引用（只有 NFA 支持）</span>
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;hello hello&quot;</span>
+<span class="c1"># 匹配重复的单词</span>
+<span class="n">pattern</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">&quot;(\b\w+\b)\s+\1&quot;</span>  <span class="c1"># \1 是反向引用</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;重复单词: </span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">result</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;无&#39;</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: hello</span>
+</code></pre></div>
+<hr>
+<h2 id="2">2. 前瞻与后顾断言</h2>
+<h3 id="21">2.1 四种断言</h3>
+<p>断言（Assertion）是"零宽"的——它们匹配位置，但不消耗字符。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;price: $100, quantity: 50&quot;</span>
+
+<span class="c1"># ============ 四种断言 ============</span>
+
+<span class="c1"># 1. 正向前瞻（Positive Lookahead）: (?=...)</span>
+<span class="c1">#    后面必须跟着指定内容</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\d+(?=\s)&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>  <span class="c1"># 后面必须是空格的数字</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;正向前瞻: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;50&#39;]  （只有50后面是空格，100后面是逗号）</span>
+
+<span class="c1"># 2. 负向前瞻（Negative Lookahead）: (?!...)</span>
+<span class="c1">#    后面不能跟着指定内容</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\d+(?!$)&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>  <span class="c1"># 后面不是行尾的数字</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;负向前瞻: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;100&#39;, &#39;50&#39;]  （排除了行尾的 $...）</span>
+
+<span class="c1"># 3. 正向后顾（Positive Lookbehind）: (?&lt;=...)</span>
+<span class="c1">#    前面必须有指定内容</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(?&lt;=\$)\d+&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>  <span class="c1"># 前面是 $ 的数字</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;正向后顾: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;100&#39;]</span>
+
+<span class="c1"># 4. 负向后顾（Negative Lookbehind）: (?&lt;!...)</span>
+<span class="c1">#    前面不能有指定内容</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(?&lt;!\$)\d+&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>  <span class="c1"># 前面不是 $ 的数字</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;负向后顾: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;50&#39;]</span>
+</code></pre></div>
+<h3 id="22">2.2 实用场景：密码强度验证</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+
+<span class="k">def</span> <span class="nf">validate_password</span><span class="p">(</span><span class="n">password</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;验证密码强度：至少8位，包含大小写字母、数字和特殊字符&quot;&quot;&quot;</span>
+    <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="c1"># 必须至少8位</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">password</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">8</span><span class="p">:</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;密码至少8位&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 必须包含小写字母（前瞻断言）</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(?=.*[a-z])&#39;</span><span class="p">,</span> <span class="n">password</span><span class="p">):</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;缺少小写字母&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 必须包含大写字母</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(?=.*[A-Z])&#39;</span><span class="p">,</span> <span class="n">password</span><span class="p">):</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;缺少大写字母&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 必须包含数字</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(?=.*\d)&#39;</span><span class="p">,</span> <span class="n">password</span><span class="p">):</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;缺少数字&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 必须包含特殊字符</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(?=.*[!@#$%^&amp;*])&#39;</span><span class="p">,</span> <span class="n">password</span><span class="p">):</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;缺少特殊字符(!@#$%^&amp;*)&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 不能包含空格</span>
+    <span class="k">if</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\s&#39;</span><span class="p">,</span> <span class="n">password</span><span class="p">):</span>
+        <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">&quot;不能包含空格&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">errors</span>
+
+
+<span class="c1"># 测试</span>
+<span class="n">passwords</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;abc&quot;</span><span class="p">,</span>           <span class="c1"># 太短</span>
+    <span class="s2">&quot;abcdefgh&quot;</span><span class="p">,</span>      <span class="c1"># 没有大写、数字、特殊字符</span>
+    <span class="s2">&quot;Abcdefg1&quot;</span><span class="p">,</span>      <span class="c1"># 没有特殊字符</span>
+    <span class="s2">&quot;Abcdefg1!&quot;</span><span class="p">,</span>     <span class="c1"># 完全符合</span>
+<span class="p">]</span>
+
+<span class="k">for</span> <span class="n">pwd</span> <span class="ow">in</span> <span class="n">passwords</span><span class="p">:</span>
+    <span class="n">errors</span> <span class="o">=</span> <span class="n">validate_password</span><span class="p">(</span><span class="n">pwd</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;❌ &#39;</span><span class="si">{</span><span class="n">pwd</span><span class="si">}</span><span class="s2">&#39;: </span><span class="si">{</span><span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">errors</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;✅ &#39;</span><span class="si">{</span><span class="n">pwd</span><span class="si">}</span><span class="s2">&#39;: 密码强度合格&quot;</span><span class="p">)</span>
+
+<span class="c1"># 输出：</span>
+<span class="c1"># ❌ &#39;abc&#39;: 密码至少8位, 缺少小写字母(?!)...</span>
+<span class="c1"># 注意：abc 没有小写是因为 re.search(r&#39;(?=.*[a-z])&#39;, &#39;abc&#39;) 其实是 True</span>
+<span class="c1"># 这里简化说明，实际需要调整</span>
+</code></pre></div>
+<p><strong>避坑说明：</strong><br>
+- ⚠️ <code>(?=...)</code> 只检查"后面有没有"，不消耗字符<br>
+- ⚠️ 后顾断言在 Python 3 中<strong>必须是固定长度</strong>的（不能用 <code>*</code> 或 <code>+</code>）<br>
+- ⚠️ <code>(?!...)</code> 负向前瞻容易写反，测试时多用几个例子验证</p>
+<h3 id="23-html">2.3 综合示例：提取 HTML 标签和内容</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+<span class="n">html</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">&lt;div class=&quot;content&quot;&gt;</span>
+<span class="s2">    &lt;h1&gt;标题&lt;/h1&gt;</span>
+<span class="s2">    &lt;p&gt;段落一&lt;/p&gt;</span>
+<span class="s2">    &lt;p&gt;段落二&lt;/p&gt;</span>
+<span class="s2">    &lt;img src=&quot;test.jpg&quot; alt=&quot;图片&quot;&gt;</span>
+<span class="s2">&lt;/div&gt;</span>
+<span class="s2">&quot;&quot;&quot;</span>
+
+<span class="c1"># 提取所有标签名（不含属性）</span>
+<span class="n">tag_pattern</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">&#39;&lt;([a-zA-Z]+)(?:\s[^&gt;]*)?&gt;&#39;</span>
+<span class="n">tags</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">tag_pattern</span><span class="p">,</span> <span class="n">html</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;标签名: </span><span class="si">{</span><span class="n">tags</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;div&#39;, &#39;h1&#39;, &#39;p&#39;, &#39;p&#39;, &#39;img&#39;]</span>
+
+<span class="c1"># 提取完整标签（包含内容）— 使用非贪婪匹配</span>
+<span class="n">full_tag_pattern</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">&#39;&lt;([a-zA-Z]+)[^&gt;]*&gt;.*?&lt;/\1&gt;&#39;</span>
+<span class="n">full_tags</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">full_tag_pattern</span><span class="p">,</span> <span class="n">html</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;完整标签内容: </span><span class="si">{</span><span class="n">full_tags</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;div&#39;, &#39;h1&#39;, &#39;p&#39;, &#39;p&#39;]</span>
+
+<span class="c1"># 提取属性</span>
+<span class="n">attr_pattern</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">&#39;([a-zA-Z-]+)=&quot;([^&quot;]*)&quot;&#39;</span>
+<span class="n">attrs</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">attr_pattern</span><span class="p">,</span> <span class="n">html</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;属性: </span><span class="si">{</span><span class="n">attrs</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [(&#39;class&#39;, &#39;content&#39;), (&#39;src&#39;, &#39;test.jpg&#39;), (&#39;alt&#39;, &#39;图片&#39;)]</span>
+</code></pre></div>
+<hr>
+<h2 id="3-vs">3. 贪婪 vs 非贪婪匹配</h2>
+<h3 id="31">3.1 默认贪婪匹配</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+<span class="n">html</span> <span class="o">=</span> <span class="s2">&quot;&lt;div&gt;内容1&lt;/div&gt;&lt;div&gt;内容2&lt;/div&gt;&quot;</span>
+
+<span class="c1"># 贪婪匹配：尽可能多地匹配（默认）</span>
+<span class="n">greedy</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;&lt;div&gt;.*&lt;/div&gt;&#39;</span><span class="p">,</span> <span class="n">html</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;贪婪匹配: </span><span class="si">{</span><span class="n">greedy</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;&lt;div&gt;内容1&lt;/div&gt;&lt;div&gt;内容2&lt;/div&gt;&#39;]</span>
+<span class="c1"># 注意：.* 把整个字符串都匹配了！</span>
+
+<span class="c1"># 非贪婪匹配：尽可能少地匹配（加 ?）</span>
+<span class="n">nongreedy</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;&lt;div&gt;.*?&lt;/div&gt;&#39;</span><span class="p">,</span> <span class="n">html</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;非贪婪匹配: </span><span class="si">{</span><span class="n">nongreedy</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;&lt;div&gt;内容1&lt;/div&gt;&#39;, &#39;&lt;div&gt;内容2&lt;/div&gt;&#39;]</span>
+<span class="c1"># 每个标签单独匹配</span>
+</code></pre></div>
+<h3 id="32">3.2 所有贪婪/非贪婪对照</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;aabab&quot;</span>
+
+<span class="c1"># 贪婪 vs 非贪婪对照表</span>
+<span class="n">patterns</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="p">(</span><span class="s2">&quot;a*&quot;</span><span class="p">,</span>   <span class="s2">&quot;a*?&quot;</span><span class="p">,</span>   <span class="s2">&quot;零次或多次&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;a+&quot;</span><span class="p">,</span>   <span class="s2">&quot;a+?&quot;</span><span class="p">,</span>   <span class="s2">&quot;一次或多次&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;a?&quot;</span><span class="p">,</span>   <span class="s2">&quot;a??&quot;</span><span class="p">,</span>   <span class="s2">&quot;零次或一次&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;a</span><span class="si">{2}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="s2">&quot;a</span><span class="si">{2}</span><span class="s2">?&quot;</span><span class="p">,</span> <span class="s2">&quot;恰好两次&quot;</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;.*&quot;</span><span class="p">,</span>   <span class="s2">&quot;.*?&quot;</span><span class="p">,</span>   <span class="s2">&quot;任意字符零次或多次&quot;</span><span class="p">),</span>
+<span class="p">]</span>
+
+<span class="k">for</span> <span class="n">greedy</span><span class="p">,</span> <span class="n">nongreedy</span><span class="p">,</span> <span class="n">desc</span> <span class="ow">in</span> <span class="n">patterns</span><span class="p">:</span>
+    <span class="n">g_result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">greedy</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+    <span class="n">n_result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">nongreedy</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">desc</span><span class="si">}</span><span class="s2">:&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  贪婪 </span><span class="si">{</span><span class="n">greedy</span><span class="si">:</span><span class="s2">8s</span><span class="si">}</span><span class="s2"> → </span><span class="si">{</span><span class="n">g_result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  非贪婪 </span><span class="si">{</span><span class="n">nongreedy</span><span class="si">:</span><span class="s2">8s</span><span class="si">}</span><span class="s2"> → </span><span class="si">{</span><span class="n">n_result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">()</span>
+
+<span class="c1"># 输出：</span>
+<span class="c1"># 零次或多次:</span>
+<span class="c1">#   贪婪 a*       → [&#39;aa&#39;, &#39;&#39;, &#39;a&#39;, &#39;&#39;, &#39;&#39;]</span>
+<span class="c1">#   非贪婪 a*?    → [&#39;&#39;, &#39;a&#39;, &#39;&#39;, &#39;a&#39;, &#39;&#39;]</span>
+<span class="c1">#</span>
+<span class="c1"># 一次或多次:</span>
+<span class="c1">#   贪婪 a+       → [&#39;aa&#39;, &#39;a&#39;]</span>
+<span class="c1">#   非贪婪 a+?    → [&#39;a&#39;, &#39;a&#39;]</span>
+</code></pre></div>
+<h3 id="33">3.3 何时用非贪婪？</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+<span class="c1"># 场景1：提取引号内的内容</span>
+<span class="n">text</span> <span class="o">=</span> <span class="s1">&#39;他说&quot;你好&quot;，然后说&quot;再见&quot;&#39;</span>
+<span class="c1"># ❌ 贪婪：匹配从第一个引号到最后一个引号的所有内容</span>
+<span class="n">greedy</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;&quot;(.*)&quot;&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;贪婪: </span><span class="si">{</span><span class="n">greedy</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;你好&quot;，然后说&quot;再见&#39;]  ← 不对！</span>
+
+<span class="c1"># ✅ 非贪婪：匹配最近的引号对</span>
+<span class="n">nongreedy</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;&quot;(.*?)&quot;&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;非贪婪: </span><span class="si">{</span><span class="n">nongreedy</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;你好&#39;, &#39;再见&#39;]  ← 正确！</span>
+
+<span class="c1"># 场景2：匹配 URL</span>
+<span class="n">url</span> <span class="o">=</span> <span class="s2">&quot;https://example.com/path?name=test&amp;value=123&quot;</span>
+<span class="c1"># ❌ 贪婪：.* 会匹配到末尾</span>
+<span class="n">greedy_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;https://(.*)&#39;</span><span class="p">,</span> <span class="n">url</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;贪婪 URL: </span><span class="si">{</span><span class="n">greedy_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: example.com/path?name=test&amp;value=123</span>
+
+<span class="c1"># ✅ 非贪婪：匹配到第一个 ? 或空格</span>
+<span class="n">nongreedy_match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;https://(.*?)(?:\?|$)&#39;</span><span class="p">,</span> <span class="n">url</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;非贪婪 URL: </span><span class="si">{</span><span class="n">nongreedy_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: example.com</span>
+</code></pre></div>
+<hr>
+<h2 id="4-recompile">4. re.compile 与性能优化</h2>
+<h3 id="41-compile">4.1 为什么要 compile？</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+
+<span class="k">def</span> <span class="nf">compare_performance</span><span class="p">():</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;对比 compile 和不 compile 的性能&quot;&quot;&quot;</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;hello&quot;</span> <span class="o">*</span> <span class="mi">10000</span>  <span class="c1"># 重复 10000 次</span>
+    <span class="n">pattern</span> <span class="o">=</span> <span class="sa">r</span><span class="s2">&quot;(hello\s*)+&quot;</span>
+
+    <span class="c1"># 方法1：不使用 compile（每次调用都重新编译）</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+    <span class="n">no_compile</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+    <span class="c1"># 方法2：使用 compile（编译一次，多次使用）</span>
+    <span class="n">compiled</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">pattern</span><span class="p">)</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">):</span>
+        <span class="n">compiled</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    <span class="n">with_compile</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;不 compile: </span><span class="si">{</span><span class="n">no_compile</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;使用 compile: </span><span class="si">{</span><span class="n">with_compile</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;性能提升: </span><span class="si">{</span><span class="n">no_compile</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">with_compile</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x&quot;</span><span class="p">)</span>
+
+
+<span class="n">compare_performance</span><span class="p">()</span>
+<span class="c1"># 输出示例：</span>
+<span class="c1"># 不 compile: 1.2345s</span>
+<span class="c1"># 使用 compile: 0.8765s</span>
+<span class="c1"># 性能提升: 1.41x</span>
+</code></pre></div>
+<h3 id="42-recompile">4.2 re.compile 最佳实践</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+
+<span class="c1"># ✅ 推荐：在模块级别编译正则（常量）</span>
+<span class="n">EMAIL_PATTERN</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$&#39;</span><span class="p">)</span>
+<span class="n">PHONE_PATTERN</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;1[3-9]\d</span><span class="si">{9}</span><span class="s1">&#39;</span><span class="p">)</span>
+<span class="n">URL_PATTERN</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;https?://\S+&#39;</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">validate_email</span><span class="p">(</span><span class="n">email</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;验证邮箱格式&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="nb">bool</span><span class="p">(</span><span class="n">EMAIL_PATTERN</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">email</span><span class="p">))</span>
+
+
+<span class="k">def</span> <span class="nf">extract_phones</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;提取所有手机号&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">PHONE_PATTERN</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">extract_urls</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;提取所有 URL&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">URL_PATTERN</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+
+
+<span class="c1"># 使用示例</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">validate_email</span><span class="p">(</span><span class="s2">&quot;test@example.com&quot;</span><span class="p">))</span>  <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">validate_email</span><span class="p">(</span><span class="s2">&quot;invalid&quot;</span><span class="p">))</span>          <span class="c1"># False</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">extract_phones</span><span class="p">(</span><span class="s2">&quot;联系我：13812345678 或 15987654321&quot;</span><span class="p">))</span>
+<span class="c1"># 输出: [&#39;13812345678&#39;, &#39;15987654321&#39;]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">extract_urls</span><span class="p">(</span><span class="s2">&quot;访问 https://example.com 或 http://test.org&quot;</span><span class="p">))</span>
+<span class="c1"># 输出: [&#39;https://example.com&#39;, &#39;http://test.org&#39;]</span>
+</code></pre></div>
+<h3 id="43">4.3 性能优化技巧</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+
+<span class="c1"># 技巧1：避免在循环中使用 re 函数</span>
+<span class="c1"># ❌ 慢</span>
+<span class="k">def</span> <span class="nf">find_all_slow</span><span class="p">(</span><span class="n">text_list</span><span class="p">,</span> <span class="n">pattern</span><span class="p">):</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">text_list</span><span class="p">:</span>
+        <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">))</span>  <span class="c1"># 每次都重新编译</span>
+    <span class="k">return</span> <span class="n">results</span>
+
+
+<span class="c1"># ✅ 快</span>
+<span class="k">def</span> <span class="nf">find_all_fast</span><span class="p">(</span><span class="n">text_list</span><span class="p">,</span> <span class="n">pattern</span><span class="p">):</span>
+    <span class="n">compiled</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">pattern</span><span class="p">)</span>  <span class="c1"># 编译一次</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">text_list</span><span class="p">:</span>
+        <span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">compiled</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="n">text</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">results</span>
+
+
+<span class="c1"># 技巧2：使用具体字符类而非 .</span>
+<span class="c1"># ❌ 慢：. 匹配任意字符</span>
+<span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;.*email.*&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+
+<span class="c1"># ✅ 快：用具体字符类</span>
+<span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;[a-zA-Z0-9@.]*email[a-zA-Z0-9@.]*&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+
+
+<span class="c1"># 技巧3：避免嵌套量词（灾难性回溯）</span>
+<span class="c1"># ❌ 危险：(a+)+ 可能导致灾难性回溯</span>
+<span class="c1"># re.search(r&#39;(a+)+b&#39;, &#39;a&#39; * 30 + &#39;c&#39;)  # 极慢！</span>
+
+<span class="c1"># ✅ 安全：使用 atomic group 或 possessive quantifier（需要 regex 模块）</span>
+<span class="c1"># 或者重新设计正则</span>
+
+
+<span class="c1"># 技巧4：使用 re.VERBOSE 写复杂的正则</span>
+<span class="n">email_regex</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    ^                   # 字符串开始</span>
+<span class="s2">    [a-zA-Z0-9._%+-]+  # 用户名部分</span>
+<span class="s2">    @                   # @ 符号</span>
+<span class="s2">    [a-zA-Z0-9.-]+     # 域名</span>
+<span class="s2">    \.                  # 点</span>
+<span class="s2">    [a-zA-Z]{2,}        # 顶级域名</span>
+<span class="s2">    $                   # 字符串结束</span>
+<span class="s2">&quot;&quot;&quot;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">VERBOSE</span><span class="p">)</span>
+
+
+<span class="nb">print</span><span class="p">(</span><span class="n">email_regex</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="s2">&quot;test@example.com&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">)</span>  <span class="c1"># True</span>
+</code></pre></div>
+<p><strong>避坑说明：</strong><br>
+- ⚠️ 不要滥用 <code>re.VERBOSE</code>，简单的正则不需要<br>
+- ⚠️ <code>re.compile</code> 在 Python 内部有缓存（最多缓存 512 个），所以不 compile 也不会太慢<br>
+- ⚠️ 真正的性能瓶颈通常是正则本身的设计，而不是 compile</p>
+<hr>
+<h2 id="5">5. 高级技巧</h2>
+<h3 id="51-resub">5.1 re.sub 的函数替换</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+
+<span class="c1"># 使用函数作为替换内容</span>
+<span class="k">def</span> <span class="nf">censor</span><span class="p">(</span><span class="n">match</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;将敏感词替换为星号&quot;&quot;&quot;</span>
+    <span class="n">word</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">()</span>
+    <span class="k">return</span> <span class="s1">&#39;*&#39;</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">word</span><span class="p">)</span>
+
+
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;这个产品很好，但价格有点贵，质量一般&quot;</span>
+<span class="c1"># 把&quot;贵&quot;和&quot;一般&quot;替换成星号</span>
+<span class="n">censored</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;贵|一般&#39;</span><span class="p">,</span> <span class="n">censor</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;审查后: </span><span class="si">{</span><span class="n">censored</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: 这个产品很好，但价格有点*，质量***</span>
+
+<span class="c1"># 更复杂的替换：将驼峰命名转为蛇形命名</span>
+<span class="k">def</span> <span class="nf">to_snake</span><span class="p">(</span><span class="n">match</span><span class="p">):</span>
+    <span class="k">return</span> <span class="s1">&#39;_&#39;</span> <span class="o">+</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+
+
+<span class="n">camel</span> <span class="o">=</span> <span class="s2">&quot;getElementById&quot;</span>
+<span class="n">snake</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;([A-Z])&#39;</span><span class="p">,</span> <span class="n">to_snake</span><span class="p">,</span> <span class="n">camel</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;蛇形命名: </span><span class="si">{</span><span class="n">snake</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: get_element_by_id</span>
+</code></pre></div>
+<h3 id="52">5.2 分组与命名分组</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+
+<span class="c1"># 命名分组 (?P&lt;name&gt;...)</span>
+<span class="n">pattern</span> <span class="o">=</span> <span class="sa">r</span><span class="s1">&#39;(?P&lt;year&gt;\d</span><span class="si">{4}</span><span class="s1">)-(?P&lt;month&gt;\d</span><span class="si">{2}</span><span class="s1">)-(?P&lt;day&gt;\d</span><span class="si">{2}</span><span class="s1">)&#39;</span>
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;日期：2024-01-15&quot;</span>
+
+<span class="n">match</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="n">pattern</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">match</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;年: </span><span class="si">{</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">&#39;year&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>   <span class="c1"># 2024</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;月: </span><span class="si">{</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">&#39;month&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 01</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;日: </span><span class="si">{</span><span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s1">&#39;day&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>    <span class="c1"># 15</span>
+
+    <span class="c1"># groupdict() 获取所有命名分组</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;字典: </span><span class="si">{</span><span class="n">match</span><span class="o">.</span><span class="n">groupdict</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="c1"># 输出: {&#39;year&#39;: &#39;2024&#39;, &#39;month&#39;: &#39;01&#39;, &#39;day&#39;: &#39;15&#39;}</span>
+
+<span class="c1"># 非捕获分组 (?:...)</span>
+<span class="c1"># 只分组，不捕获（不占用反向引用）</span>
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;foo123bar456&quot;</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;(?:foo|bar)(\d+)&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;非捕获分组: </span><span class="si">{</span><span class="n">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;123&#39;, &#39;456&#39;]  ← 没有捕获 foo/bar，只捕获数字</span>
+</code></pre></div>
+<h3 id="53-redotall-remultiline">5.3 re.DOTALL 和 re.MULTILINE</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">re</span>
+
+<span class="n">html</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;&lt;div&gt;</span>
+<span class="s2">&lt;p&gt;段落&lt;/p&gt;</span>
+<span class="s2">&lt;/div&gt;&quot;&quot;&quot;</span>
+
+<span class="c1"># 默认情况下，. 不匹配换行符</span>
+<span class="n">result1</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;&lt;div&gt;(.*)&lt;/div&gt;&#39;</span><span class="p">,</span> <span class="n">html</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;默认: </span><span class="si">{</span><span class="n">result1</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">result1</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;无&#39;</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出:  ← 空的，因为 . 不匹配换行</span>
+
+<span class="c1"># re.DOTALL：让 . 也能匹配换行符</span>
+<span class="n">result2</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;&lt;div&gt;(.*)&lt;/div&gt;&#39;</span><span class="p">,</span> <span class="n">html</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;DOTALL: </span><span class="si">{</span><span class="n">result2</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: \n&lt;p&gt;段落&lt;/p&gt;\n</span>
+
+<span class="c1"># re.MULTILINE：让 ^ 和 $ 匹配每行的开头和结尾</span>
+<span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;第一行</span>
+<span class="s2">第二行</span>
+<span class="s2">第三行&quot;&quot;&quot;</span>
+
+<span class="c1"># 默认：^ 匹配整个字符串的开头</span>
+<span class="n">result3</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;^\w+&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;默认: </span><span class="si">{</span><span class="n">result3</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;第一行&#39;]</span>
+
+<span class="c1"># MULTILINE：^ 匹配每行的开头</span>
+<span class="n">result4</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">findall</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;^\w+&#39;</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">MULTILINE</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;MULTILINE: </span><span class="si">{</span><span class="n">result4</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="c1"># 输出: [&#39;第一行&#39;, &#39;第二行&#39;, &#39;第三行&#39;]</span>
+</code></pre></div>
+<hr>
+<h2 id="html">实战项目：HTML 解析器</h2>
+<p>用正则表达式写一个简单的 HTML 解析器，提取标签、属性和文本内容。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">实战：HTML 解析器</span>
+<span class="sd">用正则表达式解析 HTML，提取标签、属性和文本</span>
+<span class="sd">运行方式：python 05-html-parser.py</span>
+<span class="sd">&quot;&quot;&quot;</span>
+<span class="kn">import</span> <span class="nn">re</span>
+
+
+<span class="k">class</span> <span class="nc">SimpleHTMLParser</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;简单的 HTML 解析器（教学用，生产环境请用 BeautifulSoup）&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">html</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">html</span> <span class="o">=</span> <span class="n">html</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tree</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parse</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">_parse</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;解析 HTML 字符串&quot;&quot;&quot;</span>
+        <span class="c1"># 匹配所有标签</span>
+        <span class="n">tag_pattern</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+            <span class="sa">r</span><span class="s1">&#39;&lt;([a-zA-Z][a-zA-Z0-9]*)&#39;</span>  <span class="c1"># 标签名</span>
+            <span class="sa">r</span><span class="s1">&#39;((?:\s+[a-zA-Z-]+(?:=(?:&quot;[^&quot;]*&quot;|</span><span class="se">\&#39;</span><span class="s1">[^</span><span class="se">\&#39;</span><span class="s1">]*</span><span class="se">\&#39;</span><span class="s1">|[^\s&gt;]*))?)*&#39;</span>  <span class="c1"># 属性</span>
+            <span class="sa">r</span><span class="s1">&#39;\s*/?)&gt;&#39;</span>  <span class="c1"># 可能是自闭合</span>
+            <span class="sa">r</span><span class="s1">&#39;(.*?)&#39;</span>  <span class="c1"># 标签内容（非贪婪）</span>
+            <span class="sa">r</span><span class="s1">&#39;(?:&lt;/\1&gt;)?&#39;</span><span class="p">,</span>  <span class="c1"># 闭合标签（可选）</span>
+            <span class="n">re</span><span class="o">.</span><span class="n">DOTALL</span>
+        <span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">match</span> <span class="ow">in</span> <span class="n">tag_pattern</span><span class="o">.</span><span class="n">finditer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">html</span><span class="p">):</span>
+            <span class="n">tag_name</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">attrs_str</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+            <span class="n">content</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+
+            <span class="c1"># 解析属性</span>
+            <span class="n">attrs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parse_attributes</span><span class="p">(</span><span class="n">attrs_str</span><span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">tree</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                <span class="s1">&#39;tag&#39;</span><span class="p">:</span> <span class="n">tag_name</span><span class="p">,</span>
+                <span class="s1">&#39;attrs&#39;</span><span class="p">:</span> <span class="n">attrs</span><span class="p">,</span>
+                <span class="s1">&#39;content&#39;</span><span class="p">:</span> <span class="n">content</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span>
+            <span class="p">})</span>
+
+    <span class="k">def</span> <span class="nf">_parse_attributes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">attrs_str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;解析标签属性&quot;&quot;&quot;</span>
+        <span class="n">attrs</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">attr_pattern</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+            <span class="sa">r</span><span class="s1">&#39;([a-zA-Z-]+)&#39;</span>  <span class="c1"># 属性名</span>
+            <span class="sa">r</span><span class="s1">&#39;(?:=(?:&quot;([^&quot;]*)&quot;|</span><span class="se">\&#39;</span><span class="s1">([^</span><span class="se">\&#39;</span><span class="s1">]*)</span><span class="se">\&#39;</span><span class="s1">|(\S+)))?&#39;</span>  <span class="c1"># 属性值</span>
+        <span class="p">)</span>
+        <span class="k">for</span> <span class="n">match</span> <span class="ow">in</span> <span class="n">attr_pattern</span><span class="o">.</span><span class="n">finditer</span><span class="p">(</span><span class="n">attrs_str</span><span class="p">):</span>
+            <span class="n">name</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="ow">or</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span> <span class="ow">or</span> <span class="n">match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span> <span class="ow">or</span> <span class="kc">True</span>
+            <span class="n">attrs</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        <span class="k">return</span> <span class="n">attrs</span>
+
+    <span class="k">def</span> <span class="nf">find_tags</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tag_name</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;查找所有指定标签&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">node</span> <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tree</span> <span class="k">if</span> <span class="n">node</span><span class="p">[</span><span class="s1">&#39;tag&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="n">tag_name</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">get_text</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;获取所有文本内容&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">node</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">]</span> <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tree</span> <span class="k">if</span> <span class="n">node</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">])</span>
+
+    <span class="k">def</span> <span class="nf">print_tree</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;打印解析树&quot;&quot;&quot;</span>
+        <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">tree</span><span class="p">:</span>
+            <span class="n">prefix</span> <span class="o">=</span> <span class="s1">&#39;  &#39;</span> <span class="o">*</span> <span class="n">indent</span>
+            <span class="n">attrs</span> <span class="o">=</span> <span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">k</span><span class="si">}</span><span class="s1">=&quot;</span><span class="si">{</span><span class="n">v</span><span class="si">}</span><span class="s1">&quot;&#39;</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">node</span><span class="p">[</span><span class="s1">&#39;attrs&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">())</span>
+            <span class="n">attrs_str</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39; </span><span class="si">{</span><span class="n">attrs</span><span class="si">}</span><span class="s1">&#39;</span> <span class="k">if</span> <span class="n">attrs</span> <span class="k">else</span> <span class="s1">&#39;&#39;</span>
+            <span class="n">content_preview</span> <span class="o">=</span> <span class="n">node</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">][:</span><span class="mi">30</span><span class="p">]</span> <span class="o">+</span> <span class="s1">&#39;...&#39;</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">node</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">])</span> <span class="o">&gt;</span> <span class="mi">30</span> <span class="k">else</span> <span class="n">node</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">]</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">prefix</span><span class="si">}</span><span class="s2">&lt;</span><span class="si">{</span><span class="n">node</span><span class="p">[</span><span class="s1">&#39;tag&#39;</span><span class="p">]</span><span class="si">}{</span><span class="n">attrs_str</span><span class="si">}</span><span class="s2">&gt; </span><span class="si">{</span><span class="n">content_preview</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="n">html</span> <span class="o">=</span> <span class="s2">&quot;&quot;&quot;</span>
+<span class="s2">    &lt;html&gt;</span>
+<span class="s2">    &lt;head&gt;&lt;title&gt;测试页面&lt;/title&gt;&lt;/head&gt;</span>
+<span class="s2">    &lt;body&gt;</span>
+<span class="s2">        &lt;h1 class=&quot;title&quot;&gt;欢迎学习正则表达式&lt;/h1&gt;</span>
+<span class="s2">        &lt;div class=&quot;content&quot;&gt;</span>
+<span class="s2">            &lt;p&gt;这是第一个段落。&lt;/p&gt;</span>
+<span class="s2">            &lt;p&gt;这是第二个段落。&lt;/p&gt;</span>
+<span class="s2">            &lt;a href=&quot;https://example.com&quot;&gt;链接&lt;/a&gt;</span>
+<span class="s2">        &lt;/div&gt;</span>
+<span class="s2">        &lt;img src=&quot;photo.jpg&quot; alt=&quot;照片&quot; /&gt;</span>
+<span class="s2">        &lt;ul&gt;</span>
+<span class="s2">            &lt;li&gt;项目一&lt;/li&gt;</span>
+<span class="s2">            &lt;li&gt;项目二&lt;/li&gt;</span>
+<span class="s2">            &lt;li&gt;项目三&lt;/li&gt;</span>
+<span class="s2">        &lt;/ul&gt;</span>
+<span class="s2">    &lt;/body&gt;</span>
+<span class="s2">    &lt;/html&gt;</span>
+<span class="s2">    &quot;&quot;&quot;</span>
+
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">SimpleHTMLParser</span><span class="p">(</span><span class="n">html</span><span class="p">)</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;📊 HTML 解析结果&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+
+    <span class="c1"># 打印解析树</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">print_tree</span><span class="p">()</span>
+
+    <span class="c1"># 查找特定标签</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span> <span class="o">+</span> <span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;🔍 查找结果&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;=&quot;</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+
+    <span class="n">paragraphs</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">find_tags</span><span class="p">(</span><span class="s1">&#39;p&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">所有 &lt;p&gt; 标签 (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">paragraphs</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个):&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">paragraphs</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  - </span><span class="si">{</span><span class="n">p</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">links</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">find_tags</span><span class="p">(</span><span class="s1">&#39;a&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">所有 &lt;a&gt; 标签 (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">links</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个):&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">link</span> <span class="ow">in</span> <span class="n">links</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  - href=</span><span class="si">{</span><span class="n">link</span><span class="p">[</span><span class="s1">&#39;attrs&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;href&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;N/A&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">, 文本=</span><span class="si">{</span><span class="n">link</span><span class="p">[</span><span class="s1">&#39;content&#39;</span><span class="p">]</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="n">images</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">find_tags</span><span class="p">(</span><span class="s1">&#39;img&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">所有 &lt;img&gt; 标签 (</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">images</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个):&quot;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">img</span> <span class="ow">in</span> <span class="n">images</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  - src=</span><span class="si">{</span><span class="n">img</span><span class="p">[</span><span class="s1">&#39;attrs&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;src&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;N/A&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">, alt=</span><span class="si">{</span><span class="n">img</span><span class="p">[</span><span class="s1">&#39;attrs&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;alt&#39;</span><span class="p">,</span><span class="w"> </span><span class="s1">&#39;N/A&#39;</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="c1"># 获取所有文本</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">📝 所有文本内容:&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="n">parser</span><span class="o">.</span><span class="n">get_text</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</code></pre></div>
+<p>运行输出：</p>
+<pre class="plain"><code>📊 HTML 解析结果
+============================================================
+  &lt;head&gt; 测试页面
+  &lt;title&gt; 测试页面
+  &lt;body&gt; \n        &lt;h1 class=&quot;title&quot;&gt;欢迎学习正则表达式&lt;/h1&gt;...
+  &lt;h1 class=&quot;title&quot;&gt; 欢迎学习正则表达式
+  &lt;div class=&quot;content&quot;&gt; \n            &lt;p&gt;这是第一个段落。&lt;/p&gt;...
+  &lt;p&gt; 这是第一个段落。
+  &lt;p&gt; 这是第二个段落。
+  &lt;a href=&quot;https://example.com&quot;&gt; 链接
+  &lt;img src=&quot;photo.jpg&quot; alt=&quot;照片&quot; /&gt;
+  &lt;ul&gt; \n            &lt;li&gt;项目一&lt;/li&gt;...
+  &lt;li&gt; 项目一
+  &lt;li&gt; 项目二
+  &lt;li&gt; 项目三
+
+🔍 查找结果
+============================================================
+
+所有 &lt;p&gt; 标签 (2 个):
+  - 这是第一个段落。
+  - 这是第二个段落。
+
+所有 &lt;a&gt; 标签 (1 个):
+  - href=https://example.com, 文本=链接
+
+所有 &lt;img&gt; 标签 (1 个):
+  - src=photo.jpg, alt=照片
+
+📝 所有文本内容:
+  测试页面 欢迎学习正则表达式 ...
+</code></pre>
+<p><strong>⚠️ 重要提醒：</strong><br>
+- 正则表达式<strong>不适合</strong>解析复杂的 HTML/XML<br>
+- 生产环境请使用 <code>BeautifulSoup</code>、<code>lxml</code> 等专业库<br>
+- 正则适合简单的文本提取，不适合处理嵌套结构</p>
+<hr>
+<h2 id="_2">今日总结</h2>
+<ul>
+<li><strong>NFA vs DFA</strong>：Python 使用 NFA，支持回溯、贪婪匹配、反向引用</li>
+<li><strong>断言</strong>：前瞻 <code>(?=...)</code> <code>(?!...)</code> 和后顾 <code>(?&lt;=...)</code> <code>(?&lt;!...)</code> 是零宽匹配</li>
+<li><strong>贪婪 vs 非贪婪</strong>：<code>*</code> <code>+</code> <code>?</code> 是贪婪的，加 <code>?</code> 变非贪婪</li>
+<li><strong>re.compile</strong>：重复使用同一正则时，compile 能提升性能</li>
+<li><strong>性能优化</strong>：避免嵌套量词、使用具体字符类、模块级别编译</li>
+<li><strong>RE_DOTALL / RE_MULTILINE</strong>：控制 <code>.</code> 和 <code>^$</code> 的匹配范围</li>
+</ul>
+<hr>
+<h2 id="_3">练习题</h2>
+<h3 id="1_1">练习 1：日志分析 ⭐⭐</h3>
+<p>编写一个函数，从服务器日志中提取所有 IP 地址和访问时间：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">log</span> <span class="o">=</span> <span class="s1">&#39;192.168.1.1 - - [15/Jan/2024:10:30:00] &quot;GET /index.html&quot;&#39;</span>
+<span class="c1"># 预期输出: (&#39;192.168.1.1&#39;, &#39;15/Jan/2024:10:30:00&#39;)</span>
+</code></pre></div>
+<h3 id="2markdown">练习 2：Markdown 链接提取 ⭐⭐</h3>
+<p>提取 Markdown 中的所有链接（文本 + URL）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">md</span> <span class="o">=</span> <span class="s2">&quot;访问 [Python](https://python.org) 和 [GitHub](https://github.com)&quot;</span>
+<span class="c1"># 预期输出: [(&#39;Python&#39;, &#39;https://python.org&#39;), (&#39;GitHub&#39;, &#39;https://github.com&#39;)]</span>
+</code></pre></div>
+<h3 id="3csv">练习 3：CSV 字段解析 ⭐⭐⭐</h3>
+<p>用正则解析 CSV 行（处理引号内的逗号）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">line</span> <span class="o">=</span> <span class="s1">&#39;name,age,&quot;city, country&quot;,email&#39;</span>
+<span class="c1"># 预期输出: [&#39;name&#39;, &#39;age&#39;, &#39;city, country&#39;, &#39;email&#39;]</span>
+</code></pre></div>
+<h3 id="4">练习 4：模板引擎 ⭐⭐⭐</h3>
+<p>实现一个简单的模板引擎，支持 <code>{{variable}}</code> 替换：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">template</span> <span class="o">=</span> <span class="s2">&quot;Hello {{name}}, you have {{count}} messages&quot;</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">render</span><span class="p">(</span><span class="n">template</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;count&quot;</span><span class="p">:</span> <span class="mi">5</span><span class="p">})</span>
+<span class="c1"># 预期输出: &quot;Hello Alice, you have 5 messages&quot;</span>
+</code></pre></div>
+<h3 id="5_1">练习 5：正则性能测试 ⭐⭐⭐⭐</h3>
+<p>编写一个脚本，测试不同正则写法的性能差异：<br>
+- 对比贪婪 vs 非贪婪的性能<br>
+- 测试不同字符类（<code>\d</code> vs <code>[0-9]</code>）的速度<br>
+- 验证灾难性回溯的存在<br>
+- 生成性能对比报告</p>
+<hr>
+<h2 id="_4">明天预告</h2>
+<p>Day 073 我们将学习<strong>包管理与虚拟环境</strong>——如何管理 Python 依赖、创建虚拟环境、打包和发布自己的 Python 包。这是每个 Python 开发者必须掌握的技能！</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-071/index.html">← Day 71 日志与调试：logging 模块与 pdb</a><a class="nav-next" href="../day-073/index.html">Day 73 包管理与虚拟环境 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

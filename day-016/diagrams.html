@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 16 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 16 正文</a>
+  <h1>Day 16 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="io">文件 I/O 图解</h1>
+<hr>
+<h2 id="1">1. 文件打开模式体系图</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph &quot;打开模式体系&quot;
+        direction TB
+        MODE[open(file, mode)]
+        MODE --&gt; BASIC[基本操作]
+        MODE --&gt; TYPE[文件类型]
+        MODE --&gt; EXTRA[附加操作]
+        
+        BASIC --&gt; R[&quot;r - 只读&quot;]
+        BASIC --&gt; W[&quot;w - 写入(清空)&quot;]
+        BASIC --&gt; A[&quot;a - 追加&quot;]
+        BASIC --&gt; X[&quot;x - 排他创建&quot;]
+        
+        TYPE --&gt; T[&quot;t - 文本模式(默认)&quot;]
+        TYPE --&gt; B[&quot;b - 二进制模式&quot;]
+        
+        EXTRA --&gt; PLUS[&quot;+ - 读写&quot;]
+    end
+    
+    subgraph &quot;常见组合&quot;
+        COM1[&quot;r+t&quot;] --&gt; |&quot;文本读写&lt;br&gt;常用: JSON编辑&quot;| COM1U
+        COM2[&quot;w+b&quot;] --&gt; |&quot;二进制读写&lt;br&gt;常用: 图片处理&quot;| COM2U
+        COM3[&quot;a+t&quot;] --&gt; |&quot;追加读取&lt;br&gt;常用: 日志查看&quot;| COM3U
+        COM4[&quot;x+t&quot;] --&gt; |&quot;排他写&lt;br&gt;常用: 避免覆盖&quot;| COM4U
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph &quot;打开模式体系&quot;
+        direction TB
+        MODE[open(file, mode)]
+        MODE --&gt; BASIC[基本操作]
+        MODE --&gt; TYPE[文件类型]
+        MODE --&gt; EXTRA[附加操作]
+        
+        BASIC --&gt; R[&quot;r - 只读&quot;]
+        BASIC --&gt; W[&quot;w - 写入(清空)&quot;]
+        BASIC --&gt; A[&quot;a - 追加&quot;]
+        BASIC --&gt; X[&quot;x - 排他创建&quot;]
+        
+        TYPE --&gt; T[&quot;t - 文本模式(默认)&quot;]
+        TYPE --&gt; B[&quot;b - 二进制模式&quot;]
+        
+        EXTRA --&gt; PLUS[&quot;+ - 读写&quot;]
+    end
+    
+    subgraph &quot;常见组合&quot;
+        COM1[&quot;r+t&quot;] --&gt; |&quot;文本读写&lt;br&gt;常用: JSON编辑&quot;| COM1U
+        COM2[&quot;w+b&quot;] --&gt; |&quot;二进制读写&lt;br&gt;常用: 图片处理&quot;| COM2U
+        COM3[&quot;a+t&quot;] --&gt; |&quot;追加读取&lt;br&gt;常用: 日志查看&quot;| COM3U
+        COM4[&quot;x+t&quot;] --&gt; |&quot;排他写&lt;br&gt;常用: 避免覆盖&quot;| COM4U
+    end
+</code></pre></div>
+<h2 id="2-with">2. <code>with</code> 语句执行流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant User as 代码块
+    participant With as with 语句
+    participant Enter as __enter__
+    participant Body as 文件操作
+    participant Exit as __exit__
+    participant File as 文件
+    
+    User-&gt;&gt;With: with open(&quot;file&quot;, &quot;r&quot;) as f:
+    With-&gt;&gt;Enter: 调用 f.__enter__()
+    Enter-&gt;&gt;File: 打开文件
+    Enter--&gt;&gt;With: 返回文件对象 f
+    Note over With,Body: 进入缩进块
+    Body-&gt;&gt;File: 读写操作
+    Note over Body: 读写正常 或 发生异常
+    Body-&gt;&gt;Exit: 离开缩进块
+    Exit-&gt;&gt;File: f.close()
+    
+    alt 无异常
+        Exit--&gt;&gt;With: 返回 None
+        With--&gt;&gt;User: 继续执行
+    else 有异常
+        Exit--&gt;&gt;With: 返回 True → 吞异常&lt;br&gt;返回 False → 抛异常
+        With--&gt;&gt;User: 处理异常
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant User as 代码块
+    participant With as with 语句
+    participant Enter as __enter__
+    participant Body as 文件操作
+    participant Exit as __exit__
+    participant File as 文件
+    
+    User-&gt;&gt;With: with open(&quot;file&quot;, &quot;r&quot;) as f:
+    With-&gt;&gt;Enter: 调用 f.__enter__()
+    Enter-&gt;&gt;File: 打开文件
+    Enter--&gt;&gt;With: 返回文件对象 f
+    Note over With,Body: 进入缩进块
+    Body-&gt;&gt;File: 读写操作
+    Note over Body: 读写正常 或 发生异常
+    Body-&gt;&gt;Exit: 离开缩进块
+    Exit-&gt;&gt;File: f.close()
+    
+    alt 无异常
+        Exit--&gt;&gt;With: 返回 None
+        With--&gt;&gt;User: 继续执行
+    else 有异常
+        Exit--&gt;&gt;With: 返回 True → 吞异常&lt;br&gt;返回 False → 抛异常
+        With--&gt;&gt;User: 处理异常
+    end
+</code></pre></div>
+<h2 id="3-vs">3. 文本模式 vs 二进制模式处理流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph &quot;文本模式 (t)&quot;
+        direction TB
+        A1[&quot;字符串 str&lt;br&gt;&#x27;Hello&#x27;&quot;] --&gt;|&quot;encode()&lt;br&gt;UTF-8&quot;| A2[&quot;字节流&lt;br&gt;b&#x27;Hello&#x27;&quot;]
+        A2 --&gt;|&quot;write()&quot;| A3[&quot;文件系统&quot;]
+        A3 --&gt;|&quot;read()&quot;| A4[&quot;字节流&lt;br&gt;b&#x27;Hello&#x27;&quot;]
+        A4 --&gt;|&quot;decode()&lt;br&gt;UTF-8&quot;| A5[&quot;字符串 str&lt;br&gt;&#x27;Hello&#x27;&quot;]
+    end
+    
+    subgraph &quot;二进制模式 (b)&quot;
+        direction TB
+        B1[&quot;字节串 bytes&lt;br&gt;b&#x27;Hello&#x27;&quot;] --&gt;|&quot;write()&quot;| B2[&quot;文件系统&quot;]
+        B2 --&gt;|&quot;read()&quot;| B3[&quot;字节串 bytes&lt;br&gt;b&#x27;Hello&#x27;&quot;]
+    end
+    
+    A3 -.-&gt;|&quot;\\n ↔ \\r\\n&lt;br&gt;平台转换&quot;| A3_PLATFORM
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph &quot;文本模式 (t)&quot;
+        direction TB
+        A1[&quot;字符串 str&lt;br&gt;&#x27;Hello&#x27;&quot;] --&gt;|&quot;encode()&lt;br&gt;UTF-8&quot;| A2[&quot;字节流&lt;br&gt;b&#x27;Hello&#x27;&quot;]
+        A2 --&gt;|&quot;write()&quot;| A3[&quot;文件系统&quot;]
+        A3 --&gt;|&quot;read()&quot;| A4[&quot;字节流&lt;br&gt;b&#x27;Hello&#x27;&quot;]
+        A4 --&gt;|&quot;decode()&lt;br&gt;UTF-8&quot;| A5[&quot;字符串 str&lt;br&gt;&#x27;Hello&#x27;&quot;]
+    end
+    
+    subgraph &quot;二进制模式 (b)&quot;
+        direction TB
+        B1[&quot;字节串 bytes&lt;br&gt;b&#x27;Hello&#x27;&quot;] --&gt;|&quot;write()&quot;| B2[&quot;文件系统&quot;]
+        B2 --&gt;|&quot;read()&quot;| B3[&quot;字节串 bytes&lt;br&gt;b&#x27;Hello&#x27;&quot;]
+    end
+    
+    A3 -.-&gt;|&quot;\\n ↔ \\r\\n&lt;br&gt;平台转换&quot;| A3_PLATFORM
+</code></pre></div>
+<h2 id="4-seektell">4. 文件指针 seek/tell 示意图</h2>
+<pre class="plain"><code>文件内容:  H e l l o   W o r l d  \n
+          0 1 2 3 4 5 6 7 8 9 10 11
+          
+① open() 后:
+  H e l l o   W o r l d  \n
+  ↑
+  pos=0 (文件开头)
+
+② f.read(5) 后:
+  H e l l o   W o r l d  \n
+            ↑
+            pos=5
+
+③ f.read() 后 (读完):
+  H e l l o   W o r l d  \n
+                              ↑
+                              pos=12 (文件末尾)
+
+④ f.seek(6): 移动到第 6 个位置
+  H e l l o   W o r l d  \n
+              ↑
+              pos=6
+
+⑤ f.seek(-3, 2): 从末尾往前 3
+  H e l l o   W o r l d  \n
+                          ↑
+                          pos=9
+</code></pre>
+<h2 id="5">5. 不同打开模式的文件指针位置</h2>
+<pre class="plain"><code>┌────────────────────────────────────────────┐
+│                   文件内容                    │
+│  ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐  │
+│  │H│e│l│l│o│ │W│o│r│l│d│ │!│\n│T│e│s│t│  │
+│  └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘  │
+│  pos:  0       5       10        15         │
+└────────────────────────────────────────────┘
+
+模式 r/r+:    ↑ (pos=0)         只读或读写
+模式 w/w+:    清空 → ↑ (pos=0)  先清空再写
+模式 a/a+:                     ↑ (pos=18) 追加到末尾
+模式 x:       新文件 → ↑ (pos=0) 不存在才创建
+</code></pre>
+<h2 id="6">6. 编码错误处理策略对比</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    ENC[读取文件] --&gt; CHECK{编码匹配?}
+    CHECK --&gt;|&quot;✅ 是&quot;| OK[正常读取]
+    CHECK --&gt;|&quot;❌ 否&quot;| ERR[编码错误]
+    
+    ERR --&gt; STRATEGY{处理策略}
+    
+    STRATEGY --&gt;|&quot;strict (默认)&quot;| RAISE[&quot;抛出 UnicodeDecodeError&lt;br&gt;最安全，不丢失数据&quot;]
+    STRATEGY --&gt;|&quot;ignore&quot;| IGNORE[&quot;静默跳过非法字节&lt;br&gt;⚠️ 可能丢失数据&quot;]
+    STRATEGY --&gt;|&quot;replace&quot;| REPLACE[&quot;用 ? 替换&lt;br&gt;保留内容长度&quot;]
+    STRATEGY --&gt;|&quot;backslashreplace&quot;| BS[&quot;用 \\xNN 转义&lt;br&gt;不丢失信息&quot;]
+    STRATEGY --&gt;|&quot;surrogateescape&quot;| SE[&quot;Python 专用编码&lt;br&gt;用于 OS 接口&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    ENC[读取文件] --&gt; CHECK{编码匹配?}
+    CHECK --&gt;|&quot;✅ 是&quot;| OK[正常读取]
+    CHECK --&gt;|&quot;❌ 否&quot;| ERR[编码错误]
+    
+    ERR --&gt; STRATEGY{处理策略}
+    
+    STRATEGY --&gt;|&quot;strict (默认)&quot;| RAISE[&quot;抛出 UnicodeDecodeError&lt;br&gt;最安全，不丢失数据&quot;]
+    STRATEGY --&gt;|&quot;ignore&quot;| IGNORE[&quot;静默跳过非法字节&lt;br&gt;⚠️ 可能丢失数据&quot;]
+    STRATEGY --&gt;|&quot;replace&quot;| REPLACE[&quot;用 ? 替换&lt;br&gt;保留内容长度&quot;]
+    STRATEGY --&gt;|&quot;backslashreplace&quot;| BS[&quot;用 \\xNN 转义&lt;br&gt;不丢失信息&quot;]
+    STRATEGY --&gt;|&quot;surrogateescape&quot;| SE[&quot;Python 专用编码&lt;br&gt;用于 OS 接口&quot;]
+</code></pre></div>
+<h2 id="7-api">7. 文件操作 API 速查图</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class FileObject {
+        +name: str
+        +mode: str
+        +encoding: str
+        +closed: bool
+        +read(n) str
+        +readline() str
+        +readlines() list
+        +write(s) int
+        +writelines(lines)
+        +seek(offset, whence) int
+        +tell() int
+        +truncate(size)
+        +flush()
+        +close()
+        +fileno() int
+        +seekable() bool
+        +readable() bool
+        +writable() bool
+        +detach() IOBase
+    }
+    
+    class TextIOWrapper {
+        +encoding: str
+        +errors: str
+        +newlines: str
+        文本模式包装器
+    }
+    
+    class BufferedRandom {
+        可读写的缓冲流
+    }
+    
+    FileObject &lt;|-- TextIOWrapper
+    FileObject &lt;|-- BufferedRandom
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class FileObject {
+        +name: str
+        +mode: str
+        +encoding: str
+        +closed: bool
+        +read(n) str
+        +readline() str
+        +readlines() list
+        +write(s) int
+        +writelines(lines)
+        +seek(offset, whence) int
+        +tell() int
+        +truncate(size)
+        +flush()
+        +close()
+        +fileno() int
+        +seekable() bool
+        +readable() bool
+        +writable() bool
+        +detach() IOBase
+    }
+    
+    class TextIOWrapper {
+        +encoding: str
+        +errors: str
+        +newlines: str
+        文本模式包装器
+    }
+    
+    class BufferedRandom {
+        可读写的缓冲流
+    }
+    
+    FileObject &lt;|-- TextIOWrapper
+    FileObject &lt;|-- BufferedRandom
+</code></pre></div>
+<hr>
+<h2 id="8">8. 大文件处理策略对比</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph &quot;小文件 (&lt;100MB)&quot;
+        A[&quot;f.read()&quot;] --&gt;|&quot;一次性加载&lt;br&gt;速度最快&quot;| A_RES[&quot;✅ 简单直接&quot;]
+    end
+    
+    subgraph &quot;大文本文件&quot;
+        B[&quot;for line in f&quot;] --&gt;|&quot;逐行迭代&lt;br&gt;内存高效&quot;| B_RES[&quot;✅ 逐行处理&quot;]
+    end
+    
+    subgraph &quot;超大二进制文件&quot;
+        C[&quot;while chunk = f.read(8KB)&quot;] --&gt;|&quot;分块读取&lt;br&gt;可控内存&quot;| C_RES[&quot;✅ 流式处理&quot;]
+    end
+    
+    FILE_SIZE{文件大小} --&gt; A
+    FILE_SIZE --&gt; B
+    FILE_SIZE --&gt; C
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph &quot;小文件 (&lt;100MB)&quot;
+        A[&quot;f.read()&quot;] --&gt;|&quot;一次性加载&lt;br&gt;速度最快&quot;| A_RES[&quot;✅ 简单直接&quot;]
+    end
+    
+    subgraph &quot;大文本文件&quot;
+        B[&quot;for line in f&quot;] --&gt;|&quot;逐行迭代&lt;br&gt;内存高效&quot;| B_RES[&quot;✅ 逐行处理&quot;]
+    end
+    
+    subgraph &quot;超大二进制文件&quot;
+        C[&quot;while chunk = f.read(8KB)&quot;] --&gt;|&quot;分块读取&lt;br&gt;可控内存&quot;| C_RES[&quot;✅ 流式处理&quot;]
+    end
+    
+    FILE_SIZE{文件大小} --&gt; A
+    FILE_SIZE --&gt; B
+    FILE_SIZE --&gt; C
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

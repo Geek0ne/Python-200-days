@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 62 — 数据序列化</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 62 — 数据序列化</h1>
+  <div class="lmeta">
+    <span class="badge">标准库与生态系统</span>
+    <span class="badge">359 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-062-数据序列化" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#1">1. 为什么需要序列化？</a>
+<a class="toc-l3" href="#11">1.1 核心目的</a>
+<a class="toc-l3" href="#12">1.2 设计原理</a>
+<a class="toc-l2" href="#2-json-json">2. JSON 序列化（json 模块）</a>
+<a class="toc-l3" href="#21">2.1 概念</a>
+<a class="toc-l3" href="#22-api">2.2 核心 API</a>
+<a class="toc-l3" href="#23">2.3 自定义编码器</a>
+<a class="toc-l2" href="#3-pickle-msgpack">3. pickle / msgpack</a>
+<a class="toc-l3" href="#31-pickle-python">3.1 pickle — Python 专属序列化</a>
+<a class="toc-l3" href="#32-msgpack">3.2 msgpack — 跨语言二进制序列化</a>
+<a class="toc-l2" href="#4-yaml">4. YAML 配置</a>
+<a class="toc-l3" href="#41">4.1 概念</a>
+<a class="toc-l3" href="#42-pyyaml-api">4.2 PyYAML API</a>
+<a class="toc-l3" href="#43-yaml-vs-json">4.3 YAML vs JSON 对比</a>
+<a class="toc-l2" href="#5">5. 三种序列化方案对比</a>
+<a class="toc-l2" href="#6">6. 实战：配置文件解析器</a>
+<a class="toc-l2" href="#7">7. 思考题</a>
+<a class="toc-l2" href="#8">8. 最佳实践总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-062">Day 062 — 数据序列化</h1>
+<h2 id="_1">概述</h2>
+<p>数据序列化（Serialization）是将内存中的数据结构（如 Python 的 dict、list、对象）转换为可以存储或传输的格式的过程。反序列化（Deserialization）则是逆过程——将存储/传输格式还原为内存中的数据结构。</p>
+<blockquote>
+<p>通俗理解：序列化 = 把 Python 对象「打包」成字符串/二进制流，反序列化 = 把打包好的数据「解包」回 Python 对象。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 为什么需要序列化？</h2>
+<h3 id="11">1.1 核心目的</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>持久化存储</strong></td>
+<td>将程序状态保存到磁盘文件，下次启动时恢复</td>
+</tr>
+<tr>
+<td><strong>网络传输</strong></td>
+<td>通过 HTTP、RPC 等协议在不同服务之间交换数据</td>
+</tr>
+<tr>
+<td><strong>跨语言通信</strong></td>
+<td>不同编程语言的系统之间共享数据</td>
+</tr>
+<tr>
+<td><strong>缓存</strong></td>
+<td>将计算结果序列化后存入 Redis/Memcached</td>
+</tr>
+<tr>
+<td><strong>配置文件</strong></td>
+<td>使用人类可读的格式（JSON/YAML）作为配置</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12">1.2 设计原理</h3>
+<p>Python 对象存活在进程的堆内存中，进程退出后内存被回收。如果要让数据「活」到进程之外，就必须将其转换为字节流——这就是序列化的本质。</p>
+<pre class="plain"><code>┌─────────────────────────────────────────────────┐
+│                  进程 A                          │
+│  ┌──────────┐    序列化     ┌──────────────┐    │
+│  │ {&quot;name&quot;: │ ──────────→  │ b&#x27;{&quot;name&quot;:..} │    │
+│  │  &quot;Alice&quot;} │             │              │    │
+│  └──────────┘    字节流     └──────────────┘    │
+│                       │                         │
+│                       ▼                         │
+│                文件 / 网络 / 缓存                 │
+│                       │                         │
+│  ┌──────────┐    反序列化   ┌──────────────┐    │
+│  │ {&quot;name&quot;: │ ←──────────  │ b&#x27;{&quot;name&quot;:..} │    │
+│  │  &quot;Bob&quot;}  │             │              │    │
+│  └──────────┘              └──────────────┘    │
+│                  进程 B                          │
+└─────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="2-json-json">2. JSON 序列化（json 模块）</h2>
+<h3 id="21">2.1 概念</h3>
+<p>JSON（JavaScript Object Notation）是一种轻量级的数据交换格式，基于 JavaScript 语法子集，但被几乎所有编程语言支持。</p>
+<p><strong>Python 类型 ↔ JSON 类型映射：</strong></p>
+<table>
+<thead>
+<tr>
+<th>Python</th>
+<th>JSON</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>dict</code></td>
+<td><code>object</code></td>
+</tr>
+<tr>
+<td><code>list</code>, <code>tuple</code></td>
+<td><code>array</code></td>
+</tr>
+<tr>
+<td><code>str</code></td>
+<td><code>string</code></td>
+</tr>
+<tr>
+<td><code>int</code>, <code>float</code></td>
+<td><code>number</code></td>
+</tr>
+<tr>
+<td><code>True</code> / <code>False</code></td>
+<td><code>true</code> / <code>false</code></td>
+</tr>
+<tr>
+<td><code>None</code></td>
+<td><code>null</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-api">2.2 核心 API</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>说明</th>
+<th>参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>json.dumps(obj)</code></td>
+<td>Python 对象 → JSON 字符串</td>
+<td><code>ensure_ascii</code>, <code>indent</code>, <code>sort_keys</code>, <code>default</code></td>
+</tr>
+<tr>
+<td><code>json.dump(obj, fp)</code></td>
+<td>Python 对象 → 写入文件流</td>
+<td>同上 + 文件对象</td>
+</tr>
+<tr>
+<td><code>json.loads(s)</code></td>
+<td>JSON 字符串 → Python 对象</td>
+<td><code>parse_float</code>, <code>object_hook</code></td>
+</tr>
+<tr>
+<td><code>json.load(fp)</code></td>
+<td>从文件流读取 → Python 对象</td>
+<td>同上</td>
+</tr>
+</tbody>
+</table>
+<p><strong>常用参数详解：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">json</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;scores&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">95</span><span class="p">,</span> <span class="mi">88</span><span class="p">],</span> <span class="s2">&quot;active&quot;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+
+<span class="c1"># 基础</span>
+<span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>               <span class="c1"># &#39;{&quot;name&quot;: &quot;Alice&quot;, &quot;scores&quot;: [95, 88], &quot;active&quot;: true}&#39;</span>
+
+<span class="c1"># 美化输出</span>
+<span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">indent</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>     <span class="c1"># 带缩进格式化</span>
+
+<span class="c1"># 中文不转义</span>
+<span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;张三&quot;</span><span class="p">},</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>   <span class="c1"># &#39;{&quot;name&quot;: &quot;张三&quot;}&#39;</span>
+
+<span class="c1"># 按键排序</span>
+<span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">sort_keys</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+<span class="c1"># 自定义类型编码</span>
+<span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="nb">str</span><span class="p">)</span>  <span class="c1"># 遇到不可序列化的类型调用 str()</span>
+</code></pre></div>
+<h3 id="23">2.3 自定义编码器</h3>
+<p>当遇到 <code>datetime</code>、<code>Decimal</code> 等 Python 特有类型时，JSON 默认不支持，需要自定义：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="k">class</span> <span class="nc">CustomEncoder</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">JSONEncoder</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">default</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">obj</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">datetime</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">obj</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">default</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;time&quot;</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">(),</span> <span class="s2">&quot;value&quot;</span><span class="p">:</span> <span class="mi">42</span><span class="p">}</span>
+<span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="bp">cls</span><span class="o">=</span><span class="n">CustomEncoder</span><span class="p">)</span>
+<span class="c1"># &#39;{&quot;time&quot;: &quot;2026-07-12T06:00:00&quot;, &quot;value&quot;: 42}&#39;</span>
+</code></pre></div>
+<p>类似地，<code>object_hook</code> 用于反序列化时自定义转换：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">decode_datetime</span><span class="p">(</span><span class="n">dct</span><span class="p">):</span>
+    <span class="k">if</span> <span class="s2">&quot;time&quot;</span> <span class="ow">in</span> <span class="n">dct</span><span class="p">:</span>
+        <span class="n">dct</span><span class="p">[</span><span class="s2">&quot;time&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="n">dct</span><span class="p">[</span><span class="s2">&quot;time&quot;</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">dct</span>
+
+<span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">json_str</span><span class="p">,</span> <span class="n">object_hook</span><span class="o">=</span><span class="n">decode_datetime</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="3-pickle-msgpack">3. pickle / msgpack</h2>
+<h3 id="31-pickle-python">3.1 pickle — Python 专属序列化</h3>
+<p><code>pickle</code> 是 Python 内置的二进制序列化协议，<strong>只能用于 Python 之间</strong>，不支持跨语言。</p>
+<p><strong>特点：</strong><br>
+- ✅ 支持任意 Python 对象（包括自定义类、函数、生成器等）<br>
+- ✅ 二进制格式，比 JSON 更紧凑<br>
+- ✅ 内置协议版本（0-5，Python 3.8+ 支持 Protocol 5）<br>
+- ❌ <strong>不安全</strong>：反序列化不可信数据时可能执行任意代码<br>
+- ❌ 跨语言/跨版本兼容性差</p>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[Python 对象] --&gt; B[pickle.dumps]
+    B --&gt; C[bytes 二进制流]
+    C --&gt; D[文件/网络]
+    D --&gt; E[pickle.loads]
+    E --&gt; F[Python 对象]
+    
+    B -.-&gt; G[协议版本 0-5]
+    G -.-&gt; H[版本越高&lt;br/&gt;效率越高]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[Python 对象] --&gt; B[pickle.dumps]
+    B --&gt; C[bytes 二进制流]
+    C --&gt; D[文件/网络]
+    D --&gt; E[pickle.loads]
+    E --&gt; F[Python 对象]
+    
+    B -.-&gt; G[协议版本 0-5]
+    G -.-&gt; H[版本越高&lt;br/&gt;效率越高]
+</code></pre></div>
+<p><strong>核心 API：</strong></p>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pickle.dumps(obj)</code></td>
+<td>对象 → bytes</td>
+</tr>
+<tr>
+<td><code>pickle.dump(obj, fp)</code></td>
+<td>对象 → 二进制文件</td>
+</tr>
+<tr>
+<td><code>pickle.loads(data)</code></td>
+<td>bytes → 对象</td>
+</tr>
+<tr>
+<td><code>pickle.load(fp)</code></td>
+<td>二进制文件 → 对象</td>
+</tr>
+<tr>
+<td><code>pickle.HIGHEST_PROTOCOL</code></td>
+<td>当前 Python 支持的最高协议版本</td>
+</tr>
+</tbody>
+</table>
+<p><strong>安全警告：</strong> 永远不要 <code>pickle.loads()</code> 来自不可信来源的数据。攻击者可以构造恶意的 pickle 数据来执行任意代码。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ⚠️ 危险示例 — 恶意 pickle 可以执行系统命令</span>
+<span class="kn">import</span> <span class="nn">pickle</span>
+<span class="kn">import</span> <span class="nn">os</span>
+
+<span class="c1"># 攻击者构造的 payload</span>
+<span class="k">class</span> <span class="nc">Exploit</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">__reduce__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">system</span><span class="p">,</span> <span class="p">(</span><span class="s1">&#39;rm -rf /&#39;</span><span class="p">,))</span>
+
+<span class="n">malicious_data</span> <span class="o">=</span> <span class="n">pickle</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">Exploit</span><span class="p">())</span>
+<span class="c1"># pickle.loads(malicious_data)  # ⚡ 会执行 rm -rf /</span>
+</code></pre></div>
+<h3 id="32-msgpack">3.2 msgpack — 跨语言二进制序列化</h3>
+<p>MessagePack 是一种高效的二进制序列化格式，类似 JSON 但更紧凑。</p>
+<p><strong>与 JSON 对比：</strong><br>
+- 同样的数据，msgpack 体积约为 JSON 的 60-70%<br>
+- 支持二进制数据（JSON 需要 base64 编码）<br>
+- 跨语言支持广泛</p>
+<p><strong>安装：</strong> <code>pip install msgpack</code></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">msgpack</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;age&quot;</span><span class="p">:</span> <span class="mi">30</span><span class="p">,</span> <span class="s2">&quot;scores&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">95</span><span class="p">,</span> <span class="mi">88</span><span class="p">]}</span>
+
+<span class="c1"># 序列化</span>
+<span class="n">packed</span> <span class="o">=</span> <span class="n">msgpack</span><span class="o">.</span><span class="n">packb</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>   <span class="c1"># bytes</span>
+
+<span class="c1"># 反序列化</span>
+<span class="n">unpacked</span> <span class="o">=</span> <span class="n">msgpack</span><span class="o">.</span><span class="n">unpackb</span><span class="p">(</span><span class="n">packed</span><span class="p">)</span>
+
+<span class="c1"># 处理自定义类型</span>
+<span class="kn">from</span> <span class="nn">datetime</span> <span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="k">def</span> <span class="nf">encode</span><span class="p">(</span><span class="n">obj</span><span class="p">):</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">datetime</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">msgpack</span><span class="o">.</span><span class="n">ExtType</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">obj</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span><span class="o">.</span><span class="n">encode</span><span class="p">())</span>
+    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown type: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">decode</span><span class="p">(</span><span class="n">code</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">code</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">datetime</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">decode</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">data</span>
+
+<span class="n">packed</span> <span class="o">=</span> <span class="n">msgpack</span><span class="o">.</span><span class="n">packb</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">encode</span><span class="p">)</span>
+<span class="n">unpacked</span> <span class="o">=</span> <span class="n">msgpack</span><span class="o">.</span><span class="n">unpackb</span><span class="p">(</span><span class="n">packed</span><span class="p">,</span> <span class="n">ext_hook</span><span class="o">=</span><span class="n">decode</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="4-yaml">4. YAML 配置</h2>
+<h3 id="41">4.1 概念</h3>
+<p>YAML（YAML Ain't Markup Language）是一种人类可读的数据序列化格式，常用于配置文件。</p>
+<p><strong>特点：</strong><br>
+- 依赖缩进表示层级（类似 Python）<br>
+- 比 JSON/XML 更易读<br>
+- 支持注释（JSON 不支持）<br>
+- 支持锚点/别名（<code>&amp;</code>/<code>*</code>）避免重复</p>
+<p><strong>安装：</strong> <code>pip install pyyaml</code></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># config.yaml</span>
+<span class="nt">server</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">localhost</span>
+<span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8080</span>
+<span class="w">  </span><span class="nt">debug</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+
+<span class="nt">database</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">${DB_HOST}</span>
+<span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">myapp</span>
+<span class="w">  </span><span class="nt">pool</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">min</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
+<span class="w">    </span><span class="nt">max</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">20</span>
+
+<span class="c1"># 列表</span>
+<span class="nt">features</span><span class="p">:</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auth</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">logging</span>
+<span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cache</span>
+
+<span class="c1"># 锚点 &amp; 别名（避免重复）</span>
+<span class="nt">defaults</span><span class="p">:</span><span class="w"> </span><span class="nl">&amp;defaults</span>
+<span class="w">  </span><span class="nt">timeout</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+<span class="w">  </span><span class="nt">retries</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+
+<span class="nt">service_a</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">&lt;&lt;</span><span class="p">:</span><span class="w"> </span><span class="nv">*defaults</span>
+<span class="w">  </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/api/a</span>
+
+<span class="nt">service_b</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">&lt;&lt;</span><span class="p">:</span><span class="w"> </span><span class="nv">*defaults</span>
+<span class="w">  </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/api/b</span>
+</code></pre></div>
+<h3 id="42-pyyaml-api">4.2 PyYAML API</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">yaml</span>
+
+<span class="c1"># 加载 YAML（字符串）</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;config.yaml&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">safe_load</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>    <span class="c1"># ✅ 推荐：只加载标准 YAML</span>
+    <span class="c1"># config = yaml.load(f, Loader=yaml.FullLoader)  # 更强大但风险更高</span>
+
+<span class="c1"># 转储为 YAML</span>
+<span class="n">data</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">,</span> <span class="s2">&quot;scores&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">95</span><span class="p">,</span> <span class="mi">88</span><span class="p">]}</span>
+<span class="n">yaml_str</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">default_flow_style</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">yaml_str</span><span class="p">)</span>
+<span class="c1"># name: Alice</span>
+<span class="c1"># scores:</span>
+<span class="c1"># - 95</span>
+<span class="c1"># - 88</span>
+
+<span class="c1"># 写入文件</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;output.yaml&quot;</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+    <span class="n">yaml</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">default_flow_style</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="43-yaml-vs-json">4.3 YAML vs JSON 对比</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph &quot;JSON&quot;
+        J1[&quot;{{&#x27;name&#x27;: &#x27;Alice&#x27;,&lt;br/&gt;&#x27;scores&#x27;: [95,88]}}&quot;]
+        J2[&quot;简洁解析快&lt;br/&gt;无注释&lt;br/&gt;标准严格&quot;]
+    end
+    
+    subgraph &quot;YAML&quot;
+        Y1[&quot;name: Alice&lt;br/&gt;scores:&lt;br/&gt;  - 95&lt;br/&gt;  - 88&quot;]
+        Y2[&quot;人类可读&lt;br/&gt;支持注释/锚点&lt;br/&gt;缩进敏感&quot;]
+    end
+    
+    J1 -.-&gt; J2
+    Y1 -.-&gt; Y2
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph &quot;JSON&quot;
+        J1[&quot;{{&#x27;name&#x27;: &#x27;Alice&#x27;,&lt;br/&gt;&#x27;scores&#x27;: [95,88]}}&quot;]
+        J2[&quot;简洁解析快&lt;br/&gt;无注释&lt;br/&gt;标准严格&quot;]
+    end
+    
+    subgraph &quot;YAML&quot;
+        Y1[&quot;name: Alice&lt;br/&gt;scores:&lt;br/&gt;  - 95&lt;br/&gt;  - 88&quot;]
+        Y2[&quot;人类可读&lt;br/&gt;支持注释/锚点&lt;br/&gt;缩进敏感&quot;]
+    end
+    
+    J1 -.-&gt; J2
+    Y1 -.-&gt; Y2
+</code></pre></div>
+<hr>
+<h2 id="5">5. 三种序列化方案对比</h2>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>JSON</th>
+<th>pickle</th>
+<th>YAML</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>格式</strong></td>
+<td>文本（字符串）</td>
+<td>二进制</td>
+<td>文本</td>
+</tr>
+<tr>
+<td><strong>跨语言</strong></td>
+<td>✅ 几乎所有语言</td>
+<td>❌ 仅 Python</td>
+<td>✅ 多数语言</td>
+</tr>
+<tr>
+<td><strong>可读性</strong></td>
+<td>⭐⭐⭐</td>
+<td>⭐</td>
+<td>⭐⭐⭐⭐⭐</td>
+</tr>
+<tr>
+<td><strong>安全性</strong></td>
+<td>✅ 安全</td>
+<td>❌ 不安全</td>
+<td>✅ safe_load 安全</td>
+</tr>
+<tr>
+<td><strong>速度</strong></td>
+<td>⭐⭐⭐⭐</td>
+<td>⭐⭐⭐⭐⭐</td>
+<td>⭐⭐</td>
+</tr>
+<tr>
+<td><strong>体积</strong></td>
+<td>⭐⭐⭐</td>
+<td>⭐⭐⭐⭐⭐</td>
+<td>⭐⭐</td>
+</tr>
+<tr>
+<td><strong>自定义类型</strong></td>
+<td>❌ 需要自定义</td>
+<td>✅ 原生支持</td>
+<td>❌ 需要自定义</td>
+</tr>
+<tr>
+<td><strong>适用场景</strong></td>
+<td>API、配置文件、Web</td>
+<td>缓存、进程间通信</td>
+<td>配置文件、文档</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="6">6. 实战：配置文件解析器</h2>
+<p>详见 <code>code/03-config-parser.py</code></p>
+<p>实现一个通用配置管理器，支持：<br>
+- 自动检测配置文件格式（JSON/YAML）<br>
+- 支持环境变量替换（<code>${VAR_NAME}</code>）<br>
+- 配置合并与覆盖<br>
+- 配置验证</p>
+<hr>
+<h2 id="7">7. 思考题</h2>
+<ol>
+<li><strong>JSON 为什么不支持 datetime 类型？</strong> 如果你是 JSON 标准委员会成员，你会怎么设计解决这个问题？</li>
+<li><strong>pickle 的安全性设计为什么如此糟糕？</strong> 为什么要支持 <code>__reduce__</code> 这个接口？</li>
+<li><strong>YAML 的缩进规则和 Python 一样，那它有没有类似 PEP 8 的缩进规范？</strong> 缩进多少个空格最合适？</li>
+<li><strong>如果一个配置文件中既有 YAML 的锚点别名，又有环境变量引用，解析时应该先处理哪个？</strong> 为什么？</li>
+<li><strong>msgpack 比 JSON 更紧凑，为什么没有替代 JSON 成为 Web API 的主流格式？</strong> 有哪些关键限制？</li>
+</ol>
+<hr>
+<h2 id="8">8. 最佳实践总结</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐方案</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>REST API</td>
+<td>JSON</td>
+<td>标准、跨语言、浏览器可直接解析</td>
+</tr>
+<tr>
+<td>配置文件</td>
+<td>YAML</td>
+<td>可读性好、支持注释</td>
+</tr>
+<tr>
+<td>内部缓存</td>
+<td>pickle</td>
+<td>速度快、支持任意对象</td>
+</tr>
+<tr>
+<td>高性能 RPC</td>
+<td>msgpack / protobuf</td>
+<td>体积小、解析快</td>
+</tr>
+<tr>
+<td>日志输出</td>
+<td>JSON</td>
+<td>结构化、易于工具解析</td>
+</tr>
+<tr>
+<td>数据持久化</td>
+<td>JSON</td>
+<td>安全、兼容性好</td>
+</tr>
+</tbody>
+</table>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-061/index.html">← Day 61 文件与路径操作</a><a class="nav-next" href="../day-063/index.html">Day 63 CSV 与 Excel →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

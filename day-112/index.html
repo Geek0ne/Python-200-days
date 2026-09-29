@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 112 — 模型调优与 Pipeline</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 112 — 模型调优与 Pipeline</h1>
+  <div class="lmeta">
+    <span class="badge">数据分析与AI/ML</span>
+    <span class="badge">459 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-112-model-tuning-pipeline" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📋 今日学习目标</a>
+<a class="toc-l2" href="#cross-validation">一、交叉验证（Cross Validation）</a>
+<a class="toc-l3" href="#11">1.1 为什么需要交叉验证？</a>
+<a class="toc-l3" href="#12">1.2 交叉验证的原理</a>
+<a class="toc-l3" href="#13">1.3 常见的交叉验证策略</a>
+<a class="toc-l2" href="#grid-search">二、网格搜索（Grid Search）</a>
+<a class="toc-l3" href="#21">2.1 为什么需要超参数调优？</a>
+<a class="toc-l3" href="#22">2.2 网格搜索的原理</a>
+<a class="toc-l3" href="#23">2.3 网格搜索的优缺点</a>
+<a class="toc-l3" href="#24">2.4 其他搜索策略</a>
+<a class="toc-l2" href="#pipeline">三、Pipeline — 管道</a>
+<a class="toc-l3" href="#31-pipeline">3.1 为什么需要 Pipeline？</a>
+<a class="toc-l3" href="#32-pipeline">3.2 Pipeline 的概念</a>
+<a class="toc-l3" href="#33-pipeline">3.3 Pipeline 的执行流程</a>
+<a class="toc-l3" href="#34-columntransformer">3.4 ColumnTransformer — 处理不同类型特征</a>
+<a class="toc-l3" href="#35-pipeline-gridsearchcv">3.5 嵌套 Pipeline 与 GridSearchCV</a>
+<a class="toc-l2" href="#model-persistence">四、模型持久化（Model Persistence）</a>
+<a class="toc-l3" href="#41">4.1 为什么需要保存模型？</a>
+<a class="toc-l3" href="#42-joblib">4.2 joblib — 推荐方式</a>
+<a class="toc-l3" href="#43">4.3 保存与加载最佳实践</a>
+<a class="toc-l2" href="#ml-pipeline">五、完整 ML Pipeline 实战</a>
+<a class="toc-l3" href="#51">5.1 项目概述</a>
+<a class="toc-l3" href="#52">5.2 完整代码</a>
+<a class="toc-l3" href="#53">5.3 关键点总结</a>
+<a class="toc-l2" href="#api">六、API 速查</a>
+<a class="toc-l3" href="#cross_val_score">cross_val_score</a>
+<a class="toc-l3" href="#gridsearchcv">GridSearchCV</a>
+<a class="toc-l3" href="#pipeline_1">Pipeline</a>
+<a class="toc-l3" href="#joblib">joblib</a>
+<a class="toc-l2" href="#_3">七、思考题</a>
+<a class="toc-l3" href="#1-vs">思考题 1：交叉验证 vs 保留验证集</a>
+<a class="toc-l3" href="#2gridsearchcv">思考题 2：GridSearchCV 的计算成本</a>
+<a class="toc-l3" href="#3">思考题 3：数据泄露</a>
+<a class="toc-l3" href="#4pipeline">思考题 4：Pipeline 的局限性</a>
+<a class="toc-l3" href="#5">思考题 5：模型持久化的安全隐患</a>
+<a class="toc-l2" href="#_4">📚 今日总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-112-pipeline">Day 112 — 模型调优与 Pipeline</h1>
+<blockquote>
+<p>交叉验证、网格搜索、特征工程 Pipeline 与模型持久化——构建完整的机器学习工作流</p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 今日学习目标</h2>
+<ol>
+<li>理解交叉验证原理，掌握 K-Fold 交叉验证的使用</li>
+<li>掌握网格搜索（GridSearchCV）进行超参数调优</li>
+<li>理解 Pipeline 概念，将特征工程与模型训练串联</li>
+<li>学会使用 joblib 保存与加载训练好的模型</li>
+<li>实战：构建一个完整的 ML Pipeline（数据预处理→特征工程→模型训练→评估→部署）</li>
+</ol>
+<hr>
+<h2 id="cross-validation">一、交叉验证（Cross Validation）</h2>
+<h3 id="11">1.1 为什么需要交叉验证？</h3>
+<p>在之前的课程中，我们用 <code>train_test_split</code> 将数据分为训练集和测试集。但这种划分方式有一个问题：</p>
+<ul>
+<li><strong>单次划分的随机性</strong>：不同的随机种子会产生不同的划分，导致评估结果不稳定</li>
+<li><strong>数据浪费</strong>：只用一部分数据训练，另一部分只用于评估</li>
+<li><strong>评估偏差</strong>：如果测试集恰好包含"容易"或"困难"的样本，评估结果会失真</li>
+</ul>
+<p>交叉验证通过<strong>多次划分、多次训练、多次评估</strong>来解决这些问题。</p>
+<h3 id="12">1.2 交叉验证的原理</h3>
+<p>交叉验证的核心思想是：<strong>将数据集分成 K 份，每次用 K-1 份训练，1 份验证，重复 K 次，取平均值作为最终评估指标。</strong></p>
+<h4 id="k-fold">K-Fold 交叉验证步骤</h4>
+<ol>
+<li>将训练数据随机分为 K 个大小相似的子集（fold）</li>
+<li>对于每个 fold：<br>
+   - 用其余 K-1 个 fold 作为训练集<br>
+   - 用当前 fold 作为验证集<br>
+   - 记录模型在验证集上的性能</li>
+<li>计算 K 次评估结果的平均值作为最终性能指标</li>
+</ol>
+<pre class="plain"><code>数据划分示例（K=5）：
+轮次1: [验证] [训练] [训练] [训练] [训练] → 得分1
+轮次2: [训练] [验证] [训练] [训练] [训练] → 得分2
+轮次3: [训练] [训练] [验证] [训练] [训练] → 得分3
+轮次4: [训练] [训练] [训练] [验证] [训练] → 得分4
+轮次5: [训练] [训练] [训练] [训练] [验证] → 得分5
+
+最终得分 = (得分1 + 得分2 + ... + 得分5) / 5
+</code></pre>
+<h4 id="_2">交叉验证的优势</h4>
+<table>
+<thead>
+<tr>
+<th>方面</th>
+<th>train_test_split</th>
+<th>K-Fold 交叉验证</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数据利用率</td>
+<td>约 75%/25%</td>
+<td>100%（每条数据都参与过训练和验证）</td>
+</tr>
+<tr>
+<td>稳定性</td>
+<td>依赖单次划分</td>
+<td>多次划分取平均，结果更稳定</td>
+</tr>
+<tr>
+<td>计算成本</td>
+<td>1次训练</td>
+<td>K次训练</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>快速验证</td>
+<td>正式评估模型性能</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13">1.3 常见的交叉验证策略</h3>
+<h4 id="k-fold_1">K-Fold</h4>
+<p>最基础的交叉验证方法，数据被等分为 K 份。</p>
+<p><strong>K 值选择建议：</strong><br>
+- K=5 或 K=10 是最常用的选择<br>
+- K 太小（如 K=2）：训练数据太少，评估偏差大<br>
+- K 太大（如 K=N）：每次只留1个样本验证（留一法），计算成本高<br>
+- K 越大，偏差越小但方差越大</p>
+<h4 id="stratified-k-fold">Stratified K-Fold</h4>
+<p>分层 K 折交叉验证，确保每个 fold 中各类别的比例与整体数据集一致。</p>
+<p><strong>适用场景：</strong> 分类问题，尤其是类别不平衡时。</p>
+<pre class="plain"><code>原始数据类别分布：正类 30%，负类 70%
+Stratified K-Fold 后每个 fold：正类 ~30%，负类 ~70%
+</code></pre>
+<h4 id="leave-one-out-loo">Leave-One-Out (LOO)</h4>
+<p>K = N（样本总数），每次只留1个样本做验证。</p>
+<p><strong>特点：</strong><br>
+- 无偏估计（几乎用了所有数据训练）<br>
+- 计算成本极高（N次训练）<br>
+- 方差较大</p>
+<h4 id="repeated-k-fold">Repeated K-Fold</h4>
+<p>重复 K-Fold 多次，每次重新随机划分。</p>
+<p><strong>特点：</strong><br>
+- 更稳定的评估结果<br>
+- 计算成本 = 重复次数 × K</p>
+<hr>
+<h2 id="grid-search">二、网格搜索（Grid Search）</h2>
+<h3 id="21">2.1 为什么需要超参数调优？</h3>
+<p>机器学习模型通常有<strong>超参数</strong>（hyperparameters），它们在训练之前设定，不能通过训练自动学习。例如：</p>
+<ul>
+<li>SVM 的 <code>C</code>（正则化强度）和 <code>gamma</code>（核函数参数）</li>
+<li>随机森林的 <code>n_estimators</code>（树的数量）和 <code>max_depth</code>（最大深度）</li>
+<li>KNN 的 <code>n_neighbors</code>（近邻数）</li>
+</ul>
+<p>选择合适的超参数对模型性能影响巨大。网格搜索是一种系统化的超参数调优方法。</p>
+<h3 id="22">2.2 网格搜索的原理</h3>
+<p>网格搜索的工作方式非常直观：</p>
+<ol>
+<li><strong>定义搜索空间</strong>：为每个超参数指定一组候选值</li>
+<li><strong>穷举组合</strong>：生成所有超参数值的组合</li>
+<li><strong>逐个尝试</strong>：对每种组合训练并评估模型</li>
+<li><strong>选择最优</strong>：返回性能最好的超参数组合</li>
+</ol>
+<pre class="plain"><code>假设搜索空间：
+  C = [0.1, 1, 10]
+  gamma = [0.01, 0.1, 1]
+
+组合数 = 3 × 3 = 9 种
+每种组合用 K-Fold 交叉验证评估
+共训练 9 × 5 = 45 次
+</code></pre>
+<h3 id="23">2.3 网格搜索的优缺点</h3>
+<p><strong>优点：</strong><br>
+- 系统性：不遗漏任何组合<br>
+- 并行化：不同组合之间独立，可以并行计算<br>
+- 结合交叉验证：结果更可靠</p>
+<p><strong>缺点：</strong><br>
+- 计算成本随超参数数量<strong>指数级增长</strong><br>
+- 只能搜索预定义的离散值<br>
+- 不适合高维超参数空间</p>
+<h3 id="24">2.4 其他搜索策略</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>特点</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GridSearchCV</td>
+<td>穷举所有组合</td>
+<td>超参数空间小</td>
+</tr>
+<tr>
+<td>RandomizedSearchCV</td>
+<td>随机采样固定次数</td>
+<td>超参数空间大</td>
+</tr>
+<tr>
+<td>HalvingGridSearchCV</td>
+<td>逐轮淘汰，加速搜索</td>
+<td>大规模数据集</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="pipeline">三、Pipeline — 管道</h2>
+<h3 id="31-pipeline">3.1 为什么需要 Pipeline？</h3>
+<p>在实际项目中，数据预处理和模型训练通常是分开的：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 分开的做法</span>
+<span class="n">scaler</span> <span class="o">=</span> <span class="n">StandardScaler</span><span class="p">()</span>
+<span class="n">X_train_scaled</span> <span class="o">=</span> <span class="n">scaler</span><span class="o">.</span><span class="n">fit_transform</span><span class="p">(</span><span class="n">X_train</span><span class="p">)</span>
+<span class="n">X_test_scaled</span> <span class="o">=</span> <span class="n">scaler</span><span class="o">.</span><span class="n">transform</span><span class="p">(</span><span class="n">X_test</span><span class="p">)</span>  <span class="c1"># ⚠️ 必须用 transform，不能 fit_transform！</span>
+
+<span class="n">model</span> <span class="o">=</span> <span class="n">LogisticRegression</span><span class="p">()</span>
+<span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X_train_scaled</span><span class="p">,</span> <span class="n">y_train</span><span class="p">)</span>
+</code></pre></div>
+<p>这种做法有几个问题：</p>
+<ol>
+<li><strong>容易犯错</strong>：忘记对测试集只做 <code>transform</code> 而误用 <code>fit_transform</code>，导致<strong>数据泄露</strong></li>
+<li><strong>代码冗余</strong>：每个预处理步骤都要单独调用</li>
+<li><strong>部署困难</strong>：保存模型时需要同时保存多个预处理器</li>
+<li><strong>难以复现</strong>：步骤多了容易遗漏</li>
+</ol>
+<p>Pipeline 将所有步骤串联成一个整体，解决上述所有问题。</p>
+<h3 id="32-pipeline">3.2 Pipeline 的概念</h3>
+<p>Pipeline 是一个<strong>按顺序执行的处理链</strong>，每个步骤可以是一个预处理器（transformer）或一个模型（estimator）。</p>
+<pre class="plain"><code>数据输入 → [步骤1: 预处理] → [步骤2: 特征工程] → [步骤3: 模型] → 预测输出
+</code></pre>
+<p><strong>Pipeline 的关键特性：</strong></p>
+<ul>
+<li><strong>统一接口</strong>：对外表现为一个 estimator，支持 <code>fit()</code>、<code>predict()</code>、<code>score()</code> 等方法</li>
+<li><strong>自动数据流</strong>：前一步的输出自动作为下一步的输入</li>
+<li><strong>防数据泄露</strong>：在交叉验证中，每个 fold 的预处理只在训练数据上 fit</li>
+<li><strong>便于部署</strong>：一个 <code>joblib.dump()</code> 就能保存整个 Pipeline</li>
+</ul>
+<h3 id="33-pipeline">3.3 Pipeline 的执行流程</h3>
+<pre class="plain"><code>Pipeline([(&#x27;scaler&#x27;, StandardScaler()), (&#x27;pca&#x27;, PCA(n_components=5)), (&#x27;clf&#x27;, SVC())])
+
+fit(X, y) 执行过程：
+  1. scaler.fit_transform(X) → X_scaled
+  2. pca.fit_transform(X_scaled) → X_pca
+  3. clf.fit(X_pca, y)
+
+predict(X_new) 执行过程：
+  1. scaler.transform(X_new) → X_scaled
+  2. pca.transform(X_scaled) → X_pca
+  3. clf.predict(X_pca)
+</code></pre>
+<p><strong>注意：</strong> Pipeline 中只有最后一步是 estimator，其余都是 transformer。</p>
+<h3 id="34-columntransformer">3.4 ColumnTransformer — 处理不同类型特征</h3>
+<p>实际数据中通常包含数值型和类别型特征，需要不同的处理方式。<code>ColumnTransformer</code> 可以对不同列应用不同的预处理器。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">sklearn.compose</span> <span class="kn">import</span> <span class="n">ColumnTransformer</span>
+<span class="kn">from</span> <span class="nn">sklearn.preprocessing</span> <span class="kn">import</span> <span class="n">StandardScaler</span><span class="p">,</span> <span class="n">OneHotEncoder</span>
+
+<span class="n">preprocessor</span> <span class="o">=</span> <span class="n">ColumnTransformer</span><span class="p">([</span>
+    <span class="p">(</span><span class="s1">&#39;num&#39;</span><span class="p">,</span> <span class="n">StandardScaler</span><span class="p">(),</span> <span class="p">[</span><span class="s1">&#39;age&#39;</span><span class="p">,</span> <span class="s1">&#39;income&#39;</span><span class="p">]),</span>
+    <span class="p">(</span><span class="s1">&#39;cat&#39;</span><span class="p">,</span> <span class="n">OneHotEncoder</span><span class="p">(),</span> <span class="p">[</span><span class="s1">&#39;city&#39;</span><span class="p">,</span> <span class="s1">&#39;gender&#39;</span><span class="p">])</span>
+<span class="p">])</span>
+</code></pre></div>
+<h3 id="35-pipeline-gridsearchcv">3.5 嵌套 Pipeline 与 GridSearchCV</h3>
+<p>Pipeline 中的超参数可以通过 <code>__</code> 语法访问：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pipeline</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">([</span>
+    <span class="p">(</span><span class="s1">&#39;scaler&#39;</span><span class="p">,</span> <span class="n">StandardScaler</span><span class="p">()),</span>
+    <span class="p">(</span><span class="s1">&#39;clf&#39;</span><span class="p">,</span> <span class="n">SVC</span><span class="p">())</span>
+<span class="p">])</span>
+
+<span class="c1"># 访问 SVC 的 C 参数</span>
+<span class="n">param_grid</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;clf__C&#39;</span><span class="p">:</span> <span class="p">[</span><span class="mf">0.1</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">10</span><span class="p">]}</span>
+</code></pre></div>
+<p>结合 GridSearchCV，可以同时搜索多个步骤的超参数。</p>
+<hr>
+<h2 id="model-persistence">四、模型持久化（Model Persistence）</h2>
+<h3 id="41">4.1 为什么需要保存模型？</h3>
+<p>训练一个模型可能花费数小时甚至数天。保存模型意味着：</p>
+<ul>
+<li>不需要每次使用都重新训练</li>
+<li>可以在不同环境中部署</li>
+<li>可以进行 A/B 测试</li>
+<li>可以回滚到之前的版本</li>
+</ul>
+<h3 id="42-joblib">4.2 joblib — 推荐方式</h3>
+<p>joblib 是 scikit-learn 官方推荐的模型保存方式，特别适合处理包含大量 NumPy 数组的模型。</p>
+<p><strong>核心 API：</strong></p>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>joblib.dump(model, filename)</code></td>
+<td>将模型保存到文件</td>
+</tr>
+<tr>
+<td><code>joblib.load(filename)</code></td>
+<td>从文件加载模型</td>
+</tr>
+</tbody>
+</table>
+<p><strong>为什么不用 pickle？</strong></p>
+<ul>
+<li>pickle 也可以保存模型，但对大型 NumPy 数组效率低</li>
+<li>joblib 使用更高效的压缩，文件更小</li>
+<li>joblib 是 scikit-learn 的官方推荐</li>
+</ul>
+<h3 id="43">4.3 保存与加载最佳实践</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">joblib</span>
+
+<span class="c1"># 保存</span>
+<span class="n">joblib</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">pipeline</span><span class="p">,</span> <span class="s1">&#39;model_pipeline.pkl&#39;</span><span class="p">)</span>
+
+<span class="c1"># 加载</span>
+<span class="n">loaded_pipeline</span> <span class="o">=</span> <span class="n">joblib</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">&#39;model_pipeline.pkl&#39;</span><span class="p">)</span>
+
+<span class="c1"># 使用加载的模型预测</span>
+<span class="n">predictions</span> <span class="o">=</span> <span class="n">loaded_pipeline</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">X_new</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>注意事项：</strong><br>
+- 保存的文件包含模型结构和参数，不包含训练数据<br>
+- 版本兼容性：加载时的 scikit-learn 版本应与保存时兼容<br>
+- 文件安全：pickle/joblib 文件可以执行代码，不要加载不可信来源的模型</p>
+<hr>
+<h2 id="ml-pipeline">五、完整 ML Pipeline 实战</h2>
+<h3 id="51">5.1 项目概述</h3>
+<p>我们将构建一个完整的机器学习 Pipeline，用于预测客户是否流失（Churn Prediction）。这模拟了真实的工业级 ML 项目流程。</p>
+<p><strong>数据集：</strong> 使用合成数据模拟电信客户流失数据</p>
+<p><strong>Pipeline 步骤：</strong><br>
+1. 数据加载与探索<br>
+2. 数据预处理（缺失值处理、编码、缩放）<br>
+3. 特征工程<br>
+4. 模型选择与超参数调优<br>
+5. 评估与比较<br>
+6. 模型保存与部署</p>
+<h3 id="52">5.2 完整代码</h3>
+<p>请查看 <code>code/03-full-pipeline.py</code> 获取完整的可运行代码。</p>
+<h3 id="53">5.3 关键点总结</h3>
+<table>
+<thead>
+<tr>
+<th>环节</th>
+<th>工具/方法</th>
+<th>要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>交叉验证</td>
+<td><code>cross_val_score</code>, <code>StratifiedKFold</code></td>
+<td>确保每折类别比例一致</td>
+</tr>
+<tr>
+<td>超参数调优</td>
+<td><code>GridSearchCV</code></td>
+<td>结合交叉验证，避免过拟合</td>
+</tr>
+<tr>
+<td>数据预处理</td>
+<td><code>ColumnTransformer</code>, <code>Pipeline</code></td>
+<td>统一处理流程</td>
+</tr>
+<tr>
+<td>模型保存</td>
+<td><code>joblib.dump/load</code></td>
+<td>保存完整 Pipeline</td>
+</tr>
+<tr>
+<td>评估指标</td>
+<td><code>classification_report</code>, <code>confusion_matrix</code></td>
+<td>多维度评估</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="api">六、API 速查</h2>
+<h3 id="cross_val_score">cross_val_score</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">sklearn.model_selection</span> <span class="kn">import</span> <span class="n">cross_val_score</span>
+
+<span class="n">scores</span> <span class="o">=</span> <span class="n">cross_val_score</span><span class="p">(</span><span class="n">estimator</span><span class="p">,</span> <span class="n">X</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">cv</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">scoring</span><span class="o">=</span><span class="s1">&#39;accuracy&#39;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;平均得分: </span><span class="si">{</span><span class="n">scores</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2"> (+/- </span><span class="si">{</span><span class="n">scores</span><span class="o">.</span><span class="n">std</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">2</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>参数说明：</strong><br>
+- <code>estimator</code>：模型对象<br>
+- <code>X, y</code>：特征和标签<br>
+- <code>cv</code>：交叉验证折数（默认5）<br>
+- <code>scoring</code>：评估指标</p>
+<h3 id="gridsearchcv">GridSearchCV</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">sklearn.model_selection</span> <span class="kn">import</span> <span class="n">GridSearchCV</span>
+
+<span class="n">grid_search</span> <span class="o">=</span> <span class="n">GridSearchCV</span><span class="p">(</span>
+    <span class="n">estimator</span><span class="o">=</span><span class="n">pipeline</span><span class="p">,</span>
+    <span class="n">param_grid</span><span class="o">=</span><span class="n">param_grid</span><span class="p">,</span>
+    <span class="n">cv</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span>
+    <span class="n">scoring</span><span class="o">=</span><span class="s1">&#39;accuracy&#39;</span><span class="p">,</span>
+    <span class="n">n_jobs</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="mi">1</span>
+<span class="p">)</span>
+<span class="n">grid_search</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X_train</span><span class="p">,</span> <span class="n">y_train</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;最佳参数: </span><span class="si">{</span><span class="n">grid_search</span><span class="o">.</span><span class="n">best_params_</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;最佳得分: </span><span class="si">{</span><span class="n">grid_search</span><span class="o">.</span><span class="n">best_score_</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>参数说明：</strong><br>
+- <code>estimator</code>：模型或 Pipeline<br>
+- <code>param_grid</code>：超参数搜索空间（字典）<br>
+- <code>cv</code>：交叉验证折数<br>
+- <code>scoring</code>：评估指标<br>
+- <code>n_jobs</code>：并行数（-1 表示使用所有 CPU）<br>
+- <code>verbose</code>：日志详细程度</p>
+<h3 id="pipeline_1">Pipeline</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">sklearn.pipeline</span> <span class="kn">import</span> <span class="n">Pipeline</span>
+
+<span class="n">pipeline</span> <span class="o">=</span> <span class="n">Pipeline</span><span class="p">([</span>
+    <span class="p">(</span><span class="s1">&#39;scaler&#39;</span><span class="p">,</span> <span class="n">StandardScaler</span><span class="p">()),</span>
+    <span class="p">(</span><span class="s1">&#39;pca&#39;</span><span class="p">,</span> <span class="n">PCA</span><span class="p">(</span><span class="n">n_components</span><span class="o">=</span><span class="mi">10</span><span class="p">)),</span>
+    <span class="p">(</span><span class="s1">&#39;clf&#39;</span><span class="p">,</span> <span class="n">SVC</span><span class="p">())</span>
+<span class="p">])</span>
+
+<span class="c1"># 统一接口</span>
+<span class="n">pipeline</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X_train</span><span class="p">,</span> <span class="n">y_train</span><span class="p">)</span>
+<span class="n">score</span> <span class="o">=</span> <span class="n">pipeline</span><span class="o">.</span><span class="n">score</span><span class="p">(</span><span class="n">X_test</span><span class="p">,</span> <span class="n">y_test</span><span class="p">)</span>
+<span class="n">predictions</span> <span class="o">=</span> <span class="n">pipeline</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="n">X_test</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="joblib">joblib</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">joblib</span>
+
+<span class="c1"># 保存模型</span>
+<span class="n">joblib</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">pipeline</span><span class="p">,</span> <span class="s1">&#39;model.pkl&#39;</span><span class="p">,</span> <span class="n">compress</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+
+<span class="c1"># 加载模型</span>
+<span class="n">loaded</span> <span class="o">=</span> <span class="n">joblib</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="s1">&#39;model.pkl&#39;</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">七、思考题</h2>
+<h3 id="1-vs">思考题 1：交叉验证 vs 保留验证集</h3>
+<blockquote>
+<p>如果你的数据集非常小（只有 100 条样本），你会选择哪种验证方式？为什么？</p>
+</blockquote>
+<p><strong>提示：</strong> 考虑数据利用率、评估偏差、计算成本之间的权衡。</p>
+<h3 id="2gridsearchcv">思考题 2：GridSearchCV 的计算成本</h3>
+<blockquote>
+<p>一个 Pipeline 有 3 个步骤，每个步骤有 4 个超参数选择，使用 5 折交叉验证。总共需要训练多少次模型？</p>
+</blockquote>
+<p><strong>提示：</strong> 总组合数 = 各步骤参数数量的乘积。</p>
+<h3 id="3">思考题 3：数据泄露</h3>
+<blockquote>
+<p>在不使用 Pipeline 的情况下，以下代码有什么问题？如何修复？</p>
+</blockquote>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">scaler</span> <span class="o">=</span> <span class="n">StandardScaler</span><span class="p">()</span>
+<span class="n">X_train_scaled</span> <span class="o">=</span> <span class="n">scaler</span><span class="o">.</span><span class="n">fit_transform</span><span class="p">(</span><span class="n">X_train</span><span class="p">)</span>
+<span class="n">X_test_scaled</span> <span class="o">=</span> <span class="n">scaler</span><span class="o">.</span><span class="n">fit_transform</span><span class="p">(</span><span class="n">X_test</span><span class="p">)</span>  <span class="c1"># 注意是 fit_transform</span>
+<span class="n">model</span> <span class="o">=</span> <span class="n">LogisticRegression</span><span class="p">()</span>
+<span class="n">model</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span><span class="n">X_train_scaled</span><span class="p">,</span> <span class="n">y_train</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>提示：</strong> 思考 "fit" 操作在训练集和测试集上的含义。</p>
+<h3 id="4pipeline">思考题 4：Pipeline 的局限性</h3>
+<blockquote>
+<p>Pipeline 能否处理以下场景？如果不能，你会如何解决？<br>
+- 训练数据中需要做文本清洗，但清洗规则需要人工定义<br>
+- 特征选择需要根据标签信息动态调整<br>
+- 需要并行运行多个模型然后融合预测结果</p>
+</blockquote>
+<h3 id="5">思考题 5：模型持久化的安全隐患</h3>
+<blockquote>
+<p><code>joblib.load()</code> 本质上执行 pickle 反序列化，这可能带来什么安全风险？在生产环境中如何安全地加载模型？</p>
+</blockquote>
+<p><strong>提示：</strong> 考虑 pickle 反序列化漏洞、模型来源验证、沙箱加载等。</p>
+<hr>
+<h2 id="_4">📚 今日总结</h2>
+<p>今天学习了构建完整机器学习工作流所需的四个关键技能：</p>
+<ol>
+<li><strong>交叉验证</strong>：通过多次划分数据获得可靠的模型评估</li>
+<li><strong>网格搜索</strong>：系统化地搜索最优超参数组合</li>
+<li><strong>Pipeline</strong>：将数据预处理和模型训练串联成一个整体，防止数据泄露，简化部署</li>
+<li><strong>模型持久化</strong>：使用 joblib 保存训练好的 Pipeline，便于重复使用</li>
+</ol>
+<p>这四个工具组合使用，构成了工业级机器学习项目的基础框架。明天我们将进入深度学习的世界！</p>
+<hr>
+<blockquote>
+<p>📅 昨天 Day 111: 无监督学习 | 明天 Day 113: PyTorch 基础</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-111/index.html">← Day 111 无监督学习 — K-Means 聚类与 PCA 降维</a><a class="nav-next" href="../day-113/index.html">Day 113 PyTorch 基础 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

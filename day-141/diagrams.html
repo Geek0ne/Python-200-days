@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 141 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 141 正文</a>
+  <h1>Day 141 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-141">Day 141 — 爬虫监控与告警 · 图解</h1>
+<h2 id="1-mermaid">1. 监控告警整体架构（Mermaid）</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[爬虫主进程] --&gt;|每30s写心跳| B[(Redis / heartbeat 文件)]
+    A --&gt;|运行统计| C[(数据库 / 日志)]
+    B --&gt; D[监控进程 · 独立部署]
+    C --&gt; D
+    D --&gt;|心跳超时| E[告警网关 · 分级+抑制]
+    D --&gt;|数据量骤降| E
+    D --&gt;|错误率飙升| E
+    E --&gt; F[钉钉机器人 · 加签]
+    E --&gt; G[企微机器人]
+    E --&gt; H[邮件 / 短信]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[爬虫主进程] --&gt;|每30s写心跳| B[(Redis / heartbeat 文件)]
+    A --&gt;|运行统计| C[(数据库 / 日志)]
+    B --&gt; D[监控进程 · 独立部署]
+    C --&gt; D
+    D --&gt;|心跳超时| E[告警网关 · 分级+抑制]
+    D --&gt;|数据量骤降| E
+    D --&gt;|错误率飙升| E
+    E --&gt; F[钉钉机器人 · 加签]
+    E --&gt; G[企微机器人]
+    E --&gt; H[邮件 / 短信]
+</code></pre></div>
+<h2 id="2-ascii">2. 指数退避 + 抖动（ASCII）</h2>
+<pre class="plain"><code>失败 ──等1~1.5s──▶ 重试#1 失败 ──等2~3s──▶ 重试#2 失败
+      ──等4~6s──▶ 重试#3 失败 ──等8~12s──▶ 重试#4 ──▶ 成功 or 死信队列
+
+单爬虫:  ▁▄▁▁▄▁▁▄▁        （间隔指数拉长，给服务喘息时间）
+多爬虫:  ▂▁▃▁▂▁▄▁▃▁▂      （jitter 抖散，避免惊群）
+</code></pre>
+<h2 id="3-ascii">3. 异常捕获分层（ASCII）</h2>
+<pre class="plain"><code>┌────────────────────────────────────┐
+│ 进程层  sys.excepthook → 崩溃告警    │
+│ ┌────────────────────────────────┐ │
+│ │ 业务层  数据量断言 → 静默失败告警  │ │
+│ │ ┌────────────────────────────┐ │ │
+│ │ │ 解析层  字段级 try → 失败计数 │ │ │
+│ │ │ ┌────────────────────────┐ │ │ │
+│ │ │ │ 请求层  重试装饰器 → 自动重试│ │ │ │
+│ │ │ └────────────────────────┘ │ │ │
+│ │ └────────────────────────────┘ │ │
+│ └────────────────────────────────┘ │
+└────────────────────────────────────┘
+</code></pre>
+<h2 id="4">4. 心跳超时判定时间线</h2>
+<pre class="plain"><code>爬虫:   ●────●────●────●────✕(崩溃)
+        0s   30s  60s  90s  120s
+监控:      ▲检查 ▲检查 ▲检查 ▲检查→ 距上次心跳30s+超阈值 → 🚨告警
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

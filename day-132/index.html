@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 132 — 代理池搭建</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 132 — 代理池搭建</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">260 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-132-proxy-pool" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-proxy">1.1 什么是代理（Proxy）</a>
+<a class="toc-l3" href="#12">1.2 代理的分类</a>
+<a class="toc-l3" href="#13-vs">1.3 免费 vs 付费代理</a>
+<a class="toc-l2" href="#_2">二、原理解释</a>
+<a class="toc-l3" href="#21-http">2.1 HTTP 代理的工作原理</a>
+<a class="toc-l3" href="#22">2.2 代理池的核心架构</a>
+<a class="toc-l3" href="#23">2.3 并发验证为什么用协程而不是线程</a>
+<a class="toc-l2" href="#api">三、定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#31-requests">3.1 requests 使用代理</a>
+<a class="toc-l3" href="#32-aiohttp">3.2 aiohttp 使用代理</a>
+<a class="toc-l3" href="#33-scrapy">3.3 Scrapy 使用代理（中间件方式）</a>
+<a class="toc-l3" href="#34">3.4 常用方法参数速查</a>
+<a class="toc-l2" href="#_3">四、图解</a>
+<a class="toc-l3" href="#41">4.1 代理池生命周期总览</a>
+<a class="toc-l3" href="#42">4.2 分数流转状态机</a>
+<a class="toc-l2" href="#_4">五、实战代码案例</a>
+<a class="toc-l2" href="#_5">六、思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-132-">Day 132 - 代理池搭建</h1>
+<blockquote>
+<p>阶段：Phase 7 - 进阶与性能优化 · 实战<br>
+主题：免费/付费代理获取、代理验证与可用性检测、代理池架构、高匿名代理池实战</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-proxy">1.1 什么是代理（Proxy）</h3>
+<p>代理是一台位于爬虫与目标服务器之间的"中转服务器"。爬虫的请求先发给代理，代理再转发给目标网站；网站的响应也经由代理返回给爬虫。</p>
+<pre class="plain"><code>没有代理:
+  爬虫 ────────────────────────▶ 目标网站
+        （真实 IP 直接暴露，容易被封）
+
+使用代理:
+  爬虫 ──▶ 代理服务器 ──▶ 目标网站
+  爬虫 ◀─ 代理服务器 ◀─ 目标网站
+        （目标网站只看到代理 IP）
+</code></pre>
+<p><strong>为什么需要代理？</strong><br>
+- 目标网站通常有 IP 频率限制：同一 IP 短时间内请求过多会被封禁或弹验证码。<br>
+- 使用代理后，请求分散到大量不同 IP 上，每个 IP 的请求频率都低于阈值。<br>
+- 封了一个代理 IP，换下一个即可，爬虫本体不受影响。</p>
+<h3 id="12">1.2 代理的分类</h3>
+<p><strong>按协议分：</strong></p>
+<table>
+<thead>
+<tr>
+<th>协议</th>
+<th>适用场景</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>HTTP</td>
+<td>普通 HTTP 页面</td>
+<td>只能代理 HTTP 请求</td>
+</tr>
+<tr>
+<td>HTTPS (CONNECT)</td>
+<td>加密网站（主流）</td>
+<td>通过 CONNECT 隧道转发 TLS 流量</td>
+</tr>
+<tr>
+<td>SOCKS4/5</td>
+<td>通用 TCP/UDP</td>
+<td>更底层，可代理任意流量，Python 用 <code>PySocks</code> 库</td>
+</tr>
+</tbody>
+</table>
+<p><strong>按匿名度分（关键！）：</strong></p>
+<table>
+<thead>
+<tr>
+<th>匿名级别</th>
+<th>目标网站看到的</th>
+<th>适用性</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>透明代理</td>
+<td>你的真实 IP + 代理 IP</td>
+<td>❌ 毫无用处，反而暴露自己</td>
+</tr>
+<tr>
+<td>普通匿名</td>
+<td>代理 IP，但知道你用了代理</td>
+<td>⚠️ 可用，但容易被针对</td>
+</tr>
+<tr>
+<td>高匿名（Elite）</td>
+<td>只看到代理 IP，不知道你用代理</td>
+<td>✅ 爬虫首选</td>
+</tr>
+</tbody>
+</table>
+<p><strong>判断方法</strong>：向检测网站（如 <code>httpbin.org/headers</code>）发请求，观察返回的 <code>X-Forwarded-For</code> / <code>Via</code> 头：<br>
+- 有 <code>X-Forwarded-For: 你的真实IP</code> → 透明代理<br>
+- 有 <code>Via</code> / <code>Proxy-Connection</code> 但无真实 IP → 普通匿名<br>
+- 什么都没有 → 高匿名</p>
+<h3 id="13-vs">1.3 免费 vs 付费代理</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>免费代理</th>
+<th>付费代理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>价格</td>
+<td>0 元</td>
+<td>几十~几百元/天</td>
+</tr>
+<tr>
+<td>可用率</td>
+<td>&lt; 10%，随抓随失效</td>
+<td>&gt; 90%</td>
+</tr>
+<tr>
+<td>稳定性</td>
+<td>极差，几分钟内可能失效</td>
+<td>有 SLA 保障</td>
+</tr>
+<tr>
+<td>匿名度</td>
+<td>参差不齐</td>
+<td>可指定高匿名</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>学习、练手</td>
+<td>生产爬虫</td>
+</tr>
+</tbody>
+</table>
+<p>免费代理来源：快代理、西刺（已停）、89IP、FreeProxyList 等网站的免费页面。免费代理的本质是"别人暴露在公网上的代理服务"，随时可能关闭，所以<strong>免费代理必须配合验证机制</strong>才有价值。</p>
+<hr>
+<h2 id="_2">二、原理解释</h2>
+<h3 id="21-http">2.1 HTTP 代理的工作原理</h3>
+<p><strong>HTTP 请求代理：</strong><br>
+爬虫向代理发送的请求行直接就是完整目标 URL：</p>
+<pre class="plain"><code>GET http://example.com/page HTTP/1.1     ← 注意：完整 URL
+Host: example.com
+</code></pre>
+<p>代理看到完整 URL，替你向目标发起请求。</p>
+<p><strong>HTTPS 请求代理（CONNECT 隧道）：</strong></p>
+<pre class="plain"><code>爬虫 ──▶ 代理:   CONNECT example.com:443 HTTP/1.1
+代理 ──▶ 爬虫:   HTTP/1.1 200 Connection Established
+（此后 TCP 连接变成透明隧道，爬虫在隧道内完成 TLS 握手）
+爬虫 ◀═════════════ 加密数据 ═════════════▶ 目标:443
+</code></pre>
+<p>代理无法解密 HTTPS 内容，只能看到你在连哪个域名（SNI）。这就是为什么 requests 的 <code>proxies</code> 参数同时支持 http/https URL 走 HTTP 代理。</p>
+<h3 id="22">2.2 代理池的核心架构</h3>
+<p>代理池不是一个"池子数据结构"，而是一个<strong>常驻服务</strong>，内部有四个逻辑模块：</p>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[抓取器 Fetcher&lt;br&gt;从免费网站抓代理] --&gt; B[验证器 Validator&lt;br&gt;并发检测可用性]
+    B --&gt;|可用| C[存储器 Redis/内存&lt;br&gt;按分数排序]
+    B --&gt;|不可用| C
+    C --&gt; D[API 接口&lt;br&gt;随机返回高分数代理]
+    D --&gt; E[爬虫业务]
+    C -.定时调度.-&gt; A
+    C -.定时降分.-&gt; B
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[抓取器 Fetcher&lt;br&gt;从免费网站抓代理] --&gt; B[验证器 Validator&lt;br&gt;并发检测可用性]
+    B --&gt;|可用| C[存储器 Redis/内存&lt;br&gt;按分数排序]
+    B --&gt;|不可用| C
+    C --&gt; D[API 接口&lt;br&gt;随机返回高分数代理]
+    D --&gt; E[爬虫业务]
+    C -.定时调度.-&gt; A
+    C -.定时降分.-&gt; B
+</code></pre></div>
+<p><strong>四个模块职责：</strong></p>
+<ol>
+<li><strong>抓取器（Fetcher）</strong>：从多个免费代理网站爬取代理列表。来源越多越好，因为单来源可用率极低。</li>
+<li><strong>验证器（Validator）</strong>：并发地对每个代理发起真实请求（访问可靠、响应快的检测站点），测量延迟、验证匿名度。验证失败的代理扣分，多次失败则移除。</li>
+<li><strong>存储器（Store）</strong>：通常用 Redis 的 ZSet（有序集合），score 表示代理的"健康度"。</li>
+<li><strong>API 接口（Provider）</strong>：爬虫通过 <code>GET /random</code> 获取当前最优代理，或 <code>GET /all</code> 获取全量列表。</li>
+</ol>
+<p><strong>分数机制（为什么用它？）</strong>：<br>
+- 新抓的代理初始分 50（半信半疑）<br>
+- 每次验证成功 +10，封顶 100 → 进入"可用"队列<br>
+- 每次验证失败 -10，降到 0 → 移除<br>
+- 这样能容忍偶发抖动（一次超时不至于立刻淘汰），又能及时清理持续失效的代理</p>
+<h3 id="23">2.3 并发验证为什么用协程而不是线程</h3>
+<p>验证 1000 个代理 = 1000 次网络 IO（每次 1~5 秒）。<br>
+- 串行：1000 × 3s ≈ 50 分钟，不可接受<br>
+- 线程池(100)：可行，但线程开销大、上限低<br>
+- <strong>协程（asyncio + aiohttp）</strong>：单线程内上千并发连接，IO 等待时切换任务，验证 1000 个代理只需 10~30 秒 ✅</p>
+<p>代理验证是典型的 IO 密集型 + 高并发短连接场景，是协程的最佳用武之地。</p>
+<hr>
+<h2 id="api">三、定义与使用方法（API 速查）</h2>
+<h3 id="31-requests">3.1 requests 使用代理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="n">proxies</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;http&quot;</span><span class="p">:</span> <span class="s2">&quot;http://112.34.5.6:8080&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;https&quot;</span><span class="p">:</span> <span class="s2">&quot;http://112.34.5.6:8080&quot;</span><span class="p">,</span>   <span class="c1"># https 流量也可走 http 代理（CONNECT 隧道）</span>
+<span class="p">}</span>
+<span class="c1"># 带认证的代理</span>
+<span class="n">proxies_auth</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;http&quot;</span><span class="p">:</span> <span class="s2">&quot;http://user:pass@112.34.5.6:8080&quot;</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">resp</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;https://httpbin.org/ip&quot;</span><span class="p">,</span> <span class="n">proxies</span><span class="o">=</span><span class="n">proxies</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="32-aiohttp">3.2 aiohttp 使用代理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">aiohttp</span><span class="o">,</span> <span class="nn">asyncio</span>
+
+<span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">():</span>
+    <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">()</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+        <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+            <span class="s2">&quot;https://httpbin.org/ip&quot;</span><span class="p">,</span>
+            <span class="n">proxy</span><span class="o">=</span><span class="s2">&quot;http://112.34.5.6:8080&quot;</span><span class="p">,</span>
+        <span class="p">)</span> <span class="k">as</span> <span class="n">resp</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="k">await</span> <span class="n">resp</span><span class="o">.</span><span class="n">json</span><span class="p">())</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<h3 id="33-scrapy">3.3 Scrapy 使用代理（中间件方式）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># middlewares.py</span>
+<span class="k">class</span> <span class="nc">ProxyMiddleware</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">process_request</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">request</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="n">request</span><span class="o">.</span><span class="n">meta</span><span class="p">[</span><span class="s2">&quot;proxy&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;http://112.34.5.6:8080&quot;</span>
+</code></pre></div>
+<h3 id="34">3.4 常用方法参数速查</h3>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>方法/参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>requests 代理</td>
+<td><code>proxies={"http": ..., "https": ...}</code></td>
+<td>字典，key 是协议</td>
+</tr>
+<tr>
+<td>requests 超时</td>
+<td><code>timeout=(3, 5)</code></td>
+<td>(连接超时, 读取超时)，验证代理必设</td>
+</tr>
+<tr>
+<td>aiohttp 代理</td>
+<td><code>session.get(url, proxy=...)</code></td>
+<td>直接传 proxy 参数</td>
+</tr>
+<tr>
+<td>aiohttp 超时</td>
+<td><code>aiohttp.ClientTimeout(total=8)</code></td>
+<td>总超时</td>
+</tr>
+<tr>
+<td>验证失败重试</td>
+<td><code>tenacity</code> / 手写 for 循环</td>
+<td>代理失效是常态，业务代码必须重试换代理</td>
+</tr>
+<tr>
+<td>环境变量代理</td>
+<td><code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code></td>
+<td>requests 默认读取，注意本地调试时的干扰</td>
+</tr>
+</tbody>
+</table>
+<p><strong>⚠️ 避坑</strong>：<br>
+1. <code>timeout</code> 不设或设太大 → 验证阶段会被死代理拖死<br>
+2. 免费代理大多只支持 HTTP，访问 HTTPS 站点时失败不一定是代理问题，先确认协议<br>
+3. requests 的 proxies 字典 key 是 <strong>你访问的目标协议</strong>，不是代理本身的协议</p>
+<hr>
+<h2 id="_3">四、图解</h2>
+<h3 id="41">4.1 代理池生命周期总览</h3>
+<pre class="plain"><code>        ┌─────────────────────────────────────────────┐
+        │              定时调度（每 10 分钟）            │
+        └──────────────────┬──────────────────────────┘
+                           ▼
+   ┌──────────┐     ┌────────────┐     ┌────────────────┐
+   │ Fetcher  │────▶│  Validator │────▶│  Redis ZSet    │
+   │ 抓免费代理 │     │ aiohttp并发 │     │  score: 0~100  │
+   └──────────┘     │  逐个验证   │     └───────┬────────┘
+                    └────────────┘             │
+                           ▲                   ▼
+                           │            ┌─────────────┐
+                    失败扣分续验证        │  API Server  │
+                           │            │  GET /random │
+                    ┌──────┴──────┐      └──────┬──────┘
+                    │ score=0 移除 │             ▼
+                    └─────────────┘        爬虫拿代理干活
+</code></pre>
+<h3 id="42">4.2 分数流转状态机</h3>
+<pre class="plain"><code>  抓取入库          验证成功         验证失败
+ ┌───────┐  +10   ┌───────┐  -10   ┌───────┐
+ │  50   │──────▶ │  100  │◀────── │  30   │
+ └───────┘        └───────┘         └───────┘
+    │                                   │
+    │            连续失败分数归零          ▼
+    └──────────────▶ 0 ◀──────────── 删除代理
+</code></pre>
+<hr>
+<h2 id="_4">五、实战代码案例</h2>
+<p>完整的高匿名代理池实现见 <code>code/03-proxy-pool.py</code>，包含：<br>
+- 多来源免费代理抓取<br>
+- asyncio 并发验证（含匿名度检测）<br>
+- 内存 ZSet 式分数管理<br>
+- 随机取用 API + 业务侧自动换代理重试</p>
+<p>核心使用方式：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">pool</span> <span class="o">=</span> <span class="n">ProxyPool</span><span class="p">()</span>
+<span class="n">pool</span><span class="o">.</span><span class="n">fetch_all</span><span class="p">()</span>          <span class="c1"># 抓取</span>
+<span class="k">await</span> <span class="n">pool</span><span class="o">.</span><span class="n">validate_all</span><span class="p">()</span> <span class="c1"># 并发验证</span>
+<span class="n">proxy</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">get_proxy</span><span class="p">()</span>  <span class="c1"># 取最优代理</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">六、思考题</h2>
+<ol>
+<li>为什么免费代理的"可用率"这么低？从这些代理的来源（机房误配置、开放转发）角度分析。</li>
+<li>验证代理时应该用哪个网站做检测目标？如果用你真正要爬的目标网站做验证，有什么好处和风险？</li>
+<li>代理池的分数机制里，"一次失败扣 10 分而不是直接删除"的设计是为了解决什么问题？</li>
+<li>如果目标网站不仅封 IP，还通过 TLS 指纹（JA3）识别并封锁 requests/curl 的流量，单纯换代理还有用吗？有什么思路？</li>
+<li>如何评估"代理池越大越好"这个说法？代理数量与爬虫吞吐量之间的最优关系是什么？</li>
+</ol>
+<hr>
+<p>参考阅读：<br>
+- requests proxies 文档：https://requests.readthedocs.io/en/latest/user/advanced/#proxies<br>
+- aiohttp proxy 支持：https://docs.aiohttp.org/en/stable/client_advanced.html#proxy-support</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-131/index.html">← Day 131 爬虫策略</a><a class="nav-next" href="../day-133/index.html">Day 133 UA 与 Cookie 池 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

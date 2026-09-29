@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 119 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 119 正文</a>
+  <h1>Day 119 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-119-api">Day 119 图解 — 大模型 API 调用</h1>
+<h2 id="api">一、API 调用全流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant User as 👤 用户
+    participant App as 📱 你的应用
+    participant API as ☁️ LLM API
+    participant Tool as 🔧 外部工具
+
+    User-&gt;&gt;App: 输入问题
+    App-&gt;&gt;API: POST /chat/completions&lt;br/&gt;(messages + tools)
+    
+    alt 普通回复
+        API--&gt;&gt;App: choices[0].message.content
+        App--&gt;&gt;User: 显示回复
+    else Function Calling
+        API--&gt;&gt;App: tool_calls: [{name, args}]
+        App-&gt;&gt;Tool: 执行函数(name, args)
+        Tool--&gt;&gt;App: 返回结果
+        App-&gt;&gt;API: 发送 tool 结果
+        API--&gt;&gt;App: 最终回复
+        App--&gt;&gt;User: 显示回复
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant User as 👤 用户
+    participant App as 📱 你的应用
+    participant API as ☁️ LLM API
+    participant Tool as 🔧 外部工具
+
+    User-&gt;&gt;App: 输入问题
+    App-&gt;&gt;API: POST /chat/completions&lt;br/&gt;(messages + tools)
+    
+    alt 普通回复
+        API--&gt;&gt;App: choices[0].message.content
+        App--&gt;&gt;User: 显示回复
+    else Function Calling
+        API--&gt;&gt;App: tool_calls: [{name, args}]
+        App-&gt;&gt;Tool: 执行函数(name, args)
+        Tool--&gt;&gt;App: 返回结果
+        App-&gt;&gt;API: 发送 tool 结果
+        API--&gt;&gt;App: 最终回复
+        App--&gt;&gt;User: 显示回复
+    end
+</code></pre></div>
+<h2 id="_1">二、消息角色流转</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    S[System] --&gt;|设定规则| U[User]
+    U --&gt;|提问| A[Assistant]
+    A --&gt;|回答| U
+    U --&gt;|追问| A
+    A --&gt;|需要工具| T[Tool]
+    T --&gt;|返回结果| A
+    A --&gt;|最终回复| U
+    
+    style S fill:#e1f5fe
+    style U fill:#fff3e0
+    style A fill:#e8f5e9
+    style T fill:#fce4ec
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    S[System] --&gt;|设定规则| U[User]
+    U --&gt;|提问| A[Assistant]
+    A --&gt;|回答| U
+    U --&gt;|追问| A
+    A --&gt;|需要工具| T[Tool]
+    T --&gt;|返回结果| A
+    A --&gt;|最终回复| U
+    
+    style S fill:#e1f5fe
+    style U fill:#fff3e0
+    style A fill:#e8f5e9
+    style T fill:#fce4ec
+</code></pre></div>
+<h2 id="prompt-engineering">三、Prompt Engineering 六大技巧</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────┐
+│            Prompt Engineering 六大技巧                 │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  1️⃣ 角色设定          2️⃣ Few-Shot 示例              │
+│  ┌─────────────┐      ┌──────────────────┐          │
+│  │ &quot;你是专家&quot;   │      │ 输入→输出 示例1  │          │
+│  │ 激活专业知识  │      │ 输入→输出 示例2  │          │
+│  └─────────────┘      └──────────────────┘          │
+│                                                      │
+│  3️⃣ 链式思考          4️⃣ 结构化输出                  │
+│  ┌─────────────┐      ┌──────────────────┐          │
+│  │ Step 1 →    │      │ {&quot;key&quot;: &quot;value&quot;} │          │
+│  │ Step 2 →    │      │ 便于程序解析      │          │
+│  │ Step 3 → 答 │      └──────────────────┘          │
+│  └─────────────┘                                     │
+│                                                      │
+│  5️⃣ 约束与边界          6️⃣ 分步骤指令                │
+│  ┌─────────────┐      ┌──────────────────┐          │
+│  │ &quot;不要编造&quot;   │      │ 步骤1: 审查      │          │
+│  │ &quot;100字以内&quot;  │      │ 步骤2: 分析      │          │
+│  └─────────────┘      │ 步骤3: 建议      │          │
+│                        └──────────────────┘          │
+└──────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="function-calling">四、Function Calling 状态机</h2>
+<pre class="plain"><code>                    ┌──────────┐
+                    │  开始    │
+                    └────┬─────┘
+                         ▼
+               ┌─────────────────┐
+               │ 用户发送消息     │
+               │ + 工具定义       │
+               └────────┬────────┘
+                        ▼
+               ┌─────────────────┐
+               │ LLM 分析需求     │
+               └────────┬────────┘
+                        ▼
+                  ┌───────────┐
+                  │ 需要工具？ │
+                  └─────┬─────┘
+                   Yes  │  No
+            ┌───────────┤───────────┐
+            ▼                       ▼
+   ┌──────────────┐       ┌──────────────┐
+   │ 返回工具调用   │       │ 返回文本回复   │
+   │ {name, args}  │       └──────┬───────┘
+   └──────┬───────┘              │
+          ▼                      ▼
+   ┌──────────────┐       ┌──────────┐
+   │ 执行函数      │       │ 返回用户  │
+   │ 获取结果      │       └──────────┘
+   └──────┬───────┘
+          ▼
+   ┌──────────────┐
+   │ 结果发回 LLM  │
+   └──────┬───────┘
+          ▼
+   ┌──────────────┐
+   │ LLM 整合回复  │
+   └──────┬───────┘
+          ▼
+   ┌──────────┐
+   │ 返回用户  │
+   └──────────┘
+</code></pre>
+<h2 id="_2">五、上下文窗口管理</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────┐
+│         Token 上下文窗口管理              │
+├──────────────────────────────────────────┤
+│                                          │
+│  Token 预算: 8192 (模型限制)              │
+│                                          │
+│  ┌────────────────────────────────────┐  │
+│  │ [System Prompt]      ~200 tokens  │  │
+│  │ [历史消息1]          ~100 tokens  │  │
+│  │ [历史消息2]          ~150 tokens  │  │
+│  │ ...                              │  │
+│  │ [历史消息N]          ~120 tokens  │  │  ← 自动截断
+│  │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─  │  │
+│  │ [当前用户消息]        ~80 tokens  │  │
+│  │ [预留输出空间]       ~2000 tokens │  │
+│  └────────────────────────────────────┘  │
+│                                          │
+│  💡 策略:                                │
+│  • 保留 System Prompt（始终不动）          │
+│  • 滑动窗口保留最近 N 条                  │
+│  • 预留 max_tokens 给输出                 │
+└──────────────────────────────────────────┘
+</code></pre>
+<h2 id="_3">六、错误处理与重试策略</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[发起 API 请求] --&gt; B{请求成功?}
+    B --&gt;|是| C[返回结果]
+    B --&gt;|否| D{错误类型?}
+    
+    D --&gt;|429 Rate Limit| E[指数退避重试&lt;br/&gt;1s → 2s → 4s → 8s]
+    D --&gt;|5xx 服务器错误| F[等待后重试&lt;br/&gt;最多3次]
+    D --&gt;|400 参数错误| G[检查参数&lt;br/&gt;修复后重试]
+    D --&gt;|网络错误| H[检查网络&lt;br/&gt;稍后重试]
+    
+    E --&gt; I{重试次数 &lt; 5?}
+    F --&gt; I
+    I --&gt;|是| A
+    I --&gt;|否| J[抛出异常&lt;br/&gt;记录日志]
+    
+    style C fill:#e8f5e9
+    style J fill:#ffebee
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[发起 API 请求] --&gt; B{请求成功?}
+    B --&gt;|是| C[返回结果]
+    B --&gt;|否| D{错误类型?}
+    
+    D --&gt;|429 Rate Limit| E[指数退避重试&lt;br/&gt;1s → 2s → 4s → 8s]
+    D --&gt;|5xx 服务器错误| F[等待后重试&lt;br/&gt;最多3次]
+    D --&gt;|400 参数错误| G[检查参数&lt;br/&gt;修复后重试]
+    D --&gt;|网络错误| H[检查网络&lt;br/&gt;稍后重试]
+    
+    E --&gt; I{重试次数 &lt; 5?}
+    F --&gt; I
+    I --&gt;|是| A
+    I --&gt;|否| J[抛出异常&lt;br/&gt;记录日志]
+    
+    style C fill:#e8f5e9
+    style J fill:#ffebee
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

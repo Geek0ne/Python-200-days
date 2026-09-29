@@ -1,0 +1,1856 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 166 — 系统监控（psutil）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 166 — 系统监控（psutil）</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">1255 行</span>
+    <span class="badge">6 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（6 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-166-系统监控-psutil" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 先分清：监控 ≠ 读一次数据</a>
+<a class="toc-l3" href="#22-psutil">2.2 psutil 是什么，不是什么</a>
+<a class="toc-l3" href="#23-counter-gauge-state">2.3 三类指标：counter / gauge / state</a>
+<a class="toc-l3" href="#24">2.4 采样的核心：为什么必须&quot;两次&quot;</a>
+<a class="toc-l3" href="#25">2.5 进程是一等公民</a>
+<a class="toc-l3" href="#26">2.6 采集的&quot;非原子性&quot;：你看到的世界从来不是同一瞬间的</a>
+<a class="toc-l3" href="#27-rss-vms-uss-pss">2.7 内存指标要分清：rss / vms / uss / pss</a>
+<a class="toc-l3" href="#28">2.8 跨平台与容器：同一行代码，两个世界</a>
+<a class="toc-l2" href="#3">3. 原理深入</a>
+<a class="toc-l3" href="#31-psutil-linux">3.1 psutil 在 Linux 上到底读了什么</a>
+<a class="toc-l3" href="#32-cpu_percent">3.2 cpu_percent() 的内部实现（伪代码级）</a>
+<a class="toc-l3" href="#33-cpu_times">3.3 进程时间：cpu_times() 与它的&quot;两个时钟&quot;</a>
+<a class="toc-l3" href="#34-pid-process">3.4 pid 复用：Process 对象缓存与&quot;僵尸对象&quot;</a>
+<a class="toc-l3" href="#35-io">3.5 IO 计数器：差分、溢出与重置</a>
+<a class="toc-l3" href="#36">3.6 异常层次：该捕哪个，不该捕哪个</a>
+<a class="toc-l3" href="#37">3.7 采样开销与&quot;观测者效应&quot;</a>
+<a class="toc-l3" href="#38-create_timeboot_time">3.8 时间基准：create_time()、boot_time() 与时钟跳变</a>
+<a class="toc-l2" href="#4-api">4. API 速查表</a>
+<a class="toc-l3" href="#41-cpu">4.1 CPU</a>
+<a class="toc-l3" href="#42">4.2 内存</a>
+<a class="toc-l3" href="#43">4.3 磁盘</a>
+<a class="toc-l3" href="#44">4.4 网络</a>
+<a class="toc-l3" href="#45">4.5 进程</a>
+<a class="toc-l3" href="#46">4.6 其他</a>
+<a class="toc-l2" href="#5-top-10">5. 常见陷阱 Top 10</a>
+<a class="toc-l3" href="#1cpu_percent-00">陷阱 1：cpu_percent() 首次返回 0.0</a>
+<a class="toc-l3" href="#2-intervalnone">陷阱 2：以为 interval=None 是&quot;瞬时值&quot;</a>
+<a class="toc-l3" href="#3_1">陷阱 3：把累计值当瞬时值（最致命的坑）</a>
+<a class="toc-l3" href="#4disk_usage-windows">陷阱 4：disk_usage(&#x27;/&#x27;) 在容器里毫无意义 / Windows 直接崩</a>
+<a class="toc-l3" href="#5processname-15-psutil">陷阱 5：Process.name() 的 15 字符截断，以及 psutil 的回退</a>
+<a class="toc-l3" href="#6">陷阱 6：容器里读到宿主机的内存/核数</a>
+<a class="toc-l3" href="#7-nosuchprocess-accessdenied">陷阱 7：不处理 NoSuchProcess / AccessDenied</a>
+<a class="toc-l3" href="#8-timetime">陷阱 8：用 time.time() 算采样间隔</a>
+<a class="toc-l3" href="#9processcpu_percent-100">陷阱 9：Process.cpu_percent() 超过 100% 就报警</a>
+<a class="toc-l3" href="#10">陷阱 10：阈值抖动导致告警风暴</a>
+<a class="toc-l2" href="#6_1">6. 实战代码案例</a>
+<a class="toc-l3" href="#61">6.1 文件清单与用途</a>
+<a class="toc-l3" href="#62">6.2 实战：一个完整的监控工具长什么样</a>
+<a class="toc-l3" href="#63">6.3 三条&quot;必须写对&quot;的细节</a>
+<a class="toc-l3" href="#64">6.4 退出码契约（再次强调，因为它真的重要）</a>
+<a class="toc-l3" href="#65">6.5 实测输出样例</a>
+<a class="toc-l2" href="#7">7. 思考题</a>
+<a class="toc-l2" href="#8">8. 参考与延伸</a>
+<a class="toc-l2" href="#9">9. 明日预告</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-166-psutil">Day 166 — 系统监控（psutil）</h1>
+<blockquote>
+<p><strong>Phase 11 — 自动化运维与 DevOps（Day 166–185）</strong> · 主题：系统监控 · 子主题：实战</p>
+<p><strong>安全与边界声明</strong>：<br>
+- 本课所有代码只<strong>读取本机指标</strong>，不发送任何网络请求，不修改系统配置。<br>
+- 演示进程只操作<strong>本进程自己</strong>（<code>os.getpid()</code>）和一个我们亲手启动的 <code>sleep</code> 子进程，<br>
+<strong>绝不</strong>对系统进程调用 <code>terminate()</code> / <code>kill()</code>。<br>
+- 教材里出现的 IP 一律是文档网段（RFC 5737 的 <code>192.0.2.0/24</code>）。<br>
+- 想要在生产机上跑监控脚本，请先用 <code>--dry-run</code> 或小 <code>--duration</code> 试跑。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>说清"监控"和"看一次数据"的本质区别，以及<strong>轮询（polling）</strong>与<strong>事件（event）</strong>两条路线的取舍</li>
+<li>解释 psutil 的定位：为什么它是一个<strong>库</strong>，而不是 <code>top</code>/<code>free</code>/<code>df</code> 命令行的 Python 包装</li>
+<li>分清三类指标：<strong>计数器（counter）</strong>、<strong>瞬时值（gauge）</strong>、<strong>状态（state）</strong>，并说出为什么搞混它们会得出错误结论</li>
+<li>说清 <code>psutil.cpu_percent()</code> 为什么需要<strong>两次读数</strong>才能算出百分比，以及它内部到底除的是什么</li>
+<li>解释 <code>cpu_percent(interval=None)</code> 首次调用返回 <code>0.0</code> 的根因，并给出三种正确写法</li>
+<li>说清什么是<strong>采样非原子性</strong>，以及它为什么会让你看到"进程用了一个不存在的用户的 CPU"</li>
+<li>解释 <code>rss</code> / <code>vms</code> / <code>uss</code> / <code>pss</code> 四个内存字段各自的含义与适用场景</li>
+<li>说清 <strong>pid 复用（pid reuse）</strong> 陷阱，以及 <code>Process</code> 对象缓存带来的迷惑行为</li>
+<li>解释为什么容器里 <code>psutil.virtual_memory().total</code> 会给出<strong>宿主机的内存总量</strong>，以及正确的读法</li>
+<li>掌握 <code>NoSuchProcess</code> / <code>AccessDenied</code> / <code>ZombieProcess</code> 三个异常的出现条件与处理套路</li>
+<li>能独立写出一个<strong>带阈值告警、可输出 JSON/Markdown 报告</strong>的系统监控脚本</li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 先分清：监控 ≠ 读一次数据</h3>
+<p>很多人第一次写"监控脚本"，写出来的是这个东西：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">psutil</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">())</span>
+</code></pre></div>
+<p>这不是监控，这只是<strong>一次采样</strong>。监控（monitoring）这个词至少有四个组成部分：</p>
+<pre class="plain"><code>        ┌──────────────── 监控的四个组成部分 ────────────────┐
+        │                                                   │
+  ①  采集      ②  时间维度       ③  判定        ④  表达/交付
+  采哪些指标    持续、带间隔、    阈值/趋势/      日志/告警/
+              连续观察         基线对比         JSON/看板
+        │            │                │              │
+        └────────────┴────────────────┴──────────────┘
+                    缺任何一个都不是&quot;监控&quot;
+</code></pre>
+<ul>
+<li><strong>只有 ①</strong> → 这是"查状态"，<code>top</code> 按一次 q 就退出。</li>
+<li><strong>只有 ①+②</strong> → 这是"记录仪"，有数据但没有结论。</li>
+<li><strong>只有 ①+②+③</strong> → 这是"告警器"，能用但会吵（阈值抖动、告警风暴）。</li>
+<li><strong>①+②+③+④</strong> → 这才叫监控：<strong>观测 → 判定 → 可复核的表达</strong>。</li>
+</ul>
+<p>本课的主线就是把这四块补齐。psutil 只负责第 ① 块（采集），<br>
+另外三块是我们自己写的逻辑 —— <strong>别把工具的边界当成问题的边界</strong>。</p>
+<h4 id="_1">为什么先说这个？</h4>
+<p>因为 psutil 的 API 长得太"顺滑"了：<code>cpu_percent()</code>、<code>virtual_memory()</code>、<code>disk_usage('/')</code>，<br>
+一行一个指标，容易让人以为监控就是"把这些值 print 出来"。<br>
+真正的坑全在 ②③④：<strong>间隔取多少、两次读数之间发生了什么、阈值该定在哪、<br>
+抖动怎么抑制、数据怎么存</strong>。这些 psutil 不替你想。</p>
+<hr>
+<h3 id="22-psutil">2.2 psutil 是什么，不是什么</h3>
+<p><strong>psutil = process and system utilities</strong>（进程与系统工具）。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">维度</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">形态</td>
+<td style="text-align: left;">纯 Python 库（底层少量 C 扩展），<code>pip install psutil</code></td>
+</tr>
+<tr>
+<td style="text-align: left;">依赖</td>
+<td style="text-align: left;">零外部依赖，不依赖 <code>top</code>/<code>free</code>/<code>vmstat</code> 等命令是否存在</td>
+</tr>
+<tr>
+<td style="text-align: left;">平台</td>
+<td style="text-align: left;">Linux / Windows / macOS / FreeBSD / OpenBSD / NetBSD / SunOS / AIX</td>
+</tr>
+<tr>
+<td style="text-align: left;">数据源</td>
+<td style="text-align: left;">Linux = <code>/proc</code> 虚拟文件系统；macOS/BSD = <code>sysctl</code> 与系统调用；Windows = Win32 API</td>
+</tr>
+<tr>
+<td style="text-align: left;">授权</td>
+<td style="text-align: left;">BSD-3-Clause，可商用</td>
+</tr>
+</tbody>
+</table>
+<p><strong>它是库，不是命令行的包装。</strong> 这一点极其关键，对比一下就懂：</p>
+<pre class="plain"><code>❌ 反例：subprocess 调 top 再解析文本
+
+   psutil 想要的值  ← top 的格式化输出 ← 终端宽度、locale、版本差异 ← 全靠正则硬啃
+                                      ↑
+                          列顺序变了 / 中文 locale 了 → 你的脚本当场去世
+
+✅ psutil 的做法
+
+   psutil 想要的值  ← 直接读 /proc/stat、/proc/meminfo、/proc/&lt;pid&gt;/stat
+
+   → 拿到的是**结构化数字**，不是给人看的文本
+   → 不受 locale、终端宽度、工具版本影响
+</code></pre>
+<p>命令行解析的三大脆性，psutil 一次性全部绕开：</p>
+<ol>
+<li><strong>格式化脆性</strong>：<code>top</code> 的头几行在不同发行版/版本上不一样，<code>free -m</code> 的单位和列名变过。</li>
+<li><strong>语言脆性</strong>：<code>LANG=zh_CN.UTF-8</code> 时某些工具的表头会变，正则立刻失配。</li>
+<li><strong>依赖脆性</strong>：容器里常常<strong>没装</strong> <code>top</code>/<code>free</code>（busybox 镜像尤甚），但 <code>/proc</code> 一定在。</li>
+</ol>
+<blockquote>
+<p><strong>原理锚点</strong>：Linux 上"一切皆文件"不只是口号 —— <code>/proc</code> 是内核导出的<br>
+<strong>实时只读视图</strong>。<code>psutil</code> 在 Linux 上基本就是"一个很懂 <code>/proc</code> 格式的解析器"。<br>
+理解了这一点，后面所有"为什么要两次读数""为什么会读到 0"的问题都能自己推出来。</p>
+</blockquote>
+<h4 id="psutil">psutil 不能做什么（边界）</h4>
+<ul>
+<li><strong>不做历史存储</strong>：它只给你"此刻"的值，不给你"昨天三点"。历史要靠 InfluxDB/Prometheus 这类时序库（Day 177 讲）。</li>
+<li><strong>不做告警分发</strong>：没有邮件/企微/钉钉（Day 171 讲）。</li>
+<li><strong>不做采样调度</strong>：不会自动每 5 秒采一次（Day 170 讲）。</li>
+<li><strong>不做容器隔离</strong>：它如实报告<strong>它自己看到的</strong> <code>/proc</code>（这个坑见 3.7 与 7.6）。</li>
+<li><strong>不是安全边界</strong>：普通用户读不到别的用户的进程详情时会 <code>AccessDenied</code>，这不是 bug。</li>
+</ul>
+<hr>
+<h3 id="23-counter-gauge-state">2.3 三类指标：counter / gauge / state</h3>
+<p>这是全课<strong>最重要的一次分类</strong>。分不清这三类，后面必然算错。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">类型</th>
+<th style="text-align: left;">含义</th>
+<th style="text-align: left;">单调性</th>
+<th style="text-align: left;">例子</th>
+<th style="text-align: left;">正确用法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>计数器 counter</strong></td>
+<td style="text-align: left;">开机以来<strong>累计</strong>的量</td>
+<td style="text-align: left;">单调递增（除非溢出/重启）</td>
+<td style="text-align: left;"><code>net_io_counters().bytes_sent</code><br><code>disk_io_counters().read_bytes</code><br><code>cpu_times().user</code></td>
+<td style="text-align: left;"><strong>必须两次读数相减</strong>，再除以时间间隔</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>瞬时值 gauge</strong></td>
+<td style="text-align: left;">此刻的<strong>水平/存量</strong></td>
+<td style="text-align: left;">上下浮动</td>
+<td style="text-align: left;"><code>virtual_memory().used</code><br><code>disk_usage('/').used</code><br><code>cpu_percent()</code>（它其实是从 counter 算出来的 gauge）</td>
+<td style="text-align: left;">直接读，或看趋势</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>状态 state</strong></td>
+<td style="text-align: left;">离散枚举/字符串</td>
+<td style="text-align: left;">—</td>
+<td style="text-align: left;"><code>Process.status()</code> → <code>'running'</code>/<code>'sleeping'</code>/<code>'zombie'</code><br><code>Process.username()</code></td>
+<td style="text-align: left;">按枚举分支处理</td>
+</tr>
+</tbody>
+</table>
+<h4 id="_2">为什么必须分清楚？看一个真实错误</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 错误：把&quot;累计发送字节数&quot;当成&quot;发送速率&quot;</span>
+<span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="p">):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">psutil</span><span class="o">.</span><span class="n">net_io_counters</span><span class="p">()</span><span class="o">.</span><span class="n">bytes_sent</span><span class="p">)</span>   <span class="c1"># 128734, 128740, 128753, ...</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="c1"># 读者看到数字一直在涨 → 误判为&quot;持续从零开始的大流量&quot;</span>
+<span class="c1"># 真相：这是开机以来的累计值，一万多字节是这次循环自己涨的</span>
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ 正确：差分 + 除以时间</span>
+<span class="n">a</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">net_io_counters</span><span class="p">()</span><span class="o">.</span><span class="n">bytes_sent</span>
+<span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">net_io_counters</span><span class="p">()</span><span class="o">.</span><span class="n">bytes_sent</span>
+<span class="n">rate</span> <span class="o">=</span> <span class="p">(</span><span class="n">b</span> <span class="o">-</span> <span class="n">a</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1.0</span>        <span class="c1"># bytes/s</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">rate</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1024</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> KiB/s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<blockquote>
+<p><strong>一句话记忆</strong>：<strong>counter 要减，gauge 要读，state 要判。</strong></p>
+</blockquote>
+<h4 id="sleep">差分为什么除以"时间间隔"而不是"sleep 的秒数"？</h4>
+<p>因为 <code>sleep(1.0)</code> 只能保证"<strong>至少</strong>睡 1 秒"，实际可能 1.003 秒（调度、GC、系统负载都会拖）。<br>
+在需要精度的场合，应该用 <code>time.monotonic()</code> 实测：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">t0</span><span class="p">,</span> <span class="n">a</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">(),</span> <span class="n">psutil</span><span class="o">.</span><span class="n">net_io_counters</span><span class="p">()</span><span class="o">.</span><span class="n">bytes_sent</span>
+<span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+<span class="n">t1</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">(),</span> <span class="n">psutil</span><span class="o">.</span><span class="n">net_io_counters</span><span class="p">()</span><span class="o">.</span><span class="n">bytes_sent</span>
+<span class="n">rate</span> <span class="o">=</span> <span class="p">(</span><span class="n">b</span> <span class="o">-</span> <span class="n">a</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">t1</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span>     <span class="c1"># 用实测间隔，误差显著更小</span>
+</code></pre></div>
+<p>而且要用 <code>time.monotonic()</code>（单调时钟）而<strong>不是</strong> <code>time.time()</code>：<br>
+后者会被 NTP 校时、闰秒、手动改时间<strong>往回拨</strong>，一旦往回拨，<br>
+<code>t1 - t0</code> 可能变成负数或 0，你的速率就成了 <code>inf</code> / 负值。</p>
+<hr>
+<h3 id="24">2.4 采样的核心：为什么必须"两次"</h3>
+<p>这是初学者最大的困惑点：<strong>"我就想知道现在 CPU 用了多少，为什么要等一秒？"</strong></p>
+<p>答案：<strong>因为操作系统里根本没有"当前 CPU 使用率"这个数字。</strong></p>
+<p>内核维护的是一堆<strong>累计刻度</strong>（jiffies），比如 <code>/proc/stat</code> 的第一行：</p>
+<pre class="plain"><code>cpu  120456 3312 42910 9876543 12043 0 812 0 0 0
+     │      │   │     │       │     │ │  │
+     │      │   │     │       │     │ │  └─ steal（被虚拟化抢走的时间）
+     │      │   │     │       │     │ └──── guest_nice
+     │      │   │     │       │     └────── guest
+     │      │   │     │       └──────────── irq / softirq（中断处理）
+     │      │   │     └──────────────────── idle（空闲）
+     │      │   └────────────────────────── system（内核态）
+     │      └────────────────────────────── nice（低优先级用户态）
+     └───────────────────────────────────── user（用户态）
+     单位：USER_HZ（Linux 上通常是 1/100 秒 = 10ms 一个 tick）
+</code></pre>
+<p><strong>使用率是算出来的，不是读出来的：</strong></p>
+<pre class="plain"><code>        t0 时刻读数                      t1 时刻读数
+   ┌──────────────┐              ┌──────────────┐
+   │ user0  nice0 │              │ user1  nice1 │
+   │ sys0   idle0 │  ───────►    │ sys1   idle1 │
+   │ ...          │   Δt 秒      │ ...          │
+   └──────────────┘              └──────────────┘
+                  ↓  差分
+   busy = (user1-user0) + (nice1-nice0) + (sys1-sys0) + ...
+   total = busy + (idle1-idle0) + (iowait1-iowait0) + ...
+   usage = busy / total × 100%      ← 这才是 &quot;CPU 使用率&quot;
+</code></pre>
+<p>由此推出三条必然结论：</p>
+<ol>
+<li><strong>第一次调用没有参照物</strong> → 只能返回 <code>0.0</code>（psutil 的选择，见 7.1）。</li>
+<li><strong>间隔越短，噪声越大</strong>。Δt=10ms 时，一个 tick 的调度误差就能让结果上下跳 10%。</li>
+<li><strong><code>usage</code> 天然是"过去 Δt 的平均值"</strong>，不是"此刻的瞬时值"。<br>
+   系统里从来就没有后者 —— 任何声称给你瞬时 CPU 的工具都在撒谎。</li>
+</ol>
+<h4 id="_3">那么"瞬时值"是怎么被造出来的？</h4>
+<p><code>top</code> 默认 3 秒刷新一次；<code>psutil.cpu_percent(interval=0.1)</code> 用 0.1 秒；<br>
+Prometheus 的 <code>node_exporter</code> 用 15 秒；云监控厂商常见 60 秒。</p>
+<p>它们都在做同一件事：<strong>选一个 Δt，让内核两次读书相减</strong>。<br>
+Δt 的选择是一个<strong>权衡</strong>：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Δt</th>
+<th style="text-align: left;">优点</th>
+<th style="text-align: left;">缺点</th>
+<th style="text-align: left;">适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">0.01–0.1s</td>
+<td style="text-align: left;">反应快</td>
+<td style="text-align: left;">噪声大，且频繁读取本身有开销</td>
+<td style="text-align: left;">交互式调试</td>
+</tr>
+<tr>
+<td style="text-align: left;">0.5–1s</td>
+<td style="text-align: left;">够快也够稳</td>
+<td style="text-align: left;">—</td>
+<td style="text-align: left;">脚本告警（推荐）</td>
+</tr>
+<tr>
+<td style="text-align: left;">5–15s</td>
+<td style="text-align: left;">稳定</td>
+<td style="text-align: left;">短时尖峰被平均掉</td>
+<td style="text-align: left;">看板、长期趋势</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>记住</strong>：你选的不只是刷新频率，而是<strong>这台机器上"多久之内的异常算异常"的定义</strong>。<br>
+选 15 秒，就意味着一次持续 8 秒的 CPU 打满<strong>永远不会</strong>被你发现。</p>
+</blockquote>
+<hr>
+<h3 id="25">2.5 进程是一等公民</h3>
+<p>psutil 对进程的建模很直白：<code>Process(pid)</code> 是一个<strong>句柄（handle）</strong>，<br>
+每次你调 <code>.cpu_percent()</code> / <code>.memory_info()</code>，它都是<strong>现场去读一次</strong> <code>/proc/&lt;pid&gt;/xxx</code>。</p>
+<pre class="plain"><code>   psutil.Process(pid=1234)
+            │
+            ├── .name()          → &quot;python3&quot;          ← 读 /proc/1234/comm
+            ├── .cmdline()       → [&quot;python3&quot;, &quot;x.py&quot;] ← 读 /proc/1234/cmdline
+            ├── .exe()           → &quot;/usr/bin/python3&quot; ← 读 /proc/1234/exe（符号链接）
+            ├── .cwd()           → &quot;/root/code&quot;       ← 读 /proc/1234/cwd
+            ├── .status()        → &quot;sleeping&quot;         ← 读 /proc/1234/stat 第 3 字段
+            ├── .memory_info()   → rss/vms/...        ← 读 /proc/1234/statm + status
+            ├── .cpu_times()     → user/system/...    ← 读 /proc/1234/stat
+            ├── .connections()   → 网络连接列表        ← 读 /proc/1234/net/ 与 socket inode
+            └── .children()      → [Process, ...]     ← 遍历 /proc/*/stat 找 ppid
+</code></pre>
+<p>关键心态转变：<strong><code>Process</code> 是"活的"，不是"快照"</strong>。<br>
+你拿到对象后，那个进程可能已经死了；你调用任何方法都可能抛 <code>NoSuchProcess</code>。<br>
+这不是设计缺陷，而是<strong>如实反映现实</strong> —— 现实里的进程确实会随时消失。</p>
+<h4 id="_4">为什么是"句柄"而不是"快照"？</h4>
+<p>因为监控的本意是"持续观察同一个对象"。如果 <code>Process(1234)</code> 是快照，<br>
+那每次采样都得重新 <code>Process(1234)</code>，无法回答"这个进程过去 5 分钟涨了多少内存"。</p>
+<p>代价就是<strong>非原子性</strong>（下一个概念）和 <strong>pid 复用</strong>（3.4）这两个坑。</p>
+<hr>
+<h3 id="26">2.6 采集的"非原子性"：你看到的世界从来不是同一瞬间的</h3>
+<p>一个容易被忽略的事实：<code>psutil.process_iter()</code> 遍历进程时，<br>
+<strong>系统在同时变化</strong>。</p>
+<pre class="plain"><code> 你(采集者)                          系统(被观测者)
+ ─────────                          ──────────────
+ 读到 pid=100 的 CPU  ────────────►  100 已退出
+ 读到 pid=200 的内存 ────────────►  200 被 AccessDenied（别的用户）
+ 遍历 /proc 列表 ────────────────► 3321 刚被创建（本轮的列表里没有它）
+ ─────────                          ──────────────
+ 得到的结果 = 不同时刻、不同状态的拼接
+</code></pre>
+<p>这叫<strong>采样非原子性（non-atomic sampling）</strong>。它不是 bug，是<strong>分布式观测的基本事实</strong>。<br>
+后果有三类，必须显式处理：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">现象</th>
+<th style="text-align: left;">原因</th>
+<th style="text-align: left;">处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">抛 <code>NoSuchProcess</code></td>
+<td style="text-align: left;">进程在两次调用之间退出</td>
+<td style="text-align: left;"><code>try/except</code> 跳过</td>
+</tr>
+<tr>
+<td style="text-align: left;">抛 <code>AccessDenied</code></td>
+<td style="text-align: left;">进程属于其他用户，普通用户读不到</td>
+<td style="text-align: left;"><code>try/except</code>，或降级为"只知道 pid 存在"</td>
+</tr>
+<tr>
+<td style="text-align: left;">抛 <code>ZombieProcess</code></td>
+<td style="text-align: left;">进程已退出但父进程没 <code>wait()</code></td>
+<td style="text-align: left;">单独识别并报告（本身是个问题信号）</td>
+</tr>
+<tr>
+<td style="text-align: left;">数值"对不上账"</td>
+<td style="text-align: left;">各项指标来自不同时刻</td>
+<td style="text-align: left;">接受；或用 <code>Process.oneshot()</code> 缩小窗口</td>
+</tr>
+</tbody>
+</table>
+<h4 id="oneshot"><code>oneshot()</code>：把多次读合并成一次</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">p</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">Process</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">getpid</span><span class="p">())</span>
+
+<span class="c1"># 普通写法：每次属性访问可能落一次系统调用/文件读</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">name</span><span class="p">(),</span> <span class="n">p</span><span class="o">.</span><span class="n">status</span><span class="p">(),</span> <span class="n">p</span><span class="o">.</span><span class="n">memory_info</span><span class="p">())</span>
+
+<span class="c1"># oneshot 写法：进入上下文后，psutil 一次性把关键文件读完并缓存</span>
+<span class="k">with</span> <span class="n">p</span><span class="o">.</span><span class="n">oneshot</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">name</span><span class="p">(),</span> <span class="n">p</span><span class="o">.</span><span class="n">status</span><span class="p">(),</span> <span class="n">p</span><span class="o">.</span><span class="n">memory_info</span><span class="p">())</span>
+</code></pre></div>
+<p><code>oneshot()</code> 内部把 <code>/proc/&lt;pid&gt;/stat</code>、<code>/proc/&lt;pid&gt;/status</code>、<code>/proc/&lt;pid&gt;/cmdline</code><br>
+等文件<strong>读一次缓存起来</strong>，上下文退出后缓存失效。<br>
+它带来两个好处：<strong>更快</strong>、<strong>同一时刻性更好</strong>（减少跨时刻拼接）。</p>
+<blockquote>
+<p>注意：<code>oneshot()</code> 里的值在上下文内<strong>不会更新</strong>。所以它适合"一次采集内读多个字段"，<br>
+<strong>不能</strong>用来替代循环采样 —— 在 <code>with</code> 里循环读只会一直读到同一份旧数据。</p>
+</blockquote>
+<hr>
+<h3 id="27-rss-vms-uss-pss">2.7 内存指标要分清：rss / vms / uss / pss</h3>
+<p><code>Process.memory_info()</code> 返回的字段，名字很像但含义差别巨大：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">字段</th>
+<th style="text-align: left;">全称</th>
+<th style="text-align: left;">含义</th>
+<th style="text-align: left;">大小关系</th>
+<th style="text-align: left;">用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>rss</code></td>
+<td style="text-align: left;">Resident Set Size</td>
+<td style="text-align: left;">实际占用的<strong>物理内存</strong>（含共享库）</td>
+<td style="text-align: left;">大</td>
+<td style="text-align: left;">最常用，但<strong>会重复计算共享页</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>vms</code> / <code>vsz</code></td>
+<td style="text-align: left;">Virtual Memory Size</td>
+<td style="text-align: left;">申请的<strong>虚拟地址空间</strong></td>
+<td style="text-align: left;">最大</td>
+<td style="text-align: left;">排查地址空间泄漏；<strong>不等于真占内存</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>uss</code></td>
+<td style="text-align: left;">Unique Set Size</td>
+<td style="text-align: left;"><strong>本进程独占</strong>的物理内存</td>
+<td style="text-align: left;">最小</td>
+<td style="text-align: left;">Linux 独有；<strong>最能代表"杀掉它能释放多少"</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>pss</code></td>
+<td style="text-align: left;">Proportional Set Size</td>
+<td style="text-align: left;">共享页<strong>按比例摊分</strong>后的物理内存</td>
+<td style="text-align: left;">rss ≥ pss ≥ uss</td>
+<td style="text-align: left;">容器/多进程场景最公平</td>
+</tr>
+</tbody>
+</table>
+<pre class="plain"><code>  物理内存                       进程 A 的视角          进程 B 的视角
+  ┌────────────────────┐
+  │ A 私有 100MB       │  ← 只属于 A            rss 计入 100MB
+  ├────────────────────┤
+  │ B 私有 200MB       │       (不属于 A)                    rss 计入 200MB
+  ├────────────────────┤
+  │ 共享库 libc 10MB   │  ← A/B 都在用          rss 计入 10MB   rss 计入 10MB
+  └────────────────────┘
+                    ↑
+     计入 A.rss(10) + B.rss(10) = 20MB，但物理上只有 10MB
+     → 这就是 &quot;把所有进程 rss 加起来 &gt; 总内存&quot; 的原因
+     → 用 pss 摊分：A.pss(5) + B.pss(5) = 10MB ✅
+</code></pre>
+<p><strong>实战结论</strong>：</p>
+<ul>
+<li>排行"谁最占内存" → 用 <code>rss</code>（直观）。</li>
+<li>判断"干掉它能省多少" → 用 <code>uss</code>（准确）。</li>
+<li>容器里做资源核算 → 用 <code>pss</code>（公平）。</li>
+<li>看到 <code>vms</code> 几十 GB 就报警 → <strong>错误</strong>，虚拟内存不等于物理占用（Python 进程尤其夸张）。</li>
+</ul>
+<hr>
+<h3 id="28">2.8 跨平台与容器：同一行代码，两个世界</h3>
+<p>psutil 的 API 是跨平台的，但<strong>语义不总是可移植</strong>：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">能力</th>
+<th style="text-align: center;">Linux</th>
+<th style="text-align: center;">macOS</th>
+<th style="text-align: center;">Windows</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>cpu_percent()</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">可用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>virtual_memory()</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">可用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>disk_partitions()</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">挂载点命名差异大，<strong>别硬编码 <code>/</code></strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sensors_temperatures()</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: left;">macOS/Windows 通常返回 <code>{}</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sensors_fans()</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: left;">同上</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.connections()</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">需要相应权限</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.ionice()</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">macOS 无</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.rlimit()</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: center;">❌</td>
+<td style="text-align: left;">Linux/FreeBSD</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>net_io_counters(pernic=True)</code></td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: center;">✅</td>
+<td style="text-align: left;">网卡名差异大（<code>eth0</code> vs <code>en0</code> vs <code>以太网</code>）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="psutil-proc">容器的真相：psutil 读的是"它看到的 /proc"</h4>
+<p>这是<strong>运维实战里最容易踩的大坑</strong>。在 Docker 容器里跑：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">psutil</span><span class="o">.</span><span class="n">virtual_memory</span><span class="p">()</span><span class="o">.</span><span class="n">total</span>     <span class="c1"># → 62.8 GB   ← 宿主机内存，不是容器限额！</span>
+<span class="n">psutil</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span>                <span class="c1"># → 8         ← 宿主机核数！</span>
+<span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">()</span>              <span class="c1"># → 反映宿主机整体负载！</span>
+</code></pre></div>
+<p>为什么会这样？因为<strong>默认情况下容器与宿主机共享 <code>/proc</code> 的一部分视图</strong>：</p>
+<pre class="plain"><code>   ┌─────────────────── 宿主机（64GB / 8 核）───────────────────┐
+   │                                                            │
+   │   /proc/meminfo   → MemTotal: 65814128 kB  （整机）         │
+   │   /proc/cpuinfo   → 8 个 processor                         │
+   │   /proc/stat      → 整机 CPU 累计刻度                       │
+   │                                                            │
+   │   ┌──────────── 容器 A（cgroup 限额 512MB / 1 核）────────┐ │
+   │   │  读 /proc/meminfo  → 看到 65814128 kB  ❌（宿主的值） │ │
+   │   │  读 /sys/fs/cgroup/memory.max → 536870912 ✅（自己的）│ │
+   │   └───────────────────────────────────────────────────────┘ │
+   └────────────────────────────────────────────────────────────┘
+</code></pre>
+<p><strong>正确读法</strong>（Linux cgroup v2）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+
+<span class="k">def</span> <span class="nf">cgroup_memory_limit</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;返回容器内存限额（字节）；无限制或不支持时返回 None。&quot;&quot;&quot;</span>
+    <span class="c1"># cgroup v2</span>
+    <span class="n">p2</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;/sys/fs/cgroup/memory.max&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">p2</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+        <span class="n">raw</span> <span class="o">=</span> <span class="n">p2</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">raw</span> <span class="o">!=</span> <span class="s2">&quot;max&quot;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="nb">int</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+    <span class="c1"># cgroup v1</span>
+    <span class="n">p1</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;/sys/fs/cgroup/memory/memory.limit_in_bytes&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">p1</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
+        <span class="n">val</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">p1</span><span class="o">.</span><span class="n">read_text</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+        <span class="c1"># v1 的&quot;无限制&quot;是一个极大值（接近 2^63），要挡掉</span>
+        <span class="k">if</span> <span class="n">val</span> <span class="o">&lt;</span> <span class="mi">1</span> <span class="o">&lt;&lt;</span> <span class="mi">62</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">val</span>
+    <span class="k">return</span> <span class="kc">None</span>
+</code></pre></div>
+<p>同理，容器的 CPU 限额在 <code>/sys/fs/cgroup/cpu.max</code>（v2，格式 <code>&lt;quota&gt; &lt;period&gt;</code>，如 <code>50000 100000</code> = 0.5 核）。</p>
+<blockquote>
+<p><strong>经验法则</strong>：<strong>在容器里做容量判断，永远先问"我的限额是多少"，而不是"机器有多少"。</strong><br>
+监控一个 512MB 的容器却按 64GB 的阈值告警，等于没有告警。</p>
+</blockquote>
+<hr>
+<h2 id="3">3. 原理深入</h2>
+<h3 id="31-psutil-linux">3.1 psutil 在 Linux 上到底读了什么</h3>
+<p>理解这张映射表，等于拿到了"为什么会出错"的排查地图：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">psutil API</th>
+<th style="text-align: left;">Linux 数据源</th>
+<th style="text-align: left;">读法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>cpu_times()</code></td>
+<td style="text-align: left;"><code>/proc/stat</code> 第 1 行（<code>cpu</code>）</td>
+<td style="text-align: left;">解析 10 个累计 jiffies</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cpu_times(percpu=True)</code></td>
+<td style="text-align: left;"><code>/proc/stat</code> 的 <code>cpu0</code>/<code>cpu1</code>... 行</td>
+<td style="text-align: left;">同上，逐核</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cpu_count(logical=True)</code></td>
+<td style="text-align: left;"><code>/proc/cpuinfo</code> 的 <code>processor</code> 条目数 或 <code>os.cpu_count()</code></td>
+<td style="text-align: left;">计数</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cpu_count(logical=False)</code></td>
+<td style="text-align: left;"><code>/proc/cpuinfo</code> 去重 <code>core id</code> + <code>physical id</code></td>
+<td style="text-align: left;">需要解析拓扑</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>cpu_freq()</code></td>
+<td style="text-align: left;"><code>/proc/cpuinfo</code> 的 <code>cpu MHz</code> 或 <code>/sys/devices/system/cpu/*/cpufreq/</code></td>
+<td style="text-align: left;">单值/列表</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>virtual_memory()</code></td>
+<td style="text-align: left;"><code>/proc/meminfo</code>（<code>MemTotal</code>/<code>MemAvailable</code>/<code>SwapTotal</code>...）</td>
+<td style="text-align: left;">逐字段解析</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>swap_memory()</code></td>
+<td style="text-align: left;"><code>/proc/meminfo</code>（<code>SwapTotal</code>/<code>SwapFree</code>）</td>
+<td style="text-align: left;">同上</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>disk_partitions()</code></td>
+<td style="text-align: left;"><code>/proc/filesystems</code> + <code>/proc/self/mounts</code>（或 <code>/etc/mtab</code>）</td>
+<td style="text-align: left;">过滤伪文件系统</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>disk_usage(path)</code></td>
+<td style="text-align: left;"><code>statvfs(2)</code> 系统调用</td>
+<td style="text-align: left;">直接系统调用，<strong>不读 /proc</strong></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>disk_io_counters()</code></td>
+<td style="text-align: left;"><code>/proc/diskstats</code></td>
+<td style="text-align: left;">累计扇区数 × 512 = 字节</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>net_io_counters()</code></td>
+<td style="text-align: left;"><code>/proc/net/dev</code></td>
+<td style="text-align: left;">累计字节/包</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>net_connections()</code></td>
+<td style="text-align: left;"><code>/proc/net/tcp</code>、<code>/proc/net/udp</code> + socket inode 映射</td>
+<td style="text-align: left;">需要权限</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>boot_time()</code></td>
+<td style="text-align: left;"><code>/proc/stat</code> 的 <code>btime</code> 行（或 <code>/proc/uptime</code> 反推）</td>
+<td style="text-align: left;">秒级时间戳</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.name()</code></td>
+<td style="text-align: left;"><code>/proc/&lt;pid&gt;/comm</code></td>
+<td style="text-align: left;">截断到 15 字符！</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.cmdline()</code></td>
+<td style="text-align: left;"><code>/proc/&lt;pid&gt;/cmdline</code>（<code>\0</code> 分隔）</td>
+<td style="text-align: left;">可能为空（内核线程/已退出）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.status()</code></td>
+<td style="text-align: left;"><code>/proc/&lt;pid&gt;/stat</code> 第 3 字段</td>
+<td style="text-align: left;">单字符码（R/S/D/Z/T...）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.memory_info()</code></td>
+<td style="text-align: left;"><code>/proc/&lt;pid&gt;/statm</code> + <code>/proc/&lt;pid&gt;/status</code></td>
+<td style="text-align: left;">页数 × 页大小</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.username()</code></td>
+<td style="text-align: left;"><code>/proc/&lt;pid&gt;/status</code> 的 <code>Uid:</code> → <code>/etc/passwd</code> 反查</td>
+<td style="text-align: left;">需要权限</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>sensors_temperatures()</code></td>
+<td style="text-align: left;"><code>/sys/class/hwmon/*</code></td>
+<td style="text-align: left;">需要驱动支持</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong><code>Process.name()</code> 与 15 字符截断</strong>（实测过的细节）：<br>
+内核的 <code>/proc/&lt;pid&gt;/comm</code> 字段上限是 <code>TASK_COMM_LEN</code>=16 字节（含结尾 <code>\0</code>），<br>
+所以<strong>内核层面</strong>最多只保留 15 个可见字符。但 psutil 会在 <code>len(name) &gt;= 15</code> 时<br>
+<strong>回退去读 <code>cmdline()</code></strong>：若 <code>cmdline[0]</code> 的 basename 以该截断名开头，就返回完整名字<br>
+（源码见 <code>Process.name()</code> 的 POSIX 分支，动机是 <code>gnome-keyring-d</code> → <code>gnome-keyring-daemon</code>）。<br>
+所以「名字被截断」这个坑，真正会伤到你的场景是：<strong><code>cmdline()</code> 不可用的时候</strong> ——<br>
+内核线程（<code>cmdline</code> 为空）、僵尸进程（抛 <code>ZombieProcess</code>）、无权限（抛 <code>AccessDenied</code>）。<br>
+完整验证见 <code>code/03-pitfalls.py --only 5</code>。</p>
+</blockquote>
+<h4 id="procdiskstats">为什么不直接读 <code>/proc/diskstats</code> 拿"磁盘使用率"？</h4>
+<p>因为 <code>/proc/diskstats</code> 给的是<strong>累计扇区数</strong>，得到使用率还需要第二个数据：<br>
+<strong>"这段时间花在 IO 上多少秒"</strong>。psutil 把它整理成了 <code>read_time</code> / <code>write_time</code>（毫秒），<br>
+于是：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">io</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">disk_io_counters</span><span class="p">()</span>
+<span class="n">busy_ms</span> <span class="o">=</span> <span class="n">io</span><span class="o">.</span><span class="n">read_time</span> <span class="o">+</span> <span class="n">io</span><span class="o">.</span><span class="n">write_time</span>          <span class="c1"># 累计 IO 忙时长</span>
+<span class="c1"># 两次采样后：</span>
+<span class="n">utilization</span> <span class="o">=</span> <span class="p">(</span><span class="n">busy_ms1</span> <span class="o">-</span> <span class="n">busy_ms0</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">t1</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">/</span> <span class="mi">1000</span>   <span class="c1"># 0.0 ~ 1.0</span>
+</code></pre></div>
+<p>注意 <strong><code>busy_ms</code> 也可能 &gt;100%</strong>（多队列块设备 nvme 会并发），<br>
+所以这个数叫"<strong>设备忙碌度</strong>"更准确，别直接当 <code>df</code> 那种"空间占用率"理解。<br>
+<strong>空间 vs 忙碌是两件事</strong> —— <code>disk_usage()</code> 看空间，<code>disk_io_counters()</code> 看吞吐/忙碌。</p>
+<hr>
+<h3 id="32-cpu_percent">3.2 <code>cpu_percent()</code> 的内部实现（伪代码级）</h3>
+<p>psutil 的实现可以概括成下面这段（简化自 CPython 扩展）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 概念性伪代码，用于理解行为，不要照抄</span>
+<span class="n">_LAST</span> <span class="o">=</span> <span class="p">{}</span>   <span class="c1"># 模块级：{key: (busy_time, total_time)}  ← 注意：是&quot;上次的绝对值&quot;</span>
+
+<span class="k">def</span> <span class="nf">cpu_percent</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">percpu</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="s1">&#39;percpu&#39;</span> <span class="k">if</span> <span class="n">percpu</span> <span class="k">else</span> <span class="s1">&#39;total&#39;</span>
+    <span class="n">now</span> <span class="o">=</span> <span class="n">_read_cpu_times</span><span class="p">()</span>                 <span class="c1"># 读 /proc/stat</span>
+    <span class="n">busy_now</span>  <span class="o">=</span> <span class="n">now</span><span class="o">.</span><span class="n">user</span> <span class="o">+</span> <span class="n">now</span><span class="o">.</span><span class="n">nice</span> <span class="o">+</span> <span class="n">now</span><span class="o">.</span><span class="n">system</span> <span class="o">+</span> <span class="n">now</span><span class="o">.</span><span class="n">irq</span> <span class="o">+</span> <span class="n">now</span><span class="o">.</span><span class="n">softirq</span> <span class="o">+</span> <span class="o">...</span>
+    <span class="n">total_now</span> <span class="o">=</span> <span class="n">busy_now</span> <span class="o">+</span> <span class="n">now</span><span class="o">.</span><span class="n">idle</span> <span class="o">+</span> <span class="n">now</span><span class="o">.</span><span class="n">iowait</span> <span class="o">+</span> <span class="o">...</span>
+
+    <span class="n">last</span> <span class="o">=</span> <span class="n">_LAST</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="n">_LAST</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">busy_now</span><span class="p">,</span> <span class="n">total_now</span><span class="p">)</span>      <span class="c1"># ★ 立刻更新&quot;上次&quot;缓存</span>
+
+    <span class="k">if</span> <span class="n">interval</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>                <span class="c1"># ★ 阻塞语义</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">interval</span><span class="p">)</span>
+        <span class="n">busy_then</span><span class="p">,</span> <span class="n">total_then</span> <span class="o">=</span> <span class="n">_read_cpu_times_again</span><span class="p">()</span>  <span class="c1"># 重新读</span>
+        <span class="c1"># 用 interval 前后的两次读数算</span>
+        <span class="o">...</span>
+
+    <span class="k">if</span> <span class="n">last</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>                        <span class="c1"># ★ 首次调用</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+
+    <span class="n">busy_delta</span>  <span class="o">=</span> <span class="n">busy_now</span> <span class="o">-</span> <span class="n">last</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">total_delta</span> <span class="o">=</span> <span class="n">total_now</span> <span class="o">-</span> <span class="n">last</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">total_delta</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="n">busy_delta</span> <span class="o">/</span> <span class="n">total_delta</span> <span class="o">*</span> <span class="mf">100.0</span>
+</code></pre></div>
+<p>由此可以<strong>推导</strong>出全部行为（后面 7.1/7.2 的坑都是这里的直接推论）：</p>
+<ol>
+<li><strong>首次调用返回 <code>0.0</code></strong>：<code>_LAST</code> 里没有参照物 → 返回 0.0。</li>
+<li><strong><code>_LAST</code> 是模块级全局</strong>：同一个进程里，<strong>任何地方</strong>调用 <code>cpu_percent()</code> 都会<br>
+   重置这个基准。所以两处代码交替调用会互相"偷时间"，导致结果偏小。</li>
+<li><strong><code>interval</code> 不是 None 时是阻塞的</strong>：调用会 <code>sleep(interval)</code>，<br>
+   这在单线程脚本里意味着<strong>你的整个循环被拖慢 interval 秒</strong>。</li>
+<li><strong><code>interval=None</code> 是非阻塞的</strong>：立刻返回"自上次调用以来"的平均值 ——<br>
+   这意味着<strong>结果取决于你多久调一次</strong>。</li>
+</ol>
+<h4 id="_5">三种正确写法</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ✅ 写法 A：阻塞式，最简单，适合串行脚本（每次调用自带一秒窗口）</span>
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;CPU: </span><span class="si">{</span><span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="mf">1.0</span><span class="p">)</span><span class="si">:</span><span class="s2">5.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>   <span class="c1"># 每次阻塞 1s</span>
+
+<span class="c1"># ✅ 写法 B：非阻塞 + 自己控制节奏（推荐用于多指标组合采集）</span>
+<span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>        <span class="c1"># 预热：建立基准，返回值丢弃</span>
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">1.0</span><span class="p">)</span>
+    <span class="n">cpu</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>    <span class="c1"># 读&quot;过去 1 秒&quot;的平均</span>
+    <span class="n">mem</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">virtual_memory</span><span class="p">()</span><span class="o">.</span><span class="n">percent</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;CPU </span><span class="si">{</span><span class="n">cpu</span><span class="si">:</span><span class="s2">5.1f</span><span class="si">}</span><span class="s2">%  MEM </span><span class="si">{</span><span class="n">mem</span><span class="si">:</span><span class="s2">5.1f</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 写法 C：逐核（percpu=True）</span>
+<span class="n">per</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="mf">1.0</span><span class="p">,</span> <span class="n">percpu</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;core</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">v</span><span class="si">:</span><span class="s2">4.1f</span><span class="si">}</span><span class="s2">%&quot;</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">per</span><span class="p">)))</span>
+</code></pre></div>
+<blockquote>
+<p><strong>写法 B 的"预热"是必须的吗？</strong> 不是必须，但<strong>不预热的第一轮会打印 0.0</strong>，<br>
+观感很差且容易误判。把"预热 + 丢弃返回值"写进初始化阶段，是工程上的好习惯。<br>
+反复强调同一个原则：<strong>观测工具本身需要被正确初始化。</strong></p>
+</blockquote>
+<hr>
+<h3 id="33-cpu_times">3.3 进程时间：<code>cpu_times()</code> 与它的"两个时钟"</h3>
+<p><code>Process.cpu_times()</code> 返回的是一组<strong>累计 CPU 时间</strong>（单位秒，浮点）：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">字段</th>
+<th style="text-align: left;">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>user</code></td>
+<td style="text-align: left;">进程在<strong>用户态</strong>消耗的 CPU 时间</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>system</code></td>
+<td style="text-align: left;">进程在<strong>内核态</strong>消耗的 CPU 时间</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>children_user</code></td>
+<td style="text-align: left;"><strong>已回收的子进程</strong>在用户态的时间（Linux/macOS）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>children_system</code></td>
+<td style="text-align: left;">已回收子进程的内核态时间</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>iowait</code></td>
+<td style="text-align: left;">等待 IO 的时间（Linux，<strong>部分内核不填</strong>）</td>
+</tr>
+</tbody>
+</table>
+<p>要点：</p>
+<ol>
+<li><strong>这是该进程"消费掉多少 CPU 秒"</strong>，不是"墙上时间（wall clock）"。<br>
+   一个进程跑 10 秒，可能只消费 0.2 秒 CPU（大部分时间在等 IO）。</li>
+<li><code>user + system</code> 是<strong>跨多核可以超过墙上时间</strong>的 —— 8 线程跑 1 秒最多能消费 8 秒 CPU。<br>
+   所以 <code>Process.cpu_percent()</code> 可能返回 <strong>800%</strong>，这<strong>不是 bug</strong>。</li>
+<li><code>children_*</code> 只统计<strong>已经被父进程 <code>wait()</code> 回收</strong>的子进程。没回收的不算。</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">p</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">Process</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">getpid</span><span class="p">())</span>
+<span class="n">ct</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">cpu_times</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;user=</span><span class="si">{</span><span class="n">ct</span><span class="o">.</span><span class="n">user</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s system=</span><span class="si">{</span><span class="n">ct</span><span class="o">.</span><span class="n">system</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h4 id="processcpu_percent"><code>Process.cpu_percent()</code> 与进程存活时长</h4>
+<p>还有一个反直觉点：<strong>新创建就立刻查 <code>Process.cpu_percent()</code>，可能返回 0.0 或者很怪的值</strong>。<br>
+因为 psutil 用进程的 <code>create_time()</code> 作为"总时间"的分母基准，<br>
+进程刚出生时分母极小，百分比会剧烈跳动。</p>
+<blockquote>
+<p><strong>实操建议</strong>：对刚启动的进程，<strong>至少等一个采样周期</strong>再读 <code>cpu_percent()</code>。</p>
+</blockquote>
+<hr>
+<h3 id="34-pid-process">3.4 pid 复用：<code>Process</code> 对象缓存与"僵尸对象"</h3>
+<p>Linux 的 pid 是<strong>循环复用</strong>的（<code>/proc/sys/kernel/pid_max</code>，默认 32768 或 4194304）。<br>
+一个进程退出后，它的 pid 很快会被新进程占用。</p>
+<pre class="plain"><code> t0:  Process(pid=1234) 指向 &quot;python3 backup.py&quot;       ← 你抓住了它
+ t1:  &quot;python3 backup.py&quot; 退出
+ t2:  pid 1234 被 &quot;nginx: worker&quot; 占用（pid 复用！）
+ t3:  你再次访问 p.name()  →  返回 &quot;nginx&quot;   ❗❓
+</code></pre>
+<p>psutil 对此有<strong>部分</strong>防御：<code>Process</code> 对象会缓存 <code>create_time</code>（进程启动时刻），<br>
+调用 <code>_is_running()</code> 时会比对，<strong>通常</strong>能识别出 pid 已被复用并抛 <code>NoSuchProcess</code>。<br>
+但：</p>
+<ul>
+<li>这个保护<strong>依赖 create_time 可读</strong>（权限不足时读到的是 0.0，保护失效）。</li>
+<li><code>process_iter()</code> 默认对<strong>本轮内</strong>的进程做缓存（<code>Process</code> 实例复用），<br>
+  在 pid 密集复用的机器上（如高频 fork 的构建机）仍可能出错。</li>
+</ul>
+<p><strong>防御性写法</strong>：只要跨采样周期持有 <code>Process</code> 对象，就<strong>每次都校验身份</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">identity</span><span class="p">(</span><span class="n">p</span><span class="p">:</span> <span class="n">psutil</span><span class="o">.</span><span class="n">Process</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;进程身份指纹：pid + 启动时刻。两者都相同才算同一个进程。&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">pid</span><span class="p">,</span> <span class="n">p</span><span class="o">.</span><span class="n">create_time</span><span class="p">())</span>
+    <span class="k">except</span> <span class="n">psutil</span><span class="o">.</span><span class="n">Error</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">pid</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+
+<span class="c1"># 采集时记住指纹，判断时比对</span>
+<span class="n">before</span> <span class="o">=</span> <span class="n">identity</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span>
+<span class="n">after</span> <span class="o">=</span> <span class="n">identity</span><span class="p">(</span><span class="n">p</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">before</span> <span class="o">!=</span> <span class="n">after</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;进程已经不是原来那个了（或已退出），丢弃旧数据&quot;</span><span class="p">)</span>
+</code></pre></div>
+<blockquote>
+<p><strong>一句话</strong>：<strong>在监控里，"pid 相同"绝不等于"同一个进程"。</strong></p>
+</blockquote>
+<hr>
+<h3 id="35-io">3.5 IO 计数器：差分、溢出与重置</h3>
+<p><code>net_io_counters()</code> / <code>disk_io_counters()</code> 返回的都是累计值，<br>
+所以差分时会遇到三种"负数/怪数"的来源：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">现象</th>
+<th style="text-align: left;">原因</th>
+<th style="text-align: left;">处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">差分为<strong>负数</strong></td>
+<td style="text-align: left;">计数器被重置（网卡重启、容器重启、模块卸载重载）</td>
+<td style="text-align: left;">检测 <code>delta &lt; 0</code> → 视为无效样本，跳过</td>
+</tr>
+<tr>
+<td style="text-align: left;">差分为<strong>极大值</strong></td>
+<td style="text-align: left;">采样间隔异常大（进程被挂起、系统休眠）</td>
+<td style="text-align: left;">校验实测 Δt，超阈值丢弃该样本</td>
+</tr>
+<tr>
+<td style="text-align: left;">计数器<strong>不增长</strong></td>
+<td style="text-align: left;">该网卡无流量 / 采到了不存在的接口</td>
+<td style="text-align: left;">属正常；注意网卡名变化</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">safe_rate</span><span class="p">(</span><span class="n">prev</span><span class="p">,</span> <span class="n">cur</span><span class="p">,</span> <span class="n">dt</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">reset_on_negative</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;安全求速率：处理计数器重置与异常间隔。&quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">dt</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">delta</span> <span class="o">=</span> <span class="n">cur</span> <span class="o">-</span> <span class="n">prev</span>
+    <span class="k">if</span> <span class="n">delta</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">reset_on_negative</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">delta</span> <span class="o">=</span> <span class="n">cur</span>          <span class="c1"># 视为计数器重置：本次增量 = 当前绝对值</span>
+    <span class="k">return</span> <span class="n">delta</span> <span class="o">/</span> <span class="n">dt</span>
+</code></pre></div>
+<h4 id="python">Python 的整数不会溢出，但内核的可能回绕</h4>
+<p>Python 的 <code>int</code> 是任意精度，所以 <code>delta &lt; 0</code> 不会因为 Python 而溢出。<br>
+但<strong>内核的计数器是定长的</strong>（如 32 位）。在极老的 32 位系统上，<br>
+<code>/proc/net/dev</code> 的字节计数在超过 4GB 后会回绕 —— 表现为差分突然变成负数。<br>
+<code>psutil</code> 在现代 64 位系统上不存在这个问题，但<strong>写防御性代码永远是对的</strong>。</p>
+<hr>
+<h3 id="36">3.6 异常层次：该捕哪个，不该捕哪个</h3>
+<pre class="plain"><code>psutil.Error                      ← 所有 psutil 异常的共同基类
+├── NoSuchProcess                 ← 进程不存在（已退出 / pid 无效）
+├── AccessDenied                  ← 权限不足（别的用户 / 需要 root）
+├── TimeoutExpired                ← 等待超时（如 wait() 带 timeout）
+├── ZombieProcess                 ← 进程存在但已是僵尸，信息读不全
+└── (POSIX 场景下的其他子类)
+
+psutil.AccessDenied 继承自 psutil.Error（不是 PermissionError）
+psutil.NoSuchProcess 不继承自 FileNotFoundError
+</code></pre>
+<p><strong>正确姿势</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">try</span><span class="p">:</span>
+    <span class="n">rss</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">Process</span><span class="p">(</span><span class="n">pid</span><span class="p">)</span><span class="o">.</span><span class="n">memory_info</span><span class="p">()</span><span class="o">.</span><span class="n">rss</span>
+<span class="k">except</span> <span class="n">psutil</span><span class="o">.</span><span class="n">NoSuchProcess</span><span class="p">:</span>
+    <span class="n">rss</span> <span class="o">=</span> <span class="kc">None</span>            <span class="c1"># 进程没了：这是&quot;预期内的正常情况&quot;，不该崩</span>
+<span class="k">except</span> <span class="n">psutil</span><span class="o">.</span><span class="n">AccessDenied</span><span class="p">:</span>
+    <span class="n">rss</span> <span class="o">=</span> <span class="kc">None</span>            <span class="c1"># 权限不够：也是正常情况，记录为&quot;不可测&quot;</span>
+<span class="k">except</span> <span class="n">psutil</span><span class="o">.</span><span class="n">ZombieProcess</span><span class="p">:</span>
+    <span class="n">rss</span> <span class="o">=</span> <span class="kc">None</span>
+</code></pre></div>
+<p><strong>错误姿势（很常见）</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">try</span><span class="p">:</span>
+    <span class="o">...</span>
+<span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>        <span class="c1"># ❌ 吞掉一切：连自己代码里的 TypeError 都被吃了</span>
+    <span class="k">pass</span>
+</code></pre></div>
+<blockquote>
+<p><strong>原则</strong>：监控代码必须<strong>区分"目标不可测"和"我写错了"</strong>。<br>
+前者静默降级 + 计数上报；后者必须炸出来，否则你会监控一个永远返回空值的假象。</p>
+</blockquote>
+<hr>
+<h3 id="37">3.7 采样开销与"观测者效应"</h3>
+<p>监控不是免费的。三个成本来源：</p>
+<ol>
+<li><strong>读取成本</strong>：每次 <code>Process.memory_info()</code> 都至少读 1~2 个 <code>/proc</code> 文件。<br>
+   遍历 2000 个进程 × 读 5 个字段 = 上万次文件读。</li>
+<li><strong>对象成本</strong>：<code>process_iter()</code> 为每个进程构造 <code>Process</code> 对象。</li>
+<li><strong>sleep 误差</strong>：<code>time.sleep(1)</code> 实际可能 1.001~1.05 秒，长跑会漂移。</li>
+</ol>
+<p>实测参考（本机 Ubuntu / 4 核 / <strong>322 个进程</strong>，可复现脚本 <code>code/04-benchmark.py</code>，<br>
+每项取多轮<strong>最小值</strong>）：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">采集方式</th>
+<th style="text-align: center;">最小耗时</th>
+<th style="text-align: center;">相对「只要 pid」</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>psutil.pids()</code></td>
+<td style="text-align: center;">180 µs</td>
+<td style="text-align: center;">1.00×</td>
+<td style="text-align: left;">只列 <code>/proc</code> 目录项</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>process_iter()</code>（不取属性）</td>
+<td style="text-align: center;">458 µs</td>
+<td style="text-align: center;">2.54×</td>
+<td style="text-align: left;">构造迭代器</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>process_iter(['name'])</code></td>
+<td style="text-align: center;">17.2 ms</td>
+<td style="text-align: center;"><strong>95.6×</strong></td>
+<td style="text-align: left;">每进程读一次 <code>comm</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>process_iter([...5 字段含 memory_info])</code></td>
+<td style="text-align: center;">33.3 ms</td>
+<td style="text-align: center;"><strong>184.6×</strong></td>
+<td style="text-align: left;">每进程多读几个文件</td>
+</tr>
+<tr>
+<td style="text-align: left;">逐进程 <code>Process(pid).name()</code></td>
+<td style="text-align: center;">22.0 ms</td>
+<td style="text-align: center;">122.0×</td>
+<td style="text-align: left;">无迭代器复用，比 <code>process_iter(['name'])</code> 还慢 1.28×</td>
+</tr>
+</tbody>
+</table>
+<p>系统级单项指标则便宜得多（同一台机器、同一轮次）：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">调用</th>
+<th style="text-align: center;">最小耗时</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>cpu_percent(interval=None)</code></td>
+<td style="text-align: center;">35 µs</td>
+</tr>
+<tr>
+<td style="text-align: left;">手写解析 <code>/proc/stat</code>（同样算一次）</td>
+<td style="text-align: center;">34 µs —— 说明 psutil 几乎没额外开销</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>virtual_memory()</code></td>
+<td style="text-align: center;">48 µs</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>disk_usage('/')</code></td>
+<td style="text-align: center;">5.6 µs（<code>statvfs</code> 系统调用）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>net_io_counters()</code></td>
+<td style="text-align: center;">80 µs</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>disk_partitions()</code></td>
+<td style="text-align: center;">209 µs</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>with p.oneshot()</code> 读 3 字段 × 200 轮</td>
+<td style="text-align: center;">9.8 ms （无 oneshot 12.7 ms → <strong>快 1.3×</strong>）</td>
+</tr>
+</tbody>
+</table>
+<pre class="plain"><code>  ┌────────────────────────── 采样周期与采集耗时的硬约束 ───────────────────────────┐
+  │                                                                              │
+  │    采样周期 Δt  必须  ≫  单轮采集耗时 T                                        │
+  │                                                                              │
+  │    Δt=1s, T=33ms   → T/Δt ≈ 3.3%   可接受                                     │
+  │    Δt=1s, T=300ms  → T/Δt ≈ 30%    监控自己就成了主要负载 ❌                    │
+  │    Δt=5s, T=300ms  → T/Δt ≈ 6%     勉强                                      │
+  │                                                                              │
+  │    → 这就是 3.7 节「观测者效应」的量化版本                                    │
+  └──────────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<blockquote>
+<p>⚠ <strong>诚实记录</strong>：本节最初的「约 1.5 倍 / 2.5 倍」是拍脑袋写的，被自己的基准测试<br>
+当场打脸 —— 实测相差<strong>两个数量级</strong>。这就是「先测再写」的意义：<br>
+<code>04-benchmark.py</code> 里所有倍数都是<strong>运行时从实测数据算出来的</strong>，不写死。<br>
+你换一台机器跑出来的倍数会不同，但「<strong>进程枚举才是大头，系统级指标可以忽略</strong>」<br>
+这个结论是稳的。</p>
+<p><strong>结论</strong>：<strong>用 <code>process_iter(attrs=[...])</code> 并只取需要的字段</strong>。<br>
+在 2000 进程的机器上，全量扫描可能轻松破百毫秒 —— 这个数字<strong>直接决定采样周期的下限</strong>，<br>
+也决定了你能否在 1 秒周期内做一轮完整采集。</p>
+</blockquote>
+<h4 id="_6">观测者效应</h4>
+<p>你的监控进程本身也在消耗 CPU 和内存。当阈值设得很低时，<br>
+<strong>你会看到自己的脚本排在 CPU 排行前列</strong>。所以：</p>
+<ul>
+<li>排行里<strong>先排除自己</strong>（<code>pid == os.getpid()</code>）；</li>
+<li>阈值告警时<strong>排除监控自身</strong>的贡献；</li>
+<li>采样周期越短，这个偏差越大（Day 177 讲 Prometheus 时会再遇到这个问题）。</li>
+</ul>
+<hr>
+<h3 id="38-create_timeboot_time">3.8 时间基准：<code>create_time()</code>、<code>boot_time()</code> 与时钟跳变</h3>
+<ul>
+<li><code>boot_time()</code>：系统启动时刻（Unix 时间戳）。</li>
+<li><code>Process.create_time()</code>：进程创建时刻（Unix 时间戳）。</li>
+<li><strong>两者都基于可被调整的系统时钟</strong>（<code>CLOCK_REALTIME</code>）。</li>
+</ul>
+<p>如果运维改了系统时间（或 NTP 大步校正），计算"进程跑了多久"会出现<strong>负数或跳变</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">uptime</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">p</span><span class="o">.</span><span class="n">create_time</span><span class="p">()</span>     <span class="c1"># 时钟被回拨时 → 负数</span>
+</code></pre></div>
+<p><strong>更稳的写法</strong>：只用<strong>同一个时钟基准</strong>做减法的同时，显式检测负值。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+
+
+<span class="k">def</span> <span class="nf">process_age_seconds</span><span class="p">(</span><span class="n">create_time</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;进程已存活秒数。</span>
+
+<span class="sd">    create_time 来自 Process.create_time()，与 time.time() 同为</span>
+<span class="sd">    CLOCK_REALTIME 基准，可以直接相减。</span>
+<span class="sd">    若系统时钟被回拨，差值会变成负数 —— 此时返回 None（不可信）。</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">age</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">create_time</span>
+    <span class="k">return</span> <span class="n">age</span> <span class="k">if</span> <span class="n">age</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="k">else</span> <span class="kc">None</span>
+</code></pre></div>
+<blockquote>
+<p><strong>不要做的两件事</strong>：<br>
+1. <strong>不要把 <code>time.monotonic()</code> 和 <code>create_time()</code> 相减</strong>。<br>
+<code>monotonic()</code> 的基准是"某个未指定的过去时刻"（Linux 上通常是开机），<br>
+   而 <code>create_time()</code> 是 Unix 时间戳 —— 两者基准不同，相减<strong>没有任何意义</strong>。<br>
+2. <strong>不要为了绕过负值而 <code>abs()</code></strong>。时钟被回拨时 <code>abs()</code> 会把一个巨大的<br>
+   错误值伪装成"正常时长"，比返回负数更危险。宁可返回 <code>None</code> 并如实上报。</p>
+<p><strong>工程结论</strong>：算存活时长用 <code>time.time() - create_time()</code> 并<strong>显式检测负值</strong>；<br>
+测<strong>采样间隔</strong>用 <code>time.monotonic()</code>（它不会被 NTP 校时影响，这正是 2.3 节<br>
+求速率时必须用它、而不是 <code>time.time()</code> 的原因）。</p>
+</blockquote>
+<hr>
+<h2 id="4-api">4. API 速查表</h2>
+<h3 id="41-cpu">4.1 CPU</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">API</th>
+<th style="text-align: left;">返回</th>
+<th style="text-align: left;">要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_times()</code></td>
+<td style="text-align: left;"><code>scputimes</code></td>
+<td style="text-align: left;"><strong>累计</strong>刻度；差分用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_times(percpu=True)</code></td>
+<td style="text-align: left;"><code>list[scputimes]</code></td>
+<td style="text-align: left;">逐核</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_percent(interval=None)</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;"><strong>非阻塞</strong>；首次返回 0.0</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_percent(interval=1.0)</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;"><strong>阻塞</strong> 1s 后返回</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_percent(percpu=True)</code></td>
+<td style="text-align: left;"><code>list[float]</code></td>
+<td style="text-align: left;">逐核百分比</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_count()</code></td>
+<td style="text-align: left;"><code>int\|None</code></td>
+<td style="text-align: left;">逻辑核数</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_count(logical=False)</code></td>
+<td style="text-align: left;"><code>int\|None</code></td>
+<td style="text-align: left;">物理核数（可能返回 None）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_stats()</code></td>
+<td style="text-align: left;"><code>scpustats</code></td>
+<td style="text-align: left;">上下文切换/中断/软中断累计数</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.cpu_freq()</code></td>
+<td style="text-align: left;"><code>scpufreq\|None</code></td>
+<td style="text-align: left;"><code>current/min/max</code>（MHz）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.getloadavg()</code></td>
+<td style="text-align: left;"><code>(1m,5m,15m)</code></td>
+<td style="text-align: left;">Unix 才有；Windows 上返回最近算出的值</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><code>getloadavg()</code> 返回的是<strong>运行队列长度</strong>（不是百分比）。<br>
+经验阈值：<strong>load &gt; 逻辑核数 × 1.0 即已饱和</strong>；&gt; 核数 × 2 属严重排队。</p>
+</blockquote>
+<h3 id="42">4.2 内存</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">API</th>
+<th style="text-align: left;">关键字段</th>
+<th style="text-align: left;">要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>psutil.virtual_memory()</code></td>
+<td style="text-align: left;"><code>total/available/used/free/percent</code></td>
+<td style="text-align: left;"><strong>优先看 <code>available</code></strong>，见下</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.swap_memory()</code></td>
+<td style="text-align: left;"><code>total/used/free/percent/sin/sout</code></td>
+<td style="text-align: left;"><code>sin/sout</code> 是<strong>累计</strong>换入换出页数</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.memory_info()</code></td>
+<td style="text-align: left;"><code>rss/vms/...</code></td>
+<td style="text-align: left;">见 2.7 的四字段对比</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.memory_info().uss</code></td>
+<td style="text-align: left;"><code>int\|None</code></td>
+<td style="text-align: left;">Linux 独有</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.memory_info().pss</code></td>
+<td style="text-align: left;"><code>int\|None</code></td>
+<td style="text-align: left;">Linux 独有</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.memory_full_info()</code></td>
+<td style="text-align: left;">含 <code>uss/pss/swap</code></td>
+<td style="text-align: left;">略慢，容器场景值得</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.memory_percent()</code></td>
+<td style="text-align: left;"><code>float</code></td>
+<td style="text-align: left;">相对<strong>总内存</strong>的百分比</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>used</code> vs <code>available</code>，一定要用 <code>available</code>：</strong></p>
+<pre class="plain"><code>  MemTotal ─────────────────────────────────────────────────────────┐
+  │ MemFree │ buffers/cache │ 可回收(slab等) │ 真正不可用            │
+  └─────────────────────────────────────────────────────────────────┘
+        ↑            ↑                  ↑
+      used 只扣掉    Linux 会把          available = MemFree + 可回收
+      MemFree       几乎所有空闲内存     ← 这才是&quot;还能申请多少&quot;
+                    拿去做 page cache
+      → thin-provisioning 让 used 常年 90%+，其实毫无压力
+</code></pre>
+<blockquote>
+<p><strong>为什么"<code>used</code> 高"经常是假警报？</strong> 因为 Linux 的设计哲学是"空闲内存就是浪费的内存"，<br>
+它会主动把没用到的 RAM 缓存文件页（page cache）。这些页在应用需要时<strong>立刻可回收</strong>。<br>
+所以监控内存<strong>看 <code>available</code></strong>，或者看 <code>percent</code>（psutil 的 <code>percent</code> 用的是<br>
+<code>total - available</code> 口径，这一点和 <code>free</code> 命令的"available"列一致）。</p>
+</blockquote>
+<h3 id="43">4.3 磁盘</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">API</th>
+<th style="text-align: left;">关键字段</th>
+<th style="text-align: left;">要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>psutil.disk_partitions()</code></td>
+<td style="text-align: left;"><code>device/mountpoint/fstype/opts</code></td>
+<td style="text-align: left;">会包含 <code>tmpfs</code>/<code>overlay</code> 等伪设备</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.disk_partitions(all=False)</code></td>
+<td style="text-align: left;">同上</td>
+<td style="text-align: left;">默认已过滤大部分伪文件系统</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.disk_usage(path)</code></td>
+<td style="text-align: left;"><code>total/used/free/percent</code></td>
+<td style="text-align: left;"><strong>按挂载点</strong>查，<code>path</code> 必须是真实存在的路径</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.disk_io_counters()</code></td>
+<td style="text-align: left;"><code>read_bytes/write_bytes/read_time/write_time</code></td>
+<td style="text-align: left;"><strong>累计</strong>，差分求速率</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.disk_io_counters(perdisk=True)</code></td>
+<td style="text-align: left;"><code>dict[str, sdiskio]</code></td>
+<td style="text-align: left;">逐设备</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>shutil.disk_usage(path)</code></td>
+<td style="text-align: left;"><code>usage</code> 命名元组</td>
+<td style="text-align: left;">标准库替代（无 percent）</td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>disk_usage</code> 的正确姿势：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 硬编码 &#39;/&#39;：Windows 上直接炸，容器里可能不是你要的分区</span>
+<span class="n">psutil</span><span class="o">.</span><span class="n">disk_usage</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 遍历真实挂载点</span>
+<span class="k">for</span> <span class="n">part</span> <span class="ow">in</span> <span class="n">psutil</span><span class="o">.</span><span class="n">disk_partitions</span><span class="p">(</span><span class="nb">all</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">disk_usage</span><span class="p">(</span><span class="n">part</span><span class="o">.</span><span class="n">mountpoint</span><span class="p">)</span>
+    <span class="k">except</span> <span class="p">(</span><span class="ne">PermissionError</span><span class="p">,</span> <span class="ne">FileNotFoundError</span><span class="p">,</span> <span class="ne">OSError</span><span class="p">):</span>
+        <span class="k">continue</span>          <span class="c1"># 已卸载/无法访问的挂载点很常见，必须容错</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">part</span><span class="o">.</span><span class="n">mountpoint</span><span class="si">:</span><span class="s2">20s</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">u</span><span class="o">.</span><span class="n">percent</span><span class="si">:</span><span class="s2">5.1f</span><span class="si">}</span><span class="s2">%  </span><span class="si">{</span><span class="n">u</span><span class="o">.</span><span class="n">free</span><span class="o">/</span><span class="mi">2</span><span class="o">**</span><span class="mi">30</span><span class="si">:</span><span class="s2">6.1f</span><span class="si">}</span><span class="s2"> GiB free&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="44">4.4 网络</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">API</th>
+<th style="text-align: left;">关键字段</th>
+<th style="text-align: left;">要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>psutil.net_io_counters()</code></td>
+<td style="text-align: left;"><code>bytes_sent/recv</code>, <code>packets_sent/recv</code>, <code>errin/errout</code>, <code>dropin/dropout</code></td>
+<td style="text-align: left;"><strong>累计</strong>，差分求速率</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.net_io_counters(pernic=True)</code></td>
+<td style="text-align: left;"><code>dict[str, snetio]</code></td>
+<td style="text-align: left;">逐网卡</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.net_connections(kind='inet')</code></td>
+<td style="text-align: left;"><code>list[sconn]</code></td>
+<td style="text-align: left;">kind: <code>inet</code>/<code>tcp</code>/<code>udp</code>/<code>unix</code>/<code>all</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.net_if_addrs()</code></td>
+<td style="text-align: left;"><code>dict[nic, list[snicaddr]]</code></td>
+<td style="text-align: left;">IP/MAC/掩码</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.net_if_stats()</code></td>
+<td style="text-align: left;"><code>dict[nic, snicstats]</code></td>
+<td style="text-align: left;"><code>isup/speed/mtu/duplex</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>Process.connections(kind='inet')</code></td>
+<td style="text-align: left;">同上</td>
+<td style="text-align: left;">需要权限；<code>AccessDenied</code> 常见</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><code>errin/errout/dropin/dropout</code> 是<strong>质量指标</strong>：网卡在丢包/出错时才会增长。<br>
+它们天生是"坏消息计数器"，<strong>任何增长都值得记录</strong>（哪怕绝对量很小）。</p>
+</blockquote>
+<h3 id="45">4.5 进程</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">API</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>psutil.pids()</code></td>
+<td style="text-align: left;">当前所有 pid 列表（快照）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.process_iter(attrs=[...])</code></td>
+<td style="text-align: left;">迭代器；<code>proc.info</code> 只含请求的字段（<strong>性能关键</strong>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.Process(pid)</code></td>
+<td style="text-align: left;">构造句柄；pid 不存在时<strong>不报错</strong>（首次调用方法时才报）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.pid</code> / <code>p.ppid()</code></td>
+<td style="text-align: left;">自身/父进程 pid</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.name()</code> / <code>p.exe()</code> / <code>p.cmdline()</code> / <code>p.cwd()</code></td>
+<td style="text-align: left;">身份信息（name 截断 15 字符）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.status()</code></td>
+<td style="text-align: left;"><code>running/sleeping/disk-sleep/zombie/stopped/...</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.create_time()</code></td>
+<td style="text-align: left;">启动时刻（Unix 时间戳）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.cpu_times()</code> / <code>p.cpu_percent()</code></td>
+<td style="text-align: left;">累计 CPU 时间 / 百分比（可 &gt;100%）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.memory_info()</code> / <code>p.memory_percent()</code></td>
+<td style="text-align: left;">内存</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.num_threads()</code> / <code>p.threads()</code></td>
+<td style="text-align: left;">线程数 / 线程列表</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.open_files()</code></td>
+<td style="text-align: left;">打开的文件（需权限）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.children(recursive=False)</code></td>
+<td style="text-align: left;">子进程</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.parent()</code></td>
+<td style="text-align: left;">父进程（<code>Process</code> 或 <code>None</code>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.nice()</code> / <code>p.ionice()</code></td>
+<td style="text-align: left;">优先级</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.username()</code></td>
+<td style="text-align: left;">属主（需权限）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.terminate()</code> / <code>p.kill()</code></td>
+<td style="text-align: left;">SIGTERM / SIGKILL（<strong>危险，本课只用在自己启动的子进程上</strong>）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.wait(timeout=...)</code></td>
+<td style="text-align: left;">等待退出（配合 <code>terminate</code> 做优雅停止）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.as_dict(attrs=[...], ad_value=None)</code></td>
+<td style="text-align: left;">一次性取多字段，异常字段填 <code>ad_value</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.oneshot()</code></td>
+<td style="text-align: left;">上下文管理器，缓存多次读取</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>p.is_running()</code></td>
+<td style="text-align: left;">是否存活</td>
+</tr>
+</tbody>
+</table>
+<h3 id="46">4.6 其他</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">API</th>
+<th style="text-align: left;">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>psutil.boot_time()</code></td>
+<td style="text-align: left;">开机时间戳</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.users()</code></td>
+<td style="text-align: left;">登录用户列表</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.sensors_temperatures()</code></td>
+<td style="text-align: left;">温度（Linux）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.sensors_battery()</code></td>
+<td style="text-align: left;">电池（笔记本）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.sensors_fans()</code></td>
+<td style="text-align: left;">风扇转速（Linux）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>psutil.PROCFS_PATH</code></td>
+<td style="text-align: left;">可改写 <code>/proc</code> 路径（主要用于测试/特殊挂载）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="5-top-10">5. 常见陷阱 Top 10</h2>
+<h3 id="1cpu_percent-00">陷阱 1：<code>cpu_percent()</code> 首次返回 0.0</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">print</span><span class="p">(</span><span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">())</span>     <span class="c1"># 0.0  ← 骗人！</span>
+</code></pre></div>
+<p><strong>根因</strong>：没有上一次的参照读数（见 3.2）。<br>
+<strong>修法</strong>：预热一次并丢弃，或用 <code>interval=</code>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>     <span class="c1"># 预热</span>
+<span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">())</span>           <span class="c1"># 真实值</span>
+</code></pre></div>
+<h3 id="2-intervalnone">陷阱 2：以为 <code>interval=None</code> 是"瞬时值"</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1000</span><span class="p">):</span>
+    <span class="n">v</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">()</span>      <span class="c1"># 非阻塞，但窗口 = 两次调用的间隔</span>
+    <span class="c1"># 这里窗口可能只有微秒 → 结果在 0 和 100 之间乱跳，或一直是 0.0</span>
+</code></pre></div>
+<p><strong>修法</strong>：非阻塞模式下，<strong>自己保证调用间隔 ≥ 采样窗口</strong>。</p>
+<h3 id="3_1">陷阱 3：把累计值当瞬时值（最致命的坑）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">print</span><span class="p">(</span><span class="n">psutil</span><span class="o">.</span><span class="n">net_io_counters</span><span class="p">()</span><span class="o">.</span><span class="n">bytes_sent</span><span class="p">)</span>   <span class="c1"># ❌ 开机以来累计</span>
+</code></pre></div>
+<p><strong>修法</strong>：差分 ÷ 实测 Δt（见 2.3）。</p>
+<h3 id="4disk_usage-windows">陷阱 4：<code>disk_usage('/')</code> 在容器里毫无意义 / Windows 直接崩</h3>
+<p><strong>修法</strong>：遍历 <code>disk_partitions()</code>，并且对每个挂载点 <code>try/except</code>。</p>
+<h3 id="5processname-15-psutil">陷阱 5：<code>Process.name()</code> 的 15 字符截断，以及 psutil 的回退</h3>
+<pre class="plain"><code>  可执行文件 basename: very-long-application-name-exceeds-comm-limit (45 字符)
+  内核 /proc/&lt;pid&gt;/comm: &#x27;very-long-appli&#x27;                            ← 内核截断到 15
+  psutil Process.name(): &#x27;very-long-application-name-...&#x27; (45 字符)    ← psutil 回退了
+  cmdline()[0] basename: 完整名字
+</code></pre>
+<p><strong>根因</strong>：内核 <code>/proc/&lt;pid&gt;/comm</code> 的 <code>TASK_COMM_LEN</code>=16 字节（含 <code>\0</code>），只能放 15 个字符。<br>
+<strong>psutil 的补偿</strong>：发现 <code>len(name) &gt;= 15</code> 时去读 <code>cmdline()</code>，若 basename 以截断名开头就返回完整版。</p>
+<p><strong>所以真正的坑不在截断本身</strong>，而在 <code>cmdline()</code> 不可用的三种情况：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">场景</th>
+<th style="text-align: left;"><code>name()</code></th>
+<th style="text-align: left;"><code>cmdline()</code></th>
+<th style="text-align: left;">后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">内核线程</td>
+<td style="text-align: left;">截断值/空</td>
+<td style="text-align: left;">空列表</td>
+<td style="text-align: left;">拿不到完整身份</td>
+</tr>
+<tr>
+<td style="text-align: left;">僵尸进程</td>
+<td style="text-align: left;">可能可读</td>
+<td style="text-align: left;">抛 <code>ZombieProcess</code></td>
+<td style="text-align: left;">回退失败，只剩截断值</td>
+</tr>
+<tr>
+<td style="text-align: left;">其他用户进程</td>
+<td style="text-align: left;">截断值</td>
+<td style="text-align: left;">抛 <code>AccessDenied</code></td>
+<td style="text-align: left;">回退失败，只剩截断值</td>
+</tr>
+</tbody>
+</table>
+<p><strong>修法</strong>：优先 <code>cmdline()[0]</code> 的 basename，失败回退 <code>name()</code>，再失败输出占位符<strong>并计数</strong><br>
+（<code>身份不全</code> 计数是采样完整性的重要指标，见 2.6）。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">full_name</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">cmd</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">cmdline</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">cmd</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">cmd</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="ow">or</span> <span class="n">p</span><span class="o">.</span><span class="n">name</span><span class="p">()</span>
+    <span class="k">except</span> <span class="n">psutil</span><span class="o">.</span><span class="n">Error</span><span class="p">:</span>
+        <span class="k">pass</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">p</span><span class="o">.</span><span class="n">name</span><span class="p">()</span>
+    <span class="k">except</span> <span class="n">psutil</span><span class="o">.</span><span class="n">Error</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&lt;pid </span><span class="si">{</span><span class="n">p</span><span class="o">.</span><span class="n">pid</span><span class="si">}</span><span class="s2">&gt;&quot;</span>
+</code></pre></div>
+<h3 id="6">陷阱 6：容器里读到宿主机的内存/核数</h3>
+<p>见 2.8。<strong>修法</strong>：读 cgroup 限额。</p>
+<h3 id="7-nosuchprocess-accessdenied">陷阱 7：不处理 <code>NoSuchProcess</code> / <code>AccessDenied</code></h3>
+<p>遍历进程时不 catch，脚本会在"某个进程刚好退出"时<strong>随机崩溃</strong>。<br>
+这类 bug 最难复现 —— <strong>它取决于时序</strong>。</p>
+<h3 id="8-timetime">陷阱 8：用 <code>time.time()</code> 算采样间隔</h3>
+<p>NTP 校时会让 Δt 变成负数或 0 → 速率变 <code>inf</code>。<strong>修法</strong>：<code>time.monotonic()</code>。</p>
+<h3 id="9processcpu_percent-100">陷阱 9：<code>Process.cpu_percent()</code> 超过 100% 就报警</h3>
+<p>多线程/多进程程序的 <code>cpu_percent()</code> <strong>上限是 100% × 核数</strong>。<br>
+<code>800%</code> 在 8 核机器上表示"打满了全部 8 核"，<strong>不是异常数据</strong>。<br>
+<strong>修法</strong>：阈值按"核数 × 目标利用率"来定，或改用 <code>cpu_percent()</code> 的系统级指标。</p>
+<h3 id="10">陷阱 10：阈值抖动导致告警风暴</h3>
+<p>CPU 在 79% 和 81% 之间反复横跳，阈值 80% 会让你收到几百条告警。<br>
+<strong>修法</strong>：<strong>去抖（debounce）</strong> —— 连续 N 次超阈值才告警，连续 M 次恢复才解除。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Threshold</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;带滞回（hysteresis）与连续次数去抖的阈值判定。</span>
+
+<span class="sd">    - high: 超过则计一次&quot;异常&quot;</span>
+<span class="sd">    - low:  低于则计一次&quot;正常&quot;（必须 &lt; high，形成滞回带）</span>
+<span class="sd">    - need: 连续多少次才真正翻转状态</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">high</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">low</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">need</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">low</span> <span class="o">&gt;=</span> <span class="n">high</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;low 必须小于 high，否则滞回带为空&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">high</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">low</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">need</span> <span class="o">=</span> <span class="n">high</span><span class="p">,</span> <span class="n">low</span><span class="p">,</span> <span class="n">need</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">state</span> <span class="o">=</span> <span class="kc">False</span>       <span class="c1"># False=正常 True=告警</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="k">def</span> <span class="nf">feed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;送入一个样本，返回当前（可能已翻转的）告警状态。&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">:</span>
+            <span class="c1"># 已告警：需要连续 need 次低于 low 才恢复</span>
+            <span class="k">if</span> <span class="n">value</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">low</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">need</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="mi">0</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">value</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">high</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">need</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">state</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="mi">0</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_streak</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span>
+</code></pre></div>
+<hr>
+<h2 id="6_1">6. 实战代码案例</h2>
+<p>本课的可运行代码全部在 <code>code/</code> 下，每个文件都能独立跑、都自带 <code>--self-test</code>。</p>
+<h3 id="61">6.1 文件清单与用途</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">文件</th>
+<th style="text-align: left;">类型</th>
+<th style="text-align: left;">讲什么</th>
+<th style="text-align: left;">自检命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>code/01-system-info.py</code></td>
+<td style="text-align: left;">基础用法</td>
+<td style="text-align: left;">CPU / 内存 / 磁盘 / 网络 / 系统 / 传感器 六类指标的正确读法</td>
+<td style="text-align: left;"><code>--self-test</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/02-process-monitor.py</code></td>
+<td style="text-align: left;">进阶用法</td>
+<td style="text-align: left;">进程扫描账本、Top-N 排行、进程树、pid 复用防御、优雅停止</td>
+<td style="text-align: left;"><code>--self-test</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/03-pitfalls.py</code></td>
+<td style="text-align: left;">避坑</td>
+<td style="text-align: left;"><strong>十条陷阱逐条实测</strong>：从"首调 0.0"到"cgroup 限额"</td>
+<td style="text-align: left;"><code>--self-test</code> / <code>--only N</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/04-benchmark.py</code></td>
+<td style="text-align: left;">性能</td>
+<td style="text-align: left;">五种进程枚举写法 + oneshot + 系统级指标的<strong>实测耗时</strong></td>
+<td style="text-align: left;"><code>--self-test</code> / <code>--rounds N</code></td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/monitor_core.py</code></td>
+<td style="text-align: left;">实战（库）</td>
+<td style="text-align: left;"><code>Collector</code> / <code>Threshold</code> / <code>safe_rate</code> / 渲染器</td>
+<td style="text-align: left;">被 05 调用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>code/05-monitor-tool.py</code></td>
+<td style="text-align: left;">实战（CLI）</td>
+<td style="text-align: left;">完整监控工具：采样 + 去抖告警 + JSON/Markdown 报告 + 退出码契约</td>
+<td style="text-align: left;"><code>--self-test</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>要求：<code>code/</code> 下每个脚本都必须能 <code>python3 &lt;file&gt; --self-test</code> 输出 <code>SELF-TEST OK</code>。<br>
+这不是形式主义 —— <strong>自检是别人（和未来的你）判断"这段代码还活着"的最快方式</strong>。</p>
+</blockquote>
+<h3 id="62">6.2 实战：一个完整的监控工具长什么样</h3>
+<p><code>05-monitor-tool.py</code> 是本课的交付物。它的结构就是第 2.1 节那张图的具体化：</p>
+<pre class="plain"><code>  ① 采集               ② 时间维度            ③ 判定              ④ 表达/交付
+  Collector.collect()  run_sampling() 的    Threshold.feed()    render_json()
+    · cpu/mem/disk       采样循环              · 滞回带             render_markdown()
+    · net/disk 差分      · monotonic 计时      · 连续次数去抖        · 原子写入
+    · 进程 Top-N         · 绝对下一次时刻       · 僵尸单独判定        · 退出码 0/2/1
+    · cgroup 限额        （防误差累积）
+</code></pre>
+<p>关键实现片段（都对应一条前面讲过的原理）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ① 预热：不预热第一轮 CPU 全是 0.0（陷阱 1）</span>
+<span class="n">collector</span><span class="o">.</span><span class="n">warmup</span><span class="p">()</span>
+
+<span class="c1"># ② 采样调度用&quot;绝对下一次时刻&quot;，避免 sleep 误差累积漂移</span>
+<span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+<span class="n">next_tick</span> <span class="o">=</span> <span class="n">start</span>
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">now</span> <span class="o">-</span> <span class="n">start</span> <span class="o">&gt;=</span> <span class="n">duration</span><span class="p">:</span>
+        <span class="k">break</span>
+    <span class="k">if</span> <span class="n">next_tick</span> <span class="o">&gt;</span> <span class="n">now</span><span class="p">:</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">next_tick</span> <span class="o">-</span> <span class="n">now</span><span class="p">)</span>
+    <span class="n">next_tick</span> <span class="o">+=</span> <span class="n">interval</span>          <span class="c1"># ★ 累加的是&quot;计划时刻&quot;，不是&quot;实际耗时&quot;</span>
+    <span class="n">sample</span> <span class="o">=</span> <span class="n">collector</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+</code></pre></div>
+<blockquote>
+<p><strong>为什么是 <code>next_tick += interval</code> 而不是 <code>sleep(interval)</code>？</strong><br>
+后者会把每次的采集耗时也累加进去：采集本身要 30ms，采 60 次就多漂 1.8 秒。<br>
+前者把"什么时候该醒"和"采集花了多久"解耦，长跑不漂。这是所有定时采样的标准做法。</p>
+</blockquote>
+<h3 id="63">6.3 三条"必须写对"的细节</h3>
+<p><strong>(1) 计数器差分必须用实测间隔</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">safe_rate</span><span class="p">(</span><span class="n">prev</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">cur</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">dt</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">dt</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="n">delta</span> <span class="o">=</span> <span class="n">cur</span> <span class="o">-</span> <span class="n">prev</span>
+    <span class="k">if</span> <span class="n">delta</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>      <span class="c1"># 计数器被重置（网卡/容器重启）→ 丢弃，绝不进速率计算</span>
+    <span class="k">return</span> <span class="n">delta</span> <span class="o">/</span> <span class="n">dt</span>
+</code></pre></div>
+<p>返回 <code>None</code> 而不是 <code>0.0</code>，是刻意的：<code>0.0</code> 会被误读成"没有流量"，<br>
+而 <code>None</code> 会迫使调用方显式处理"这个样本不可信"。</p>
+<p><strong>(2) 告警必须去抖，且"进入告警"与"恢复"阈值不同</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">th</span> <span class="o">=</span> <span class="n">Threshold</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;CPU&quot;</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="mi">85</span><span class="p">,</span> <span class="n">low</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span> <span class="n">need</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="c1"># high=85 才进入告警，low=80 以下才恢复 → 81%~84% 的抖动无法翻转状态</span>
+</code></pre></div>
+<p><strong>(3) 报告要原子落盘</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">tmp</span> <span class="o">=</span> <span class="n">path</span> <span class="o">+</span> <span class="s2">&quot;.tmp&quot;</span>
+<span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fh</span><span class="p">:</span>
+    <span class="n">fh</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">content</span><span class="p">)</span>
+<span class="n">os</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span>      <span class="c1"># 原子替换：读者要么看到旧文件，要么看到完整的新文件</span>
+</code></pre></div>
+<p>监控报告经常被<strong>另一个正在运行的脚本</strong>读取。非原子写入会让它读到半截 JSON<br>
+而解析失败 —— 这种"随机崩溃"最后一定会被归因成"监控系统不稳定"。</p>
+<h3 id="64">6.4 退出码契约（再次强调，因为它真的重要）</h3>
+<pre class="plain"><code>  0  ── 采集成功，所有指标在阈值内
+  2  ── 采集成功，但触发了告警
+  1  ── 采集失败 / 参数错误
+
+  为什么这样分？
+    cron/CI/K8s 需要区分&quot;脚本自己坏了&quot;(1) 和&quot;被监控对象有问题&quot;(2)。
+    混用会导致：真正的故障被当成脚本 bug 排查，或者脚本 bug 被当成系统告警
+    反复骚扰运维 —— 两种都会消耗信任。
+</code></pre>
+<h3 id="65">6.5 实测输出样例</h3>
+<pre class="plain"><code>$ python3 05-monitor-tool.py --duration 3 --interval 0.8 --out-dir /tmp/reports
+  · CPU: 告警阈值 ≥85%，恢复阈值 &lt;80%，连续 2 次才翻转
+  · 采样：每 0.8s 一次，共 3.0s，进程排行 Top 5
+
+  [06:05:48] CPU   0.0%  MEM  28.2%  DISK  34.5% (/)  NET ↑  0.0 B/s ↓  0.0 B/s  PROC  317  告警[...]
+  [06:05:49] CPU   1.6%  MEM  28.2%  DISK  34.5% (/)  NET ↑ 52.6 B/s ↓379.1 B/s  PROC  317  告警[...]
+
+  采样完成：5 个样本，0 条告警
+  CPU  平均  1.40%  峰值  1.90%
+  报告已写入：
+    /tmp/reports/monitor-20260925-060551.json
+    /tmp/reports/monitor-20260925-060551.md
+  退出码 0（采集成功，无告警）
+</code></pre>
+<p>（上面是<strong>真机实测</strong>输出。<code>CPU 0.0%</code> 出现在第一行是一种巧合而非 bug：<br>
+它是"从预热到第一次 collect"的窗口内平均；窗口极短时确实可能读到 0.0。<br>
+这恰好是陷阱 1 与陷阱 2 的现场演示。）</p>
+<hr>
+<h2 id="7">7. 思考题</h2>
+<ol>
+<li>
+<p><strong>"CPU 使用率 80%" 这句话缺了哪个必要参数？</strong> 没有它，这个数字为什么没有意义？<br>
+   （提示：采样窗口，以及"平均值"这个词本身。）</p>
+</li>
+<li>
+<p><strong>一进程 <code>cpu_percent()</code> 返回 <code>450%</code>，要报警吗？</strong> 判断依据是什么？<br>
+   如果机器 4 核、进程是你自己的多线程爬虫，结论变吗？<br>
+   再想一想：<strong>如果这个进程属于别人</strong>，你的判断会怎么变？</p>
+</li>
+<li>
+<p><strong>为什么"所有进程 RSS 之和"经常超过物理内存？</strong><br>
+   要回答"现在实际占用多少物理内存"，应该用什么口径（rss/pss/uss）？<br>
+   为什么这个问题在容器里比在物理机上更严重？</p>
+</li>
+<li>
+<p><strong>连续 3 次采到 CPU 0.0%，你能确定机器空闲吗？</strong><br>
+   列出至少两种造成"假的 0.0%"的原因。</p>
+</li>
+<li>
+<p><strong>阈值定 80% 还是 95%？</strong> 这个问题为什么不能只从技术层面回答？<br>
+   "告警疲劳"和"漏报"哪个更危险？为什么"两个都避免"是不可能的<br>
+   （提示：这是统计学的两类错误，不可能同时最小化）？</p>
+</li>
+<li>
+<p><strong>如果 <code>psutil</code> 在某平台上不提供 <code>sensors_temperatures()</code>，你的监控脚本应该怎么办？</strong><br>
+   是报错退出、还是静默跳过？给出你的选择并说明理由<br>
+   （提示：想一想 2.6 节的"采样完整性计数"）。</p>
+</li>
+<li>
+<p><strong>观测者效应</strong>：如果监控脚本自己排在 CPU 排行第一，这说明了什么？<br>
+   在实际项目里，你会怎么处理这个偏差，又如何在报告里保持诚实？</p>
+</li>
+</ol>
+<hr>
+<h2 id="8">8. 参考与延伸</h2>
+<ul>
+<li>psutil 官方文档 —— <a href="https://psutil.readthedocs.io/">https://psutil.readthedocs.io/</a></li>
+<li>Linux <code>/proc</code> 手册 —— <code>man 5 proc</code>（<code>/proc/stat</code>、<code>/proc/meminfo</code>、<code>/proc/&lt;pid&gt;/stat</code> 字段定义）</li>
+<li>cgroup v2 文档 —— <a href="https://docs.kernel.org/admin-guide/cgroup-v2.html">https://docs.kernel.org/admin-guide/cgroup-v2.html</a></li>
+<li><em>Site Reliability Engineering</em>（Google）第 6 章 "Monitoring Distributed Systems"<br>
+  —— 关于"监控什么才是有用的信号"的经典论述</li>
+<li>Brendan Gregg, <em>Systems Performance</em> —— 关于 counter/gauge 与观测开销的系统方法</li>
+</ul>
+<hr>
+<h2 id="9">9. 明日预告</h2>
+<p><strong>Day 167 — 文件监控（watchdog）</strong></p>
+<p>今天做的是<strong>轮询（polling）</strong>：我每隔一段时间主动去问"现在怎么样了"。<br>
+明天做<strong>事件（event）</strong>：让内核在文件发生变化时<strong>主动通知</strong>我。</p>
+<p>两者的取舍是本课的延伸：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;"></th>
+<th style="text-align: left;">轮询（今天）</th>
+<th style="text-align: left;">事件（明天）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">机制</td>
+<td style="text-align: left;">定时主动采样</td>
+<td style="text-align: left;">内核回调通知</td>
+</tr>
+<tr>
+<td style="text-align: left;">延迟</td>
+<td style="text-align: left;">最差 = 采样周期</td>
+<td style="text-align: left;">接近实时</td>
+</tr>
+<tr>
+<td style="text-align: left;">开销</td>
+<td style="text-align: left;">与"被监控对象数量"成正比</td>
+<td style="text-align: left;">与"变化次数"成正比</td>
+</tr>
+<tr>
+<td style="text-align: left;">漏报风险</td>
+<td style="text-align: left;">两次采样之间的短时事件会被整体平均掉</td>
+<td style="text-align: left;">几乎不漏</td>
+</tr>
+<tr>
+<td style="text-align: left;">复杂度</td>
+<td style="text-align: left;">低</td>
+<td style="text-align: left;">高（队列溢出、事件合并、重命名竞态）</td>
+</tr>
+</tbody>
+</table>
+<p>预告实例：<code>watchdog</code> 的 <code>FileSystemEventHandler</code> 与 <code>inotify</code> 的队列溢出问题 ——<br>
+"你以为你在监控目录，其实你在监控一个会丢事件的队列"。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-165/index.html">← Day 165 阶段项目（四）：安全审计工具箱 · 报告生成 + Docker 部署</a><a class="nav-next" href="../day-167/index.html">Day 167 文件监控（watchdog） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

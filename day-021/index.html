@@ -1,0 +1,621 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 21 — 迭代器与可迭代对象 (Iterator &amp; Iterable) 🔄</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 21 — 迭代器与可迭代对象 (Iterator &amp; Iterable) 🔄</h1>
+  <div class="lmeta">
+    <span class="badge">核心编程概念</span>
+    <span class="badge">412 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-021-iterator-and-iterable" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概述</a>
+<a class="toc-l2" href="#vs-vs">📚 可迭代对象 vs 迭代器 vs 生成器</a>
+<a class="toc-l3" href="#_2">三者的层次关系</a>
+<a class="toc-l3" href="#_3">对比速查表</a>
+<a class="toc-l3" href="#_4">判断方法</a>
+<a class="toc-l2" href="#iterator-protocol">🏗️ 迭代器协议 (Iterator Protocol)</a>
+<a class="toc-l3" href="#_5">协议定义</a>
+<a class="toc-l3" href="#_6">协议流程</a>
+<a class="toc-l3" href="#_7">完整契约</a>
+<a class="toc-l2" href="#for">🔄 for 循环底层实现原理</a>
+<a class="toc-l3" href="#_8">等价代码</a>
+<a class="toc-l3" href="#_9">步骤详解</a>
+<a class="toc-l3" href="#__getitem__">__getitem__ 回退机制</a>
+<a class="toc-l2" href="#lazy-evaluation">🔧 迭代器的惰性求值（Lazy Evaluation）</a>
+<a class="toc-l3" href="#_10">什么是惰性求值？</a>
+<a class="toc-l3" href="#_11">无限迭代器</a>
+<a class="toc-l2" href="#itertools">🔗 itertools 标准库</a>
+<a class="toc-l3" href="#_12">核心函数速查</a>
+<a class="toc-l3" href="#_13">实战示例</a>
+<a class="toc-l2" href="#_14">🚨 常见陷阱与注意事项</a>
+<a class="toc-l3" href="#1">陷阱 1: 迭代器只能遍历一次</a>
+<a class="toc-l3" href="#2">陷阱 2: 在迭代时修改集合</a>
+<a class="toc-l3" href="#3">陷阱 3: 生成器被意外耗尽</a>
+<a class="toc-l3" href="#4">陷阱 4: 递归迭代器的深层嵌套</a>
+<a class="toc-l2" href="#mermaid">🎨 Mermaid 图解</a>
+<a class="toc-l3" href="#_15">迭代器协议流程</a>
+<a class="toc-l3" href="#_16">可迭代对象 → 迭代器 → 元素</a>
+<a class="toc-l3" href="#for_1">for 循环底层等价代码流程图</a>
+<a class="toc-l3" href="#_17">常见迭代器关系</a>
+<a class="toc-l2" href="#_18">📝 思考题</a>
+<a class="toc-l2" href="#_19">🔗 延伸阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-021-iterator-iterable">Day 021 — 迭代器与可迭代对象 (Iterator &amp; Iterable) 🔄</h1>
+<!-- Updated 2026-06-15: Added for loop implementation details and __getitem__ fallback mechanism -->
+
+<h2 id="_1">概述</h2>
+<p><strong>迭代器（Iterator）</strong> 和 <strong>可迭代对象（Iterable）</strong> 是 Python 中遍历数据的核心抽象。理解它们的关系和差异，是掌握 Python 数据流处理的关键一步。</p>
+<blockquote>
+<p><strong>一句话理解</strong>：可迭代对象是"可以产生迭代器的东西"，迭代器是"可以逐个取值的东西"。</p>
+</blockquote>
+<h2 id="vs-vs">📚 可迭代对象 vs 迭代器 vs 生成器</h2>
+<h3 id="_2">三者的层次关系</h3>
+<pre class="plain"><code>┌──────────────────────────────────────┐
+│          可迭代对象 (Iterable)         │
+│  ┌──────────────────────────────────┐│
+│  │        迭代器 (Iterator)          ││
+│  │  ┌────────────────────────────┐  ││
+│  │  │    生成器 (Generator)      │  ││
+│  │  └────────────────────────────┘  ││
+│  └──────────────────────────────────┘│
+└──────────────────────────────────────┘
+</code></pre>
+<h3 id="_3">对比速查表</h3>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>可迭代对象 (Iterable)</th>
+<th>迭代器 (Iterator)</th>
+<th>生成器 (Generator)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>可 for 循环</strong></td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>有 <code>__iter__()</code></strong></td>
+<td>✅</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>有 <code>__next__()</code></strong></td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>可多次遍历</strong></td>
+<td>✅</td>
+<td>❌（只能一次）</td>
+<td>❌（只能一次）</td>
+</tr>
+<tr>
+<td><strong>惰性求值</strong></td>
+<td>❌</td>
+<td>✅</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>使用 <code>yield</code></strong></td>
+<td>❌</td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>举例</strong></td>
+<td>list, str, dict, tuple, set</td>
+<td>iter([]), 文件句柄</td>
+<td>生成器函数返回值</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_4">判断方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">collections.abc</span> <span class="kn">import</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">Iterator</span><span class="p">,</span> <span class="n">Generator</span>
+
+<span class="c1"># 检查</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="n">Iterable</span><span class="p">))</span>   <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">],</span> <span class="n">Iterator</span><span class="p">))</span>   <span class="c1"># False</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="nb">iter</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]),</span> <span class="n">Iterable</span><span class="p">))</span>  <span class="c1"># True</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="nb">iter</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]),</span> <span class="n">Iterator</span><span class="p">))</span>  <span class="c1"># True</span>
+</code></pre></div>
+<h2 id="iterator-protocol">🏗️ 迭代器协议 (Iterator Protocol)</h2>
+<h3 id="_5">协议定义</h3>
+<p>迭代器协议由两个魔法方法组成：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>作用</th>
+<th>返回值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>__iter__(self)</code></td>
+<td>返回迭代器自身</td>
+<td><code>self</code></td>
+</tr>
+<tr>
+<td><code>__next__(self)</code></td>
+<td>返回下一个元素</td>
+<td>元素值，或抛出 <code>StopIteration</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_6">协议流程</h3>
+<pre class="plain"><code>可迭代对象          iter()          迭代器           next()          值
+  list       ──────────────→   list_iterator  ──────────────→  元素
+  str                          str_iterator                     ...
+  dict                         dict_keyiterator                 StopIteration
+</code></pre>
+<h3 id="_7">完整契约</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">IteratorProtocol</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;迭代器协议的完整契约&quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;返回迭代器对象本身&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="fm">__next__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;返回下一个元素，没有元素时抛出 StopIteration&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_exhausted</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">StopIteration</span>
+        <span class="c1"># ... 返回下一个值</span>
+</code></pre></div>
+<h2 id="for">🔄 for 循环底层实现原理</h2>
+<h3 id="_8">等价代码</h3>
+<p>Python 的 <code>for x in iterable:</code> 语句底层实际上执行的是：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># for x in iterable:</span>
+<span class="c1">#     print(x)</span>
+
+<span class="c1"># 等价于：</span>
+<span class="n">_iterator</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">(</span><span class="n">iterable</span><span class="p">)</span>     <span class="c1"># 1. 获取迭代器</span>
+<span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="nb">next</span><span class="p">(</span><span class="n">_iterator</span><span class="p">)</span>     <span class="c1"># 2. 逐个取值</span>
+    <span class="k">except</span> <span class="ne">StopIteration</span><span class="p">:</span>       <span class="c1"># 3. 捕捉结束信号</span>
+        <span class="k">break</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>                    <span class="c1"># 4. 执行循环体</span>
+<span class="k">del</span> <span class="n">_iterator</span>                   <span class="c1"># 5. 清理迭代器</span>
+</code></pre></div>
+<h3 id="_9">步骤详解</h3>
+<p><strong>步骤 1: <code>iter(iterable)</code></strong><br>
+- 调用 <code>iterable.__iter__()</code> 或 <code>iterable.__getitem__(0)</code>（回退方案）<br>
+- 返回一个迭代器对象</p>
+<p><strong>步骤 2-3: <code>next(iterator)</code> 和 <code>StopIteration</code></strong><br>
+- 反复调用 <code>next(iterator)</code>（等价于 <code>iterator.__next__()</code>）<br>
+- 当迭代器耗尽时抛出 <code>StopIteration</code>，循环正常结束</p>
+<p><strong>步骤 4-5: 循环体和清理</strong><br>
+- 每次迭代执行循环体代码<br>
+- 循环结束后删除迭代器引用（触发 GC）</p>
+<h3 id="__getitem__"><code>__getitem__</code> 回退机制</h3>
+<p>如果对象没有 <code>__iter__()</code> 但有 <code>__getitem__()</code>，Python 会创建一个旧的序列迭代器：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">OldStyleIterable</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;旧式可迭代对象——只有 __getitem__&quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">data</span>
+
+    <span class="k">def</span> <span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">index</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">index</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">IndexError</span>     <span class="c1"># Python 捕获 IndexError 并转为 StopIteration</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">index</span><span class="p">]</span>
+
+<span class="c1"># 仍然可以 for 循环！</span>
+<span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">OldStyleIterable</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># 1, 2, 3</span>
+</code></pre></div>
+<blockquote>
+<p>⚠️ <strong>注意</strong>：<code>__getitem__</code> 是 Python 2 的遗留协议。Python 3 优先使用 <code>__iter__()</code>。推荐始终实现 <code>__iter__()</code>。</p>
+</blockquote>
+<h2 id="lazy-evaluation">🔧 迭代器的惰性求值（Lazy Evaluation）</h2>
+<h3 id="_10">什么是惰性求值？</h3>
+<p>迭代器的核心优势是<strong>惰性求值</strong>——只在需要时才计算下一个值。这意味着：</p>
+<ol>
+<li><strong>节省内存</strong>：可以处理无限序列或超大文件</li>
+<li><strong>节省CPU</strong>：不需要一次性计算所有值</li>
+<li><strong>支持无限数据流</strong>：理论上可以永不停止</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 列表：一次性加载所有数据到内存</span>
+<span class="n">all_lines</span> <span class="o">=</span> <span class="n">file</span><span class="o">.</span><span class="n">readlines</span><span class="p">()</span>  <span class="c1"># 大文件时内存爆炸</span>
+
+<span class="c1"># ✅ 迭代器：逐行读取，每次只占一行内存</span>
+<span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">file</span><span class="p">:</span>             <span class="c1"># file 本身是迭代器</span>
+    <span class="n">process</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+
+<span class="c1"># ❌ 列表推导式：立即生成全部结果</span>
+<span class="n">squares</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span><span class="o">**</span><span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="o">**</span><span class="mi">7</span><span class="p">)]</span>  <span class="c1"># 内存爆炸！</span>
+
+<span class="c1"># ✅ 迭代器：按需生成</span>
+<span class="n">squares</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="o">**</span><span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">10</span><span class="o">**</span><span class="mi">7</span><span class="p">))</span>  <span class="c1"># 几乎不占内存</span>
+</code></pre></div>
+<h3 id="_11">无限迭代器</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span> <span class="nc">Counter</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;无限递增的迭代器——演示惰性求值&quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">start</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">current</span> <span class="o">=</span> <span class="n">start</span>
+
+    <span class="k">def</span> <span class="fm">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span> <span class="fm">__next__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">current</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">current</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+<span class="c1"># 永远不会构造完 10 亿个元素的列表</span>
+<span class="c1"># 只会在 for 循环中逐个生成</span>
+<span class="n">counter</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">counter</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">i</span> <span class="o">&gt;=</span> <span class="mi">10</span><span class="p">:</span>
+        <span class="k">break</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>  <span class="c1"># 0, 1, 2, ..., 9</span>
+</code></pre></div>
+<h2 id="itertools">🔗 itertools 标准库</h2>
+<h3 id="_12">核心函数速查</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>作用</th>
+<th>等价于</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>count(start, step)</code></td>
+<td>无限等差数列</td>
+<td><code>start, start+step, ...</code></td>
+<td><code>count(10, 2)</code> → 10, 12, 14...</td>
+</tr>
+<tr>
+<td><code>cycle(iterable)</code></td>
+<td>无限循环</td>
+<td><code>A, B, C, A, B, C, ...</code></td>
+<td><code>cycle('ABC')</code> → A, B, C, A...</td>
+</tr>
+<tr>
+<td><code>repeat(elem, n)</code></td>
+<td>重复元素 n 次</td>
+<td><code>elem, elem, ...</code></td>
+<td><code>repeat(5, 3)</code> → 5, 5, 5</td>
+</tr>
+<tr>
+<td><code>chain(*iters)</code></td>
+<td>串联多个迭代器</td>
+<td><code>a1, a2, b1, b2</code></td>
+<td><code>chain('AB', 'CD')</code> → A, B, C, D</td>
+</tr>
+<tr>
+<td><code>zip_longest(*iters)</code></td>
+<td>类似 zip 但以最长为准</td>
+<td>填充 <code>fillvalue</code></td>
+<td>见下方示例</td>
+</tr>
+<tr>
+<td><code>islice(iter, start, stop)</code></td>
+<td>迭代器切片</td>
+<td>惰性切片</td>
+<td><code>islice(count(), 5)</code> → 0-4</td>
+</tr>
+<tr>
+<td><code>takewhile(pred, iter)</code></td>
+<td>条件为真时取值</td>
+<td></td>
+<td>从开头取直到条件不满足</td>
+</tr>
+<tr>
+<td><code>dropwhile(pred, iter)</code></td>
+<td>跳过条件为真的部分</td>
+<td></td>
+<td>从条件不满足开始取</td>
+</tr>
+<tr>
+<td><code>product(*iters)</code></td>
+<td>笛卡尔积</td>
+<td>嵌套 for</td>
+<td><code>product('AB', '12')</code></td>
+</tr>
+<tr>
+<td><code>permutations(iter, r)</code></td>
+<td>排列</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>combinations(iter, r)</code></td>
+<td>组合</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td><code>groupby(iter, key)</code></td>
+<td>相邻元素分组</td>
+<td></td>
+<td>类似 SQL GROUP BY</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_13">实战示例</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">itertools</span>
+
+<span class="c1"># 1. count + islice = 惰性切片</span>
+<span class="n">evens</span> <span class="o">=</span> <span class="n">itertools</span><span class="o">.</span><span class="n">count</span><span class="p">(</span><span class="n">start</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+<span class="n">first_10</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">itertools</span><span class="o">.</span><span class="n">islice</span><span class="p">(</span><span class="n">evens</span><span class="p">,</span> <span class="mi">10</span><span class="p">))</span>  <span class="c1"># [0, 2, 4, ... 18]</span>
+
+<span class="c1"># 2. cycle 实现轮询</span>
+<span class="n">servers</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;S1&#39;</span><span class="p">,</span> <span class="s1">&#39;S2&#39;</span><span class="p">,</span> <span class="s1">&#39;S3&#39;</span><span class="p">]</span>
+<span class="n">pool</span> <span class="o">=</span> <span class="n">itertools</span><span class="o">.</span><span class="n">cycle</span><span class="p">(</span><span class="n">servers</span><span class="p">)</span>
+<span class="n">assignments</span> <span class="o">=</span> <span class="p">[</span><span class="nb">next</span><span class="p">(</span><span class="n">pool</span><span class="p">)</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">7</span><span class="p">)]</span>  <span class="c1"># [&#39;S1&#39;,&#39;S2&#39;,&#39;S3&#39;,&#39;S1&#39;,&#39;S2&#39;,&#39;S3&#39;,&#39;S1&#39;]</span>
+
+<span class="c1"># 3. chain 合并多个迭代器</span>
+<span class="n">result</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">itertools</span><span class="o">.</span><span class="n">chain</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">],</span> <span class="s1">&#39;AB&#39;</span><span class="p">))</span>  <span class="c1"># [1, 2, 3, 4, &#39;A&#39;, &#39;B&#39;]</span>
+
+<span class="c1"># 4. zip_longest 处理不等长</span>
+<span class="n">a</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+<span class="n">b</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;a&#39;</span><span class="p">,</span> <span class="s1">&#39;b&#39;</span><span class="p">]</span>
+<span class="n">padded</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">itertools</span><span class="o">.</span><span class="n">zip_longest</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">,</span> <span class="n">fillvalue</span><span class="o">=</span><span class="s1">&#39;N/A&#39;</span><span class="p">))</span>
+<span class="c1"># [(1, &#39;a&#39;), (2, &#39;b&#39;), (3, &#39;N/A&#39;)]</span>
+
+<span class="c1"># 5. groupby 分组（必须已排序）</span>
+<span class="n">data</span> <span class="o">=</span> <span class="p">[(</span><span class="s1">&#39;A&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;A&#39;</span><span class="p">,</span> <span class="mi">2</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;B&#39;</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="p">(</span><span class="s1">&#39;B&#39;</span><span class="p">,</span> <span class="mi">4</span><span class="p">)]</span>
+<span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">itertools</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">]):</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="nb">list</span><span class="p">(</span><span class="n">group</span><span class="p">))</span>  <span class="c1"># A [(A,1),(A,2)]  B [(B,3),(B,4)]</span>
+</code></pre></div>
+<h2 id="_14">🚨 常见陷阱与注意事项</h2>
+<h3 id="1">陷阱 1: 迭代器只能遍历一次</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">nums</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+
+<span class="c1"># 第一次遍历：正常</span>
+<span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">nums</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># 1, 2, 3</span>
+
+<span class="c1"># 第二次遍历：什么都没有！</span>
+<span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">nums</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>  <span class="c1"># (无输出) — 迭代器已经耗尽</span>
+
+<span class="c1"># ✅ 解决：需要重新创建迭代器</span>
+<span class="n">nums</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+</code></pre></div>
+<h3 id="2">陷阱 2: 在迭代时修改集合</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ RuntimeError: Set changed size during iteration</span>
+<span class="n">items</span> <span class="o">=</span> <span class="p">{</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">5</span><span class="p">}</span>
+<span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">item</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">items</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+
+<span class="c1"># ✅ 正确做法：先复制再遍历</span>
+<span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="n">items</span><span class="p">):</span>  <span class="c1"># list() 创建副本</span>
+    <span class="k">if</span> <span class="n">item</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">items</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="3">陷阱 3: 生成器被意外耗尽</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 小心：传给多个函数可能导致意外耗尽</span>
+<span class="k">def</span> <span class="nf">check_positive</span><span class="p">(</span><span class="n">nums</span><span class="p">):</span>
+    <span class="k">return</span> <span class="nb">all</span><span class="p">(</span><span class="n">x</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">nums</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">sum_squares</span><span class="p">(</span><span class="n">nums</span><span class="p">):</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="n">x</span><span class="o">**</span><span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">nums</span><span class="p">)</span>
+
+<span class="n">data</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">])</span>  <span class="c1"># 生成器</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">check_positive</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>  <span class="c1"># False（遍历到 -3 时停止）</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sum_squares</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>     <span class="c1"># 只得到 4²=16，因为生成器已部分耗尽！</span>
+
+<span class="c1"># ✅ 改用列表</span>
+<span class="n">data</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span>
+</code></pre></div>
+<h3 id="4">陷阱 4: 递归迭代器的深层嵌套</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># chain 嵌套 chain：没问题，惰性的</span>
+<span class="n">deep</span> <span class="o">=</span> <span class="n">itertools</span><span class="o">.</span><span class="n">chain</span><span class="o">.</span><span class="n">from_iterable</span><span class="p">(</span>
+    <span class="n">itertools</span><span class="o">.</span><span class="n">chain</span><span class="o">.</span><span class="n">from_iterable</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<span class="p">)</span>
+
+<span class="c1"># 但打印调试时会立即求值</span>
+<span class="nb">list</span><span class="p">(</span><span class="n">deep</span><span class="p">)</span>  <span class="c1"># 小心内存！</span>
+</code></pre></div>
+<h2 id="mermaid">🎨 Mermaid 图解</h2>
+<h3 id="_15">迭代器协议流程</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Code as Python代码
+    participant Iterable as 可迭代对象 (list)
+    participant Iterator as 迭代器
+    participant Elements as 元素列表
+
+    Code-&gt;&gt;Iterable: iter([1,2,3])
+    Iterable--&gt;&gt;Iterator: __iter__() → list_iterator
+    Code-&gt;&gt;Iterator: next(it)
+    Iterator-&gt;&gt;Elements: __next__()
+    Elements--&gt;&gt;Iterator: 1
+    Iterator--&gt;&gt;Code: 1
+    Code-&gt;&gt;Iterator: next(it)
+    Elements--&gt;&gt;Iterator: 2
+    Iterator--&gt;&gt;Code: 2
+    Code-&gt;&gt;Iterator: next(it)
+    Elements--&gt;&gt;Iterator: 3
+    Iterator--&gt;&gt;Code: 3
+    Code-&gt;&gt;Iterator: next(it)
+    Elements--&gt;&gt;Iterator: StopIteration
+    Iterator--&gt;&gt;Code: StopIteration 异常
+    Note over Code: 循环结束
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Code as Python代码
+    participant Iterable as 可迭代对象 (list)
+    participant Iterator as 迭代器
+    participant Elements as 元素列表
+
+    Code-&gt;&gt;Iterable: iter([1,2,3])
+    Iterable--&gt;&gt;Iterator: __iter__() → list_iterator
+    Code-&gt;&gt;Iterator: next(it)
+    Iterator-&gt;&gt;Elements: __next__()
+    Elements--&gt;&gt;Iterator: 1
+    Iterator--&gt;&gt;Code: 1
+    Code-&gt;&gt;Iterator: next(it)
+    Elements--&gt;&gt;Iterator: 2
+    Iterator--&gt;&gt;Code: 2
+    Code-&gt;&gt;Iterator: next(it)
+    Elements--&gt;&gt;Iterator: 3
+    Iterator--&gt;&gt;Code: 3
+    Code-&gt;&gt;Iterator: next(it)
+    Elements--&gt;&gt;Iterator: StopIteration
+    Iterator--&gt;&gt;Code: StopIteration 异常
+    Note over Code: 循环结束
+</code></pre></div>
+<h3 id="_16">可迭代对象 → 迭代器 → 元素</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 可迭代对象
+        L1[&quot;list [1,2,3]&quot;]
+    end
+    subgraph iter函数
+        I1[&quot;iter()&quot;]
+    end
+    subgraph 迭代器
+        IT1[&quot;list_iterator&lt;br/&gt;__iter__ → self&lt;br/&gt;__next__ → value&quot;]
+    end
+    subgraph 逐个取值
+        N1[&quot;next()&quot;]
+        N2[&quot;next()&quot;]
+        N3[&quot;StopIteration&quot;]
+    end
+
+    L1 --&gt; I1 --&gt; IT1
+    IT1 --&gt; N1 --&gt; 1
+    IT1 --&gt; N2 --&gt; 2
+    IT1 --&gt; N3
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 可迭代对象
+        L1[&quot;list [1,2,3]&quot;]
+    end
+    subgraph iter函数
+        I1[&quot;iter()&quot;]
+    end
+    subgraph 迭代器
+        IT1[&quot;list_iterator&lt;br/&gt;__iter__ → self&lt;br/&gt;__next__ → value&quot;]
+    end
+    subgraph 逐个取值
+        N1[&quot;next()&quot;]
+        N2[&quot;next()&quot;]
+        N3[&quot;StopIteration&quot;]
+    end
+
+    L1 --&gt; I1 --&gt; IT1
+    IT1 --&gt; N1 --&gt; 1
+    IT1 --&gt; N2 --&gt; 2
+    IT1 --&gt; N3
+</code></pre></div>
+<h3 id="for_1">for 循环底层等价代码流程图</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;for x in iterable:&quot;] --&gt; B[&quot;it = iter(iterable)&quot;]
+    B --&gt; C{&quot;try:&lt;br/&gt;x = next(it)&quot;}
+    C --&gt;|成功| D[&quot;执行循环体&lt;br/&gt;print(x)&quot;]
+    D --&gt; C
+    C --&gt;|StopIteration| E[&quot;except StopIteration:&lt;br/&gt;break&quot;]
+    E --&gt; F[&quot;del it&quot;]
+    F --&gt; G[&quot;循环结束&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;for x in iterable:&quot;] --&gt; B[&quot;it = iter(iterable)&quot;]
+    B --&gt; C{&quot;try:&lt;br/&gt;x = next(it)&quot;}
+    C --&gt;|成功| D[&quot;执行循环体&lt;br/&gt;print(x)&quot;]
+    D --&gt; C
+    C --&gt;|StopIteration| E[&quot;except StopIteration:&lt;br/&gt;break&quot;]
+    E --&gt; F[&quot;del it&quot;]
+    F --&gt; G[&quot;循环结束&quot;]
+</code></pre></div>
+<h3 id="_17">常见迭代器关系</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph 内置类型
+        L(List) --&gt; I(可迭代对象)
+        S(Str) --&gt; I
+        D(Dict) --&gt; I
+        T(Tuple) --&gt; I
+    end
+
+    subgraph 迭代器
+        LI(&quot;list_iterator&quot;) --&gt; Ir(迭代器)
+        FI(&quot;file_iterator&quot;) --&gt; Ir
+        GI(&quot;generator&quot;) --&gt; Ir
+    end
+
+    I --&gt;|&quot;iter()&quot;| Ir
+    Ir --&gt;|&quot;next()&quot;| EI(元素)
+    Ir --&gt;|&quot;list()&quot;| ALL(全部元素)
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph 内置类型
+        L(List) --&gt; I(可迭代对象)
+        S(Str) --&gt; I
+        D(Dict) --&gt; I
+        T(Tuple) --&gt; I
+    end
+
+    subgraph 迭代器
+        LI(&quot;list_iterator&quot;) --&gt; Ir(迭代器)
+        FI(&quot;file_iterator&quot;) --&gt; Ir
+        GI(&quot;generator&quot;) --&gt; Ir
+    end
+
+    I --&gt;|&quot;iter()&quot;| Ir
+    Ir --&gt;|&quot;next()&quot;| EI(元素)
+    Ir --&gt;|&quot;list()&quot;| ALL(全部元素)
+</code></pre></div>
+<h2 id="_18">📝 思考题</h2>
+<ol>
+<li>为什么迭代器遍历过一次后就不能再次遍历？设计上的考虑是什么？</li>
+<li>用自己的话说说 <code>__iter__()</code> 和 <code>__next__()</code> 方法的各自职责。</li>
+<li>实现一个迭代器来生成斐波那契数列——和递归版本、迭代版本比有什么优劣势？</li>
+<li><code>range()</code> 返回的是什么？是迭代器吗？用代码验证。</li>
+<li>如何实现一个"可暂停、可恢复"的迭代器？需要存储哪些状态？</li>
+<li><code>itertools.chain</code> 和 <code>+</code> 运算符拼接列表有什么区别？</li>
+<li>什么时候应该选择用迭代器而不是列表？什么时候反过来？</li>
+<li>请写出 <code>for x in obj:</code> 在 CPython 虚拟机中的完整执行步骤。</li>
+</ol>
+<h2 id="_19">🔗 延伸阅读</h2>
+<ul>
+<li><a href="https://peps.python.org/pep-0234/">PEP 234 — Iterators</a></li>
+<li><a href="https://docs.python.org/3/library/stdtypes.html#iterator-types">Python docs: Iterator Types</a></li>
+<li><a href="https://docs.python.org/3/library/itertools.html">Python docs: itertools</a></li>
+<li><a href="https://www.oreilly.com/library/view/fluent-python-2nd/9781492056348/">Fluent Python — Chapter 17: Iterators, Generators, and Coroutines</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-020/index.html">← Day 20 递归 (Recursion) 🔄</a><a class="nav-next" href="../day-022/index.html">Day 22 生成器 (Generator) ⚡ →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

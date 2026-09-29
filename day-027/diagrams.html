@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 27 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 27 正文</a>
+  <h1>Day 27 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-027">Day 027 — 图解：时间与日期</h1>
+<p>本目录包含 Day 027 主题相关的 ASCII 图和 Mermaid 图解。</p>
+<hr>
+<h2 id="datetime">图一：datetime 模块对象关系图</h2>
+<h3 id="ascii">ASCII 版本</h3>
+<pre class="plain"><code>                    ┌─────────────────────────────────────────┐
+                    │            datetime 模块                  │
+                    │  (from datetime import ...)              │
+                    └─────────────────────────────────────────┘
+                                      │
+          ┌───────────────┬───────────┴───────────┬───────────────┐
+          │               │                       │               │
+          ▼               ▼                       ▼               ▼
+   ┌──────────┐    ┌──────────┐           ┌──────────┐    ┌──────────────┐
+   │   date   │    │   time   │           │ datetime │    │   timedelta  │
+   │ (日期)   │    │ (时间)   │           │ (日期+时间)│   │ (时间差)     │
+   │          │    │          │           │          │    │              │
+   │ year     │    │ hour     │           │ year     │    │ days         │
+   │ month    │    │ minute   │ 继承 date │ month    │    │ seconds      │
+   │ day      │    │ second   │──────────►│ day      │    │ microseconds │
+   │          │    │ microsec │           │ hour     │    │              │
+   │ today()  │    │ tzinfo   │           │ minute   │    │ total_secs() │
+   │ weekday()│    │          │           │ second   │    │              │
+   └──────────┘    └──────────┘           │ microsec │    └──────────────┘
+                                          │ tzinfo   │
+                                          │          │
+                                          │ now()    │
+                                          │ strftime │
+                                          │ strptime │
+                                          │ timestamp│
+                                          └──────────┘
+</code></pre>
+<h3 id="mermaid">Mermaid 版本</h3>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class date {
+        -int year
+        -int month
+        -int day
+        +today() date
+        +weekday() int
+        +strftime(fmt) str
+    }
+    
+    class time {
+        -int hour
+        -int minute
+        -int second
+        -int microsecond
+        -tzinfo tz
+    }
+    
+    class datetime {
+        -int year
+        -int month
+        -int day
+        -int hour
+        -int minute
+        -int second
+        -int microsecond
+        -tzinfo tz
+        +now() datetime
+        +fromtimestamp(ts) datetime
+        +timestamp() float
+        +strftime(fmt) str
+        +strptime(s, fmt) datetime
+        +astimezone(tz) datetime
+    }
+    
+    class timedelta {
+        -int days
+        -int seconds
+        -int microseconds
+        +total_seconds() float
+    }
+    
+    datetime --|&gt; date : 继承
+    datetime ..&gt; timedelta : 运算产生
+    datetime ..&gt; time : 包含时间部分
+    datetime ..&gt; date : 包含日期部分
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class date {
+        -int year
+        -int month
+        -int day
+        +today() date
+        +weekday() int
+        +strftime(fmt) str
+    }
+    
+    class time {
+        -int hour
+        -int minute
+        -int second
+        -int microsecond
+        -tzinfo tz
+    }
+    
+    class datetime {
+        -int year
+        -int month
+        -int day
+        -int hour
+        -int minute
+        -int second
+        -int microsecond
+        -tzinfo tz
+        +now() datetime
+        +fromtimestamp(ts) datetime
+        +timestamp() float
+        +strftime(fmt) str
+        +strptime(s, fmt) datetime
+        +astimezone(tz) datetime
+    }
+    
+    class timedelta {
+        -int days
+        -int seconds
+        -int microseconds
+        +total_seconds() float
+    }
+    
+    datetime --|&gt; date : 继承
+    datetime ..&gt; timedelta : 运算产生
+    datetime ..&gt; time : 包含时间部分
+    datetime ..&gt; date : 包含日期部分
+</code></pre></div>
+<hr>
+<h2 id="_1">图二：时间转换流程</h2>
+<h3 id="_2">三种时间形态的相互转换</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────────────────┐
+│                    时间的三重形态                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+                      ┌─────────────────┐
+                      │    📦 时间戳      │
+                      │  (Unix Epoch秒数) │
+                      │  1755000000.0    │
+                      └────────┬────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │                │                │
+              ▼                ▼                ▼
+    ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+    │  fromtimestamp() │ │  fromtimestamp() │ │  fromtimestamp()│
+    │  (datetime模块)  │ │  (date模块)      │ │  (time模块)     │
+    └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
+             │                   │                   │
+             ▼                   ▼                   │
+    ┌─────────────────┐ ┌─────────────────┐          │
+    │  📋 datetime     │ │  📅 date         │          │
+    │  2026-06-18      │ │  2026-06-18      │          │
+    │  09:15:30        │ │                  │          │
+    └────────┬────────┘ └──────────────────┘          │
+             │                                        │
+             ▼                                        ▼
+    ┌─────────────────┐                    ┌─────────────────┐
+    │  ✏️ 格式化       │                    │  ⏰ time         │
+    │  strftime()     │                    │  09:15:30        │
+    │  &quot;2026-06-18...&quot;│                    │                  │
+    └─────────────────┘                    └─────────────────┘
+
+               strptime() 反向操作:
+               &quot;2026-06-18 09:15:30&quot; ──► datetime对象
+</code></pre>
+<h3 id="mermaid_1">Mermaid 流程图</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    subgraph &quot;输入层&quot;
+        A[&quot;⏱️ 时间戳&lt;br/&gt;float / int&quot;]
+        B[&quot;📝 时间字符串&lt;br/&gt;&#x27;2026-06-18 09:15:30&#x27;&quot;]
+        C[&quot;📐 结构化数据&lt;br/&gt;(year, month, day, ...)&quot;]
+    end
+    
+    subgraph &quot;转换层&quot;
+        D[&quot;datetime.fromtimestamp()&quot;]
+        E[&quot;datetime.strptime()&quot;]
+        F[&quot;datetime(year, month, day, ...)&quot;]
+        G[&quot;datetime.now() / datetime.utcnow()&quot;]
+    end
+    
+    subgraph &quot;中间表示&quot;
+        H[&quot;📦 datetime 对象&lt;br/&gt;(带或不带时区)&quot;]
+    end
+    
+    subgraph &quot;输出层&quot;
+        I[&quot;🔢 timestamp()&lt;br/&gt;→ 时间戳&quot;]
+        J[&quot;📝 strftime()&lt;br/&gt;→ 字符串&quot;]
+        K[&quot;📊 date() / time()&lt;br/&gt;→ 部分提取&quot;]
+        L[&quot;📏 运算 (A-B, A+td)&lt;br/&gt;→ timedelta / datetime&quot;]
+    end
+    
+    A --&gt; D --&gt; H
+    B --&gt; E --&gt; H
+    C --&gt; F --&gt; H
+    G --&gt; H
+    
+    H --&gt; I
+    H --&gt; J
+    H --&gt; K
+    H --&gt; L
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    subgraph &quot;输入层&quot;
+        A[&quot;⏱️ 时间戳&lt;br/&gt;float / int&quot;]
+        B[&quot;📝 时间字符串&lt;br/&gt;&#x27;2026-06-18 09:15:30&#x27;&quot;]
+        C[&quot;📐 结构化数据&lt;br/&gt;(year, month, day, ...)&quot;]
+    end
+    
+    subgraph &quot;转换层&quot;
+        D[&quot;datetime.fromtimestamp()&quot;]
+        E[&quot;datetime.strptime()&quot;]
+        F[&quot;datetime(year, month, day, ...)&quot;]
+        G[&quot;datetime.now() / datetime.utcnow()&quot;]
+    end
+    
+    subgraph &quot;中间表示&quot;
+        H[&quot;📦 datetime 对象&lt;br/&gt;(带或不带时区)&quot;]
+    end
+    
+    subgraph &quot;输出层&quot;
+        I[&quot;🔢 timestamp()&lt;br/&gt;→ 时间戳&quot;]
+        J[&quot;📝 strftime()&lt;br/&gt;→ 字符串&quot;]
+        K[&quot;📊 date() / time()&lt;br/&gt;→ 部分提取&quot;]
+        L[&quot;📏 运算 (A-B, A+td)&lt;br/&gt;→ timedelta / datetime&quot;]
+    end
+    
+    A --&gt; D --&gt; H
+    B --&gt; E --&gt; H
+    C --&gt; F --&gt; H
+    G --&gt; H
+    
+    H --&gt; I
+    H --&gt; J
+    H --&gt; K
+    H --&gt; L
+</code></pre></div>
+<hr>
+<h2 id="_3">图三：时区转换示意图</h2>
+<h3 id="naive-aware">Naive ↔ Aware 转换</h3>
+<pre class="plain"><code>              ⚠️ 不允许直接混合运算！ ⚠️
+
+Naive datetime                    Aware datetime
+(tzinfo=None)                     (tzinfo=ZoneInfo(...))
+    │                                    │
+    │                                    │
+    │    ┌─────────────────────┐          │
+    │    │  方案 A: 补充时区    │          │
+    └───►│  replace(tzinfo=utc)│          │
+         │                     │◄─────────┘
+         │  方案 B: 去除时区    │
+         │  replace(tzinfo=None)│
+         └─────────────────────┘
+                    │
+                    ▼
+          ⚡ 统一后的 datetime
+          (双方类型一致，可以运算)
+</code></pre>
+<h3 id="_4">跨时区时间转换</h3>
+<pre class="plain"><code>UTC 时间 (数据库存储)
+    │
+    │  astimezone(ZoneInfo(&#x27;Asia/Shanghai&#x27;))
+    ▼
+北京时间: 2026-06-18 15:00:00 CST (UTC+8)
+    │
+    │  astimezone(ZoneInfo(&#x27;America/New_York&#x27;))
+    ▼
+纽约时间: 2026-06-18 03:00:00 EDT (UTC-4)  [夏令时]
+
+关键原则:
+┌────────────────────────────────────────────┐
+│  ✅ 存储: UTC                              │
+│  ✅ 计算: UTC 统一基准                      │
+│  ✅ 显示: 根据用户时区转换                   │
+│  ❌ 禁止: naive + aware 混用               │
+│  ❌ 禁止: 存储带时区的本地时间                │
+└────────────────────────────────────────────┘
+</code></pre>
+<h3 id="mermaid_2">Mermaid 时序图</h3>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant User as 用户 (北京)
+    participant App as 应用系统
+    participant DB as 数据库 (UTC)
+    participant NYC as 纽约用户
+    
+    User-&gt;&gt;App: 输入会议时间 15:00 (CST)
+    App-&gt;&gt;App: 转换为 UTC 07:00
+    App-&gt;&gt;DB: 存储 UTC 时间
+    Note over DB: 2026-06-18 07:00:00 UTC
+    
+    NYC-&gt;&gt;App: 查询会议时间
+    App-&gt;&gt;DB: 读取 UTC 时间
+    App-&gt;&gt;App: 转换为纽约时区
+    App-&gt;&gt;NYC: 显示 03:00 EDT
+    Note over NYC: 2026-06-18 03:00 EDT
+    
+    User-&gt;&gt;App: 查询会议时间
+    App-&gt;&gt;DB: 读取 UTC 时间
+    App-&gt;&gt;App: 转换为北京时间
+    App-&gt;&gt;User: 显示 15:00 CST
+    Note over User: 2026-06-18 15:00 CST
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant User as 用户 (北京)
+    participant App as 应用系统
+    participant DB as 数据库 (UTC)
+    participant NYC as 纽约用户
+    
+    User-&gt;&gt;App: 输入会议时间 15:00 (CST)
+    App-&gt;&gt;App: 转换为 UTC 07:00
+    App-&gt;&gt;DB: 存储 UTC 时间
+    Note over DB: 2026-06-18 07:00:00 UTC
+    
+    NYC-&gt;&gt;App: 查询会议时间
+    App-&gt;&gt;DB: 读取 UTC 时间
+    App-&gt;&gt;App: 转换为纽约时区
+    App-&gt;&gt;NYC: 显示 03:00 EDT
+    Note over NYC: 2026-06-18 03:00 EDT
+    
+    User-&gt;&gt;App: 查询会议时间
+    App-&gt;&gt;DB: 读取 UTC 时间
+    App-&gt;&gt;App: 转换为北京时间
+    App-&gt;&gt;User: 显示 15:00 CST
+    Note over User: 2026-06-18 15:00 CST
+</code></pre></div>
+<hr>
+<h2 id="_5">图四：时间格式解析流程</h2>
+<h3 id="strptime">strptime 的解析过程</h3>
+<pre class="plain"><code>输入: &quot;18/Jun/2026:09:15:30 +0800&quot;
+格式: &quot;%d/%b/%Y:%H:%M:%S %z&quot;
+
+解析过程 (从左到右):
+
+位置 0: &quot;1&quot;  → %d 开始, 读入 &quot;18&quot;    → day = 18
+位置 2: &quot;/&quot;  → 匹配分隔符 &quot;/&quot;
+位置 3: &quot;J&quot;  → %b 开始, 读入 &quot;Jun&quot;   → month = 6
+位置 6: &quot;/&quot;  → 匹配分隔符 &quot;/&quot;
+位置 7: &quot;2&quot;  → %Y 开始, 读入 &quot;2026&quot;  → year = 2026
+位置 11: &quot;:&quot; → 匹配分隔符 &quot;:&quot;
+位置 12: &quot;0&quot; → %H 开始, 读入 &quot;09&quot;    → hour = 9
+位置 14: &quot;:&quot; → 匹配分隔符 &quot;:&quot;
+位置 15: &quot;1&quot; → %M 开始, 读入 &quot;15&quot;    → minute = 15
+位置 17: &quot;:&quot; → 匹配分隔符 &quot;:&quot;
+位置 18: &quot;3&quot; → %S 开始, 读入 &quot;30&quot;    → second = 30
+位置 20: &quot; &quot; → 匹配分隔符 &quot; &quot;
+位置 21: &quot;+&quot; → %z 开始, 读入 &quot;+0800&quot; → tz = UTC+08:00
+
+┌────────────────────────────────────────┐
+│ 解析结果:                              │
+│ datetime(2026, 6, 18, 9, 15, 30,      │
+│          tzinfo=timezone(+08:00))      │
+└────────────────────────────────────────┘
+</code></pre>
+<h3 id="mermaid_3">Mermaid 流程图</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[&quot;字符串&lt;br/&gt;&#x27;18/Jun/2026:09:15:30 +0800&#x27;&quot;] --&gt; B[&quot;strptime&quot;]
+    B --&gt; C[&quot;格式模板&lt;br/&gt;&#x27;%d/%b/%Y:%H:%M:%S %z&#x27;&quot;]
+    C --&gt; D{&quot;逐字符匹配&quot;}
+    
+    D --&gt;|&quot;%d → 18&quot;| E[&quot;day=18&quot;]
+    D --&gt;|&quot;/ → 分隔符&quot;| F{&quot;继续&quot;}
+    D --&gt;|&quot;%b → Jun&quot;| G[&quot;month=6&quot;]
+    D --&gt;|&quot;/ → 分隔符&quot;| H{&quot;继续&quot;}
+    D --&gt;|&quot;%Y → 2026&quot;| I[&quot;year=2026&quot;]
+    D --&gt;|&quot;: → 分隔符&quot;| J{&quot;继续&quot;}
+    D --&gt;|&quot;%H → 09&quot;| K[&quot;hour=9&quot;]
+    D --&gt;|&quot;: → 分隔符&quot;| L{&quot;继续&quot;}
+    D --&gt;|&quot;%M → 15&quot;| M[&quot;minute=15&quot;]
+    D --&gt;|&quot;: → 分隔符&quot;| N{&quot;继续&quot;}
+    D --&gt;|&quot;%S → 30&quot;| O[&quot;second=30&quot;]
+    D --&gt;|&quot; → 分隔符&quot;| P{&quot;继续&quot;}
+    D --&gt;|&quot;%z → +0800&quot;| Q[&quot;tz=UTC+8&quot;]
+    
+    E --&gt; R[&quot;✨ datetime 对象&lt;br/&gt;2026-06-18 09:15:30+08:00&quot;]
+    G --&gt; R
+    I --&gt; R
+    K --&gt; R
+    M --&gt; R
+    O --&gt; R
+    Q --&gt; R
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[&quot;字符串&lt;br/&gt;&#x27;18/Jun/2026:09:15:30 +0800&#x27;&quot;] --&gt; B[&quot;strptime&quot;]
+    B --&gt; C[&quot;格式模板&lt;br/&gt;&#x27;%d/%b/%Y:%H:%M:%S %z&#x27;&quot;]
+    C --&gt; D{&quot;逐字符匹配&quot;}
+    
+    D --&gt;|&quot;%d → 18&quot;| E[&quot;day=18&quot;]
+    D --&gt;|&quot;/ → 分隔符&quot;| F{&quot;继续&quot;}
+    D --&gt;|&quot;%b → Jun&quot;| G[&quot;month=6&quot;]
+    D --&gt;|&quot;/ → 分隔符&quot;| H{&quot;继续&quot;}
+    D --&gt;|&quot;%Y → 2026&quot;| I[&quot;year=2026&quot;]
+    D --&gt;|&quot;: → 分隔符&quot;| J{&quot;继续&quot;}
+    D --&gt;|&quot;%H → 09&quot;| K[&quot;hour=9&quot;]
+    D --&gt;|&quot;: → 分隔符&quot;| L{&quot;继续&quot;}
+    D --&gt;|&quot;%M → 15&quot;| M[&quot;minute=15&quot;]
+    D --&gt;|&quot;: → 分隔符&quot;| N{&quot;继续&quot;}
+    D --&gt;|&quot;%S → 30&quot;| O[&quot;second=30&quot;]
+    D --&gt;|&quot; → 分隔符&quot;| P{&quot;继续&quot;}
+    D --&gt;|&quot;%z → +0800&quot;| Q[&quot;tz=UTC+8&quot;]
+    
+    E --&gt; R[&quot;✨ datetime 对象&lt;br/&gt;2026-06-18 09:15:30+08:00&quot;]
+    G --&gt; R
+    I --&gt; R
+    K --&gt; R
+    M --&gt; R
+    O --&gt; R
+    Q --&gt; R
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

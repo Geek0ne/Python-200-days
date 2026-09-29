@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 88 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 88 正文</a>
+  <h1>Day 88 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-088-pygame">Day 088 - 图解 Pygame 核心概念</h1>
+<h2 id="1">1. 游戏循环流程图</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[游戏启动] --&gt; B[pygame.init]
+    B --&gt; C[创建窗口]
+    C --&gt; D[游戏主循环开始]
+    
+    D --&gt; E[事件处理]
+    E --&gt; E1{有事件?}
+    E1 --&gt;|是| E2[处理事件]
+    E2 --&gt; F[游戏更新]
+    E1 --&gt;|否| F
+    
+    F --&gt; G[画面渲染]
+    G --&gt; H[clock.tick 控制帧率]
+    H --&gt; I{游戏结束?}
+    I --&gt;|否| D
+    I --&gt;|是| J[pygame.quit]
+    J --&gt; K[程序退出]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[游戏启动] --&gt; B[pygame.init]
+    B --&gt; C[创建窗口]
+    C --&gt; D[游戏主循环开始]
+    
+    D --&gt; E[事件处理]
+    E --&gt; E1{有事件?}
+    E1 --&gt;|是| E2[处理事件]
+    E2 --&gt; F[游戏更新]
+    E1 --&gt;|否| F
+    
+    F --&gt; G[画面渲染]
+    G --&gt; H[clock.tick 控制帧率]
+    H --&gt; I{游戏结束?}
+    I --&gt;|否| D
+    I --&gt;|是| J[pygame.quit]
+    J --&gt; K[程序退出]
+</code></pre></div>
+<h2 id="2-pygame">2. Pygame 坐标系</h2>
+<pre class="plain"><code>    X 轴 (向右增大)
+    ──────────────────────→
+    │
+    │  (0,0) ← 左上角原点
+    │    ┌──────────┐
+    │    │  rect    │ (x, y)
+    │    │  ┌────┐  │
+    │    │  │●   │  │ ← rect.center
+    │    │  └────┘  │
+    │    └──────────┘
+    │
+    │  Y 轴 (向下增大)
+    ↓
+</code></pre>
+<h2 id="3">3. 精灵系统架构</h2>
+<div class="mermaid-wrap"><div class="mermaid">classDiagram
+    class Sprite {
+        +Surface image
+        +Rect rect
+        +update()
+    }
+    
+    class Player {
+        +int speed
+        +update()
+        +shoot()
+    }
+    
+    class Enemy {
+        +int speed
+        +update()
+    }
+    
+    class Group {
+        +add(Sprite)
+        +remove(Sprite)
+        +update()
+        +draw(Surface)
+    }
+    
+    Sprite &lt;|-- Player
+    Sprite &lt;|-- Enemy
+    Group o-- Sprite : contains
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>classDiagram
+    class Sprite {
+        +Surface image
+        +Rect rect
+        +update()
+    }
+    
+    class Player {
+        +int speed
+        +update()
+        +shoot()
+    }
+    
+    class Enemy {
+        +int speed
+        +update()
+    }
+    
+    class Group {
+        +add(Sprite)
+        +remove(Sprite)
+        +update()
+        +draw(Surface)
+    }
+    
+    Sprite &lt;|-- Player
+    Sprite &lt;|-- Enemy
+    Group o-- Sprite : contains
+</code></pre></div>
+<h2 id="4">4. 碰撞检测类型</h2>
+<pre class="plain"><code>1. 矩形碰撞 (AABB)
+   ┌────────┐
+   │  A     │
+   │     ┌──┼────┐
+   └─────┼──┘    │
+         │  B    │
+         └───────┘
+   两矩形有重叠区域 = 碰撞
+
+2. 圆形碰撞
+      ╭──╮
+    ╭─┤A ├─╮
+    │ ╰──╯ │
+    │ ╭──╮ │
+    ╰─┤B ├──╯
+      ╰──╯
+   圆心距 &lt; r1 + r2 = 碰撞
+
+3. 像素级碰撞
+   需要逐像素检测，最精确但最慢
+   pygame.mask 模块提供此功能
+</code></pre>
+<h2 id="5">5. 双缓冲渲染原理</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│                  显示器                       │
+│  ┌─────────────────────────────────────┐    │
+│  │        当前显示的画面（前缓冲区）       │    │
+│  │    用户正在看到的内容                  │    │
+│  └─────────────────────────────────────┘    │
+│                   ↑                          │
+│              display.flip()                  │
+│                   ↓                          │
+│  ┌─────────────────────────────────────┐    │
+│  │        正在绘制的画面（后缓冲区）       │    │
+│  │    fill() + draw() 操作都在这里       │    │
+│  └─────────────────────────────────────┘    │
+│              后台准备                         │
+└─────────────────────────────────────────────┘
+</code></pre>
+<p><strong>为什么要用双缓冲？</strong>
+- 避免画面撕裂：如果直接在显示缓冲区绘制，用户可能看到"画了一半"的画面
+- flip() 是原子操作：一次性替换整个画面，视觉上瞬间切换</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 51 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 51 正文</a>
+  <h1>Day 51 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-051">Day 051 — 弱引用图解</h1>
+<h2 id="1-vs">1. 强引用 vs 弱引用</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph 强引用
+        A[变量 a] --&gt;|强引用| B[对象 42]
+        C[变量 b] --&gt;|强引用| B
+    end
+
+    subgraph 弱引用
+        D[变量 c] --&gt;|强引用| E[对象 99]
+        F[weakref.ref] -.-&gt;|弱引用| E
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph 强引用
+        A[变量 a] --&gt;|强引用| B[对象 42]
+        C[变量 b] --&gt;|强引用| B
+    end
+
+    subgraph 弱引用
+        D[变量 c] --&gt;|强引用| E[对象 99]
+        F[weakref.ref] -.-&gt;|弱引用| E
+    end
+</code></pre></div>
+<h2 id="2">2. 弱引用生命周期</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant User
+    participant Object as 对象
+    participant WeakRef as weakref.ref
+
+    User-&gt;&gt;Object: 创建对象
+    User-&gt;&gt;WeakRef: 创建弱引用
+    WeakRef-&gt;&gt;Object: 指向对象（不增加引用计数）
+
+    Note over Object: 对象仍然存活
+
+    User-&gt;&gt;Object: del 对象
+    Note over Object: 引用计数归零
+    Note over WeakRef: 弱引用返回 None
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant User
+    participant Object as 对象
+    participant WeakRef as weakref.ref
+
+    User-&gt;&gt;Object: 创建对象
+    User-&gt;&gt;WeakRef: 创建弱引用
+    WeakRef-&gt;&gt;Object: 指向对象（不增加引用计数）
+
+    Note over Object: 对象仍然存活
+
+    User-&gt;&gt;Object: del 对象
+    Note over Object: 引用计数归零
+    Note over WeakRef: 弱引用返回 None
+</code></pre></div>
+<h2 id="3">3. 循环引用问题</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[对象A] --&gt;|强引用| B[对象B]
+    B --&gt;|强引用| A
+
+    style A fill:#ff6b6b,color:#fff
+    style B fill:#ff6b6b,color:#fff
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[对象A] --&gt;|强引用| B[对象B]
+    B --&gt;|强引用| A
+
+    style A fill:#ff6b6b,color:#fff
+    style B fill:#ff6b6b,color:#fff
+</code></pre></div>
+<h2 id="4">4. 弱引用打破循环</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[对象A] --&gt;|强引用| B[对象B]
+    B -.-&gt;|弱引用| A
+
+    style A fill:#51cf66,color:#fff
+    style B fill:#51cf66,color:#fff
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[对象A] --&gt;|强引用| B[对象B]
+    B -.-&gt;|弱引用| A
+
+    style A fill:#51cf66,color:#fff
+    style B fill:#51cf66,color:#fff
+</code></pre></div>
+<h2 id="5-weakvaluedictionary">5. WeakValueDictionary 工作原理</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant Cache as WeakValueDictionary
+    participant Obj as 对象
+
+    Cache-&gt;&gt;Cache: 存储弱引用指向对象
+    Note over Cache: 对象仍在使用
+
+    Obj-&gt;&gt;Obj: 删除对象
+    Cache-&gt;&gt;Cache: 弱引用失效
+    Cache-&gt;&gt;Cache: 自动清理条目
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant Cache as WeakValueDictionary
+    participant Obj as 对象
+
+    Cache-&gt;&gt;Cache: 存储弱引用指向对象
+    Note over Cache: 对象仍在使用
+
+    Obj-&gt;&gt;Obj: 删除对象
+    Cache-&gt;&gt;Cache: 弱引用失效
+    Cache-&gt;&gt;Cache: 自动清理条目
+</code></pre></div>
+<h2 id="6">6. 观察者模式中的弱引用</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    subgraph EventBus
+        WS[WeakSet]
+    end
+
+    subgraph Observers
+        O1[观察者1]
+        O2[观察者2]
+        O3[观察者3]
+    end
+
+    O1 -.-&gt;|弱引用| WS
+    O2 -.-&gt;|弱引用| WS
+    O3 -.-&gt;|弱引用| WS
+
+    WS --&gt;|发布事件| O1
+    WS --&gt;|发布事件| O2
+    WS --&gt;|发布事件| O3
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    subgraph EventBus
+        WS[WeakSet]
+    end
+
+    subgraph Observers
+        O1[观察者1]
+        O2[观察者2]
+        O3[观察者3]
+    end
+
+    O1 -.-&gt;|弱引用| WS
+    O2 -.-&gt;|弱引用| WS
+    O3 -.-&gt;|弱引用| WS
+
+    WS --&gt;|发布事件| O1
+    WS --&gt;|发布事件| O2
+    WS --&gt;|发布事件| O3
+</code></pre></div>
+<h2 id="7">7. 引用计数变化</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    A[创建对象] --&gt;|refcount = 1| B[强引用 a]
+    B --&gt;|refcount = 2| C[创建弱引用]
+    C --&gt;|refcount 不变| D[弱引用不影响计数]
+    D --&gt;|refcount = 1| E[del a]
+    E --&gt;|refcount = 0| F[对象被 GC 回收]
+    F --&gt;|弱引用返回 None| G[弱引用失效]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    A[创建对象] --&gt;|refcount = 1| B[强引用 a]
+    B --&gt;|refcount = 2| C[创建弱引用]
+    C --&gt;|refcount 不变| D[弱引用不影响计数]
+    D --&gt;|refcount = 1| E[del a]
+    E --&gt;|refcount = 0| F[对象被 GC 回收]
+    F --&gt;|弱引用返回 None| G[弱引用失效]
+</code></pre></div>
+<h2 id="8">8. 内存布局对比</h2>
+<pre class="plain"><code>强引用:                          弱引用:
+┌─────────────┐                  ┌─────────────┐
+│ 变量 a      │                  │ 变量 a      │
+└──────┬──────┘                  └──────┬──────┘
+       │                               │
+       ▼                               ▼
+┌─────────────┐                  ┌─────────────┐
+│ 对象        │                  │ 对象        │
+│ refcount=2  │                  │ refcount=1  │
+└─────────────┘                  └─────────────┘
+                                        ▲
+                                        │
+                                 ┌──────────────┐
+                                 │ weakref.ref  │
+                                 │ (不增加计数) │
+                                 └──────────────┘
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

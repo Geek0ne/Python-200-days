@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 169 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 169 正文</a>
+  <h1>Day 169 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-169-fabric">Day 169 — Fabric 批量执行 · 图解</h1>
+<blockquote>
+<p>全部为纯文本/Mermaid，可离线阅读。</p>
+</blockquote>
+<hr>
+<h2 id="1fabric">图 1：Fabric 的栈与"该去哪一层排错"</h2>
+<pre class="plain"><code>  ┌──────────────────────────────────────────────────────────┐
+  │  Invoke 层     @task / Context / fab CLI / 参数解析        │  ← 参数没传进来？
+  ├──────────────────────────────────────────────────────────┤
+  │  Fabric 层     Connection / Group / Config / gateway      │  ← 连上但不执行？
+  ├──────────────────────────────────────────────────────────┤
+  │  Paramiko 层   Transport / Channel / SFTPClient           │  ← 连不上？
+  ├──────────────────────────────────────────────────────────┤
+  │  OpenSSH 层    sshd / 认证 / pty / subsystem sftp         │  ← 权限/配置问题？
+  ├──────────────────────────────────────────────────────────┤
+  │  TCP/IP        :22 / 防火墙 / NAT / MTU                   │  ← 网络问题？
+  └──────────────────────────────────────────────────────────┘
+   自下而上排查；症状与层次的对应关系写在 README 第 5.1 节。
+</code></pre>
+<hr>
+<h2 id="2connection">图 2：<code>Connection</code> 的生命周期（惰性建连 + 复用）</h2>
+<pre class="plain"><code>   c = Connection(&quot;web-01&quot;, ...)          c.run(&quot;uptime&quot;)      c.run(&quot;df -h&quot;)
+   │                                       │                     │
+   │ 只记参数                               │ 首次：建连          │ 复用同一 Transport
+   │ 无网络 IO                              │ KEX+认证 ≈ 100ms    │ 新开 channel ≈ 2ms
+   ▼                                       ▼                     ▼
+ ┌──────────┐                            ┌──────────┐          ┌──────────┐
+ │ 参数对象  │  ──────────────────────▶  │ Transport│ ───────▶ │ Transport│
+ └──────────┘                            │ channel#1│          │ channel#2│
+                                         └──────────┘          └──────────┘
+
+  ❌ c = Connection(&quot;坏域名&quot;)  不会报错
+  ❌ c.run(...) 不写 try        才报错（而且可能等很久，若 connect_kwargs 没设 timeout）
+</code></pre>
+<hr>
+<h2 id="3result">图 3：<code>Result</code> 的结构与判断路径</h2>
+<pre class="plain"><code>                        Result
+   ┌──────────────────────────────────────────────┐
+   │ command      &#x27;systemctl is-active nginx&#x27;      │
+   │ stdout       &#x27;active\n&#x27;                       │
+   │ stderr       &#x27;&#x27;                               │
+   │ return_code  0          （= exited，别名）          │
+   │ ok / failed  True / False   ← 用这个表达意图   │
+   │ exited       0          ← 就是退出码(int)，没跑完为 None│
+   │ tail(stream,count) 方法：r.tail(&quot;stdout&quot;) ← 最常用    │
+   └──────────────────────────────────────────────┘
+
+   判断建议：
+     成功？        if r.ok
+     具体错误码？  if r.return_code == 2
+     没跑完？      if r.exited is None        （超时/自动应答失败）
+     被信号杀？    if r.exited is not None and (r.exited &lt; 0 or r.exited &gt;= 128)
+     看日志尾巴？  print(r.tail(&quot;stdout&quot;))  （比切 splitlines() 稳）
+</code></pre>
+<hr>
+<h2 id="4mermaid-vs">图 4：Mermaid — 并发 vs 串行的失败语义</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    subgraph T[&quot;ThreadingGroup（并发）&quot;]
+        T1[h1] --&gt; TR[结果/异常混合]
+        T2[h2] --&gt; TR
+        T3[h3] --&gt; TR
+        TR --&gt; TE{有失败?}
+        TE --&gt;|是| TX[&quot;抛 GroupException&lt;br/&gt;成功主机的 Result 丢失&quot;]
+        TE --&gt;|否| TOK[dict host→Result]
+    end
+    subgraph S[&quot;SerialGroup（串行）&quot;]
+        S1[h1 ok] --&gt; S2[h2 ok]
+        S2 --&gt; S3{h3}
+        S3 --&gt;|失败| SX[&quot;抛 UnexpectedExit&lt;br/&gt;停点 = h3，前两台已知成功&quot;]
+        S3 --&gt;|ok| SOK[继续 h4]
+    end
+
+    T -. &quot;读数（可容忍单点失败）&quot; .-&gt; USE1[&quot;巡检/采集&quot;]
+    S -. &quot;写数（需要明确停点）&quot; .-&gt; USE2[&quot;部署/重启/迁移&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    subgraph T[&quot;ThreadingGroup（并发）&quot;]
+        T1[h1] --&gt; TR[结果/异常混合]
+        T2[h2] --&gt; TR
+        T3[h3] --&gt; TR
+        TR --&gt; TE{有失败?}
+        TE --&gt;|是| TX[&quot;抛 GroupException&lt;br/&gt;成功主机的 Result 丢失&quot;]
+        TE --&gt;|否| TOK[dict host→Result]
+    end
+    subgraph S[&quot;SerialGroup（串行）&quot;]
+        S1[h1 ok] --&gt; S2[h2 ok]
+        S2 --&gt; S3{h3}
+        S3 --&gt;|失败| SX[&quot;抛 UnexpectedExit&lt;br/&gt;停点 = h3，前两台已知成功&quot;]
+        S3 --&gt;|ok| SOK[继续 h4]
+    end
+
+    T -. &quot;读数（可容忍单点失败）&quot; .-&gt; USE1[&quot;巡检/采集&quot;]
+    S -. &quot;写数（需要明确停点）&quot; .-&gt; USE2[&quot;部署/重启/迁移&quot;]
+</code></pre></div>
+<hr>
+<h2 id="5-fabric-workers">图 5：限流分片（因为 Fabric 没有 workers 参数）</h2>
+<pre class="plain"><code>   hosts = [h1..h200]   batch = 16
+
+   ┌─ batch1 ─┐  ┌─ batch2 ─┐        ┌─ batch13 ─┐
+   │h1..h16   │  │h17..h32  │  ...   │h193..h200│
+   └────┬─────┘  └────┬─────┘        └────┬─────┘
+        │             │                   │
+     16 线程并发    16 线程并发        8 线程并发
+        │             │                   │
+   try/except GroupException 每批独立处理
+        │
+   ┌────▼───────────────────────────────────────┐
+   │ 为什么要 per-batch try：                     │
+   │  · 一批失败不影响后续批次（可继续/可中止）      │
+   │  · 失败批次可以单独重试                       │
+   │  · 避免 200 个线程同时认证撞 MaxStartups      │
+   └────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="6mermaid">图 6：Mermaid — 零停机发布与回滚的状态机</h2>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; Uploading
+    Uploading --&gt; Extracted: tar -xzf 成功
+    Uploading --&gt; Rollback: 上传/解包失败
+    Extracted --&gt; Linked: shared 软链建好
+    Linked --&gt; Migrated: 迁移成功
+    Linked --&gt; Rollback: 迁移失败
+    Migrated --&gt; Switched: ln -sfn current 原子切换
+    Switched --&gt; Restarting
+    Restarting --&gt; Healthy: /healthz 200（重试 10 次 × 2s）
+    Restarting --&gt; Rollback: 重试耗尽
+    Healthy --&gt; [*]: 清理旧 release（保留 3 版）
+    Rollback --&gt; [*]: current 指回上一版 + 重启 + 告警(退出码 1)
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; Uploading
+    Uploading --&gt; Extracted: tar -xzf 成功
+    Uploading --&gt; Rollback: 上传/解包失败
+    Extracted --&gt; Linked: shared 软链建好
+    Linked --&gt; Migrated: 迁移成功
+    Linked --&gt; Rollback: 迁移失败
+    Migrated --&gt; Switched: ln -sfn current 原子切换
+    Switched --&gt; Restarting
+    Restarting --&gt; Healthy: /healthz 200（重试 10 次 × 2s）
+    Restarting --&gt; Rollback: 重试耗尽
+    Healthy --&gt; [*]: 清理旧 release（保留 3 版）
+    Rollback --&gt; [*]: current 指回上一版 + 重启 + 告警(退出码 1)
+</code></pre></div>
+<hr>
+<h2 id="7">图 7：跳板机链路</h2>
+<pre class="plain"><code>   本机/CI                    bastion(4.4.4.4)              内网 web-01(10.0.0.11)
+      │                              │                              │
+      │ ① SSH 建连 + 认证             │                              │
+      ├─────────────────────────────▶│                              │
+      │ ② CHANNEL_OPEN(direct-tcpip, dst=10.0.0.11:22)              │
+      ├─────────────────────────────▶│──────── 建立 TCP 隧道 ───────▶│
+      │ ③ 在隧道里跑**第二次** SSH（KEX + 认证）                      │
+      ├─────────────────────────────▶│─────────────────────────────▶│
+      │ ④ 之后的 channel 都在内层连接上                              │
+      │◀─────────────────────────────┴──────────────────────────────┤
+
+   Fabric 写法：
+     jump  = Connection(&quot;bastion&quot;, user=&quot;ops&quot;, connect_kwargs={...})
+     inner = Connection(&quot;10.0.0.11&quot;, user=&quot;deploy&quot;, gateway=jump, ...)
+   ⇒ 两次认证、两条 SSH、一次 TCP 隧道；超时参数要**分别**设置。
+</code></pre>
+<hr>
+<h2 id="8">图 8：健康检查三级金字塔</h2>
+<pre class="plain"><code>                    ▲ 最真实、最慢、最容易误报
+                   ╱ ╲
+                  ╱ ③ ╲   业务级  curl -fsS -m5 /healthz
+                 ╱─────╲  能发现：DB 连不上 / 依赖挂了 / 迁移未完成
+                ╱   ②   ╲ 端口级  ss -ltn | grep &#x27;:80 &#x27;
+               ╱─────────╲ 能发现：进程活着但没监听（配置错、端口被占）
+              ╱     ①     ╲ 进程级  systemctl is-active --quiet
+             ╱─────────────╲ 能发现：进程根本没起来
+            ▼ 最快、最弱     ▼
+
+  部署验收标准：③ 必须通过；① ② 用作失败时的**定位线索**。
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

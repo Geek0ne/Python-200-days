@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 144 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 144 正文</a>
+  <h1>Day 144 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-144">Day 144 — 图解</h1>
+<h2 id="1">1. 验证码分级熔断状态机</h2>
+<pre class="plain"><code>                    正常抓取
+                       │ 命中验证码文案
+                       ▼
+              ┌── Level 1 ──┐  换代理 + 退避重试
+              │  恢复成功?  │──是──▶ 回到正常抓取
+              └──────┬──────┘
+                     │ 否 / 被重定向到验证页
+                     ▼
+              ┌── Level 2 ──┐  暂停该域名 30 分钟
+              │  暂停到期?  │──是──▶ 降回 Level 1 重试
+              └──────┬──────┘
+                     │ 否 / 429 明确限频
+                     ▼
+              ┌── Level 3 ──┐  停止任务 + 推送告警
+              │  人工介入   │──确认后──▶ 手动复位
+              └─────────────┘
+</code></pre>
+<h2 id="2">2. 清洗管线数据流</h2>
+<pre class="plain"><code>raw_data.jsonl
+   │
+   ├─① 字段校验 ──── 缺字段/类型错 ──▶ 丢弃(计数 invalid)
+   ├─② 文本归一化 ── NFKC → 去标签 → 反转义 → 压空白
+   ├─③ 指纹去重 ──── sha256(规范标题+正文前500字)
+   │                    已存在 ──▶ 丢弃(计数 duplicates)
+   ▼
+clean_data.jsonl + 清洗报告(成功率监控 → 触发告警)
+</code></pre>
+<h2 id="3">3. 容器化部署视图</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    D[Docker Host] --&gt; C1[crawler 容器&lt;br&gt;APScheduler 主进程&lt;br&gt;+ Playwright Chromium]
+    D --&gt; V[(volume /app/data&lt;br&gt;raw/clean jsonl + state)]
+    C1 --&gt; V
+    C1 -- 失败率&gt;阈值 --&gt; W[钉钉/企微 Webhook]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    D[Docker Host] --&gt; C1[crawler 容器&lt;br&gt;APScheduler 主进程&lt;br&gt;+ Playwright Chromium]
+    D --&gt; V[(volume /app/data&lt;br&gt;raw/clean jsonl + state)]
+    C1 --&gt; V
+    C1 -- 失败率&gt;阈值 --&gt; W[钉钉/企微 Webhook]
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 143 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 143 正文</a>
+  <h1>Day 143 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-143">Day 143 — 图解</h1>
+<h2 id="1">1. 代理池生命周期</h2>
+<pre class="plain"><code>  采集源A ┐
+  采集源B ├──▶ [入库] ──▶ [后台校验线程] ──▶ 评分更新
+  采集源C ┘                 │
+                            ▼
+              ok++ / fail++（连续失败&gt;=3 → 淘汰）
+                            │
+                            ▼
+              爬虫 acquire(): 加权随机(∝score)
+                            │
+                 feedback(成功/失败) 闭环
+</code></pre>
+<h2 id="2">2. 静态/动态分流决策</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    U[URL 队列] --&gt; S[httpx + 代理 静态请求]
+    S --&gt; C{status==200 且&lt;br&gt;无框架挂载点?}
+    C -- 是 --&gt; O1[✅ 静态解析入库]
+    C -- 否/JS渲染 --&gt; P[Playwright 无头渲染&lt;br&gt;inject stealth JS]
+    P --&gt; I[监听 response&lt;br&gt;优先捕获 XHR JSON]
+    I --&gt; O2[✅ JSON/渲染DOM 入库]
+    S -- 被限频/封禁 --&gt; R[代理池 feedback + 换代理重试]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    U[URL 队列] --&gt; S[httpx + 代理 静态请求]
+    S --&gt; C{status==200 且&lt;br&gt;无框架挂载点?}
+    C -- 是 --&gt; O1[✅ 静态解析入库]
+    C -- 否/JS渲染 --&gt; P[Playwright 无头渲染&lt;br&gt;inject stealth JS]
+    P --&gt; I[监听 response&lt;br&gt;优先捕获 XHR JSON]
+    I --&gt; O2[✅ JSON/渲染DOM 入库]
+    S -- 被限频/封禁 --&gt; R[代理池 feedback + 换代理重试]
+</code></pre></div>
+<h2 id="3">3. 无头检测对抗的本质</h2>
+<pre class="plain"><code>真浏览器指纹:   webdriver=false | 插件5个 | WebGL正常 | 轨迹自然
+无头默认指纹:   webdriver=true  | 插件0个 | WebGL异常 | 无鼠标事件
+                     │ 注入 init script 抹平 ──────────▶ 差异缩小
+对抗是军备竞赛: 检测方加新探针 ←→ 模拟方补特征，没有一劳永逸
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

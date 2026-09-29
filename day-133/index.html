@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 133 — UA 与 Cookie 池</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 133 — UA 与 Cookie 池</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">251 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-133-ua-cookie-pool" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-user-agentua">1.1 User-Agent（UA）是什么</a>
+<a class="toc-l3" href="#12-ua-ua-pool">1.2 UA 池（UA Pool）</a>
+<a class="toc-l3" href="#13-cookie">1.3 Cookie 是什么（复习 + 深化）</a>
+<a class="toc-l3" href="#14-cookie-cookie-pool">1.4 Cookie 池（Cookie Pool）</a>
+<a class="toc-l3" href="#15">1.5 浏览器指纹</a>
+<a class="toc-l2" href="#_2">二、原理解析</a>
+<a class="toc-l3" href="#21-ua">2.1 反爬如何检测 UA</a>
+<a class="toc-l3" href="#22-cookie">2.2 Cookie 会话生命周期</a>
+<a class="toc-l3" href="#23-cookie">2.3 Cookie 池状态机</a>
+<a class="toc-l3" href="#24-ua">2.4 UA 一致性原理</a>
+<a class="toc-l2" href="#api">三、API 速查表</a>
+<a class="toc-l3" href="#requests">requests 相关</a>
+<a class="toc-l3" href="#_3">常用反伪装请求头模板</a>
+<a class="toc-l3" href="#faker">faker 相关（生成随机身份）</a>
+<a class="toc-l2" href="#_4">四、图解</a>
+<a class="toc-l3" href="#_5">请求伪装层次</a>
+<a class="toc-l3" href="#cookie">Cookie 池整体架构</a>
+<a class="toc-l2" href="#_6">五、实战代码案例</a>
+<a class="toc-l2" href="#_7">六、思考题</a>
+<a class="toc-l2" href="#_8">相关天数</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-133-ua-cookie">Day 133 - UA 与 Cookie 池</h1>
+<blockquote>
+<p>主题：浏览器指纹 UA 随机化、Cookie 持久化与轮换、绕过反爬检测实战</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-user-agentua">1.1 User-Agent（UA）是什么</h3>
+<p>User-Agent 是 HTTP 请求头中的一个字段，用于标识发起请求的客户端类型：操作系统、浏览器、版本号、渲染引擎等。服务器（尤其是 WAF / 反爬系统）通过它判断"这是不是一个正常的浏览器"。</p>
+<p>一个典型的 Chrome UA：</p>
+<pre class="plain"><code>Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36
+</code></pre>
+<p><strong>为什么爬虫 UA 是反爬第一道防线</strong>：<br>
+- <code>requests</code> / <code>httpx</code> 默认 UA 是 <code>python-requests/2.x</code>，一眼假<br>
+- 大量请求使用同一个 UA + 同一个 IP = 明显的机器特征<br>
+- 反爬系统维护"UA 黑名单"，非浏览器 UA 直接拦截或返回假数据</p>
+<h3 id="12-ua-ua-pool">1.2 UA 池（UA Pool）</h3>
+<p>UA 池 = 维护一批真实、常见的浏览器 UA，每次请求随机选一个（或按会话轮换），让请求特征接近真实用户的多样性分布。</p>
+<p>设计要点：<br>
+- <strong>真实性</strong>：只用近两年主流浏览器 UA（过老的 UA 反而可疑）<br>
+- <strong>一致性</strong>：一次"会话"内 UA 应保持不变（真实用户不会一个会话换 5 种浏览器），且 UA 声称的操作系统要与 <code>Sec-CH-UA-Platform</code> 等头一致<br>
+- <strong>权重分布</strong>：Chrome 用户最多，按市场份额加权抽取更真实</p>
+<h3 id="13-cookie">1.3 Cookie 是什么（复习 + 深化）</h3>
+<p>Cookie 是服务器发送给客户端、由客户端保存并在后续请求中回传的小段数据（<code>Set-Cookie</code> 响应头 → <code>Cookie</code> 请求头）。反爬中 Cookie 常承担：</p>
+<ul>
+<li><strong>会话标识</strong>（Session ID）：登录态、游客态</li>
+<li><strong>反爬令牌</strong>：服务端下发的一次性/时效性 token，如 <code>acw_sc__v2</code>、<code>__jsluid</code>（加速乐）、Cloudflare <code>cf_clearance</code></li>
+<li><strong>频率标记</strong>：访问过快时服务器种一个"被限速"标记 Cookie</li>
+</ul>
+<h3 id="14-cookie-cookie-pool">1.4 Cookie 池（Cookie Pool）</h3>
+<p>Cookie 池 = 维护一批可用 Cookie（通常对应一批账号或游客会话），每个请求轮换使用，实现：</p>
+<ul>
+<li>单 Cookie 请求量分摊 → 降低单账号触发风控的概率</li>
+<li>某个 Cookie 被封禁后自动剔除、补充新 Cookie</li>
+</ul>
+<p><strong>UA 池 vs Cookie 池</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>UA 池</th>
+<th>Cookie 池</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>成本</td>
+<td>几乎为零（字符串列表）</td>
+<td>高（需注册账号 / 请求获取游客 Cookie）</td>
+</tr>
+<tr>
+<td>有效性判断</td>
+<td>不存在"失效"</td>
+<td>会过期、会被封</td>
+</tr>
+<tr>
+<td>轮换粒度</td>
+<td>每请求可换</td>
+<td>通常每会话/每 N 请求换</td>
+</tr>
+<tr>
+<td>核心问题</td>
+<td>伪装身份</td>
+<td>分摊风险、保持登录态</td>
+</tr>
+</tbody>
+</table>
+<h3 id="15">1.5 浏览器指纹</h3>
+<p>UA 只是"自述身份"，现代反爬还会校验真实行为指纹：TLS 指纹（JA3）、HTTP/2 指纹、Header 顺序、<code>navigator.webdriver</code>、Canvas 指纹等。UA 随机化是必要非充分条件。</p>
+<hr>
+<h2 id="_2">二、原理解析</h2>
+<h3 id="21-ua">2.1 反爬如何检测 UA</h3>
+<pre class="plain"><code>客户端                          反爬系统
+  │  GET /api/data                 │
+  │  User-Agent: python-requests   │
+  │ ─────────────────────────────► │
+  │                                │ 1. UA 规则匹配（非浏览器 UA → 拦）
+  │                                │ 2. UA 与其他头交叉验证
+  │                                │    (缺少 Accept-Language 等 → 可疑)
+  │                                │ 3. UA + IP 频率统计
+  │ ◄─── 403 / 蜜罐假数据 ─────────│
+</code></pre>
+<p><strong>交叉验证原理</strong>：真实 Chrome 请求会带一整套头。只改 UA 不带配套头（<code>Accept</code>、<code>Accept-Language</code>、<code>sec-ch-ua</code> 等），头组合的"指纹"依然是异常的。所以 UA 池最好搭配"完整请求头模板"使用。</p>
+<h3 id="22-cookie">2.2 Cookie 会话生命周期</h3>
+<pre class="plain"><code>┌─────────────────────────────────────────────────┐
+│ 1. 冷启动：GET 首页，无 Cookie                    │
+│    ◄── Set-Cookie: sid=abc; jsluid=xxx           │
+│ 2. 携带 Cookie 请求 → 通过校验                    │
+│ 3. Cookie 被服务端标记 / 过期                      │
+│    ◄── Set-Cookie: 限速标记 / 401 / 302 跳验证    │
+│ 4. 池管理器感知失效 → 剔除 → 补充                  │
+└─────────────────────────────────────────────────┘
+</code></pre>
+<p>关键机制：<br>
+- <strong>会话保持</strong>：<code>requests.Session</code> 自动管理 Cookie（内存中）；<code>httpx</code> 用 <code>Client(cookies=...)</code> 同理<br>
+- <strong>持久化</strong>：手动 <code>pickle</code>/<code>sqlite</code> 存储 CookieJar，程序重启后可恢复登录态<br>
+- <strong>失效感知</strong>：响应状态码（401/403/302）、响应体特征（"登录失效"）、Cookie 被服务端 <code>Set-Cookie</code> 覆盖删除（<code>Max-Age=0</code>）</p>
+<h3 id="23-cookie">2.3 Cookie 池状态机</h3>
+<pre class="plain"><code>            ┌──────────┐
+   补充策略  │  未使用    │
+  ┌────────►│ (fresh)  │────┐
+  │         └──────────┘    │ 取用
+  │                         ▼
+┌─┴───────┐           ┌──────────┐
+│  失效    │  检测失效  │  使用中   │
+│ (dead)  │◄──────────│ (active) │
+└──────────┘           └────┬────┘
+     │ 剔除                  │ 健康检查通过
+     ▼                      │
+   删除/降权 ◄───────────────┘
+</code></pre>
+<p>每个 Cookie 有状态：<code>fresh → active → (dead | 回到 active)</code>。池子核心 API：<br>
+- <code>get()</code>：按策略（轮询/随机/加权）取一个可用 Cookie<br>
+- <code>report(cookie, ok/fail)</code>：反馈使用结果<br>
+- <code>refill()</code>：补充新 Cookie（注册/游客会话）</p>
+<h3 id="24-ua">2.4 UA 一致性原理</h3>
+<p>一个"会话"应该像同一个用户。正确做法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 每个会话固定一个身份（UA + 配套头 + Cookie）</span>
+<span class="n">identity</span> <span class="o">=</span> <span class="n">pick_identity</span><span class="p">()</span>   <span class="c1"># UA + platform + locale</span>
+<span class="n">session</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+<span class="n">session</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">identity</span><span class="o">.</span><span class="n">headers</span><span class="p">)</span>
+<span class="c1"># 整个会话生命周期内不再变化</span>
+</code></pre></div>
+<p>错误做法：每请求换 UA 但复用同一 Session Cookie —— 服务端看到"同一会话、5 秒内换了 3 种浏览器"，比固定 UA 更可疑。</p>
+<hr>
+<h2 id="api">三、API 速查表</h2>
+<h3 id="requests">requests 相关</h3>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>requests.get(url, headers={"User-Agent": ua})</code></td>
+<td>单请求指定 UA</td>
+</tr>
+<tr>
+<td><code>s = requests.Session()</code></td>
+<td>会话对象，自动管理 Cookie</td>
+</tr>
+<tr>
+<td><code>s.headers.update({...})</code></td>
+<td>设置会话级默认头</td>
+</tr>
+<tr>
+<td><code>s.cookies</code></td>
+<td><code>RequestsCookieJar</code>，可读/写/序列化</td>
+</tr>
+<tr>
+<td><code>pickle.dumps(s.cookies)</code></td>
+<td>CookieJar 二进制持久化</td>
+</tr>
+<tr>
+<td><code>requests.utils.dict_from_cookiejar(jar)</code></td>
+<td>CookieJar → dict</td>
+</tr>
+<tr>
+<td><code>requests.utils.add_dict_to_cookiejar(jar, d)</code></td>
+<td>dict → CookieJar</td>
+</tr>
+<tr>
+<td><code>http.cookiejar.MozillaCookieJar(path)</code></td>
+<td>标准 Netscape 格式存取</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_3">常用反伪装请求头模板</h3>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>User-Agent</code></td>
+<td>浏览器标识</td>
+</tr>
+<tr>
+<td><code>Accept</code></td>
+<td><code>text/html,application/xhtml+xml,...</code></td>
+</tr>
+<tr>
+<td><code>Accept-Language</code></td>
+<td><code>zh-CN,zh;q=0.9,en;q=0.8</code></td>
+</tr>
+<tr>
+<td><code>Referer</code></td>
+<td>来源页，很多站点校验</td>
+</tr>
+<tr>
+<td><code>sec-ch-ua</code> / <code>sec-ch-ua-platform</code></td>
+<td>Client Hints，与 UA 一致</td>
+</tr>
+</tbody>
+</table>
+<h3 id="faker">faker 相关（生成随机身份）</h3>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fake.user_agent()</code></td>
+<td>随机 UA（需 <code>pip install faker</code>）</td>
+</tr>
+<tr>
+<td><code>fake.locale()</code> / <code>fake.language_code()</code></td>
+<td>随机语言环境</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">四、图解</h2>
+<h3 id="_5">请求伪装层次</h3>
+<pre class="plain"><code>        请求伪装金字塔
+        ┌────────────┐
+        │ 行为模拟     │  ← 鼠标轨迹/浏览节奏（最高级）
+        ├────────────┤
+        │ 指纹一致性   │  ← TLS/HTTP2/Header顺序
+        ├────────────┤
+        │ Cookie 池   │  ← 分摊风控风险
+        ├────────────┤
+        │ UA + 头模板 │  ← 本日重点
+        ├────────────┤
+        │ IP 代理池   │  ← Day 132
+        └────────────┘
+</code></pre>
+<h3 id="cookie">Cookie 池整体架构</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[爬虫任务] --&gt;|get cookie| B[CookiePool]
+    B --&gt; C[(SQLite/Redis 存储)]
+    D[补充器: 游客会话/账号登录] --&gt;|refill| B
+    B --&gt;|report result| B
+    C --&gt; E[状态: fresh/active/dead]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[爬虫任务] --&gt;|get cookie| B[CookiePool]
+    B --&gt; C[(SQLite/Redis 存储)]
+    D[补充器: 游客会话/账号登录] --&gt;|refill| B
+    B --&gt;|report result| B
+    C --&gt; E[状态: fresh/active/dead]
+</code></pre></div>
+<hr>
+<h2 id="_6">五、实战代码案例</h2>
+<p>场景：采集一个有 UA 校验 + 游客 Cookie 限频的站点（演示站点 <code>httpbin.org</code> 模拟）。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">random</span>
+<span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="n">UA_POOL</span> <span class="o">=</span> <span class="p">[</span>
+    <span class="s2">&quot;Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15&quot;</span><span class="p">,</span>
+    <span class="s2">&quot;Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0&quot;</span><span class="p">,</span>
+<span class="p">]</span>
+
+<span class="k">def</span> <span class="nf">make_session</span><span class="p">():</span>
+    <span class="n">ua</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">choice</span><span class="p">(</span><span class="n">UA_POOL</span><span class="p">)</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">Session</span><span class="p">()</span>
+    <span class="n">s</span><span class="o">.</span><span class="n">headers</span><span class="o">.</span><span class="n">update</span><span class="p">({</span>
+        <span class="s2">&quot;User-Agent&quot;</span><span class="p">:</span> <span class="n">ua</span><span class="p">,</span>
+        <span class="s2">&quot;Accept&quot;</span><span class="p">:</span> <span class="s2">&quot;text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8&quot;</span><span class="p">,</span>
+        <span class="s2">&quot;Accept-Language&quot;</span><span class="p">:</span> <span class="s2">&quot;zh-CN,zh;q=0.9,en;q=0.8&quot;</span><span class="p">,</span>
+    <span class="p">})</span>
+    <span class="k">return</span> <span class="n">s</span>
+
+<span class="n">s</span> <span class="o">=</span> <span class="n">make_session</span><span class="p">()</span>
+<span class="n">r</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;https://httpbin.org/get&quot;</span><span class="p">)</span>   <span class="c1"># 首次请求自动接收 Cookie</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s2">&quot;headers&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;User-Agent&quot;</span><span class="p">))</span>
+<span class="n">r</span> <span class="o">=</span> <span class="n">s</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;https://httpbin.org/cookies/set/token/abc&quot;</span><span class="p">,</span> <span class="n">allow_redirects</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">cookies</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;token&quot;</span><span class="p">))</span>          <span class="c1"># Cookie 已被 Session 持有</span>
+</code></pre></div>
+<p>完整可运行版本见 <code>code/</code> 目录。</p>
+<hr>
+<h2 id="_7">六、思考题</h2>
+<ol>
+<li>为什么"每个请求随机换 UA"反而可能比"固定一个真实 UA"更容易被识别？什么场景下该换、什么场景下不该换？</li>
+<li>Cookie 池和 IP 代理池通常<strong>绑定使用</strong>（一个 IP 固定用某几个 Cookie），为什么？如果不绑定会发生什么？</li>
+<li>如果目标站点使用 Cloudflare，<code>cf_clearance</code> Cookie 与访问 IP 绑定。这对你的池子设计有什么约束？</li>
+<li><code>requests</code> 发出的请求即使带了完美 UA，TLS 指纹仍是 Python 的。你会怎么解决？（提示：<code>curl_cffi</code> / <code>tls-client</code>）</li>
+<li>Cookie 池的"健康检查"本身也会产生请求量。如何设计检查频率才能不因检查而触发限频？</li>
+</ol>
+<hr>
+<h2 id="_8">相关天数</h2>
+<ul>
+<li>Day 132：代理池（IP 层伪装）</li>
+<li>Day 134：验证码识别（Cookie 失效后的下一步）</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-132/index.html">← Day 132 代理池搭建</a><a class="nav-next" href="../day-134/index.html">Day 134 验证码识别 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

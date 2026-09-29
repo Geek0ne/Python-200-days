@@ -1,0 +1,1094 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 161 — 渗透测试框架：流程编排 · 信息收集 → 检测 → 利用 · 自动化扫描框架</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 161 — 渗透测试框架：流程编排 · 信息收集 → 检测 → 利用 · 自动化扫描框架</h1>
+  <div class="lmeta">
+    <span class="badge">网络安全开发</span>
+    <span class="badge">623 行</span>
+    <span class="badge">5 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（5 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-161-渗透测试框架" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 渗透测试框架到底是什么</a>
+<a class="toc-l3" href="#22">2.2 为什么需要框架：四个真实痛点</a>
+<a class="toc-l3" href="#23">2.3 阶段模型：从侦察到报告</a>
+<a class="toc-l3" href="#24">2.4 授权与范围：为什么必须是数据结构</a>
+<a class="toc-l3" href="#25">2.5 插件化：注册表模式的收益与代价</a>
+<a class="toc-l3" href="#26-metasploit">2.6 Metasploit 的定位：理解概念，而不是抄命令</a>
+<a class="toc-l2" href="#3">3. 原理深入</a>
+<a class="toc-l3" href="#31-tcp-connect">3.1 TCP connect 扫描的三态语义</a>
+<a class="toc-l3" href="#32-syn-raw-socket">3.2 为什么不用 SYN 半开扫描（raw socket）</a>
+<a class="toc-l3" href="#33">3.3 并发模型：线程池 + 令牌桶</a>
+<a class="toc-l3" href="#34">3.4 编排器：为什么是&quot;阶段对象&quot;而不是&quot;一个大函数&quot;</a>
+<a class="toc-l3" href="#35">3.5 审计日志：框架的第一等产物</a>
+<a class="toc-l2" href="#4">4. 核心机制详解：编排状态机与限速实现</a>
+<a class="toc-l3" href="#41">4.1 阶段结果的状态机</a>
+<a class="toc-l3" href="#42">4.2 令牌桶限速：算法与实现</a>
+<a class="toc-l3" href="#43-05-01">4.3 超时的选择：为什么是 0.5 秒而不是 0.1 秒</a>
+<a class="toc-l3" href="#44">4.4 幂等与去重</a>
+<a class="toc-l3" href="#45">4.5 失败重试：只重试&quot;网络抖动类&quot;错误</a>
+<a class="toc-l2" href="#5-api">5. API 速查</a>
+<a class="toc-l3" href="#51-pentest_core">5.1 pentest_core 模块速查</a>
+<a class="toc-l3" href="#52">5.2 三态 + 退出码语义对照（最容易记混的两组）</a>
+<a class="toc-l3" href="#53">5.3 优先级公式</a>
+<a class="toc-l3" href="#54">5.4 参数速查（报告必须回显这几个）</a>
+<a class="toc-l2" href="#6">6. 实战代码案例：一次完整的框架运行</a>
+<a class="toc-l3" href="#61">6.1 正常运行（有开放端口、无可判定缺口）</a>
+<a class="toc-l3" href="#62">6.2 越界必须立即终止（这是重点）</a>
+<a class="toc-l3" href="#63-filtered-4">6.3 结果不完整（存在 filtered）时退出码是 4</a>
+<a class="toc-l2" href="#7-13-code03-pitfallspy">7. 常见陷阱（13 个，对照表；详细复现见 code/03-pitfalls.py）</a>
+<a class="toc-l2" href="#8">8. 局限与伦理边界（必须写进交付报告，不能省略）</a>
+<a class="toc-l2" href="#9">9. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-161">Day 161 — 渗透测试框架：流程编排 · 信息收集 → 检测 → 利用 · 自动化扫描框架</h1>
+<blockquote>
+<p><strong>Phase 10 — 网络安全开发（Day 146–165）</strong> · 主题：渗透测试框架（实战）</p>
+<p><strong>使用边界（重要，先读这一节）</strong>：<br>
+- 本课只对<strong>你自己拥有、或已获得书面授权</strong>的目标做测试。<br>
+- 本课<strong>不提供任何真实攻击载荷</strong>（exploit / webshell / 提权脚本一律没有）。<br>
+<code>利用（exploitation）</code> 这一阶段在代码里是<strong>空实现 + 占位插件</strong>，<br>
+  它只负责"标记需要人工验证的点位"，<strong>不会发出任何攻击请求</strong>。<br>
+- 框架的<strong>硬门禁是 Scope</strong>：默认只允许 <code>127.0.0.1</code> + 实验端口段。<br>
+  未经授权的主机/端口会直接抛 <code>AuthorizationError</code> 并以退出码 2 终止。<br>
+- 框架的探测<strong>全部是只读</strong>的：TCP connect、读取服务主动发来的问候语（banner），<br>
+<strong>不发送任何自定义数据</strong>、不做爆破登录、不提交表单。<br>
+- 教材中出现的 IP 一律是文档专用网段（<code>203.0.113.0/24</code>、<code>198.51.100.0/24</code>、<br>
+<code>192.0.2.0/24</code>）或回环地址，账号均为占位名。</p>
+</blockquote>
+<h2 id="1">1. 学习目标</h2>
+<p>完成本课后，你应该能够：</p>
+<ul>
+<li>说清"渗透测试框架"<strong>是什么、不是什么</strong>：它是<strong>流程编排 + 范围约束 + 证据留存</strong>，<br>
+  不是"一键入侵工具"</li>
+<li>画出并解释标准的阶段流水线（信息收集 → 检测 → 利用 → 报告），<br>
+  以及<strong>为什么授权与范围校验必须排在阶段之前</strong></li>
+<li>用数据结构（而不是口头约定）表达授权范围，让越界在<strong>代码层面不可能发生</strong></li>
+<li>解释 TCP connect 扫描的三态语义：<code>open</code> / <code>closed</code> / <code>filtered</code> <strong>分别意味着什么</strong>，<br>
+  以及把 <code>filtered</code> 当成 <code>closed</code> 会造成什么错误结论</li>
+<li>用<strong>插件注册表（registry）</strong>模式把"框架"和"具体检测项"解耦，并说清它的代价</li>
+<li>用线程池 + 令牌桶限速实现并发扫描，并解释<strong>为什么要主动限速</strong>（不是性能问题）</li>
+<li>把每一步动作写进<strong>审计日志</strong>，并解释为什么审计日志是框架的第一等产物</li>
+<li>明确框架的伦理与法律边界：哪些能力本课<strong>刻意不做</strong>，为什么</li>
+</ul>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 渗透测试框架到底是什么</h3>
+<p>一个常见的误解是："框架 = 点一下按钮就拿下目标"。真实的渗透测试框架解决的是<br>
+<strong>流程与约束</strong>问题，它由四块组成，缺一块就不能叫框架：</p>
+<table>
+<thead>
+<tr>
+<th>组成</th>
+<th>解决什么问题</th>
+<th>失败的后果（真实案例式的教训）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>范围模型（Scope）</strong></td>
+<td>我能碰谁、不能碰谁</td>
+<td>扫到隔壁客户的网段 → 合规事故，不是"技术失误"</td>
+</tr>
+<tr>
+<td><strong>阶段编排（Orchestration）</strong></td>
+<td>先做什么后做什么、结果如何流转</td>
+<td>还没确认存活就开始扫描 → 大量无效工作和误报</td>
+</tr>
+<tr>
+<td><strong>插件/模块（Plugins）</strong></td>
+<td>具体检测项可插拔、可替换</td>
+<td>检测逻辑散落在脚本里 → 无法复用、无法单独测试</td>
+</tr>
+<tr>
+<td><strong>证据与报告（Evidence）</strong></td>
+<td>谁在什么时候对什么做了什么</td>
+<td>无法复现、无法交付、无法自证清白</td>
+</tr>
+</tbody>
+</table>
+<p>一句话概括：</p>
+<blockquote>
+<p><strong>框架 = 范围约束 × 阶段编排 × 可插拔能力 × 可追溯证据</strong></p>
+</blockquote>
+<p>请注意这个式子里没有"攻击载荷"——载荷是可以换的零件，<strong>约束与证据才是框架的骨架</strong>。<br>
+这也解释了为什么本课把代码重心放在 Scope、编排器、审计日志上，<br>
+而把"利用"阶段留成空实现。</p>
+<h3 id="22">2.2 为什么需要框架：四个真实痛点</h3>
+<ol>
+<li><strong>防遗忘</strong>：人手工做渗透测试会漏步骤。框架把"必做步骤"写成代码，<br>
+   漏做会体现在报告的阶段清单里（而不是凭记忆说"我做过"）。</li>
+<li><strong>防越界</strong>：口头约定的范围在紧张的执行过程中一定会被突破<br>
+   （"顺手扫一下这个 C 段吧"）。把范围写成数据结构，越界直接抛异常。</li>
+<li><strong>可复现</strong>：半年后客户问"这个结论怎么来的"，框架能给出：<br>
+   当时的范围、参数、原始结果（JSON）、审计日志。手工流水账给不出这些。</li>
+<li><strong>可测试</strong>：插件可以被单元测试。一个"检测器"如果只在真实目标上跑过，<br>
+   它实际上从未被验证过。</li>
+</ol>
+<h3 id="23">2.3 阶段模型：从侦察到报告</h3>
+<p>工业界常用的流程模型是 PTES（Penetration Testing Execution Standard）七阶段。<br>
+本课把概念模型裁剪成<strong>能自动化、且不越界</strong>的四段：</p>
+<pre class="plain"><code>    ┌────────────┐   ┌────────────┐   ┌────────────┐   ┌───────────┐   ┌──────────┐
+    │ 0 授权与   │──▶│ 1 信息收集 │──▶│ 2 检测     │──▶│ 3 利用    │──▶│ 4 报告   │
+    │   范围校验 │   │  侦察/扫描 │   │  漏洞判定  │   │ 人工验证  │   │ 证据交付 │
+    └────────────┘   └────────────┘   └────────────┘   └───────────┘   └──────────┘
+       代码执行          全自动只读       全自动只读       ★ 本课为空实现 ★    全自动
+       强制门禁          允许            允许（只读）     （只留人工入口）     允许
+</code></pre>
+<p>阶段之间是<strong>数据流</strong>关系，不是"可选菜单"：</p>
+<ul>
+<li>阶段 1 产出 <code>Asset</code>（存活主机 + 开放端口 + 服务指纹）</li>
+<li>阶段 2 消费 <code>Asset</code>，产出 <code>Finding</code>（可验证的问题点）</li>
+<li>阶段 3 消费 <code>Finding</code>，产出 <code>Verification</code>（人工确认结论）——本课留空</li>
+<li>阶段 4 消费以上全部，产出报告 + 审计日志</li>
+</ul>
+<p><strong>为什么要严格分段？</strong> 因为分段让失败可以被定位。如果扫描和判定混在一个脚本里，<br>
+"结果不对"时你无法区分是"资产判断错了"还是"检测逻辑错了"——<br>
+这正是 Day 160 日志分析里"解析/检测/报告"三段分离的同一个道理。</p>
+<h3 id="24">2.4 授权与范围：为什么必须是数据结构</h3>
+<p>口头授权在真实项目里的样子：</p>
+<blockquote>
+<p>"客户的 Web 站点你可以测，但是<strong>不要动数据库服务器</strong>，<br>
+<strong>不要做拒绝服务</strong>，<strong>只在下班后 20:00–23:00 做</strong>。"</p>
+</blockquote>
+<p>这句话里有四类约束：<strong>目标范围</strong>、<strong>排除项</strong>、<strong>禁止手法</strong>、<strong>时间窗口</strong>。<br>
+四类都必须落到代码里：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Scope</span><span class="p">:</span>
+    <span class="n">networks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>          <span class="c1"># 允许的目标（CIDR）</span>
+    <span class="n">ports</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="c1"># 允许的端口区间</span>
+    <span class="n">excluded</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>          <span class="c1"># 显式排除（黑名单优先于白名单！）</span>
+    <span class="n">allow_raw_sockets</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>   <span class="c1"># 本课永远 False</span>
+    <span class="n">allow_write_actions</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span> <span class="c1"># 本课永远 False</span>
+    <span class="n">ticket</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>             <span class="c1"># 授权单号（证据链的一部分）</span>
+    <span class="n">expires</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>            <span class="c1"># 授权截止时间</span>
+</code></pre></div>
+<p><strong>关键设计：黑名单优先。</strong> 即使某个主机同时在白名单里，<br>
+只要命中 <code>excluded</code> 就拒绝。为什么？因为排除项通常对应"业务不能停"的机器，<br>
+一次越界的代价远大于少扫一台。</p>
+<p><strong>更关键的一点：范围校验发生在"动作之前"，而不是"动作之后"。</strong><br>
+很多脚本的做法是"先连接，看连上了再判断是否在范围内"——<br>
+这已经把包发出去了。正确顺序是：</p>
+<pre class="plain"><code>解析目标 → 生成 Target 列表 → ★ scope.check(target) ★ → 才有资格创建 socket
+                                    ↑
+                        越界在这里抛异常，socket 从未被创建
+</code></pre>
+<h3 id="25">2.5 插件化：注册表模式的收益与代价</h3>
+<p>框架不写死检测项，检测项通过注册表挂进来：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@framework</span><span class="o">.</span><span class="n">plugin</span><span class="p">(</span><span class="s2">&quot;http_banner&quot;</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">http_banner</span><span class="p">(</span><span class="n">ctx</span><span class="p">):</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p>为什么值得？三个收益：</p>
+<ol>
+<li><strong>框架代码稳定</strong>：加检测项不需要改编排器，降低回归风险。</li>
+<li><strong>可单独测试</strong>：每个插件可以用假 <code>ctx</code> 跑单元测试，不需要真实网络。</li>
+<li><strong>可裁剪合规</strong>：客户不让做某类检测时，<strong>不注册</strong>即可，而不是"注册了但记得别调"。</li>
+</ol>
+<p>代价也要说清（这是很多教程省略的部分）：</p>
+<ul>
+<li><strong>隐式控制流</strong>：读代码时要跳来跳去，"谁调用了这个插件"不再一目了然。</li>
+<li><strong>上下文膨胀</strong>：<code>ctx</code> 慢慢变成万能对象，插件之间通过它隐式耦合。</li>
+<li><strong>注册顺序即执行顺序</strong>：如果不显式排序，执行顺序变得脆弱。</li>
+</ul>
+<p>所以本课的注册表是<strong>有序注册表</strong>（记录注册顺序 + 显式 <code>priority</code>），<br>
+并且 <code>ctx</code> 是只读 dataclass（插件只能读，写回结果要 <code>return Finding</code>），<br>
+这样隐式耦合被掐死在设计层面。</p>
+<h3 id="26-metasploit">2.6 Metasploit 的定位：理解概念，而不是抄命令</h3>
+<p>ROADMAP 里提到"Metasploit 基础"。这里只做<strong>概念层面</strong>的说明，<br>
+原因是：Msfconsole 的价值在于"模块生态 + 会话管理"，而它的使用教程<br>
+不是本课能承担的责任，也不该由教材承担风险。你需要理解的概念：</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>含义</th>
+<th>对应本课的哪些代码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Module</strong></td>
+<td>一个可执行单元（auxiliary/exploit/post）</td>
+<td>本课的 Plugin</td>
+</tr>
+<tr>
+<td><strong>Auxiliary</strong></td>
+<td>只做扫描/嗅探/枚举，不做利用</td>
+<td>本课的阶段 1/2</td>
+</tr>
+<tr>
+<td><strong>Exploit</strong></td>
+<td>触发漏洞并建立会话</td>
+<td>本课<strong>空实现</strong>（阶段 3）</td>
+</tr>
+<tr>
+<td><strong>Payload</strong></td>
+<td>利用成功后执行的内容</td>
+<td>本课<strong>完全不涉及</strong></td>
+</tr>
+<tr>
+<td><strong>Encoder</strong></td>
+<td>变形载荷以规避检测</td>
+<td>本课<strong>完全不涉及</strong>（规避检测属于攻击能力）</td>
+</tr>
+<tr>
+<td><strong>Workspace</strong></td>
+<td>按项目隔离数据</td>
+<td>本课的 <code>--scope</code> 文件 + 输出目录</td>
+</tr>
+<tr>
+<td><strong>Session</strong></td>
+<td>已建立的交互通道</td>
+<td>本课没有（无利用能力）</td>
+</tr>
+</tbody>
+</table>
+<p>一句话：<strong>框架的架构思想可以学，攻击载荷不学也不会影响你把它用在授权测试里</strong>——<br>
+因为授权测试里真正耗时的 90% 是范围管理、资产盘点、结果复核、报告交付，<br>
+而不是"敲 exploit"。</p>
+<h2 id="3">3. 原理深入</h2>
+<h3 id="31-tcp-connect">3.1 TCP connect 扫描的三态语义</h3>
+<p>本课用 <code>socket.connect_ex()</code>，它内部就是完整的 TCP 三次握手：</p>
+<pre class="plain"><code>客户端                     目标
+   │──── SYN ──────────────▶│   connect() 发起
+   │◀─── SYN + ACK ─────────│   端口有人在监听 → 返回 0        → OPEN
+   │──── ACK ──────────────▶│   连接建立（随后我们立即关闭，不发送任何数据）
+
+   │──── SYN ──────────────▶│
+   │◀─── RST ───────────────│   没有监听者 → ECONNREFUSED     → CLOSED
+
+   │──── SYN ──────────────▶│
+   │        （无回应）       │   被防火墙静默丢弃 → timeout     → FILTERED
+</code></pre>
+<p>三态的工程含义完全不一样：</p>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>errno</th>
+<th>含义</th>
+<th>报告里应该怎么写</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>open</code></td>
+<td>0</td>
+<td>有服务在监听</td>
+<td>"端口开放，需进一步确认服务与版本"</td>
+</tr>
+<tr>
+<td><code>closed</code></td>
+<td><code>ECONNREFUSED</code>(111)</td>
+<td>主机<strong>活着</strong>但没有服务</td>
+<td>"主机存活，该端口无服务"</td>
+</tr>
+<tr>
+<td><code>filtered</code></td>
+<td>timeout / <code>EHOSTUNREACH</code></td>
+<td><strong>测不出</strong>，有设备在拦</td>
+<td>"<strong>不可判定</strong>：被过滤或链路问题"</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>其他（DNS、权限、网络不可达）</td>
+<td>扫描本身失败</td>
+<td>"该目标本轮无有效结论"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>最常见的错误：把 <code>filtered</code> 统计成 <code>closed</code>。</strong> 后果是报告写着<br>
+"该网段仅 3 个端口开放"，而实际上有 50 个端口因为防火墙静默丢包<br>
+而处于"不可判定"状态——这是<strong>结论级</strong>的错误，不是精度问题。</p>
+<h3 id="32-syn-raw-socket">3.2 为什么不用 SYN 半开扫描（raw socket）</h3>
+<p>教科书里的"半开扫描"需要 raw socket 自己构造 TCP 包，本课<strong>刻意不做</strong>，三个原因：</p>
+<ol>
+<li><strong>需要 root</strong>：裸 socket 要 <code>CAP_NET_RAW</code>，而"必须用 root 才能跑"的框架会<br>
+   诱导使用者全程 root，扩大攻击面。</li>
+<li><strong>越界风险更高</strong>：自己构造包意味着可以构造任意包，范围约束更难保证。</li>
+<li><strong>合规与观感</strong>：半开扫描的行为特征与攻击工具高度相似，<br>
+   在授权测试里没有必要为了省一次握手去冒这个风险。</li>
+</ol>
+<p><code>connect</code> 扫描的代价是：<strong>每次扫描都会在目标留下完整连接记录</strong>（会被记日志）。<br>
+<strong>这不是缺陷，是特性</strong>——授权测试应该留下痕迹，且框架应主动告知客户<br>
+"你会在日志里看到这些连接"。</p>
+<h3 id="33">3.3 并发模型：线程池 + 令牌桶</h3>
+<p>扫描是典型的 <strong>I/O 密集</strong>任务：每个端口 99% 的时间在等超时。<br>
+两种可选方案：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>优点</th>
+<th>缺点</th>
+<th>本课选择</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ThreadPoolExecutor</code></td>
+<td>代码直观、<code>socket</code> 阻塞语义天然适配</td>
+<td>线程数上限、GIL（这里无影响，纯 I/O）</td>
+<td>✅ 采用</td>
+</tr>
+<tr>
+<td><code>asyncio</code></td>
+<td>万级并发更省资源</td>
+<td>需要异步客户端、超时语义更绕</td>
+<td>❌ 教学成本高</td>
+</tr>
+</tbody>
+</table>
+<p><strong>但"并发"必须配一个"限速"</strong>，否则：</p>
+<ul>
+<li>目标侧连接表被打满（<strong>这已经属于拒绝服务的边缘</strong>）</li>
+<li>中间设备（IDS/WAF）把你标记为攻击源，客户安全团队会直接联系你</li>
+<li>你的结果会因为目标丢包而充满 <code>filtered</code>，<strong>数据质量下降</strong></li>
+</ul>
+<p>所以框架里有一个<strong>令牌桶（token bucket）</strong>：每秒最多放行 <code>rate</code> 个连接，<br>
+并发数 <code>workers</code> 限制同时在途的连接数。两个参数管的是不同的事：</p>
+<pre class="plain"><code>workers  → 同时在途的连接数（背压：防止本地端口耗尽、防止把目标打满）
+rate     → 每秒新增连接数（礼貌：控制对目标/中间设备的冲击）
+</code></pre>
+<h3 id="34">3.4 编排器：为什么是"阶段对象"而不是"一个大函数"</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">Phase</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">fn</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Framework</span><span class="p">,</span> <span class="nb">list</span><span class="p">[</span><span class="n">Asset</span><span class="p">]],</span> <span class="n">PhaseResult</span><span class="p">]</span>
+    <span class="n">optional</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+</code></pre></div>
+<p>每个阶段返回 <code>PhaseResult</code>（<code>ok / skipped / failed / reason / findings</code>）。<br>
+编排器做三件事：</p>
+<ol>
+<li><strong>依赖检查</strong>：阶段 2 需要阶段 1 的产物，若阶段 1 失败（例如全部 timeout），<br>
+   阶段 2 应该 <code>skipped</code> 而不是"在空列表上算出 0 个问题"。<br>
+   —— 后者会让报告显示"未发现问题"，属于<strong>静默失败</strong>，是最危险的失败模式。</li>
+<li><strong>统一审计</strong>：每个阶段的开始/结束/耗时/产出数量都写进审计日志。</li>
+<li><strong>失败传播</strong>：<code>critical</code> 阶段失败 → 立即终止；<code>optional</code> 阶段失败 → 记警告继续。</li>
+</ol>
+<h3 id="35">3.5 审计日志：框架的第一等产物</h3>
+<p>审计日志的每一行回答四个问题：<strong>谁、何时、对什么、做了什么</strong>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">jsonl</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">{&quot;ts&quot;: &quot;2026-09-20T09:10:01+08:00&quot;, &quot;event&quot;: &quot;scope_check&quot;, &quot;subject&quot;: &quot;127.0.0.1:8000&quot;, &quot;result&quot;: &quot;in_scope&quot;, &quot;detail&quot;: {&quot;ticket&quot;: &quot;LAB-SELF-001&quot;}}
+{&quot;ts&quot;: &quot;2026-09-20T09:10:02+08:00&quot;, &quot;event&quot;: &quot;probe&quot;, &quot;subject&quot;: &quot;127.0.0.1:8000&quot;, &quot;result&quot;: &quot;open&quot;, &quot;detail&quot;: {&quot;elapsed_ms&quot;: 0.6}}
+{&quot;ts&quot;: &quot;2026-09-20T09:10:03+08:00&quot;, &quot;event&quot;: &quot;phase_end&quot;, &quot;subject&quot;: &quot;scan&quot;, &quot;result&quot;: &quot;ok&quot;, &quot;detail&quot;: {&quot;assets&quot;: 1}}
+</code></pre></div>
+<p>为什么它比报告更重要？</p>
+<ul>
+<li>报告是<strong>结论</strong>（可能出错）；审计日志是<strong>过程</strong>（可以复核）；</li>
+<li>出争议时（"你们那天到底扫了什么？"）只有日志能自证；</li>
+<li>它是<strong>唯一</strong>能证明"范围约束真的生效了"的东西——<br>
+  因为 <code>AuthorizationError</code> 会同时写一条 <code>scope_check / result=denied</code> 记录。</li>
+</ul>
+<p><strong>结论：没有审计日志的"渗透测试"无法交付。</strong></p>
+<h2 id="4">4. 核心机制详解：编排状态机与限速实现</h2>
+<h3 id="41">4.1 阶段结果的状态机</h3>
+<p>阶段不能只有"成功/失败"两态，因为<strong>"跳过"和"失败"必须被区分</strong>：</p>
+<pre class="plain"><code>       ┌──────────────────────────────────────────────────────────┐
+       │                    编排器 run(phases)                    │
+       └──────────────────────────────────────────────────────────┘
+                                  │
+              ┌───────────────────┼───────────────────┐
+              ▼                   ▼                   ▼
+        ┌──────────┐        ┌──────────┐        ┌──────────┐
+        │  ok      │        │ skipped  │        │ failed   │
+        │ 有产出   │        │ 依赖不满足│        │ 抛异常   │
+        └────┬─────┘        └────┬─────┘        └────┬─────┘
+             │                   │                   │
+             │                   │                   ├─ optional? → warn + 继续
+             │                   │                   └─ critical? → 终止 + 退出码 4
+             │                   │
+             └───────────┬───────┘
+                         ▼
+              下一阶段：把 skipped 的产物视为&quot;不可用&quot;
+              （绝不允许在空输入上计算&quot;0 个问题&quot;）
+</code></pre>
+<p>用代码表达（<code>pentest_core.py</code> 的实际实现）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nd">@dataclass</span>
+<span class="k">class</span> <span class="nc">PhaseResult</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">str</span>          <span class="c1"># ok / skipped / failed</span>
+    <span class="n">reason</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+    <span class="n">findings</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">list</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">usable</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;ok&quot;</span>
+</code></pre></div>
+<p>编排器里的关键判断（<strong>这是整份框架最容易被写错的一行</strong>）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">for</span> <span class="n">phase</span> <span class="ow">in</span> <span class="n">phases</span><span class="p">:</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">deps_satisfied</span><span class="p">(</span><span class="n">phase</span><span class="p">,</span> <span class="n">done</span><span class="p">):</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">PhaseResult</span><span class="p">(</span><span class="n">phase</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="s2">&quot;skipped&quot;</span><span class="p">,</span> <span class="s2">&quot;上游阶段未产出可用资产&quot;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">phase</span><span class="o">.</span><span class="n">fn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">assets</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">PhaseResult</span><span class="p">(</span><span class="n">phase</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="s2">&quot;failed&quot;</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">exc</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="o">...</span>
+</code></pre></div>
+<p><strong>为什么"Skipped 必须存在"？</strong> 因为报告里的一句话差别巨大：</p>
+<ul>
+<li>❌ "检测阶段完成，发现 0 个问题"（在 0 个资产上跑的）</li>
+<li>✅ "检测阶段<strong>未执行</strong>：资产发现阶段全部超时（filtered），无可用输入"</li>
+</ul>
+<p>前者在客户眼里等于"没事"，后者意味着"这次测试无结论，需要排期重测"。<br>
+<strong>把无结论伪装成结论，是自动化测试最严重的缺陷。</strong></p>
+<h3 id="42">4.2 令牌桶限速：算法与实现</h3>
+<p>令牌桶的规则很简单：</p>
+<pre class="plain"><code>桶容量 capacity（例如 = workers）
+每 1/rate 秒补充 1 个令牌（不超过容量）
+每次要发一个连接请求 → 先取 1 个令牌；取不到就等待
+</code></pre>
+<pre class="plain"><code>capacity = 5, rate = 2/s
+
+  tokens
+    5 ┤●●●●●
+      │        ┌─ 匀速补令牌 ─┐
+    3 ┤●●●     │  +1 每 0.5s  │
+    1 ┤●       └──────────────┘
+    0 ┤     ●───●───●───●        ← 取用（每次放行一个连接）
+      └────┬───┬───┬───┬───┬───▶ t(s)
+           0   0.5  1.0 1.5 2.0
+</code></pre>
+<p>与"并发上限"的区别再说一遍，因为这两个参数经常被混淆：</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>语义</th>
+<th>调大后的后果</th>
+<th>调小后的后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>workers</code></td>
+<td><strong>同时在途</strong>的连接数</td>
+<td>本地端口/TIME_WAIT 堆积，目标连接表压力</td>
+<td>扫得慢，超时误判增多</td>
+</tr>
+<tr>
+<td><code>rate</code></td>
+<td><strong>每秒新增</strong>连接数</td>
+<td>IDS 报警、被客户安全团队叫停</td>
+<td>速度慢但"礼貌"</td>
+</tr>
+</tbody>
+</table>
+<p><strong>实测经验值（回环/局域网教学环境）</strong>：<code>workers=8, rate=50/s</code> 足够让<br>
+127.0.0.1 的 200 个端口在 1 秒左右扫完；<strong>真实授权环境</strong>建议从<br>
+<code>rate=5/s</code> 起步，根据客户许可往上调——<strong>这不是"能多快"的问题，<br>
+而是"客户允许多快"的问题</strong>。</p>
+<h3 id="43-05-01">4.3 超时的选择：为什么是 0.5 秒而不是 0.1 秒</h3>
+<p>超时值决定 <code>filtered</code> 的判定，而 <code>filtered</code> 是<strong>不可判定</strong>态，越少越好：</p>
+<table>
+<thead>
+<tr>
+<th>超时</th>
+<th>回环</th>
+<th>同局域网</th>
+<th>广域网（跨区域）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.1s</td>
+<td>足够</td>
+<td>大量假 <code>filtered</code></td>
+<td>几乎全 <code>filtered</code></td>
+</tr>
+<tr>
+<td>0.5s</td>
+<td>足够</td>
+<td>基本可靠</td>
+<td>部分假 <code>filtered</code></td>
+</tr>
+<tr>
+<td>1–3s</td>
+<td>浪费（本地毫秒级就返回）</td>
+<td>可靠</td>
+<td>可靠</td>
+</tr>
+</tbody>
+</table>
+<p>本课默认 <code>0.5s</code>：在实验环境（回环）下，正常端口的 connect 是<strong>微秒级</strong>返回的，<br>
+超时参数只影响"被丢弃的包"要等多久。<strong>报告里必须回显实际超时值</strong>——<br>
+否则"开放 3 个端口"这个数字无法被复核（用 0.1s 扫出来的 <code>filtered</code><br>
+和用 3s 扫出来的完全是两回事）。</p>
+<h3 id="44">4.4 幂等与去重</h3>
+<p>同一个 <code>(host, port)</code> 可能被多个阶段/插件重复探测，框架层做两件事：</p>
+<ol>
+<li><strong>去重队列</strong>：<code>Target</code> 是 frozen dataclass，放进 <code>set</code> 自动去重；</li>
+<li><strong>结果缓存</strong>：同一轮运行内 <code>(host, port)</code> 只探测一次，<br>
+   结果存在 <code>Framework.cache</code>，第二次命中直接复用（并记录 <code>cache_hit</code>）。</li>
+</ol>
+<p>为什么重要？因为<strong>重复探测会污染审计日志</strong>：日志里出现 3 次同一端口，<br>
+复核者无法判断是"框架重试"还是"三个人在扫"。缓存让日志与事实一一对应。</p>
+<h3 id="45">4.5 失败重试：只重试"网络抖动类"错误</h3>
+<p>不是所有失败都值得重试：</p>
+<table>
+<thead>
+<tr>
+<th>错误类型</th>
+<th>重试？</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ECONNREFUSED</code></td>
+<td>❌ 不重试</td>
+<td>这是<strong>有效结论</strong>（端口关闭），重试只是浪费</td>
+</tr>
+<tr>
+<td>timeout</td>
+<td>✅ 重试 1 次</td>
+<td>可能是抖动；重试后仍超时才是 <code>filtered</code></td>
+</tr>
+<tr>
+<td><code>EHOSTUNREACH</code></td>
+<td>✅ 重试 1 次</td>
+<td>可能是路由收敛中</td>
+</tr>
+<tr>
+<td><code>AuthorizationError</code></td>
+<td>❌ <strong>绝不重试</strong></td>
+<td>越界是<strong>策略拒绝</strong>，重试等于绕过门禁</td>
+</tr>
+<tr>
+<td><code>socket.gaierror</code></td>
+<td>❌ 不重试</td>
+<td>本课不接受域名目标（避免 DNS 外发）</td>
+</tr>
+</tbody>
+</table>
+<p>最后一条是安全设计原则：<strong>越界错误绝不能进入重试路径</strong>，<br>
+否则"重试逻辑"会变成"绕过范围校验的旁路"。</p>
+<h2 id="5-api">5. API 速查</h2>
+<h3 id="51-pentest_core">5.1 <code>pentest_core</code> 模块速查</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>类型</th>
+<th>作用</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Scope</code></td>
+<td>dataclass</td>
+<td>授权范围</td>
+<td>黑名单优先；<code>allow_raw_sockets/allow_write_actions</code> 恒为 False</td>
+</tr>
+<tr>
+<td><code>Scope.check(target)</code></td>
+<td>方法</td>
+<td><strong>唯一的越界出口</strong></td>
+<td>不通过抛 <code>AuthorizationError</code></td>
+</tr>
+<tr>
+<td><code>Scope.load(path)</code></td>
+<td>类方法</td>
+<td>从 JSON 载入</td>
+<td>缺 <code>networks</code>/<code>ports</code> 直接 <code>ScopeError</code></td>
+</tr>
+<tr>
+<td><code>parse_host_spec(spec)</code></td>
+<td>函数</td>
+<td>IP/CIDR → 主机列表</td>
+<td><strong>拒绝域名</strong>（避免 DNS 外发）</td>
+</tr>
+<tr>
+<td><code>parse_port_spec(spec)</code></td>
+<td>函数</td>
+<td><code>"80,8000-8010"</code> → 端口列表</td>
+<td>有序去重，越界端口报错</td>
+</tr>
+<tr>
+<td><code>Target(host, port)</code></td>
+<td>frozen dataclass</td>
+<td>探测单元</td>
+<td>frozen ⇒ 可进 <code>set</code> 去重</td>
+</tr>
+<tr>
+<td><code>AuditLog.record(event, subject, result, **detail)</code></td>
+<td>方法</td>
+<td>写过程证据</td>
+<td>可选 JSONL 落盘</td>
+</tr>
+<tr>
+<td><code>tcp_probe(target, timeout, retries)</code></td>
+<td>函数</td>
+<td>只读探测</td>
+<td>只读 banner，<strong>不发送任何字节</strong></td>
+</tr>
+<tr>
+<td><code>TokenBucket(rate, capacity).acquire()</code></td>
+<td>类</td>
+<td>限速</td>
+<td>返回本次等待秒数</td>
+</tr>
+<tr>
+<td><code>Framework.build_targets(hosts, ports)</code></td>
+<td>方法</td>
+<td>表达式 → 去重 Target 列表</td>
+<td>只做解析，不校验</td>
+</tr>
+<tr>
+<td><code>Framework.authorize(targets)</code></td>
+<td>方法</td>
+<td>批量校验</td>
+<td><strong>fail-fast</strong>：任一越界即中止</td>
+</tr>
+<tr>
+<td><code>Framework.probe_many(targets)</code></td>
+<td>方法</td>
+<td>线程池 + 限速探测</td>
+<td>结果顺序与输入一致</td>
+</tr>
+<tr>
+<td><code>Framework.run_phases(phases, assets)</code></td>
+<td>方法</td>
+<td>阶段编排</td>
+<td>空资产 ⇒ 下游 <code>skipped</code></td>
+</tr>
+<tr>
+<td><code>Finding</code></td>
+<td>dataclass</td>
+<td>发现项</td>
+<td><code>priority = f(severity, confidence)</code></td>
+</tr>
+<tr>
+<td><code>build_report(...)</code> / <code>render_markdown(...)</code></td>
+<td>函数</td>
+<td>报告</td>
+<td>必含范围/参数/覆盖/审计统计</td>
+</tr>
+<tr>
+<td><code>LabServer({port: greeting})</code></td>
+<td>类</td>
+<td>回环实验服务</td>
+<td>仅用于自测</td>
+</tr>
+</tbody>
+</table>
+<h3 id="52">5.2 三态 + 退出码语义对照（最容易记混的两组）</h3>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>取值</th>
+<th>判据</th>
+<th>报告措辞</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>端口状态</td>
+<td><code>open</code></td>
+<td><code>connect_ex == 0</code></td>
+<td>有服务在监听</td>
+</tr>
+<tr>
+<td></td>
+<td><code>closed</code></td>
+<td><code>errno == 111</code></td>
+<td>主机存活、该端口无服务</td>
+</tr>
+<tr>
+<td></td>
+<td><code>filtered</code></td>
+<td>timeout / <code>errno == 11</code></td>
+<td><strong>不可判定</strong>（被过滤或链路问题）</td>
+</tr>
+<tr>
+<td></td>
+<td><code>error</code></td>
+<td>其他 OSError / gaierror</td>
+<td>本轮无有效结论</td>
+</tr>
+<tr>
+<td>退出码</td>
+<td><code>2</code></td>
+<td>越界 / 参数非法</td>
+<td>不可执行，修范围重跑</td>
+</tr>
+<tr>
+<td></td>
+<td><code>4</code></td>
+<td>存在 filtered / error</td>
+<td>无结论，需换路径复测</td>
+</tr>
+<tr>
+<td></td>
+<td><code>3</code></td>
+<td>有 P0/P1 发现</td>
+<td>进人工复核队列</td>
+</tr>
+<tr>
+<td></td>
+<td><code>0</code></td>
+<td>干净完成</td>
+<td>归档</td>
+</tr>
+</tbody>
+</table>
+<p>优先级：<code>2 &gt; 4 &gt; 3 &gt; 0</code>。</p>
+<h3 id="53">5.3 优先级公式</h3>
+<pre class="plain"><code>severity   ∈ {info=0, low=1, medium=2, high=3, critical=4}
+confidence ∈ {info=0, low=1, medium=2, high=3}
+priority_score = (severity + 1) × (confidence + 1)
+  ≥ 20 → P0      ≥ 12 → P1      ≥ 6 → P2      其余 → P3
+</code></pre>
+<p>例：<code>version_disclosure</code> = low + high = 2×4 = 8 → <strong>P2</strong>；<br>
+<code>cleartext_protocol</code> = high + medium = 4×3 = 12 → <strong>P1</strong>；<br>
+<code>banner_evidence</code> = info + high = 1×4 = 4 → <strong>P3</strong>（事实记录，不丢弃）。</p>
+<h3 id="54">5.4 参数速查（报告必须回显这几个）</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认</th>
+<th>含义</th>
+<th>调大的后果</th>
+<th>调小的后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>timeout</code></td>
+<td>0.5 s</td>
+<td>单次 connect 等待</td>
+<td>扫描变慢</td>
+<td>假 <code>filtered</code> 增多</td>
+</tr>
+<tr>
+<td><code>workers</code></td>
+<td>8</td>
+<td>同时在途连接数</td>
+<td>本地端口耗尽、目标压力大</td>
+<td>慢</td>
+</tr>
+<tr>
+<td><code>rate</code></td>
+<td>50 /s</td>
+<td>每秒新增连接数</td>
+<td>触发 IDS/客户投诉</td>
+<td>慢但礼貌</td>
+</tr>
+<tr>
+<td><code>retries</code></td>
+<td>1</td>
+<td>抖动类错误重试次数</td>
+<td>超时类错误被掩盖</td>
+<td>抖动被记为不可判定</td>
+</tr>
+</tbody>
+</table>
+<h2 id="6">6. 实战代码案例：一次完整的框架运行</h2>
+<p>下面的输出全部来自 <code>04-pentest-framework.py</code> 的<strong>实测输出</strong>（本机 Linux + Python 3.12，<br>
+实验服务：8000 伪装 SSH、8080 伪装 HTTP；授权范围回环 + 8000-8099；扫描端口 8000-8080）。</p>
+<h3 id="61">6.1 正常运行（有开放端口、无可判定缺口）</h3>
+<pre class="plain"><code>$ python3 code/04-pentest-framework.py lab --ports 8000-8080 --rate 500
+[lab]   启动本机实验服务: [8000, 8080]（仅回环）
+[scope] networks=[&#x27;127.0.0.1/32&#x27;] ports=[(8000, 8099)] ticket=LAB-SELF-001
+[collect] 目标 81 个 → open 2 / closed 79 / filtered 0 / error 0  (throttle_wait=0.981s)
+[detect]  插件 4 个 → findings 9
+[exploit] skipped：本课不提供利用能力；输出人工验证清单，无网络行为
+[report]  已写入 days/day-161-渗透测试框架/out/day161-lab-report.json / ...md
+[exit]    3
+</code></pre>
+<p><code>findings 9</code> 的构成（实测）：7 条来自 4 个检测插件，2 条来自 exploit 占位阶段<br>
+的 <code>needs_manual_verification</code>（每台开放端口的主机 1 条）：</p>
+<table>
+<thead>
+<tr>
+<th>优先级</th>
+<th>插件</th>
+<th>目标</th>
+<th>severity/confidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P1</td>
+<td><code>cleartext_protocol</code></td>
+<td>127.0.0.1:8080</td>
+<td>high / medium</td>
+</tr>
+<tr>
+<td>P2</td>
+<td><code>version_disclosure</code></td>
+<td>127.0.0.1:8000</td>
+<td>low / high</td>
+</tr>
+<tr>
+<td>P2</td>
+<td><code>version_disclosure</code></td>
+<td>127.0.0.1:8080</td>
+<td>low / high</td>
+</tr>
+<tr>
+<td>P3</td>
+<td><code>banner_evidence</code></td>
+<td>127.0.0.1:8000</td>
+<td>info / high</td>
+</tr>
+<tr>
+<td>P3</td>
+<td><code>banner_evidence</code></td>
+<td>127.0.0.1:8080</td>
+<td>info / high</td>
+</tr>
+<tr>
+<td>P3</td>
+<td><code>high_port_service</code></td>
+<td>127.0.0.1:8000</td>
+<td>info / medium</td>
+</tr>
+<tr>
+<td>P3</td>
+<td><code>high_port_service</code></td>
+<td>127.0.0.1:8080</td>
+<td>info / medium</td>
+</tr>
+<tr>
+<td>P3</td>
+<td><code>needs_manual_verification</code></td>
+<td>8000 / 8080</td>
+<td>info / info</td>
+</tr>
+</tbody>
+</table>
+<p>报告节选：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">markdown</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="gu">## 覆盖与结论可信度</span>
+
+<span class="k">-</span><span class="w"> </span>目标数 81：open 2 / closed 79 / filtered 0 / error 0
+<span class="k">-</span><span class="w"> </span><span class="gs">**可判定 81 条；不可判定 0 条**</span>（filtered = 被过滤或链路问题，不能当作关闭）
+
+<span class="gu">## 开放端口与服务</span>
+
+| 目标 | 服务 | banner（截断） |
+| --- | --- | --- |
+| 127.0.0.1:8000 | ssh | SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.4 |
+| 127.0.0.1:8080 | http | HTTP/1.1 200 OK Server: lab-nginx/1.18.0 |
+</code></pre></div>
+<h3 id="62">6.2 越界必须立即终止（这是重点）</h3>
+<pre class="plain"><code>$ python3 code/04-pentest-framework.py scan --hosts 10.0.0.5 --ports 8000
+⚠️ 未指定 --scope，使用默认实验范围（仅回环 8000-8099）。
+[scope] networks=[&#x27;127.0.0.1/32&#x27;] ports=[(8000, 8099)] ticket=LAB-SELF-001
+⛔ AuthorizationError: 目标不在授权网段内: 10.0.0.5
+   （已记入审计日志：scope_check denied + run_abort exit=2）
+[exit] 2
+</code></pre>
+<p><strong>注意 <code>denied</code> 这一条也被写进了审计日志</strong>——"我拒绝了一个请求"同样是证据。</p>
+<h3 id="63-filtered-4">6.3 结果不完整（存在 filtered）时退出码是 4</h3>
+<p>用<strong>不可路由的文档网段</strong>（192.0.2.0/24，RFC 5737）造出"不可判定"场景：<br>
+让范围文件允许它，但那里没有服务会应答。</p>
+<pre class="plain"><code>$ cat /tmp/scope192.json
+{&quot;networks&quot;: [&quot;192.0.2.0/24&quot;], &quot;ports&quot;: [[8000, 8002]], &quot;ticket&quot;: &quot;LAB-DEMO&quot;}
+
+$ python3 code/04-pentest-framework.py scan --hosts 192.0.2.1 --ports 8000-8002 \
+      --scope /tmp/scope192.json --timeout 0.2 --tag demo-inconclusive
+[scope] networks=[&#x27;192.0.2.0/24&#x27;] ports=[(8000, 8002)] ticket=LAB-DEMO
+[collect] 目标 3 个 → open 0 / closed 0 / filtered 3 / error 0  (throttle_wait=0.000s)
+[detect] skipped：上游阶段无可用资产（全部 filtered/error）
+[exploit] skipped：上游阶段无可用资产（全部 filtered/error）
+[exit]    4
+</code></pre>
+<p><strong>这里最值得看的是 <code>skipped</code></strong>：不是"发现 0 个问题"，<br>
+而是"检测阶段未执行"。同一个空 findings 列表，两种措辞，两种完全不同的含义。</p>
+<p>（这也是开发期真实踩到的坑：早期 <code>tcp_probe</code> 忘了 <code>sock.settimeout(timeout)</code>，<br>
+回环测试完全正常，一遇到不可达目标就卡住几十秒——详见坑 13。）</p>
+<h2 id="7-13-code03-pitfallspy">7. 常见陷阱（13 个，对照表；详细复现见 <code>code/03-pitfalls.py</code>）</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>陷阱</th>
+<th>症状</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>把 <code>filtered</code> 当 <code>closed</code></td>
+<td>报告谎称"仅 N 个端口开放"</td>
+<td>三态分开统计，回显不可判定数量</td>
+</tr>
+<tr>
+<td>2</td>
+<td>先连接再判断范围</td>
+<td>越界包已经发出去了</td>
+<td>校验在 <code>socket()</code> <strong>之前</strong></td>
+</tr>
+<tr>
+<td>3</td>
+<td>把 <code>ECONNREFUSED</code> 当"主机不存在"</td>
+<td>丢失"主机存活"情报</td>
+<td><code>closed</code> ⇒ 主机存活 + 该端口无服务</td>
+</tr>
+<tr>
+<td>4</td>
+<td>超时拍脑袋设 0.05s</td>
+<td>假 <code>filtered</code> 遍地</td>
+<td>按网络距离选值并回显</td>
+</tr>
+<tr>
+<td>5</td>
+<td>并发拉满无限速</td>
+<td>事实上的拒绝服务边缘</td>
+<td>令牌桶 + 由客户许可决定 rate</td>
+</tr>
+<tr>
+<td>6</td>
+<td>重试策略写反</td>
+<td>抖动被误判 / 越界被重试</td>
+<td>只重试抖动类；越界<strong>绝不重试</strong></td>
+</tr>
+<tr>
+<td>7</td>
+<td>范围里写域名</td>
+<td>解析即外发</td>
+<td>只接受 IP/CIDR</td>
+</tr>
+<tr>
+<td>8</td>
+<td>空输入算出 0 个问题</td>
+<td>"无结论"伪装成"没问题"</td>
+<td>上游无资产 ⇒ 下游 <code>skipped</code></td>
+</tr>
+<tr>
+<td>9</td>
+<td>重复探测不缓存</td>
+<td>审计日志污染</td>
+<td><code>Target</code> 去重 + 结果缓存</td>
+</tr>
+<tr>
+<td>10</td>
+<td>直接写 banner 进报告</td>
+<td>目标注入控制字符/Markdown</td>
+<td>净化 + 截断 + 标注不可信</td>
+</tr>
+<tr>
+<td>11</td>
+<td>用 <code>time.time()</code> 计时</td>
+<td>校时/改时钟导致负数</td>
+<td>计时用 <code>perf_counter</code></td>
+</tr>
+<tr>
+<td>12</td>
+<td>报告不回显范围与参数</td>
+<td>结论不可复核</td>
+<td>范围/参数/覆盖/审计统计必有</td>
+</tr>
+<tr>
+<td>13</td>
+<td>收了 <code>timeout</code> 却没 <code>settimeout</code></td>
+<td>回环正常、遇到不可达目标就卡死</td>
+<td><code>sock.settimeout(timeout)</code>；用不可达目标验证耗时≈timeout</td>
+</tr>
+</tbody>
+</table>
+<h2 id="8">8. 局限与伦理边界（必须写进交付报告，不能省略）</h2>
+<p><strong>能力上的局限</strong></p>
+<ul>
+<li><strong>只做阶段 1–2</strong>：不做利用、不做后渗透，因此<strong>任何 Finding 都不是"已验证的漏洞"</strong>，<br>
+  只是"需要人工验证的点位"。措辞上必须区分"疑似"与"确认"。</li>
+<li><strong>探测量级有限</strong>：只有 TCP connect 与 banner 读取，没有 UDP、没有 SNMP、<br>
+  没有认证类探测。资产盘点必然是<strong>不完整</strong>的。</li>
+<li><strong>无情报关联</strong>：不知道某个 IP/服务版本在真实世界里的被利用情况，<br>
+  置信度天花板因此较低。</li>
+<li><strong>未评测检出率</strong>：没有在带标签的授权环境中计算 precision/recall，<br>
+<strong>不能</strong>替代商业扫描器，也不能作为合规审计的唯一依据。</li>
+</ul>
+<p><strong>刻意不做（设计选择，不是遗漏）</strong></p>
+<table>
+<thead>
+<tr>
+<th>不做的事</th>
+<th>为什么不做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>提供 exploit / 载荷</td>
+<td>教材不承担武器化风险；授权测试的瓶颈在流程与证据，不在载荷</td>
+</tr>
+<tr>
+<td>提供规避检测（encoder/混淆）</td>
+<td>规避能力只对"未授权攻击"有意义；授权测试应留下痕迹</td>
+</tr>
+<tr>
+<td>自动处置（封 IP、改配置）</td>
+<td>误报会直接升级为生产事故；处置必须走独立的授权与变更流程</td>
+</tr>
+<tr>
+<td>raw socket / SYN 扫描</td>
+<td>需 root、扩大攻击面、行为特征与攻击工具难以区分</td>
+</tr>
+<tr>
+<td>自动扩大范围（"顺手扫一下邻居"）</td>
+<td>越界不是技术失误，是合规事故</td>
+</tr>
+</tbody>
+</table>
+<h2 id="9">9. 思考题</h2>
+<ol>
+<li>本框架把 <code>filtered</code> 单列并让退出码变成 4。如果客户只想要一个"扫描结果"，<br>
+   为什么"本次无结论"这个结论反而更重要？请从<strong>责任边界</strong>角度回答。</li>
+<li>范围校验选择 <strong>fail-fast</strong>（一个越界就整轮终止）而不是"跳过越界目标继续"。<br>
+   在什么情况下你会反过来选择"跳过并记警告"？这两种选择分别让谁承担风险？</li>
+<li>插件注册表让"加检测项"变容易了，但也让"执行顺序"变得隐式依赖 <code>priority</code>。<br>
+   如果两个插件分别需要"先有 banner"和"先有服务推断"，你如何用<strong>数据结构</strong><br>
+   而不是文档约定来保证顺序？（提示：声明式依赖 vs 数字优先级）</li>
+<li>审计日志会记录"我对哪个 IP 的哪个端口做了什么"。这份日志本身也是敏感数据：<br>
+   如果它泄露，攻击者能获得什么？你会在<strong>留存期限</strong>和<strong>脱敏粒度</strong>上怎么设计？</li>
+<li>本课刻意不提供利用能力。假设某天你所在的团队要加上"验证性利用"，<br>
+   你会要求哪些<strong>前置条件</strong>（授权、隔离环境、回滚方案、审批留痕）才允许合并？<br>
+   列出至少 4 条，并说明每条对应哪一类风险。</li>
+<li><code>rate</code> 参数决定了扫描压力。假如客户说"我们的 WAF 会把超过 20 连接/秒<br>
+   的来源封禁 1 小时"，你如何设计一个既能完成扫描、又不会被封的策略？<br>
+   （提示：不要试图规避 WAF —— 应该去和客户约定白名单或维护窗口。）</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-160/index.html">← Day 160 日志安全分析：格式标准化 · 异常登录 · 暴力破解识别</a><a class="nav-next" href="../day-162/index.html">Day 162 阶段项目（一）：安全审计工具箱 · 端口扫描 + 目录爆破 + 指纹识别 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

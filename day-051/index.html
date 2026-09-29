@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 51 — 弱引用（weakref）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 51 — 弱引用（weakref）</h1>
+  <div class="lmeta">
+    <span class="badge">高阶特性</span>
+    <span class="badge">478 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-051-weakref" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">📌 今日目标</a>
+<a class="toc-l2" href="#1">1. 什么是弱引用？</a>
+<a class="toc-l3" href="#11-vs">1.1 强引用 vs 弱引用</a>
+<a class="toc-l3" href="#12">1.2 为什么需要弱引用？</a>
+<a class="toc-l2" href="#2-weakref-api">2. weakref 模块核心 API</a>
+<a class="toc-l3" href="#21-weakrefref">2.1 weakref.ref() —— 创建弱引用</a>
+<a class="toc-l3" href="#22-callback">2.2 弱引用回调（Callback）</a>
+<a class="toc-l3" href="#23-weakrefproxy">2.3 weakref.proxy() —— 代理对象</a>
+<a class="toc-l2" href="#3">3. 循环引用与垃圾回收</a>
+<a class="toc-l3" href="#31">3.1 循环引用的困境</a>
+<a class="toc-l3" href="#32">3.2 用弱引用打破循环</a>
+<a class="toc-l2" href="#4">4. 弱引用容器</a>
+<a class="toc-l3" href="#41-weakvaluedictionary">4.1 WeakValueDictionary —— 值为弱引用的字典</a>
+<a class="toc-l3" href="#42-weakkeydictionary">4.2 WeakKeyDictionary —— 键为弱引用的字典</a>
+<a class="toc-l3" href="#43-weakset">4.3 WeakSet —— 元素为弱引用的集合</a>
+<a class="toc-l2" href="#5">5. 弱引用的使用限制</a>
+<a class="toc-l3" href="#51">5.1 哪些对象可以有弱引用？</a>
+<a class="toc-l3" href="#52-__slots__">5.2 __slots__ 与弱引用</a>
+<a class="toc-l2" href="#6-lru">6. 实战：基于弱引用的 LRU 缓存</a>
+<a class="toc-l2" href="#7">7. 弱引用最佳实践</a>
+<a class="toc-l3" href="#_2">注意事项</a>
+<a class="toc-l2" href="#8">8. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-051-weakref">Day 051 — 弱引用（weakref）</h1>
+<blockquote>
+<p><strong>Phase 4 · 高阶特性 · Day 051</strong><br>
+主题：弱引用（weakref）—— 不增加引用计数的优雅引用</p>
+</blockquote>
+<hr>
+<h2 id="_1">📌 今日目标</h2>
+<ol>
+<li>理解弱引用的原理及其与强引用的区别</li>
+<li>掌握 <code>weakref</code> 模块的核心 API</li>
+<li>理解循环引用问题及其解决方案</li>
+<li>掌握 <code>WeakValueDictionary</code>、<code>WeakKeyDictionary</code>、<code>WeakSet</code> 的使用</li>
+<li>实战：实现带弱引用的缓存系统</li>
+</ol>
+<hr>
+<h2 id="1">1. 什么是弱引用？</h2>
+<h3 id="11-vs">1.1 强引用 vs 弱引用</h3>
+<p>在 Python 中，变量赋值默认创建<strong>强引用</strong>（Strong Reference）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">sys</span>
+
+<span class="n">a</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>       <span class="c1"># 强引用：变量 a 指向列表对象</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getrefcount</span><span class="p">(</span><span class="n">a</span><span class="p">))</span>  <span class="c1"># 输出至少为 2（a + getrefcount 的参数）</span>
+</code></pre></div>
+<p><strong>弱引用</strong>（Weak Reference）不增加对象的引用计数。如果一个对象只有弱引用指向它，Python 会在下一次垃圾回收时回收该对象。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+
+<span class="n">a</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="n">a</span><span class="p">)</span>  <span class="c1"># 创建弱引用</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">b</span><span class="p">())</span>          <span class="c1"># 输出: [1, 2, 3] —— 通过弱引用访问对象</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getrefcount</span><span class="p">(</span><span class="n">a</span><span class="p">))</span>  <span class="c1"># 仍然只有强引用的计数</span>
+
+<span class="k">del</span> <span class="n">a</span>               <span class="c1"># 删除强引用</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">b</span><span class="p">())</span>          <span class="c1"># 输出: None —— 对象已被回收</span>
+</code></pre></div>
+<h3 id="12">1.2 为什么需要弱引用？</h3>
+<p><strong>核心问题：循环引用导致内存泄漏</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ⚠️ 这会导致循环引用，但 Python 的垃圾回收器可以处理</span>
+<span class="k">class</span> <span class="nc">Node</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">children</span> <span class="o">=</span> <span class="p">[]</span>
+
+<span class="n">parent</span> <span class="o">=</span> <span class="n">Node</span><span class="p">()</span>
+<span class="n">child</span> <span class="o">=</span> <span class="n">Node</span><span class="p">()</span>
+<span class="n">parent</span><span class="o">.</span><span class="n">children</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">child</span><span class="p">)</span>
+<span class="n">child</span><span class="o">.</span><span class="n">parent</span> <span class="o">=</span> <span class="n">parent</span>  <span class="c1"># 循环引用！</span>
+</code></pre></div>
+<p>在某些场景下，循环引用无法被垃圾回收器正确处理（例如涉及 <code>__del__</code> 方法的对象）。弱引用是解决这类问题的优雅方案。</p>
+<hr>
+<h2 id="2-weakref-api">2. weakref 模块核心 API</h2>
+<h3 id="21-weakrefref">2.1 <code>weakref.ref()</code> —— 创建弱引用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;MyClass(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">(</span><span class="s2">&quot;hello&quot;</span><span class="p">)</span>
+<span class="n">ref</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">ref</span><span class="p">())</span>       <span class="c1"># &lt;weakref at 0x...; dead&gt; 或 MyClass(&#39;hello&#39;)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ref</span><span class="p">()</span> <span class="ow">is</span> <span class="n">obj</span><span class="p">)</span>  <span class="c1"># True —— 指向同一个对象</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">ref</span><span class="p">)</span>         <span class="c1"># &lt;weakref at 0x...; to MyClass&gt;</span>
+</code></pre></div>
+<h3 id="22-callback">2.2 弱引用回调（Callback）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="k">def</span> <span class="nf">callback</span><span class="p">(</span><span class="n">ref</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;当对象被回收时，回调函数被调用&quot;&quot;&quot;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;对象被回收了! 弱引用指向: </span><span class="si">{</span><span class="n">ref</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="n">ref</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">callback</span><span class="p">)</span>
+
+<span class="k">del</span> <span class="n">obj</span>  <span class="c1"># 输出: 对象被回收了! 弱引用指向: &lt;weakref at 0x...; dead&gt;</span>
+</code></pre></div>
+<h3 id="23-weakrefproxy">2.3 <code>weakref.proxy()</code> —— 代理对象</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="k">def</span> <span class="nf">hello</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="s2">&quot;Hello from proxy!&quot;</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="n">proxy</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">proxy</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">proxy</span><span class="o">.</span><span class="n">hello</span><span class="p">())</span>  <span class="c1"># 输出: Hello from proxy!</span>
+<span class="c1"># proxy 看起来和原对象一样，但不增加引用计数</span>
+
+<span class="k">del</span> <span class="n">obj</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">proxy</span><span class="o">.</span><span class="n">hello</span><span class="p">()</span>
+<span class="k">except</span> <span class="ne">ReferenceError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;捕获异常: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 弱引用目标已死</span>
+</code></pre></div>
+<p><strong><code>ref</code> vs <code>proxy</code> 的区别：</strong></p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th><code>weakref.ref()</code></th>
+<th><code>weakref.proxy()</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>访问对象</td>
+<td><code>ref()</code> 调用</td>
+<td>直接使用，无需 <code>()</code></td>
+</tr>
+<tr>
+<td>类型检查</td>
+<td><code>isinstance(ref, weakref.ref)</code></td>
+<td>无法区分代理和原对象</td>
+</tr>
+<tr>
+<td>异常处理</td>
+<td>返回 <code>None</code></td>
+<td>抛出 <code>ReferenceError</code></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="3">3. 循环引用与垃圾回收</h2>
+<h3 id="31">3.1 循环引用的困境</h3>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    A[对象A] --&gt;|强引用| B[对象B]
+    B --&gt;|强引用| A
+    A -.-&gt;|引用计数| 1
+    B -.-&gt;|引用计数| 1
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    A[对象A] --&gt;|强引用| B[对象B]
+    B --&gt;|强引用| A
+    A -.-&gt;|引用计数| 1
+    B -.-&gt;|引用计数| 1
+</code></pre></div>
+<p>Python 使用<strong>引用计数 + 分代回收</strong>机制：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">gc</span>
+
+<span class="k">class</span> <span class="nc">Node</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+    <span class="k">def</span> <span class="fm">__del__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Node(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">) 被回收&quot;</span><span class="p">)</span>
+
+<span class="c1"># 创建循环引用</span>
+<span class="n">a</span> <span class="o">=</span> <span class="n">Node</span><span class="p">(</span><span class="s2">&quot;A&quot;</span><span class="p">)</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">Node</span><span class="p">(</span><span class="s2">&quot;B&quot;</span><span class="p">)</span>
+<span class="n">a</span><span class="o">.</span><span class="n">other</span> <span class="o">=</span> <span class="n">b</span>
+<span class="n">b</span><span class="o">.</span><span class="n">other</span> <span class="o">=</span> <span class="n">a</span>
+
+<span class="k">del</span> <span class="n">a</span>
+<span class="k">del</span> <span class="n">b</span>
+<span class="c1"># 即使 del 了，由于循环引用，__del__ 可能不会立即执行</span>
+<span class="n">gc</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>  <span class="c1"># 强制垃圾回收，此时才调用 __del__</span>
+</code></pre></div>
+<h3 id="32">3.2 用弱引用打破循环</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="k">class</span> <span class="nc">Parent</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_children</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">add_child</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">child</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_children</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">child</span><span class="p">)</span>
+        <span class="n">child</span><span class="o">.</span><span class="n">_parent</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>  <span class="c1"># 用弱引用指向父节点</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">children</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">c</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_children</span> <span class="k">if</span> <span class="n">c</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">]</span>
+
+<span class="k">class</span> <span class="nc">Child</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span> <span class="o">=</span> <span class="kc">None</span>  <span class="c1"># 将存储弱引用</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">parent</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent</span><span class="p">()</span>  <span class="c1"># 解引用弱引用</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+<span class="c1"># 使用</span>
+<span class="n">parent</span> <span class="o">=</span> <span class="n">Parent</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">)</span>
+<span class="n">child1</span> <span class="o">=</span> <span class="n">Child</span><span class="p">(</span><span class="s2">&quot;Bob&quot;</span><span class="p">)</span>
+<span class="n">parent</span><span class="o">.</span><span class="n">add_child</span><span class="p">(</span><span class="n">child1</span><span class="p">)</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">child1</span><span class="o">.</span><span class="n">parent</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>  <span class="c1"># Alice</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">parent</span><span class="o">.</span><span class="n">children</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>  <span class="c1"># Bob</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 弱引用容器</h2>
+<h3 id="41-weakvaluedictionary">4.1 <code>WeakValueDictionary</code> —— 值为弱引用的字典</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="k">class</span> <span class="nc">ExpensiveObject</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;ExpensiveObject(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s2">)&quot;</span>
+    <span class="k">def</span> <span class="fm">__del__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2"> 被回收&quot;</span><span class="p">)</span>
+
+<span class="n">cache</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">WeakValueDictionary</span><span class="p">()</span>
+
+<span class="n">obj1</span> <span class="o">=</span> <span class="n">ExpensiveObject</span><span class="p">(</span><span class="s2">&quot;data1&quot;</span><span class="p">)</span>
+<span class="n">cache</span><span class="p">[</span><span class="s2">&quot;key1&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="n">obj1</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;key1 in cache: </span><span class="si">{</span><span class="s1">&#39;key1&#39;</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">cache</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># True</span>
+
+<span class="k">del</span> <span class="n">obj1</span>  <span class="c1"># 对象被回收</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;key1 in cache: </span><span class="si">{</span><span class="s1">&#39;key1&#39;</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">cache</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># False —— 自动清理</span>
+</code></pre></div>
+<p><strong>典型场景：ORM 模型缓存、连接池、资源管理器</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="k">class</span> <span class="nc">DatabaseConnection</span><span class="p">:</span>
+    <span class="n">_instances</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">WeakValueDictionary</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="fm">__new__</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">):</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">host</span><span class="p">,</span> <span class="n">port</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_instances</span><span class="p">:</span>
+            <span class="n">obj</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__new__</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span>
+            <span class="n">obj</span><span class="o">.</span><span class="n">_connected</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="bp">cls</span><span class="o">.</span><span class="n">_instances</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">obj</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  创建新连接: </span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;  复用连接: </span><span class="si">{</span><span class="n">host</span><span class="si">}</span><span class="s2">:</span><span class="si">{</span><span class="n">port</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_instances</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+
+<span class="c1"># 演示</span>
+<span class="n">conn1</span> <span class="o">=</span> <span class="n">DatabaseConnection</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">5432</span><span class="p">)</span>
+<span class="n">conn2</span> <span class="o">=</span> <span class="n">DatabaseConnection</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">5432</span><span class="p">)</span>  <span class="c1"># 复用</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;同一个对象: </span><span class="si">{</span><span class="n">conn1</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="n">conn2</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># True</span>
+
+<span class="k">del</span> <span class="n">conn1</span>
+<span class="n">conn3</span> <span class="o">=</span> <span class="n">DatabaseConnection</span><span class="p">(</span><span class="s2">&quot;localhost&quot;</span><span class="p">,</span> <span class="mi">5432</span><span class="p">)</span>  <span class="c1"># 创建新的</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;同一个对象: </span><span class="si">{</span><span class="n">conn2</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="n">conn3</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># True</span>
+</code></pre></div>
+<h3 id="42-weakkeydictionary">4.2 <code>WeakKeyDictionary</code> —— 键为弱引用的字典</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="k">class</span> <span class="nc">Config</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+
+<span class="n">config</span> <span class="o">=</span> <span class="n">Config</span><span class="p">(</span><span class="s2">&quot;production&quot;</span><span class="p">)</span>
+<span class="n">data</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">WeakKeyDictionary</span><span class="p">()</span>
+<span class="n">data</span><span class="p">[</span><span class="n">config</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;production_data&quot;</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">data</span><span class="p">[</span><span class="n">config</span><span class="p">])</span>  <span class="c1"># production_data</span>
+
+<span class="k">del</span> <span class="n">config</span>  <span class="c1"># 键被回收，条目自动删除</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>  <span class="c1"># 0</span>
+</code></pre></div>
+<h3 id="43-weakset">4.3 <code>WeakSet</code> —— 元素为弱引用的集合</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="k">class</span> <span class="nc">Observer</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="n">observers</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">WeakSet</span><span class="p">()</span>
+
+<span class="n">obs1</span> <span class="o">=</span> <span class="n">Observer</span><span class="p">()</span>
+<span class="n">obs2</span> <span class="o">=</span> <span class="n">Observer</span><span class="p">()</span>
+<span class="n">observers</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">obs1</span><span class="p">)</span>
+<span class="n">observers</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">obs2</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;观察者数量: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">observers</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 2</span>
+
+<span class="k">del</span> <span class="n">obs1</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;观察者数量: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">observers</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>  <span class="c1"># 1</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 弱引用的使用限制</h2>
+<h3 id="51">5.1 哪些对象可以有弱引用？</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="c1"># ✅ 可以创建弱引用的对象</span>
+<span class="k">class</span> <span class="nc">MyClass</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">MyClass</span><span class="p">()</span>
+<span class="n">ref</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>  <span class="c1"># OK</span>
+
+<span class="c1"># ✅ 实例对象可以有弱引用（即使没有 __weakref__）</span>
+<span class="c1"># 但内置类型（list, dict, int, str）不行</span>
+
+<span class="c1"># ❌ 以下会报 TypeError</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">ref</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">])</span>
+<span class="k">except</span> <span class="ne">TypeError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;list 不支持弱引用: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 解决方案：使用包装类</span>
+<span class="k">class</span> <span class="nc">MyList</span><span class="p">:</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">data</span>
+
+<span class="n">ref</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="n">MyList</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]))</span>  <span class="c1"># OK</span>
+</code></pre></div>
+<h3 id="52-__slots__">5.2 <code>__slots__</code> 与弱引用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+
+<span class="c1"># 没有 __slots__ 的类默认可以创建弱引用</span>
+<span class="k">class</span> <span class="nc">NormalClass</span><span class="p">:</span>
+    <span class="k">pass</span>
+
+<span class="n">obj</span> <span class="o">=</span> <span class="n">NormalClass</span><span class="p">()</span>
+<span class="n">ref</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="n">obj</span><span class="p">)</span>  <span class="c1"># OK</span>
+
+<span class="c1"># 有 __slots__ 的类默认不能创建弱引用</span>
+<span class="k">class</span> <span class="nc">SlottedClass</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">,)</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="n">ref</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="n">SlottedClass</span><span class="p">(</span><span class="s2">&quot;test&quot;</span><span class="p">))</span>
+<span class="k">except</span> <span class="ne">TypeError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;SlottedClass 不支持弱引用: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 需要显式添加 &#39;__weakref__&#39; 到 __slots__</span>
+<span class="k">class</span> <span class="nc">SlottedWithWeak</span><span class="p">:</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;name&#39;</span><span class="p">,</span> <span class="s1">&#39;__weakref__&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+
+<span class="n">ref</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">ref</span><span class="p">(</span><span class="n">SlottedWithWeak</span><span class="p">(</span><span class="s2">&quot;test&quot;</span><span class="p">))</span>  <span class="c1"># OK</span>
+</code></pre></div>
+<hr>
+<h2 id="6-lru">6. 实战：基于弱引用的 LRU 缓存</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">weakref</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">from</span> <span class="nn">collections</span> <span class="kn">import</span> <span class="n">OrderedDict</span>
+
+<span class="k">class</span> <span class="nc">LRUCache</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;基于弱引用的 LRU 缓存&quot;&quot;&quot;</span>
+
+    <span class="k">class</span> <span class="nc">CacheEntry</span><span class="p">:</span>
+        <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;key&#39;</span><span class="p">,</span> <span class="s1">&#39;value&#39;</span><span class="p">,</span> <span class="s1">&#39;expire_time&#39;</span><span class="p">,</span> <span class="s1">&#39;__weakref__&#39;</span><span class="p">)</span>
+
+        <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">ttl</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">key</span> <span class="o">=</span> <span class="n">key</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">value</span> <span class="o">=</span> <span class="n">value</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">expire_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">+</span> <span class="n">ttl</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">maxsize</span><span class="o">=</span><span class="mi">128</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="mi">300</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_maxsize</span> <span class="o">=</span> <span class="n">maxsize</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ttl</span> <span class="o">=</span> <span class="n">ttl</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span> <span class="o">=</span> <span class="n">weakref</span><span class="o">.</span><span class="n">WeakValueDictionary</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_order</span> <span class="o">=</span> <span class="n">OrderedDict</span><span class="p">()</span>  <span class="c1"># 保持访问顺序</span>
+
+    <span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">:</span>
+            <span class="n">entry</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">entry</span><span class="o">.</span><span class="n">expire_time</span><span class="p">:</span>
+                <span class="c1"># 移到末尾（最近使用）</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_order</span><span class="o">.</span><span class="n">move_to_end</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">entry</span><span class="o">.</span><span class="n">value</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># 过期，删除</span>
+                <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+                <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">_order</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span> <span class="nf">put</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_order</span><span class="o">.</span><span class="n">move_to_end</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_order</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span>
+
+        <span class="n">entry</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">CacheEntry</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ttl</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">entry</span>
+
+        <span class="c1"># 超出容量时，删除最久未使用的</span>
+        <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_order</span><span class="p">)</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">_maxsize</span><span class="p">:</span>
+            <span class="n">oldest_key</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_order</span><span class="o">.</span><span class="n">popitem</span><span class="p">(</span><span class="n">last</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">oldest_key</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">:</span>
+                <span class="k">del</span> <span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">[</span><span class="n">oldest_key</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cache</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;LRUCache(size=</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="si">}</span><span class="s2">, maxsize=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_maxsize</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+<span class="c1"># 测试</span>
+<span class="n">cache</span> <span class="o">=</span> <span class="n">LRUCache</span><span class="p">(</span><span class="n">maxsize</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">cache</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s2">&quot;user:1&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Alice&quot;</span><span class="p">})</span>
+<span class="n">cache</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s2">&quot;user:2&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Bob&quot;</span><span class="p">})</span>
+<span class="n">cache</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s2">&quot;user:3&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;Charlie&quot;</span><span class="p">})</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="n">cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user:1&quot;</span><span class="p">))</span>  <span class="c1"># {&#39;name&#39;: &#39;Alice&#39;}</span>
+<span class="n">cache</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="s2">&quot;user:4&quot;</span><span class="p">,</span> <span class="p">{</span><span class="s2">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;David&quot;</span><span class="p">})</span>  <span class="c1"># 淘汰 user:2</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">cache</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;user:2&quot;</span><span class="p">))</span>  <span class="c1"># None</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">cache</span><span class="p">)</span>  <span class="c1"># LRUCache(size=3, maxsize=3)</span>
+</code></pre></div>
+<hr>
+<h2 id="7">7. 弱引用最佳实践</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>推荐方案</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>缓存系统</td>
+<td><code>WeakValueDictionary</code></td>
+<td>对象回收后自动清理缓存</td>
+</tr>
+<tr>
+<td>观察者模式</td>
+<td><code>WeakSet</code></td>
+<td>观察者销毁时自动取消订阅</td>
+</tr>
+<tr>
+<td>父子关系</td>
+<td><code>weakref.ref()</code></td>
+<td>避免循环引用</td>
+</tr>
+<tr>
+<td>单例模式</td>
+<td><code>WeakValueDictionary</code></td>
+<td>自动管理实例生命周期</td>
+</tr>
+<tr>
+<td>事件监听器</td>
+<td><code>WeakKeyDictionary</code></td>
+<td>防止内存泄漏</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_2">注意事项</h3>
+<ol>
+<li><strong>不要缓存临时对象的弱引用</strong>：临时对象可能立即被回收</li>
+<li><strong>注意线程安全</strong>：<code>WeakValueDictionary</code> 不是线程安全的</li>
+<li><strong>回调函数中避免引用对象</strong>：回调不应持有被监控对象的强引用</li>
+<li><strong>性能考量</strong>：弱引用比强引用有额外的查找开销</li>
+</ol>
+<hr>
+<h2 id="8">8. 思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 Python 不让 <code>list</code>、<code>dict</code>、<code>int</code> 等内置类型支持弱引用？</strong> 提示：思考 CPython 的实现机制。</p>
+</li>
+<li>
+<p><strong><code>weakref.proxy()</code> 有什么潜在的陷阱？</strong> 提示：考虑它与 <code>isinstance</code> 检查的关系。</p>
+</li>
+<li>
+<p><strong>如果一个类同时继承了支持弱引用和不支持弱引用的父类，子类能否创建弱引用？</strong> 提示：查看 MRO 和 <code>__weakref__</code> 属性。</p>
+</li>
+<li>
+<p><strong>如何在多线程环境下安全地使用 <code>WeakValueDictionary</code>？</strong> 提示：考虑加锁策略。</p>
+</li>
+<li>
+<p><strong>弱引用的回调函数什么时候会被调用？</strong> 是对象被 <code>del</code> 时还是被 GC 回收时？两者有什么区别？</p>
+</li>
+</ol>
+<hr>
+<blockquote>
+<p><strong>明日预告</strong>：Day 052 — 深拷贝与浅拷贝，理解 Python 对象的复制机制。</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-050/index.html">← Day 50 槽（__slots__）</a><a class="nav-next" href="../day-052/index.html">Day 52 深拷贝与浅拷贝 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>
