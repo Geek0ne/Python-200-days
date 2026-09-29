@@ -21,9 +21,14 @@ import argparse
 import html
 import json
 import re
+import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import md2html  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 OUT_DEFAULT = REPO / "site" / "dist"
@@ -118,7 +123,10 @@ def parse_day(day_dir: Path) -> Day | None:
         num=num,
         slug=day_dir.name,
         title=title,
-        url_slug=re.sub(r"[^a-z0-9\-]", "", day_dir.name.lower()) or f"day-{num}",
+        # URL 用纯 day 编号：唯一、简短、可读。
+        # ⚠️ 不要用目录名做 slug——中文会被剥掉（day-170-定时任务 → day-170-），
+        #    既难看又可能撞名（多个课只剩编号相同）。
+        url_slug=f"day-{num:03d}",
         has_code=code_dir.is_dir(),
         has_exercises=(day_dir / "exercises" / "checklist.md").exists(),
         has_diagrams=(day_dir / "diagrams" / "README.md").exists(),
@@ -242,7 +250,9 @@ h2 .muted { font-weight: 400; color: var(--muted); font-size: .9rem; }
         background: var(--border); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .days li { background: var(--panel); padding: 9px 14px; display: flex; align-items: center; gap: 12px; }
 .days .dnum { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 62px; font-size: .86rem; }
-.days .dtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.days .dtitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); text-decoration: none; }
+.days li:hover { background: color-mix(in srgb, var(--panel) 60%, var(--accent) 8%); }
+.days a.dtitle:hover { color: var(--accent); text-decoration: none; }
 .days .tags { display: flex; gap: 5px; }
 .tag { font-size: .68rem; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; }
 
@@ -293,7 +303,7 @@ def render_index_html(days: list[Day], phases: list[Phase], prog: dict, info: di
             lis = "".join(
                 f'<li data-t="{e((d.title + " " + d.slug).lower())}">'
                 f'<span class="dnum">Day {d.num}</span>'
-                f'<span class="dtitle">{e(d.title)}</span>'
+                f'<a class="dtitle" href="{d.url_slug}/">{e(d.title)}</a>'
                 f'<span class="tags">'
                 + ('<span class="tag">code</span>' if d.has_code else "")
                 + ('<span class="tag">ex</span>' if d.has_exercises else "")
@@ -380,6 +390,80 @@ def render_index_html(days: list[Day], phases: list[Phase], prog: dict, info: di
 """
 
 
+def build_lessons(repo: Path, out: Path, days: list[Day]) -> dict:
+    """为每一门课生成独立 HTML 页面，并把 code/ 源码拷进去供下载。"""
+    by_num = {d.num: d for d in days}
+    ordered = sorted(days, key=lambda d: d.num)
+    stats = {"pages": 0, "code_files": 0, "subpages": 0, "mermaid": 0, "errors": []}
+
+    for i, day in enumerate(ordered):
+        src = repo / "days" / day.slug
+        dst = out / day.url_slug
+        dst.mkdir(parents=True, exist_ok=True)
+
+        prev_day = ordered[i - 1] if i > 0 else None
+        next_day = ordered[i + 1] if i < len(ordered) - 1 else None
+
+        # 正文
+        readme = src / "README.md"
+        if readme.exists():
+            md = readme.read_text(encoding="utf-8")
+            stats["mermaid"] += md.count("```mermaid")
+            try:
+                page = md2html.render_lesson(
+                    md, day=day, prev_day=prev_day, next_day=next_day,
+                    all_days=ordered, site_root="..",
+                )
+                (dst / "index.html").write_text(page, encoding="utf-8")
+                stats["pages"] += 1
+            except Exception as e:
+                stats["errors"].append(f"{day.slug} 正文渲染失败: {type(e).__name__}: {e}")
+
+        # 附属页：练习 / 图解
+        for sub, fname in (("exercises", "checklist.md"), ("diagrams", "README.md")):
+            p = src / sub / fname
+            if not p.exists():
+                continue
+            try:
+                title = "练习与清单" if sub == "exercises" else "图解"
+                (dst / f"{sub}.html").write_text(
+                    md2html.render_subpage(p.read_text(encoding="utf-8"),
+                                           title=f"Day {day.num} · {title}", day=day),
+                    encoding="utf-8")
+                stats["subpages"] += 1
+            except Exception as e:
+                stats["errors"].append(f"{day.slug}/{sub} 渲染失败: {type(e).__name__}: {e}")
+
+        # 代码拷进站点，可直接下载
+        cdir = src / "code"
+        if cdir.is_dir():
+            target = dst / "code"
+            target.mkdir(exist_ok=True)
+            for py in cdir.glob("*.py"):
+                try:
+                    shutil.copy2(py, target / py.name)
+                    stats["code_files"] += 1
+                except Exception as e:
+                    stats["errors"].append(f"{day.slug}/{py.name} 拷贝失败: {e}")
+            # code/ 目录页，方便浏览器里点开看
+            names = sorted(p.name for p in target.glob("*.py"))
+            if names:
+                rows = "".join(
+                    f'<li><a href="{n}">{n}</a></li>' for n in names)
+                (target / "index.html").write_text(
+                    f'<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+                    f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+                    f'<title>Day {day.num} 代码</title>'
+                    f'<link rel="stylesheet" href="../../assets/style.css"></head>'
+                    f'<body><div class="wrap"><p><a href="../index.html">← 返回 Day {day.num} 正文</a></p>'
+                    f'<h2>Day {day.num} · {html.escape(day.title)}</h2>'
+                    f'<ul class="days">{rows}</ul></div></body></html>',
+                    encoding="utf-8")
+
+    _ = by_num  # 保留引用，避免误删
+    return stats
+
+
 def build(repo: Path, out: Path) -> dict:
     days = load_days(repo / "days")
     phases = parse_phases(repo / "README.md")
@@ -389,6 +473,20 @@ def build(repo: Path, out: Path) -> dict:
 
     (out / "assets").mkdir(parents=True, exist_ok=True)
     (out / "assets" / "style.css").write_text(CSS, encoding="utf-8")
+
+    # 静态资源：课程页样式 + 本地 mermaid（不依赖 CDN）
+    src_assets = Path(__file__).resolve().parent / "assets"
+    for name in ("lesson.css", "mermaid.min.js"):
+        s = src_assets / name
+        if s.exists():
+            shutil.copy2(s, out / "assets" / name)
+        elif name == "mermaid.min.js":
+            print(f"⚠️ 缺少 {s}，mermaid 图将无法渲染")
+
+    lesson_stats = {"pages": 0, "code_files": 0, "subpages": 0, "mermaid": 0, "errors": []}
+    if days and not (out / ".index-only").exists():
+        lesson_stats = build_lessons(repo, out, days)
+
     (out / "index.html").write_text(render_index_html(days, phases, prog, info), encoding="utf-8")
 
     # 便于机器读取的清单
