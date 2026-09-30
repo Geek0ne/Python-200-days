@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 171 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 171 正文</a>
+  <h1>Day 171 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-171">Day 171 — 通知告警 · 图解</h1>
+<p>共 11 张图。</p>
+<hr>
+<h2 id="1">1. 告警系统的四层模型</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────┐
+│  ④ 送达层  Channel   ── 邮件(SMTP) / 钉钉 / 企业微信 / Slack │
+│                 ▲ 本课 80% 的内容在这里                        │
+├──────────────────────────────────────────────────────────────┤
+│  ③ 路由层  Router    ── 按级别选渠道、@谁、要不要全渠道        │
+├──────────────────────────────────────────────────────────────┤
+│  ② 判定层  Evaluator ── 阈值、滞回、时间窗口                   │
+├──────────────────────────────────────────────────────────────┤
+│  ① 采集层  Collector ── psutil / 日志 / 健康检查               │
+└──────────────────────────────────────────────────────────────┘
+
+每一层都会「悄悄」断掉，而断掉时通常不报错 —— 这才是告警系统难的地方。
+</code></pre>
+<hr>
+<h2 id="2">2. 完整数据流</h2>
+<pre class="plain"><code>  ┌──────────┐   指标    ┌──────────┐   Alert    ┌──────────────────┐
+  │ Collector│──────────▶│ Evaluator│──────────▶│    AlertHub      │
+  │ psutil   │  disk%    │ threshold│  结构化事件 │ fingerprint      │
+  └──────────┘           └──────────┘            │ suppress window  │
+                                              │ token bucket     │
+                                              │ mask()           │
+                                              └────────┬─────────┘
+                                     ┌─────────────────┼─────────────────┐
+                                     ▼                 ▼                 ▼
+                              ┌────────────┐   ┌────────────┐   ┌────────────┐
+                              │ SMTPChannel│   │ WebhookCh. │   │ StdoutCh.  │
+                              │ 邮件(详)   │   │ IM(快)     │   │ 兜底(永不失败)
+                              └──────┬─────┘   └─────┬──────┘   └────────────┘
+                                     │               │
+                                  ┌──▼───────────────▼──┐
+                                  │   平台侧 errcode    │
+                                  │  200 != 成功        │
+                                  └─────────────────────┘
+</code></pre>
+<hr>
+<h2 id="3-http-200">3. ⭐ HTTP 200 ≠ 成功（核心图）</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[发送 Webhook 告警] --&gt; B{raise_for_status&lt;br/&gt;HTTP 传输层}
+    B --&gt;|4xx/5xx| X[失败：网络/地址/服务异常]
+    B --&gt;|200| C{解析 body.errcode}
+    C --&gt;|errcode == 0| OK[✅ 真的送达]
+    C --&gt;|300005 token不存在| P1[❌ 永久错误&lt;br/&gt;重试无意义]
+    C --&gt;|310000 关键词不匹配| P2[❌ 永久错误]
+    C --&gt;|400013 签名/IP错误| P3[❌ 永久错误]
+    C --&gt;|410100 / 45009 限流| R[✅ 值得退避重试]
+
+    style OK fill:#d4edda,stroke:#28a745
+    style X fill:#f8d7da,stroke:#dc3545
+    style P1 fill:#f8d7da,stroke:#dc3545
+    style P2 fill:#f8d7da,stroke:#dc3545
+    style P3 fill:#f8d7da,stroke:#dc3545
+    style R fill:#fff3cd,stroke:#ffc107
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[发送 Webhook 告警] --&gt; B{raise_for_status&lt;br/&gt;HTTP 传输层}
+    B --&gt;|4xx/5xx| X[失败：网络/地址/服务异常]
+    B --&gt;|200| C{解析 body.errcode}
+    C --&gt;|errcode == 0| OK[✅ 真的送达]
+    C --&gt;|300005 token不存在| P1[❌ 永久错误&lt;br/&gt;重试无意义]
+    C --&gt;|310000 关键词不匹配| P2[❌ 永久错误]
+    C --&gt;|400013 签名/IP错误| P3[❌ 永久错误]
+    C --&gt;|410100 / 45009 限流| R[✅ 值得退避重试]
+
+    style OK fill:#d4edda,stroke:#28a745
+    style X fill:#f8d7da,stroke:#dc3545
+    style P1 fill:#f8d7da,stroke:#dc3545
+    style P2 fill:#f8d7da,stroke:#dc3545
+    style P3 fill:#f8d7da,stroke:#dc3545
+    style R fill:#fff3cd,stroke:#ffc107
+</code></pre></div>
+<p><strong>本机实测</strong>（故意写错 token，真连官方端点）：</p>
+<pre class="plain"><code>钉钉     HTTP 200  errcode=300005  token is not exist     ← 失败
+企业微信  HTTP 200  errcode=93000   invalid webhook url   ← 失败
+Slack    HTTP 404  no_team                               ← 失败（语义不同）
+</code></pre>
+<hr>
+<h2 id="4">4. 告警风暴与指纹去重</h2>
+<pre class="plain"><code>时间 ──────────────────────────────────────────────────────▶
+指标  92%  88%  93%  89%  91%  87%  94%  86%  90%  92%
+      ███    ░    ███    ░    ███    ░    ███    ░    ███
+
+朴素实现：  ! ! ! ! ! ! ! ! !          → 10 条一模一样的内容
+            ████████████████████
+
+指纹去重：  █                           → 1 条（抑制窗口 30 分钟内不重复）
+fingerprint = sha1(&quot;disk_usage|web-01|disk&quot;)
+            = 5fa27966b740a126
+
+本机实测压缩比：40 次越界 → 1 条通知（40:1）
+</code></pre>
+<hr>
+<h2 id="5">5. 令牌桶限流原理</h2>
+<pre class="plain"><code>        容量 capacity = 20（= 平台 1 分钟上限）
+     ┌───────────────────────────┐
+     │ ● ● ● ● ● ● ● ● ● ● ● ●  │  ← 满桶，可突发 20 条
+     │ ● ● ● ● ● ● ● ● ● ● ○ ○  │  ← 消耗中
+     │ ● ● ● ● ● ○ ○ ○ ○ ○ ○ ○  │  ← 空了
+     └───────────────────────────┘
+                ↑
+      以 rate = 20/60 每秒 的速度持续回充
+      桶空时 acquire() 阻塞等待（或返回 False = 丢弃）
+
+本机实测：40 次突发调用 → 放行 21 次（多出的 1 个来自 1 秒多的回充），19 次被拦
+</code></pre>
+<hr>
+<h2 id="6-smtp">6. SMTP 会话完整时序</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as smtplib 客户端
+    participant S as 抓包 SMTP 服务器
+    C-&gt;&gt;S: EHLO [127.0.1.1]
+    S--&gt;&gt;C: 250-8BITMIME / 250-SMTPUTF8 / 250 SIZE
+    Note over C: starttls() 之后必须再 EHLO 一次
+    C-&gt;&gt;S: MAIL FROM:&lt;a@b.c&gt; size=635
+    Note over C,S: ⚠️ size= 是 ESMTP 参数，不是地址的一部分
+    S--&gt;&gt;C: 250 2.1.0 Ok
+    C-&gt;&gt;S: RCPT TO:&lt;user@x.com&gt;
+    S--&gt;&gt;C: 250 2.1.5 Ok
+    C-&gt;&gt;S: DATA
+    S--&gt;&gt;C: 354 以单独一行 . 结束
+    C-&gt;&gt;S: MIME 原文（Subject 已做 RFC2047 编码）
+    Note over C: 正文中的 &quot;.&quot; 会被点填充成 &quot;..&quot;
+    S--&gt;&gt;C: 250 2.0.0 Ok: queued
+    C-&gt;&gt;S: QUIT
+    S--&gt;&gt;C: 221 closing connection
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as smtplib 客户端
+    participant S as 抓包 SMTP 服务器
+    C-&gt;&gt;S: EHLO [127.0.1.1]
+    S--&gt;&gt;C: 250-8BITMIME / 250-SMTPUTF8 / 250 SIZE
+    Note over C: starttls() 之后必须再 EHLO 一次
+    C-&gt;&gt;S: MAIL FROM:&lt;a@b.c&gt; size=635
+    Note over C,S: ⚠️ size= 是 ESMTP 参数，不是地址的一部分
+    S--&gt;&gt;C: 250 2.1.0 Ok
+    C-&gt;&gt;S: RCPT TO:&lt;user@x.com&gt;
+    S--&gt;&gt;C: 250 2.1.5 Ok
+    C-&gt;&gt;S: DATA
+    S--&gt;&gt;C: 354 以单独一行 . 结束
+    C-&gt;&gt;S: MIME 原文（Subject 已做 RFC2047 编码）
+    Note over C: 正文中的 &quot;.&quot; 会被点填充成 &quot;..&quot;
+    S--&gt;&gt;C: 250 2.0.0 Ok: queued
+    C-&gt;&gt;S: QUIT
+    S--&gt;&gt;C: 221 closing connection
+</code></pre></div>
+<hr>
+<h2 id="7-envelope-vs-header">7. 邮件身份：Envelope vs Header</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────┐
+│ Envelope（信封）— 由 smtplib.login() 决定，参与 SPF/退信 │
+│   MAIL FROM:&lt;noreply@company.com&gt;                        │
+│   RCPT TO:&lt;niedong@company.com&gt;                           │
+├─────────────────────────────────────────────────────────┤
+│ Header（信头）— 你自己写的，只影响显示                    │
+│   From: &quot;Learn-Python 告警&quot; &lt;noreply@company.com&gt;        │
+│   To:   niedong@company.com                              │
+│   Subject: [P1] 磁盘告警                                   │
+└─────────────────────────────────────────────────────────┘
+
+两者解耦的好处：用 noreply@ 账号也能发出&quot;运维组&quot;署名的告警，
+且不会被邮箱的 SPF 规则拒收。
+</code></pre>
+<hr>
+<h2 id="8-rfc-2047">8. 中文主题的 RFC 2047 编码</h2>
+<pre class="plain"><code>原始（有中文）:  Subject: 数据库磁盘使用率 91%
+
+编码后（实际发出）: Subject: =?utf-8?b?5pWw5o2u5bqT56OB55uY5L2/55So546H?= 91%
+                                            └──── base64 ────┘
+                                            └─ utf-8 ─┘
+
+原因：邮件头在 SMTP 协议里只允许 ASCII（RFC 5322），
+      所以任何非 ASCII 标题必须先按 RFC 2047 编码。
+
+✅ EmailMessage 会自动做这件事 —— 你不需要手写 base64。
+</code></pre>
+<hr>
+<h2 id="9-mime-multipart">9. MIME multipart 结构</h2>
+<pre class="plain"><code>Content-Type: multipart/mixed; boundary=&quot;===5168995940==&quot;
+
+--===5168995940==
+Content-Type: text/plain; charset=&quot;utf-8&quot;
+Content-Transfer-Encoding: 8bit
+
+磁盘使用率超过阈值。                        ← 正文段
+--===5168995940==
+Content-Type: text/plain; charset=&quot;utf-8&quot;
+Content-Disposition: attachment; filename=&quot;app.log&quot;
+
+log line 1
+log line 2                                 ← 附件段
+--===5168995940==--
+</code></pre>
+<p>类型速查：<code>multipart/mixed</code>（任意组合）、<code>multipart/alternative</code>（多版本二选一）、
+<code>multipart/related</code>（HTML + 内嵌图片，邮件里显示图片必须用它）。</p>
+<hr>
+<h2 id="10">10. 三平台安全设置与失败语义</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph 钉钉
+      D1[access_token] --&gt; D2{安全设置}
+      D2 --&gt; D3[加签 HMAC-SHA256]
+      D2 --&gt; D4[自定义关键词]
+      D2 --&gt; D5[IP 白名单]
+      D3 &amp; D4 &amp; D5 --&gt; D6[&quot;失败也在 HTTP 200&lt;br/&gt;errcode 300005/310000/410100&quot;]
+    end
+    subgraph 企业微信
+      W1[key=xxx] --&gt; W2[&quot;失败也在 HTTP 200&lt;br/&gt;errcode 93000/45009&quot;]
+    end
+    subgraph Slack
+      S1[hooks.slack.com/services/...] --&gt; S2[&quot;失败是 4xx/5xx/302&lt;br/&gt;body 为纯文本&quot;]
+    end
+
+    style D6 fill:#f8d7da,stroke:#dc3545
+    style W2 fill:#f8d7da,stroke:#dc3545
+    style S2 fill:#fff3cd,stroke:#ffc107
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph 钉钉
+      D1[access_token] --&gt; D2{安全设置}
+      D2 --&gt; D3[加签 HMAC-SHA256]
+      D2 --&gt; D4[自定义关键词]
+      D2 --&gt; D5[IP 白名单]
+      D3 &amp; D4 &amp; D5 --&gt; D6[&quot;失败也在 HTTP 200&lt;br/&gt;errcode 300005/310000/410100&quot;]
+    end
+    subgraph 企业微信
+      W1[key=xxx] --&gt; W2[&quot;失败也在 HTTP 200&lt;br/&gt;errcode 93000/45009&quot;]
+    end
+    subgraph Slack
+      S1[hooks.slack.com/services/...] --&gt; S2[&quot;失败是 4xx/5xx/302&lt;br/&gt;body 为纯文本&quot;]
+    end
+
+    style D6 fill:#f8d7da,stroke:#dc3545
+    style W2 fill:#f8d7da,stroke:#dc3545
+    style S2 fill:#fff3cd,stroke:#ffc107
+</code></pre></div>
+<p>⚠️ 本课实验发现：企业微信的错误信息会<strong>回显调用方的公网出口 IP</strong>。
+所以 Webhook URL 必须当密钥保管，并开启 IP 白名单。</p>
+<hr>
+<h2 id="11">11. 告警风暴的整体防线（分层降级）</h2>
+<pre class="plain"><code>第 1 层  抑制窗口 30 分钟      → 600 事件降到 21 条   （本课实测 99.1%）
+   │  降不下来？
+第 2 层  令牌桶 20 条/分钟     → 不撞平台限流
+   │  还是降不下来？
+第 3 层  渠道 fan-out          → IM + 邮件并行，互不影响
+   │  某个渠道挂了？
+第 4 层  单渠道失败隔离        → 其余渠道照常送达
+   │  全挂了？
+第 5 层  stdout 兜底           → 至少在日志/CI 里留痕（永不失败）
+
+本课 self-test 第 5 项即验证第 4/5 层：
+  3 渠道全失败 → 自动降级 stdout，且 errcode 300005 被正确识别为失败
+</code></pre>
+<blockquote>
+<p>真正的第 6 层不在代码里 —— 那是"用什么完全独立的路径监控告警系统本身"，
+见 README 思考题 5。</p>
+</blockquote></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

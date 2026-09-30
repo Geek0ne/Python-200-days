@@ -1,0 +1,1025 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 171 — 通知告警</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 171 — 通知告警</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">686 行</span>
+    <span class="badge">5 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（5 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-171-通知告警" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#1">1. 学习目标</a>
+<a class="toc-l2" href="#2">2. 概念解释</a>
+<a class="toc-l3" href="#21">2.1 告警不是「发消息」，是「送达」</a>
+<a class="toc-l3" href="#22">2.2 四层模型</a>
+<a class="toc-l3" href="#23-email-im-webhook">2.3 为什么 Email 和 IM Webhook 是两套完全不同的协议</a>
+<a class="toc-l2" href="#3">3. 原理深入</a>
+<a class="toc-l3" href="#31-smtp">3.1 SMTP 会话长什么样（本机抓包实测）</a>
+<a class="toc-l3" href="#32-mime">3.2 为什么 MIME 存在</a>
+<a class="toc-l3" href="#33-http-200">3.3 ⭐ 核心机制：HTTP 200 不等于成功</a>
+<a class="toc-l3" href="#34">3.4 为什么需要指纹去重</a>
+<a class="toc-l2" href="#4-api">4. 定义与方法（API 速查）</a>
+<a class="toc-l3" href="#41-smtplib">4.1 smtplib</a>
+<a class="toc-l3" href="#42-emailmessageemailmessage">4.2 email.message.EmailMessage</a>
+<a class="toc-l3" href="#43">4.3 三家平台的端点与安全设置</a>
+<a class="toc-l2" href="#5">5. 图解</a>
+<a class="toc-l2" href="#6">6. 实战实验手册</a>
+<a class="toc-l3" href="#1-smtp-smtplib">实验 1：手写抓包 SMTP 服务器，看清 smtplib 到底发了什么</a>
+<a class="toc-l3" href="#2-http-200">实验 2：⭐ 真连官方端点，证明「HTTP 200 但业务失败」</a>
+<a class="toc-l3" href="#3http-200-errcode">实验 3：离线复现「HTTP 200 + errcode 失败」并验证降级</a>
+<a class="toc-l3" href="#4">实验 4：告警风暴压测 —— 实测去重与限流的收益</a>
+<a class="toc-l3" href="#59">实验 5：9 个陷阱全离线复现</a>
+<a class="toc-l3" href="#6-">实验 6：告警风暴 -&amp;gt; 恢复的完整闭环（真实指标）</a>
+<a class="toc-l2" href="#7">7. 翻车实验记录</a>
+<a class="toc-l3" href="#1mail-from-esmtp">翻车 1：MAIL FROM 里的 ESMTP 参数</a>
+<a class="toc-l3" href="#2add_attachment">翻车 2：add_attachment 的参数矩阵</a>
+<a class="toc-l3" href="#3python-m-smtpd-python-312">翻车 3：python -m smtpd 在 Python 3.12 已经不存在</a>
+<a class="toc-l3" href="#4_1">翻车 4：自检脚本把自己跑死了</a>
+<a class="toc-l3" href="#5pkill-f">翻车 5：pkill -f 杀掉了自己</a>
+<a class="toc-l3" href="#6_1">翻车 6：断言里的数字是&quot;想当然&quot;，不是实测</a>
+<a class="toc-l2" href="#8-api">8. API 速查与对比</a>
+<a class="toc-l3" href="#81">8.1 发送方式横向对比</a>
+<a class="toc-l3" href="#82">8.2 成功判定方式对照（最容易搞错的一张表）</a>
+<a class="toc-l2" href="#9">9. 代码清单</a>
+<a class="toc-l2" href="#10">10. 思考题</a>
+<a class="toc-l2" href="#11">11. 延伸阅读方向</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-171">Day 171 — 通知告警</h1>
+<blockquote>
+<p><strong>一句话定义</strong>：通知告警 = <strong>把「系统出事了」这件事，可靠地送到唯一能看到它的人手里</strong>。<br>
+难点从来不是「发出去」——发一条 HTTP 请求三行代码就能写完。<br>
+真正的难点是：<strong>你以为发出去了，其实根本没送到。</strong></p>
+</blockquote>
+<hr>
+<h2 id="1">1. 学习目标</h2>
+<p>学完本课，你应该能够：</p>
+<ul>
+<li>[ ] 说清告警系统的 <strong>4 层模型</strong>：采集 → 判定 → 路由 → 送达</li>
+<li>[ ] 用 <code>smtplib</code> + <code>EmailMessage</code> 发出不会被拒收、不会乱码的中文邮件</li>
+<li>[ ] 解释 <strong>MIME / multipart / RFC 2047 编码</strong>各自解决什么问题</li>
+<li>[ ] 熟练接入 <strong>钉钉 / 企业微信 / Slack</strong> 三种 Webhook 机器人</li>
+<li>[ ] ⭐ 说出并复现本课最重要的发现：<strong>HTTP 200 不代表发送成功</strong></li>
+<li>[ ] 区分「可重试错误」与「永久错误」，实现指数退避 + 限流感知重试</li>
+<li>[ ] 用 <strong>指纹（fingerprint）+ 抑制窗口</strong>把告警风暴压缩一个数量级</li>
+<li>[ ] 用<strong>令牌桶</strong>在撞到平台限流之前就自己排队</li>
+<li>[ ] 写出一个可用的多渠道告警中枢（扇出 / 去重 / 恢复 / 降级 / 脱敏 / 审计）</li>
+<li>[ ] 说清为什么<strong>告警系统自己需要被监控</strong></li>
+</ul>
+<hr>
+<h2 id="2">2. 概念解释</h2>
+<h3 id="21">2.1 告警不是「发消息」，是「送达」</h3>
+<p>初学者把告警理解成一个发送动作：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="n">webhook</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s2">&quot;服务挂了&quot;</span><span class="p">})</span>
+</code></pre></div>
+<p>这个理解是错的。告警是一条<strong>链路</strong>，链路上任何一环断了，告警就没了：</p>
+<pre class="plain"><code>[指标采集] → [阈值判定] → [路由选择] → [网络传输] → [平台接收] → [人真的看到]
+     ↓            ↓             ↓            ↓            ↓            ↓
+  采集失败     阈值写错     级别过滤错     超时/断网     200+errcode   被刷屏淹没
+</code></pre>
+<p>最后三环是最容易悄悄断掉的。<strong>本课 80% 的篇幅都在讲它们。</strong></p>
+<h3 id="22">2.2 四层模型</h3>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>职责</th>
+<th>典型事故</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>采集层</strong></td>
+<td>从系统里取指标</td>
+<td>psutil 采集异常、指标本身为空</td>
+</tr>
+<tr>
+<td><strong>判定层</strong></td>
+<td>决定"是否该报警"</td>
+<td>阈值写死、抖动导致反复触发</td>
+</tr>
+<tr>
+<td><strong>路由层</strong></td>
+<td>决定"发给谁、走哪些渠道"</td>
+<td>级别过滤失效、群发所有人</td>
+</tr>
+<tr>
+<td><strong>送达层</strong></td>
+<td>真正把消息送出去</td>
+<td><strong>HTTP 200 但失败</strong>、限流、超时</td>
+</tr>
+</tbody>
+</table>
+<p>本课的代码主要落在<strong>送达层</strong>，因为这一层的坑最隐蔽。</p>
+<h3 id="23-email-im-webhook">2.3 为什么 Email 和 IM Webhook 是两套完全不同的协议</h3>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>邮件（SMTP）</th>
+<th>IM 机器人（Webhook）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>协议</td>
+<td>有状态的、多次往返的 TCP 会话</td>
+<td>无状态的、一次 HTTP 请求</td>
+</tr>
+<tr>
+<td>成功语义</td>
+<td><code>250 OK</code> 且抛异常与否</td>
+<td>⚠️ <strong>HTTP 200 可能仍是失败</strong></td>
+</tr>
+<tr>
+<td>送达延迟</td>
+<td>秒级（含反垃圾扫描）</td>
+<td>毫秒级</td>
+</tr>
+<tr>
+<td>适合</td>
+<td>详细报告、留档、值班交接</td>
+<td>即时通知、需要 @ 人的紧急事件</td>
+</tr>
+<tr>
+<td>可靠度</td>
+<td>高（有退信、可重发）</td>
+<td>低（限流严格、会丢）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论：生产告警系统两者都要——IM 负责"快"，邮件负责"全"。</strong></p>
+<hr>
+<h2 id="3">3. 原理深入</h2>
+<h3 id="31-smtp">3.1 SMTP 会话长什么样（本机抓包实测）</h3>
+<p><code>smtplib</code> 发一封邮件，实际在 TCP 上是这样的<strong>多轮问答</strong>：</p>
+<pre class="plain"><code>C: ehlo [127.0.1.1]                          ← 客户端问「你支持什么扩展」
+S: 250-capture.local greets you
+S: 250-8BITMIME                            ← 我能收 8bit 正文
+S: 250-SMTPUTF8                             ← 我能收 UTF-8 标题
+S: 250 SIZE 10485760                        ← 单封最大 10MB
+C: mail FROM:&lt;alert@learn-python.dev&gt; size=635
+S: 250 2.1.0 Ok
+C: rcpt TO:&lt;niedong@learn-python.dev&gt;
+S: 250 2.1.5 Ok
+C: data                                     ← 我要发正文了
+S: 354 End data with &lt;CR&gt;&lt;LF&gt;.&lt;CR&gt;&lt;LF&gt;      ← 你发吧，以单独一行的 . 结束
+C: From: ... To: ... Subject: =?utf-8?b?5pWw5o2u5bqT?= ...   ← 整封 MIME 原文
+   .
+S: 250 2.0.0 Ok: queued as CAPTURED
+C: quit
+S: 221 2.0.0 closing connection
+</code></pre>
+<p><strong>三个必须理解的细节：</strong></p>
+<ol>
+<li>
+<p><strong><code>size=635</code> 是 ESMTP 参数，不是地址的一部分。</strong><br>
+   我第一次实现抓包服务器时，用 <code>line.partition(":")[2]</code> 抠地址，结果得到<br>
+<code>selftest@learn-python.dev&gt; size=246</code>，断言直接挂掉。<strong>必须先按空格切掉参数区。</strong></p>
+</li>
+<li>
+<p><strong><code>Subject</code> 里那一串 <code>=?utf-8?b?5pWw5o2u5bqT?=</code> 是 RFC 2047 编码。</strong><br>
+   邮件头只允许 ASCII，中文必须按这个格式编码 + base64。<br>
+   好消息：<code>EmailMessage</code> 会<strong>自动</strong>帮你做，你不用手写。</p>
+</li>
+<li>
+<p><strong><code>354</code> 之后是"以单独一行 <code>.</code> 结尾"的流式协议。</strong><br>
+   正文里如果有一行正好是 <code>.</code>，会被"点填充（dot-stuffing）"转义成 <code>..</code>。<br>
+   抓包服务器必须做<strong>反转义</strong>，否则日志会多出一个点。</p>
+</li>
+</ol>
+<h3 id="32-mime">3.2 为什么 MIME 存在</h3>
+<p>早期邮件只能传纯 ASCII 正文，于是需要一个机制同时携带<strong>多段</strong>和<strong>多种编码</strong>的内容 —— 这就是 MIME。</p>
+<pre class="plain"><code>multipart/mixed                       ← 本课带附件时自动生成的顶层类型
+├── text/plain; charset=&quot;utf-8&quot;       ← 第 1 段：正文
+│   Content-Transfer-Encoding: 8bit
+│
+└── text/plain; filename=&quot;app.log&quot;    ← 第 2 段：附件
+    Content-Disposition: attachment
+</code></pre>
+<ul>
+<li><code>Content-Type</code> 说什么这是什么类型</li>
+<li><code>Content-Transfer-Encoding</code> 说什么编码方式（7bit / 8bit / base64 / quoted-printable）</li>
+<li><code>Content-Disposition</code> 说这是正文还是附件</li>
+</ul>
+<h3 id="33-http-200">3.3 ⭐ 核心机制：HTTP 200 不等于成功</h3>
+<p>这是本课<strong>最有价值的一条</strong>，而且是本机真连官方端点测出来的：</p>
+<pre class="plain"><code>钉钉     -&gt; HTTP 200  {&quot;errcode&quot;:300005,&quot;errmsg&quot;:&quot;token is not exist&quot;}
+企业微信 -&gt; HTTP 200  {&quot;errcode&quot;:93000,&quot;errmsg&quot;:&quot;invalid webhook url, hint: [...], from ip: 119.145.35.9, ...&quot;}
+Slack    -&gt; HTTP 404  no_team
+</code></pre>
+<p><strong>为什么？</strong> HTTP 状态码表达的是<strong>传输层</strong>语义：请求到达了、你的 Webhook 地址存在、服务器愿意处理。<br>
+而"这个机器人/token 有没有被禁用""你的关键词配不配""你是不是被限流了"属于<strong>业务层</strong>语义。</p>
+<p>钉钉和企业微信把业务结果放在 body 的 <code>errcode</code> 里：</p>
+<table>
+<thead>
+<tr>
+<th>errcode</th>
+<th>含义</th>
+<th>该重试吗</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>成功</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>300005</code></td>
+<td>token 不存在</td>
+<td>❌ 永久，重试无意义</td>
+</tr>
+<tr>
+<td><code>310000</code></td>
+<td>关键词不匹配</td>
+<td>❌ 永久</td>
+</tr>
+<tr>
+<td><code>400013</code></td>
+<td>签名错误 / IP 不在白名单</td>
+<td>❌ 永久</td>
+</tr>
+<tr>
+<td><code>410100</code> / <code>130101</code></td>
+<td>发送太频繁</td>
+<td>✅ 该退避重试</td>
+</tr>
+<tr>
+<td><code>45009</code>（企业微信）</td>
+<td>调用超限</td>
+<td>✅ 该退避重试</td>
+</tr>
+</tbody>
+</table>
+<p>所以正确写法是：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">json</span><span class="o">=</span><span class="n">payload</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+<span class="n">r</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>                  <span class="c1"># 第一层：传输层</span>
+<span class="n">body</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">json</span><span class="p">()</span>
+<span class="k">if</span> <span class="n">body</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;errcode&quot;</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>          <span class="c1"># 第二层：业务层 —— 千万别漏</span>
+    <span class="o">...</span><span class="n">处理失败</span><span class="o">...</span>
+</code></pre></div>
+<blockquote>
+<p><strong>⚠️ 安全提醒</strong>：上面企业微信返回的 <code>from ip: 119.145.35.9</code> 是<strong>本机的公网出口 IP</strong>。<br>
+真实环境中，Webhook 的错误信息会回显你的出口 IP —— 这意味着：<br>
+任何能拿到你 Webhook URL 的人，都能通过错误信息推断出你的服务器出口 IP。<br>
+所以 Webhook URL 必须当作<strong>密钥</strong>保管，并且开启平台的 IP 白名单。</p>
+</blockquote>
+<h3 id="34">3.4 为什么需要指纹去重</h3>
+<p>指标在阈值附近抖动是常态。假设每 5 秒检查一次，一个抖动的指标会这样：</p>
+<pre class="plain"><code>92% ✓告警  88% ✗恢复  93% ✓告警  89% ✗恢复  91% ✓告警 ...
+</code></pre>
+<p>朴素实现每 5 秒检查一次是否越界 → 半小时发出 <strong>200 条</strong>一模一样的内容。<br>
+真实故障会被埋在噪声里，人会开始屏蔽这个机器人 —— <strong>告警系统就此失效</strong>。</p>
+<p>解法是引入<strong>指纹（fingerprint）</strong>：</p>
+<pre class="plain"><code>fingerprint = sha1(rule | instance | metric)
+</code></pre>
+<p>同一指纹在<strong>抑制窗口</strong>（如 30 分钟）内只发一次；恢复时补发一条 RECOVERED。<br>
+注意指纹里必须含 <code>instance</code> —— <code>web-01</code> 和 <code>web-02</code> 都爆盘时是两个独立事件。</p>
+<p><strong>本机实测：100 次检查、40 次越界 → 去重后只发 1 条，压缩比 40:1。</strong></p>
+<hr>
+<h2 id="4-api">4. 定义与方法（API 速查）</h2>
+<h3 id="41-smtplib">4.1 smtplib</h3>
+<table>
+<thead>
+<tr>
+<th>成员</th>
+<th>用途</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>smtplib.SMTP(host, port, timeout=10)</code></td>
+<td>明文连接</td>
+<td><strong>timeout 必设</strong>，否则会永久阻塞</td>
+</tr>
+<tr>
+<td><code>smtplib.SMTP_SSL(host, port)</code></td>
+<td>隐式 TLS（465）</td>
+<td>一上来就加密</td>
+</tr>
+<tr>
+<td><code>s.ehlo()</code></td>
+<td>宣告扩展能力</td>
+<td><code>starttls()</code> 之后要<strong>再调一次</strong></td>
+</tr>
+<tr>
+<td><code>s.starttls()</code></td>
+<td>明文升级为 TLS（587）</td>
+<td>服务器不支持会抛异常</td>
+</tr>
+<tr>
+<td><code>s.login(user, password)</code></td>
+<td>认证</td>
+<td>QQ/163 必须用<strong>授权码</strong>，不是登录密码</td>
+</tr>
+<tr>
+<td><code>s.send_message(msg)</code></td>
+<td>发送（自动处理 MIME）</td>
+<td>推荐用它，而不是 <code>sendmail</code></td>
+</tr>
+<tr>
+<td><code>s.set_debuglevel(1)</code></td>
+<td>打印完整会话</td>
+<td>排查 SMTP 问题的唯一利器</td>
+</tr>
+</tbody>
+</table>
+<p><strong>异常分类（决定要不要重试）：</strong></p>
+<table>
+<thead>
+<tr>
+<th>异常</th>
+<th>含义</th>
+<th>重试</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SMTPServerDisconnected</code></td>
+<td>对端断开</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>SMTPConnectError</code></td>
+<td>连不上</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>SMTPResponseException</code> 4xx</td>
+<td>临时不可用</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>SMTPResponseException</code> 5xx</td>
+<td>永久失败（如 535 认证错）</td>
+<td>❌</td>
+</tr>
+<tr>
+<td><code>SMTPAuthenticationError</code></td>
+<td>认证失败</td>
+<td>❌</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-emailmessageemailmessage">4.2 email.message.EmailMessage</h3>
+<table>
+<thead>
+<tr>
+<th>调用</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>EmailMessage()</code></td>
+<td>创建（自动生成 MIME-Version）</td>
+</tr>
+<tr>
+<td><code>msg["Subject"] = "中文"</code></td>
+<td>自动 RFC 2047 编码，<strong>不用自己 base64</strong></td>
+</tr>
+<tr>
+<td><code>msg.set_content("正文")</code></td>
+<td>设置纯文本正文</td>
+</tr>
+<tr>
+<td><code>msg.add_attachment(str, filename=...)</code></td>
+<td>文本附件</td>
+</tr>
+<tr>
+<td><code>msg.add_attachment(bytes, maintype=..., subtype=..., filename=...)</code></td>
+<td>二进制附件</td>
+</tr>
+<tr>
+<td><code>msg.as_bytes()</code></td>
+<td>得到完整 MIME 原文</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ <strong>实测踩坑</strong>：<code>add_attachment</code> 的 <code>maintype/subtype</code> 是否必填，取决于传什么类型：</p>
+<table>
+<thead>
+<tr>
+<th>传入</th>
+<th>结果（本机 Python 3.12.3 实测）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>str</code> + <code>maintype/subtype</code></td>
+<td>❌ <code>TypeError: set_text_content() got an unexpected keyword argument 'maintype'</code></td>
+</tr>
+<tr>
+<td><code>str</code> + 不传</td>
+<td>✅ OK</td>
+</tr>
+<tr>
+<td><code>bytes</code> + 不传</td>
+<td>❌ <code>TypeError: set_bytes_content() missing 2 required positional arguments</code></td>
+</tr>
+<tr>
+<td><code>bytes</code> + 显式类型</td>
+<td>✅ OK</td>
+</tr>
+<tr>
+<td><code>BytesIO</code></td>
+<td>❌ <code>KeyError: '_io.BytesIO'</code>（3.12 不支持）</td>
+</tr>
+<tr>
+<td><code>EmailMessage</code></td>
+<td>✅ OK（嵌套邮件）</td>
+</tr>
+</tbody>
+</table>
+</blockquote>
+<h3 id="43">4.3 三家平台的端点与安全设置</h3>
+<table>
+<thead>
+<tr>
+<th>平台</th>
+<th>端点</th>
+<th>安全设置</th>
+<th>频率限制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>钉钉</td>
+<td><code>oapi.dingtalk.com/robot/send?access_token=</code></td>
+<td>加签 / 自定义关键词 / IP 白名单</td>
+<td>20 条/分钟</td>
+</tr>
+<tr>
+<td>企业微信</td>
+<td><code>qyapi.weixin.qq.com/cgi-bin/webhook/send?key=</code></td>
+<td>（群机器人）</td>
+<td><strong>20 条/分钟</strong></td>
+</tr>
+<tr>
+<td>Slack</td>
+<td><code>hooks.slack.com/services/T…/B…/…</code></td>
+<td>—</td>
+<td>约 1 条/秒</td>
+</tr>
+</tbody>
+</table>
+<p><strong>钉钉加签算法</strong>（HMAC-SHA256）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">string_to_sign</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">timestamp</span><span class="si">}</span><span class="se">\n</span><span class="si">{</span><span class="n">secret</span><span class="si">}</span><span class="s2">&quot;</span>
+<span class="n">sign</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="n">hmac</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">secret</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span> <span class="n">string_to_sign</span><span class="o">.</span><span class="n">encode</span><span class="p">(),</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">)</span><span class="o">.</span><span class="n">digest</span><span class="p">())</span>
+<span class="c1"># 然后 sign 要 URL-encode 后作为 &amp;sign= 传参</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 图解</h2>
+<p>见 <a href="diagrams/README.md"><code>diagrams/README.md</code></a>，共 11 张图。核心一张：</p>
+<pre class="plain"><code>                        ┌─────────────────────────────────┐
+                        │      AlertHub（告警中枢）        │
+  Alert(指标+规则+实例) ─▶│                                 │
+                        │  1. fingerprint = sha1(r|i|m)   │
+                        │  2. 抑制窗口内去重              │
+                        │  3. 令牌桶限流（20 条/分钟）     │
+                        │  4. 敏感信息脱敏                │
+                        └───────────┬─────────────────────┘
+                                    │ 按级别扇出
+        ┌───────────────┬───────────┼───────────┬───────────────┐
+        ▼               ▼           ▼           ▼               ▼
+   ┌─────────┐   ┌──────────┐ ┌────────┐ ┌────────┐      ┌─────────┐
+   │ 邮件     │   │ 钉钉     │ │企业微信│ │ Slack  │      │ stdout  │
+   │ SMTP    │   │ Webhook  │ │Webhook │ │Webhook │      │  兜底   │
+   └────┬────┘   └────┬─────┘ └───┬────┘ └───┬────┘      └────┬────┘
+        │             │           │          │                │
+        │       ┌─────▼───────────▼──────────▼─────┐          │
+        │       │  HTTP 200 但 errcode != 0  ← 陷阱 │          │
+        │       │  必须判业务层，不能只看状态码     │          │
+        │       └───────────────────────────────────┘          │
+        │                                                       │
+        └──────────── 任一渠道失败都不影响其他渠道 ──────────────┘
+                              全失败 → 降级到 stdout
+</code></pre>
+<hr>
+<h2 id="6">6. 实战实验手册</h2>
+<blockquote>
+<p>运行环境：<strong>Python 3.12.3 / Linux x86_64 / 2026-10-01</strong><br>
+所有实验都可以在你自己机器上复现，不需要真实 IM 机器人、不需要邮箱、不需要外网。<br>
+唯一的外部依赖是 <code>psutil</code>（可选，缺失会自动降级）。</p>
+</blockquote>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-171-通知告警/code
+</code></pre></div>
+<h3 id="1-smtp-smtplib">实验 1：手写抓包 SMTP 服务器，看清 smtplib 到底发了什么</h3>
+<p><strong>目的</strong>：把 SMTP 的多轮会话和 MIME 原文完整打出来。</p>
+<p><strong>准备</strong>：无，纯标准库。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>smtp_capture_server.py<span class="w"> </span>--self-test<span class="w">          </span><span class="c1"># 先跑离线自检</span>
+python3<span class="w"> </span>smtp_capture_server.py<span class="w"> </span>--port<span class="w"> </span><span class="m">1025</span><span class="w">          </span><span class="c1"># 终端 A：启动抓包服务器</span>
+python3<span class="w"> </span><span class="m">01</span>-basic-smtplib.py<span class="w"> </span>--port<span class="w"> </span><span class="m">1025</span><span class="w">              </span><span class="c1"># 终端 B：发一封带附件的邮件</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（本机真实输出，已裁剪）：</p>
+<pre class="plain"><code>send: &#x27;ehlo [127.0.1.1]\r\n&#x27;
+  C: ehlo [127.0.1.1]
+reply: b&#x27;250-capture.local greets you\r\n&#x27;
+reply: b&#x27;250-8BITMIME\r\n&#x27;
+reply: b&#x27;250-SMTPUTF8\r\n&#x27;
+reply: b&#x27;250 SIZE 10485760\r\n&#x27;
+send: &#x27;mail FROM:&lt;alert@learn-python.dev&gt; size=635\r\n&#x27;
+  C: mail FROM:&lt;alert@learn-python.dev&gt; size=635
+    [envelope sender] alert@learn-python.dev
+send: &#x27;rcpt TO:&lt;niedong@learn-python.dev&gt;\r\n&#x27;
+  C: rcpt TO:&lt;niedong@learn-python.dev&gt;
+    [envelope rcpt] niedong@learn-python.dev
+send: &#x27;data\r\n&#x27;
+  C: data
+reply: b&#x27;354 End data with &lt;CR&gt;&lt;LF&gt;.&lt;CR&gt;&lt;LF&gt;\r\n&#x27;
+data: (354, b&#x27;End data with &lt;CR&gt;&lt;LF&gt;.&lt;CR&gt;&lt;LF&gt;&#x27;)
+send: b&#x27;From: alert@learn-python.dev\r\nTo: niedong@learn-python.dev\r\n
+  Subject: [P1] =?utf-8?b?5pWw5o2u5bqT56OB55uY5L2/55So546H?= 91%\r\n
+  MIME-Version: 1.0\r\nContent-Type: multipart/mixed;
+  boundary=&quot;===============5168995940432228121==&quot;\r\n\r\n
+  --===============5168995940432228121==\r\n
+  Content-Type: text/plain; charset=&quot;utf-8&quot;\r\n
+  Content-Transfer-Encoding: 8bit\r\n\r\n
+  \xe7\xa3\x81\xe7\x9b\x98...\r\n
+  --===============5168995940432228121==\r\n
+  Content-Type: text/plain; charset=&quot;utf-8&quot;\r\n
+  Content-Disposition: attachment; filename=&quot;app.log&quot;\r\n\r\n
+  log line 1\r\nlog line 2\r\n
+  --===============5168995940432228121==--\r\n.\r\n&#x27;
+reply: b&#x27;250 2.0.0 Ok: queued as CAPTURED\r\n&#x27;
+reply: retcode (250); Msg: b&#x27;2.0.0 Ok: queued as CAPTURED&#x27;
+send: &#x27;quit\r\n&#x27;
+=== captured: 1 size: 635 B ===
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 中文主题被自动编码成 <code>=?utf-8?b?...?=</code>（RFC 2047），不用手写；<br>
+- 带附件时顶层变成 <code>multipart/mixed</code>，boundary 由库生成；<br>
+- <code>MAIL FROM</code> 带了 <code>size=635</code> 这个 ESMTP 参数 —— 这正是翻车实验 1 的根源。</p>
+<p><strong>清理</strong>：终端 A 按 <code>Ctrl-C</code>；或直接 <code>python3 smtp_capture_server.py --self-test</code>（自检用的是临时端口，跑完自动关闭）。</p>
+<hr>
+<h3 id="2-http-200">实验 2：⭐ 真连官方端点，证明「HTTP 200 但业务失败」</h3>
+<p><strong>目的</strong>：用一个<strong>故意写错的 token</strong> 打出真实的生产环境响应，验证本课最重要的结论。</p>
+<p><strong>环境</strong>：需要外网。<strong>不会打扰任何人</strong>（token 是假的，请求必然被拒）。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-webhook-notify.py<span class="w"> </span>--probe
+</code></pre></div>
+<p><strong>实际结果</strong>（本机真实输出，2026-10-01 06:11 CST）：</p>
+<pre class="plain"><code>说明：下面用的是【故意写错的 token】，不会打扰任何人，
+      目的只是真实演示「HTTP 200 但业务失败」。
+
+钉钉     -&gt; [dingtalk] ok=False http=200 errcode=300005 errmsg=&#x27;token is not exist&#x27; elapsed=163ms attempts=1
+         ^^^ 铁证：HTTP 200 却是失败，errcode=300005
+
+企业微信   -&gt; [wecom] ok=False http=200 errcode=93000 errmsg=&#x27;invalid webhook url, hint: [1790806079345572489457392], from ip: 119.145.35.9, more info at https://open.work.weixin.qq.com/devtool/query?e=93000&#x27; elapsed=209ms attempts=1
+         ^^^ 铁证：HTTP 200 却是失败，errcode=93000
+
+Slack   -&gt; [slack] ok=False http=404 errcode=404 errmsg=&#x27;no_team&#x27; elapsed=363ms attempts=1
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 钉钉和企业微信的失败<strong>都是 HTTP 200</strong>，只写 <code>raise_for_status()</code> 的代码会把它们全部当成功；<br>
+- Slack 的语义不同 —— 失败直接是 4xx，且 body 是纯文本不是 JSON，不能无脑 <code>.json()</code>；<br>
+- 顺带发现一个安全问题：企业微信的报错<strong>回显了本机出口 IP</strong>。</p>
+<p><strong>清理</strong>：本实验不产生任何本地状态，无需清理。</p>
+<hr>
+<h3 id="3http-200-errcode">实验 3：离线复现「HTTP 200 + errcode 失败」并验证降级</h3>
+<p><strong>目的</strong>：把实验 2 的现象做成可离线重放的自动化断言。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-webhook-notify.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">04</span>-alert-hub.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>实际结果</strong>（本机真实输出）：</p>
+<pre class="plain"><code>OK 正常发送: [dingtalk] ok=True http=200 errcode=0 errmsg=&#x27;ok&#x27; elapsed=3ms attempts=1
+OK 核心陷阱: HTTP 200 但 errcode=300005 被正确识别为失败 -&gt; [dingtalk] ok=False http=200 errcode=300005 errmsg=&#x27;token is not exist&#x27; elapsed=2ms attempts=1
+OK 限流退避: 重试 3 次，总耗时 308ms（&gt;=300ms）-&gt; [wecom] ok=False http=200 errcode=45009 errmsg=&#x27;接口调用超过限制&#x27; elapsed=4ms attempts=3
+OK 永久错误不重试: 5 次 retries 配置下实际只发 1 次
+OK Slack 语义不同: 4xx 判失败且不解析 JSON -&gt; [slack] ok=False http=404 errcode=404 errmsg=&#x27;no_service&#x27; elapsed=2ms attempts=1
+OK 钉钉加签确定性: timestamp=1700000000000 sign=Orf%2Bfj1NyYtycFhdVp...
+OK 钉钉自定义关键词自动注入正文（否则 errcode=310000 拒收）
+SELFTEST PASS
+</code></pre>
+<p>告警中枢的全渠道降级：</p>
+<pre class="plain"><code>--- 5. ⭐ 全渠道 HTTP 200 + errcode 失败 -&gt; 必须识别并降级 ---
+  OK 3 渠道全部失败 -&gt; 自动降级到 stdout；errcode 300005 被正确识别为失败
+      (若只看 HTTP 状态码，这里会被误判成成功 —— 就是那个致命陷阱)
+</code></pre>
+<p><strong>结论</strong>：传输层 + 业务层双重判定；限流类错误才退避重试，永久错误立刻放弃（避免重试风暴）。</p>
+<p><strong>清理</strong>：<code>--self-test</code> 用的都是内核分配的临时端口，进程退出即释放。</p>
+<hr>
+<h3 id="4">实验 4：告警风暴压测 —— 实测去重与限流的收益</h3>
+<p><strong>目的</strong>：量化指纹去重和令牌桶到底省了多少。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-alert-hub.py<span class="w"> </span>--storm
+</code></pre></div>
+<p><strong>实际结果</strong>（本机真实输出）：</p>
+<pre class="plain"><code>压测：注入 500 个抖动事件，观察去重与限流效果
+  注入事件    : 600 条（500 条 CPU 抖动 + 100 条磁盘抖动）
+  最终发送    : 21 条
+  被抑制      : 579 条
+  恢复通知    : 0 条
+  总耗时      : 1031ms  (平均每条 1.72ms)
+  实际 HTTP 请求: 63 次   实际 SMTP: 21 封
+</code></pre>
+<p><strong>结论</strong>（测试条件：600 个事件 / 20 个实例 / 本机单进程 / 单次运行）：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>朴素实现</th>
+<th>AlertHub</th>
+<th>收益</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>收到的告警事件</td>
+<td>600</td>
+<td>600</td>
+<td>—</td>
+</tr>
+<tr>
+<td>真正发出的通知</td>
+<td>600 × 4 渠道 ≈ 2400</td>
+<td><strong>21</strong></td>
+<td><strong>压低 99.1%</strong></td>
+</tr>
+<tr>
+<td>实际 HTTP 请求</td>
+<td>2400</td>
+<td><strong>63</strong></td>
+<td>压低 97.4%</td>
+</tr>
+<tr>
+<td>平均处理耗时</td>
+<td>—</td>
+<td>1.72 ms/事件</td>
+<td>告警本身不该成为性能瓶颈</td>
+</tr>
+</tbody>
+</table>
+<p>21 条 = 20 个 CPU 节点各 1 条 + <code>web-01</code> 磁盘 1 条。</p>
+<hr>
+<h3 id="59">实验 5：9 个陷阱全离线复现</h3>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-pitfalls.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">03</span>-pitfalls.py<span class="w"> </span>--only<span class="w"> </span><span class="m">5</span><span class="w">      </span><span class="c1"># 只看某一个</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（节选，本机真实输出）：</p>
+<pre class="plain"><code>【陷阱 1】HTTP 200 ≠ 成功（errcode 在 body 里）
+  HTTP 状态码      = 200
+  body.errcode     = 300005  (token is not exist)
+  天真写法判断成功? = True   &lt;-- 错！
+  正确写法判断成功? = False   &lt;-- 对
+
+【陷阱 2】重试风暴：永久错误也重试
+  天真写法（永久错误也重试 5 次）-&gt; 实际发出 5 次请求
+  正确写法（识别为永久错误）      -&gt; 实际发出 1 次请求
+
+【陷阱 4】告警风暴：缺少指纹去重
+  100 次检查中越界 40 次
+  天真写法     -&gt; 发出 40 条告警
+  指纹去重     -&gt; 发出 1 条，抑制 39 条 (压缩比 40:1)
+
+【陷阱 5】SMTP 不设 timeout 卡死告警线程
+  天真（无 timeout）: 仍在阻塞（线程卡在等 220 欢迎语）, 等待 3.0s 后依然没返回
+  正确（timeout=0.3）: SMTPServerDisconnected, 耗时 301ms
+
+【陷阱 8】忽略平台频率限制
+  100 次调用，桶容量=5 -&gt; 立即放行 5 次，剩余 95 次被延迟
+</code></pre>
+<p><strong>结论</strong>：陷阱 5 的对照最有说服力 —— 不设 timeout 时线程<strong>3 秒后依然卡在等欢迎语</strong>，<br>
+而这在生产里意味着告警线程池被慢慢耗尽，且你不会收到任何错误。</p>
+<hr>
+<h3 id="6-">实验 6：告警风暴 -&gt; 恢复的完整闭环（真实指标）</h3>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-alert-hub.py<span class="w"> </span>--demo
+</code></pre></div>
+<p><strong>实际结果</strong>（本机真实输出）：</p>
+<pre class="plain"><code>演示：磁盘告警触发 -&gt; 抖动 -&gt; 恢复
+* 真实指标: 磁盘 43.2%  CPU 12.5%  内存 32.1%
+[AlertHub] SUPPRESSED 5fa27966b740a126 (0s &lt; 1800s)
+[AlertHub] RECOVERED 5fa27966b740a126
+[AlertHub]   OK  email      46.0ms
+[AlertHub]   OK  dingtalk   1.1ms  errcode=0 errmsg=ok
+[AlertHub]   OK  wecom      0.8ms  errcode=0 errmsg=ok
+[AlertHub]   OK  slack      1.4ms  HTTP 200
+
+统计: {&#x27;received&#x27;: 6, &#x27;sent&#x27;: 2, &#x27;suppressed&#x27;: 3, &#x27;recovered&#x27;: 1, &#x27;channel_fail&#x27;: 0, &#x27;fallback&#x27;: 0}
+</code></pre>
+<p><strong>结论</strong>：6 个事件 → 只发 2 条通知（1 条真实告警 + 1 条恢复），3 条抖动被抑制。<br>
+RECOVERED 事件<strong>不受抑制窗口限制</strong>，保证故障闭环可见。</p>
+<hr>
+<h2 id="7">7. 翻车实验记录</h2>
+<blockquote>
+<p>教材里最值钱的部分 —— 以下都是本课编写过程中<strong>真实踩过</strong>的坑。</p>
+</blockquote>
+<h3 id="1mail-from-esmtp">翻车 1：<code>MAIL FROM</code> 里的 ESMTP 参数</h3>
+<ul>
+<li><strong>现象</strong>：抓包服务器的 <code>--self-test</code> 断言失败：<br>
+<code>AssertionError: selftest@learn-python.dev&gt; size=246</code></li>
+<li><strong>假设</strong>：<code>partition(":")</code> 之后全是地址 —— 显然不对。</li>
+<li><strong>验证</strong>：打印真实 SMTP 报文，看到 <code>mail FROM:&lt;alert@learn-python.dev&gt; size=635</code></li>
+<li><strong>真实根因</strong>：SMTP 的 <code>MAIL FROM</code> 语法是 <code>&lt;address&gt; [参数...]</code>，<br>
+  参数区与地址用<strong>空格</strong>分隔。<code>size=</code> 是客户端预告正文大小（<code>8BITMIME</code> 场景下还会有 <code>BODY=8BITMIME</code>）。<br>
+  天真实现取了冒号后的全部内容。</li>
+<li><strong>修复</strong>：先 <code>rest.strip().split(" ")[0]</code> 切掉参数区，再剥尖括号。</li>
+<li><strong>复测</strong>：<code>SELFTEST PASS</code>。</li>
+</ul>
+<p><strong>教训</strong>：任何形如 <code>VERB:&lt;something&gt; [params]</code> 的协议行，都要先读 spec 再写 parser。</p>
+<h3 id="2add_attachment">翻车 2：<code>add_attachment</code> 的参数矩阵</h3>
+<ul>
+<li><strong>现象</strong>：连踩 3 次不同报错。</li>
+<li><strong>根因</strong>：<code>add_attachment</code> 内部走 <code>email.contentmanager</code>，<br>
+  它按传入对象的类型分派到不同的 setter，而 <code>maintype/subtype</code> 对不同 setter 的意义不同。</li>
+<li><strong>验证</strong>：写了个 6 格的矩阵探针，把每种组合的真实异常都打出来：</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>传入</th>
+<th>真实结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>str</code> + <code>maintype/subtype</code></td>
+<td><code>TypeError: set_text_content() got an unexpected keyword argument 'maintype'</code></td>
+</tr>
+<tr>
+<td><code>str</code> + 不传</td>
+<td>OK</td>
+</tr>
+<tr>
+<td><code>bytes</code> + 不传</td>
+<td><code>TypeError: set_bytes_content() missing 2 required positional arguments: 'maintype' and 'subtype'</code></td>
+</tr>
+<tr>
+<td><code>BytesIO</code> + <code>text/plain</code></td>
+<td><code>KeyError: '_io.BytesIO'</code></td>
+</tr>
+<tr>
+<td><code>BytesIO</code> + <code>application/octet-stream</code></td>
+<td><code>KeyError: '_io.BytesIO'</code></td>
+</tr>
+<tr>
+<td><code>EmailMessage</code></td>
+<td>OK</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>修复</strong>：文本附件传 <code>str</code>，二进制附件传 <code>bytes</code> + 显式类型。</li>
+<li><strong>复测</strong>：附件邮件 <code>multipart/mixed</code> 生成成功，644B。</li>
+</ul>
+<h3 id="3python-m-smtpd-python-312">翻车 3：<code>python -m smtpd</code> 在 Python 3.12 已经不存在</h3>
+<ul>
+<li><strong>现象</strong>：想用标准库的 <code>DebuggingServer</code> 做实验，<code>import smtpd</code> 直接 <code>ModuleNotFoundError</code>。</li>
+<li><strong>根因</strong>：<strong>PEP 594</strong> 在 Python 3.12 移除了大量废弃模块，<code>smtpd</code> 正在其中<br>
+  （同批还有 <code>cgi</code>、<code>telnetlib</code>、<code>nntplib</code> 等）。</li>
+<li><strong>验证</strong>：<code>python3 -c "import smtpd"</code> → <code>ModuleNotFoundError: No module named 'smtpd'</code></li>
+<li><strong>修复</strong>：不再依赖任何第三方库，改用 <code>socketserver</code> 手写 ~80 行抓包服务器。<br>
+  顺带也用 <code>pip install --target /tmp/xxx aiosmtpd</code> 装了一份<strong>独立交叉验证</strong>，<br>
+  确认我实现的协议行为与官方库一致（而非自定义了一个假服务器骗自己）。</li>
+<li><strong>复测</strong>：自检通过，且 <code>--probe</code> 打到了真实官方端点。</li>
+</ul>
+<h3 id="4_1">翻车 4：自检脚本把自己跑死了</h3>
+<ul>
+<li><strong>现象</strong>：跑 <code>03-pitfalls.py --self-test</code> 时进程<strong>永远不返回</strong>，只能强杀。</li>
+<li><strong>假设</strong>：陷阱 5 里那个"黑洞 SMTP 服务器"（accept 后永不回应 <code>220</code>）<br>
+  配上不设 timeout 的 <code>smtplib.SMTP</code>，会<strong>永久阻塞</strong>。</li>
+<li><strong>验证</strong>：确实是它。而且这恰好<strong>就是陷阱本身</strong> —— 我为了演示这个坑，被这个坑绊倒了。</li>
+<li><strong>根因</strong>：主线程直接调用阻塞 API，而 <code>join()</code> 无上限。</li>
+<li><strong>修复</strong>：把天真写法放进 <code>daemon=True</code> 的线程，用 <code>join(timeout=3.0)</code> 限定等待，<br>
+  超过就报告"仍在阻塞"——既保住了实验的对比效果，又不会卡死测试。</li>
+<li><strong>复测</strong>：陷阱 5 输出"等待 3.0s 后依然没返回"，对比组 301ms 抛 <code>SMTPServerDisconnected</code>。</li>
+</ul>
+<h3 id="5pkill-f">翻车 5：<code>pkill -f</code> 杀掉了自己</h3>
+<ul>
+<li><strong>现象</strong>：<code>pkill -f "03-pitfalls.py"</code> 之后，当前 shell 报 <code>Command aborted by signal SIGTERM</code>。</li>
+<li><strong>根因</strong>：<code>pkill -f</code> 匹配<strong>完整命令行</strong>，而我自己的 <code>bash -c</code> 命令行里就含这个字符串 → 自杀。</li>
+<li><strong>修复</strong>：用字符类打断字面量 —— <code>pkill -f "03-pitfalls[.]py"</code>，正则匹配到的字符串与自身命令行不匹配。</li>
+<li><strong>复测</strong>：<code>pgrep -cf '03-pitfalls[.]py'</code> 返回 0。</li>
+</ul>
+<h3 id="6_1">翻车 6：断言里的数字是"想当然"，不是实测</h3>
+<ul>
+<li><strong>现象</strong>：三处断言挂在自己的假设上：<br>
+  1. 断言"100 次检查中越界 &gt; 50 次" —— 实测是<strong>恰好 40 次</strong>；<br>
+  2. 断言"<code>web-02</code> 独立发送后 hits == 6" —— 忘了前面恢复事件已产生 3 次，实测是 <strong>9</strong>；<br>
+  3. 断言"桶容量 20 就放行 20 次" —— 实测放行 <strong>21</strong> 次。</li>
+<li><strong>根因</strong>：先写断言再想结果。</li>
+<li><strong>验证</strong>：第 3 条尤其值得说 —— 令牌桶是<strong>持续补充</strong>的，被拦下的 19 次调用每次 sleep ~50ms，<br>
+  1 秒多时间里又回充了 ~0.33 个令牌，于是挤出了第 21 个。<strong>这是正确行为，不是 bug。</strong></li>
+<li><strong>修复</strong>：把断言改成真实语义（第 3 条放宽为 <code>20 &lt;= allowed &lt;= 22</code> 并在注释里解释为什么）。</li>
+<li><strong>复测</strong>：全部通过。</li>
+</ul>
+<p><strong>教训</strong>：压测类实验里，<strong>先跑出数字，再写断言</strong>。反过来就是在给自己写 bug。</p>
+<hr>
+<h2 id="8-api">8. API 速查与对比</h2>
+<h3 id="81">8.1 发送方式横向对比</h3>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>延迟</th>
+<th>可靠度</th>
+<th>成本</th>
+<th>适合</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>smtplib</code> 直连</td>
+<td>秒级</td>
+<td>高</td>
+<td>0</td>
+<td>详细报告、留档</td>
+</tr>
+<tr>
+<td>钉钉机器人</td>
+<td>毫秒</td>
+<td>中（有严格限流）</td>
+<td>0</td>
+<td>国内团队即时通知</td>
+</tr>
+<tr>
+<td>企业微信</td>
+<td>毫秒</td>
+<td>中（20 条/分钟）</td>
+<td>0</td>
+<td>已在用企微的团队</td>
+</tr>
+<tr>
+<td>Slack</td>
+<td>毫秒</td>
+<td>中</td>
+<td>0</td>
+<td>海外团队</td>
+</tr>
+<tr>
+<td>云监控（阿里云/腾讯云）</td>
+<td>秒级</td>
+<td>高</td>
+<td>付费</td>
+<td>托管服务</td>
+</tr>
+<tr>
+<td>AlertManager</td>
+<td>秒级</td>
+<td>高</td>
+<td>需自建</td>
+<td>Prometheus 生态</td>
+</tr>
+</tbody>
+</table>
+<h3 id="82">8.2 成功判定方式对照（<strong>最容易搞错的一张表</strong>）</h3>
+<table>
+<thead>
+<tr>
+<th>平台</th>
+<th>传输层成功</th>
+<th>业务层成功</th>
+<th>危险写法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>钉钉</td>
+<td>HTTP 200</td>
+<td><code>errcode == 0</code></td>
+<td>❌ 只看 200</td>
+</tr>
+<tr>
+<td>企业微信</td>
+<td>HTTP 200</td>
+<td><code>errcode == 0</code></td>
+<td>❌ 只看 200</td>
+</tr>
+<tr>
+<td>Slack</td>
+<td>2xx</td>
+<td>body <code>ok</code></td>
+<td>❌ 无脑 <code>.json()</code></td>
+</tr>
+<tr>
+<td>SMTP</td>
+<td>收 <code>250</code></td>
+<td>无异常</td>
+<td>❌ 不设 timeout</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="9">9. 代码清单</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>说明</th>
+<th>运行</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code/smtp_capture_server.py</code></td>
+<td>手写抓包 SMTP 服务器（纯标准库）</td>
+<td><code>python3 smtp_capture_server.py --self-test</code></td>
+</tr>
+<tr>
+<td><code>code/01-basic-smtplib.py</code></td>
+<td>邮件基础 / 附件 / TLS / 重试</td>
+<td><code>python3 01-basic-smtplib.py --self-test</code></td>
+</tr>
+<tr>
+<td><code>code/02-webhook-notify.py</code></td>
+<td>三平台 Webhook 统一封装</td>
+<td><code>python3 02-webhook-notify.py --self-test</code><br><code>--probe</code> 真连官方</td>
+</tr>
+<tr>
+<td><code>code/03-pitfalls.py</code></td>
+<td>9 个陷阱，全部离线可复现</td>
+<td><code>python3 03-pitfalls.py --self-test</code></td>
+</tr>
+<tr>
+<td><code>code/04-alert-hub.py</code></td>
+<td>实战：多渠道告警中枢</td>
+<td><code>python3 04-alert-hub.py --self-test</code><br><code>--demo</code> <code>--storm</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>全部 5 个脚本都带 <code>--self-test</code>，离线、零外部依赖可跑通。</strong></p>
+<hr>
+<h2 id="10">10. 思考题</h2>
+<ol>
+<li>
+<p><strong>本课实验 2 证明 HTTP 200 可能失败。</strong> 如果让你审查团队现有的告警代码，<br>
+   你会用什么手段在最短时间内找出所有"只看状态码"的地方？<br>
+   （提示：与其 review 代码，不如让它自己暴露 —— 故意把 token 写错，跑一周看有没有告警。）</p>
+</li>
+<li>
+<p><strong><code>fingerprint</code> 里我用了 <code>rule|instance|metric</code>。</strong><br>
+   如果规则改成"5 分钟内失败率 &gt; 1%" 这种<strong>时间窗口</strong>型指标，<br>
+   去重逻辑要怎么调整？为什么纯指标值去重在窗口型规则上会失效？</p>
+</li>
+<li>
+<p><strong>RECOVERED 事件我让它绕过了抑制窗口。</strong><br>
+   设想一个场景：服务持续抖动（反复 firing/recovering），<br>
+   这个设计会不会反过来变成"恢复通知刷屏"？你会怎么修？</p>
+</li>
+<li>
+<p><strong>令牌桶容量设为"一分钟的量"（20）。</strong><br>
+   这个取值合理吗？如果是"凌晨 3 点全集群同时崩"（20 个实例同时告警），<br>
+   你的桶会把它们全部立刻放行吗？跨过 20 条之后会发生什么？<br>
+   你需要什么样的降级策略？</p>
+</li>
+<li>
+<p><strong>最难的题</strong>：告警系统本身挂了怎么办？<br>
+   你的告警中枢进程 OOM 了，或者它依赖的 SMTP 服务器挂了，<br>
+<strong>谁来通知你"告警系统挂了"</strong>？<br>
+   （提示：思考一下"最后一道防线"应该是什么形态 —— 是不是应该有一份告警，<br>
+   其送达路径与其他所有告警<strong>完全独立</strong>？）</p>
+</li>
+</ol>
+<hr>
+<h2 id="11">11. 延伸阅读方向</h2>
+<ul>
+<li>Prometheus AlertManager：<code>group_by</code> / <code>repeat_interval</code> / 静默（silence）/ 抑制规则（inhibition）</li>
+<li>SMTP RFC 5321（协议）· RFC 2047（标题编码）· RFC 2046（MIME）</li>
+<li>钉钉/企业微信机器人官方文档的「频率限制」与「IP 白名单」章节</li>
+<li>抖动与去抖：<code>hysteresis</code>（滞回阈值）—— 比固定抑制窗口更优的方案</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-170/index.html">← Day 170 定时任务</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>
