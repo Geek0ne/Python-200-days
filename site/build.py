@@ -34,6 +34,9 @@ import md2html  # noqa: E402
 REPO = Path(__file__).resolve().parent.parent
 OUT_DEFAULT = REPO / "site" / "dist"
 
+# GitHub Pages 自定义域名。改域名就改这一行，重跑 build.py 即可生效。
+CUSTOM_DOMAIN = "python.geek0ne.com"
+
 
 # ---------------------------------------------------------------------------
 # 数据模型
@@ -520,6 +523,11 @@ def build(repo: Path, out: Path) -> dict:
         lesson_stats = build_lessons(repo, out, days)
 
     (out / "index.html").write_text(render_index_html(days, phases, prog, info), encoding="utf-8")
+
+    # 自定义域名：必须由构建器生成。
+    # 教训：CNAME 若只手动加在 gh-pages 上，每天发布时的 `rm -rf *` 会把它删掉，
+    # 导致 Pages 绑定丢失、域名 404（2026-10-02 实测）。放进 dist 才能随发布一起走。
+    out.joinpath("CNAME").write_text(CUSTOM_DOMAIN + "\n", encoding="utf-8")
 
     # 便于机器读取的清单
     manifest = {
