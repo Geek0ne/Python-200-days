@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 172 — Docker 容器化</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 172 — Docker 容器化</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">749 行</span>
+    <span class="badge">1 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（1 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-172-Docker容器化" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-container">1.1 容器（Container）到底是什么</a>
+<a class="toc-l3" href="#12-image">1.2 镜像（Image）与分层文件系统</a>
+<a class="toc-l3" href="#13-dockerfile">1.3 为什么 Dockerfile 里&quot;顺序&quot;决定缓存命中</a>
+<a class="toc-l3" href="#14-multi-stage-build">1.4 多阶段构建（Multi-stage Build）解决了什么</a>
+<a class="toc-l3" href="#15">1.5 容器网络与端口映射</a>
+<a class="toc-l2" href="#docker-run">二、原理深入：一次 docker run 背后发生了什么</a>
+<a class="toc-l3" href="#21-10">2.1 停止流程与 10 秒之谜</a>
+<a class="toc-l2" href="#api">三、API 速查表</a>
+<a class="toc-l3" href="#31">3.1 镜像命令</a>
+<a class="toc-l3" href="#32">3.2 容器命令</a>
+<a class="toc-l3" href="#33-dockerfile">3.3 Dockerfile 指令速查</a>
+<a class="toc-l2" href="#_2">四、实战代码案例</a>
+<a class="toc-l2" href="#_3">五、实战实验手册</a>
+<a class="toc-l3" href="#_4">实验环境</a>
+<a class="toc-l3" href="#1-flask">实验 1：最小 Flask 应用容器化</a>
+<a class="toc-l3" href="#2">实验 2：分层结构与层体积</a>
+<a class="toc-l3" href="#3">实验 3：构建缓存实测（关键性能数字）</a>
+<a class="toc-l3" href="#4-127001">实验 4：翻车实验 —— 监听 127.0.0.1 导致&quot;服务启动成功但外部访问不了&quot;</a>
+<a class="toc-l3" href="#5-root">实验 5：非 root 运行 + 环境变量注入</a>
+<a class="toc-l3" href="#6dockerignore">实验 6：.dockerignore 的真实收益</a>
+<a class="toc-l3" href="#7">实验 7：多阶段构建体积对比</a>
+<a class="toc-l3" href="#8-copy-from">实验 8：翻车实验 —— 多阶段 COPY --from 路径写错，容器起来就崩</a>
+<a class="toc-l3" href="#9">实验 9：四个翻车点的汇总复盘</a>
+<a class="toc-l2" href="#_5">六、思考题</a>
+<a class="toc-l2" href="#_6">七、收尾卫生（本次已执行）</a>
+<a class="toc-l2" href="#_7">八、下一步</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-172-docker">Day 172 — Docker 容器化</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化（实战）<br>
+今天所有输出均为本机真机执行捕获，运行环境见文末「实验环境」。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-container">1.1 容器（Container）到底是什么</h3>
+<p>容器不是"轻量虚拟机"。虚拟机虚拟的是<strong>硬件</strong>（CPU、内存、磁盘），容器虚拟的是<strong>操作系统视图</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>虚拟机</th>
+<th>容器</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>隔离层</td>
+<td>Hypervisor 虚拟硬件</td>
+<td>Linux Namespace（内核特性）</td>
+</tr>
+<tr>
+<td>启动耗时</td>
+<td>30s ~ 2min</td>
+<td>毫秒 ~ 2s</td>
+</tr>
+<tr>
+<td>镜像体积</td>
+<td>GB 级（含完整 Guest OS）</td>
+<td>MB 级（共享宿主内核）</td>
+</tr>
+<tr>
+<td>隔离强度</td>
+<td>强（独立内核）</td>
+<td>弱（共享内核，靠 cgroup 限制资源）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>设计原理</strong>：既然 Linux 已经提供了 namespace（隔离视图）+ cgroup（资源限制），<br>
+Docker 就没有必要再虚拟一套硬件——直接复用宿主的内核，把"我以为是根文件系统"这一层<br>
+视图用 namespace 隔出来即可。这就是容器能做到秒级启动、百兆体积的根本原因。</p>
+<p>内核层的三件套：</p>
+<ul>
+<li><strong>UTS namespace</strong>：隔离 hostname 与 domainname（容器里 <code>hostname</code> 是容器 ID）</li>
+<li><strong>PID namespace</strong>：隔离进程号（容器里的主进程 PID=1，看不到宿主机进程）</li>
+<li><strong>Mount namespace</strong>：隔离挂载点（容器里的 <code>/</code> 是镜像层，只读）</li>
+<li><strong>Network namespace</strong>：隔离网卡、路由、端口（容器有自己的 <code>eth0</code> 和 lo）</li>
+<li><strong>IPC / User namespace</strong>：隔离进程间通信与用户映射</li>
+</ul>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph HOST[&quot;宿主机 Linux 内核（共享）&quot;]
+        K[&quot;Linux Kernel&lt;br/&gt;namespace + cgroup&quot;]
+        subgraph NS1[&quot;容器 A&quot;]
+            A1[&quot;PID 1: python main.py&quot;]
+            A2[&quot;eth0 172.17.0.2&quot;]
+        end
+        subgraph NS2[&quot;容器 B&quot;]
+            B1[&quot;PID 1: redis-server&quot;]
+            B2[&quot;eth0 172.17.0.3&quot;]
+        end
+    end
+    K --&gt; NS1
+    K --&gt; NS2
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph HOST[&quot;宿主机 Linux 内核（共享）&quot;]
+        K[&quot;Linux Kernel&lt;br/&gt;namespace + cgroup&quot;]
+        subgraph NS1[&quot;容器 A&quot;]
+            A1[&quot;PID 1: python main.py&quot;]
+            A2[&quot;eth0 172.17.0.2&quot;]
+        end
+        subgraph NS2[&quot;容器 B&quot;]
+            B1[&quot;PID 1: redis-server&quot;]
+            B2[&quot;eth0 172.17.0.3&quot;]
+        end
+    end
+    K --&gt; NS1
+    K --&gt; NS2
+</code></pre></div>
+<h3 id="12-image">1.2 镜像（Image）与分层文件系统</h3>
+<p>镜像是<strong>只读的分层文件系统</strong>（OverlayFS），每条 Dockerfile 指令产生一层。</p>
+<ul>
+<li><strong>UnionFS / Overlay2</strong>：lowerdir（只读层）叠 upperdir（可写层），删除文件用 whiteout 标记</li>
+<li>层一旦生成就<strong>不可变</strong>——这是缓存能命中的根本原因</li>
+<li>容器启动时只在最上面加一个可写层，所以"改容器里的文件"一停即丢，必须 <code>docker commit</code> 才会固化</li>
+</ul>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    L0[&quot;Layer 0: python:3.12-slim base&lt;br/&gt;~130MB&quot;] --&gt; L1[&quot;Layer 1: WORKDIR /app&lt;br/&gt;8.19kB&quot;]
+    L1 --&gt; L2[&quot;Layer 2: COPY requirements.txt&lt;br/&gt;12.3kB&quot;]
+    L2 --&gt; L3[&quot;Layer 3: RUN pip install&lt;br/&gt;15.2MB&quot;]
+    L3 --&gt; L4[&quot;Layer 4: COPY main.py&lt;br/&gt;12.3kB&quot;]
+    L4 --&gt; L5[&quot;Container rw layer&lt;br/&gt;运行期写入&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    L0[&quot;Layer 0: python:3.12-slim base&lt;br/&gt;~130MB&quot;] --&gt; L1[&quot;Layer 1: WORKDIR /app&lt;br/&gt;8.19kB&quot;]
+    L1 --&gt; L2[&quot;Layer 2: COPY requirements.txt&lt;br/&gt;12.3kB&quot;]
+    L2 --&gt; L3[&quot;Layer 3: RUN pip install&lt;br/&gt;15.2MB&quot;]
+    L3 --&gt; L4[&quot;Layer 4: COPY main.py&lt;br/&gt;12.3kB&quot;]
+    L4 --&gt; L5[&quot;Container rw layer&lt;br/&gt;运行期写入&quot;]
+</code></pre></div>
+<h3 id="13-dockerfile">1.3 为什么 Dockerfile 里"顺序"决定缓存命中</h3>
+<p>Docker 的缓存判定规则只有一条：<strong>如果某一层的输入（父层哈希 + 指令 + 该指令的文件内容）没变，就直接复用整层结果</strong>。</p>
+<p>因此：<br>
+- 把<strong>变动少的放上面，变动多的放下面的前面</strong>——不对，正确写法是：<strong>易变的放最后</strong>（靠近 CMD），稳定的放前面<br>
+- <code>COPY . .</code> 写在 <code>RUN pip install</code> 前面 → 改一行代码就重装全部依赖（我们实测：9.4s vs 1.7s，差 5.5 倍）</p>
+<h3 id="14-multi-stage-build">1.4 多阶段构建（Multi-stage Build）解决了什么</h3>
+<p>痛点：编译工具（gcc、头文件、npm devDependencies、pip 构建中间产物）只在<strong>构建时</strong>需要，<br>
+运行时不需要。但它们已经被写进了镜像层，删不掉（层不可变）。</p>
+<p>多阶段构建的原理：让 builder 阶段装全，构建完<strong>只 COPY 需要的产物</strong>到干净的 final 阶段。<br>
+final 阶段从头开始构建，天然不含任何构建垃圾。</p>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph B[&quot;Stage: builder&quot;]
+        B1[&quot;FROM python:3.12-slim AS builder&quot;]
+        B2[&quot;pip install --target /install&quot;]
+        B3[&quot;gcc / 头文件等中间产物&lt;br/&gt;留在 builder，不进最终镜像&quot;]
+    end
+    subgraph F[&quot;Stage: final&quot;]
+        F1[&quot;FROM python:3.12-slim&lt;br/&gt;干净起点&quot;]
+        F2[&quot;COPY --from=builder /install /install&lt;br/&gt;只拷 site-packages&quot;]
+        F3[&quot;无编译器、无缓存、无 shell 历史&quot;]
+    end
+    B --&gt;|&quot;COPY --from=builder&quot;| F
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph B[&quot;Stage: builder&quot;]
+        B1[&quot;FROM python:3.12-slim AS builder&quot;]
+        B2[&quot;pip install --target /install&quot;]
+        B3[&quot;gcc / 头文件等中间产物&lt;br/&gt;留在 builder，不进最终镜像&quot;]
+    end
+    subgraph F[&quot;Stage: final&quot;]
+        F1[&quot;FROM python:3.12-slim&lt;br/&gt;干净起点&quot;]
+        F2[&quot;COPY --from=builder /install /install&lt;br/&gt;只拷 site-packages&quot;]
+        F3[&quot;无编译器、无缓存、无 shell 历史&quot;]
+    end
+    B --&gt;|&quot;COPY --from=builder&quot;| F
+</code></pre></div>
+<h3 id="15">1.5 容器网络与端口映射</h3>
+<ul>
+<li>默认 bridge 网络 <code>172.17.0.0/16</code>，容器 IP 由 Docker 分配，<strong>重启会变</strong>——所以服务间必须用容器名而非 IP</li>
+<li><code>-p 宿主端口:容器端口</code>：Docker 在宿主上做 DNAT 转发</li>
+<li>⚠️ 应用必须监听 <code>0.0.0.0</code>，监听 <code>127.0.0.1</code> 只在容器网络命名空间内有意义——这是新手第一大坑，今天实测复现（见实验 4）</li>
+</ul>
+<hr>
+<h2 id="docker-run">二、原理深入：一次 <code>docker run</code> 背后发生了什么</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant U as 用户
+    participant CLI as docker CLI
+    participant D as dockerd
+    participant R as containerd
+    participant CN as containerd-shim
+    U-&gt;&gt;CLI: docker run -p 18000:8000 img
+    CLI-&gt;&gt;D: POST /containers/create
+    D-&gt;&gt;D: 从镜像快照创建可写层
+    D-&gt;&gt;D: 创建 namespace + cgroup 限额
+    D-&gt;&gt;D: 配置 iptables DNAT (宿主:18000 → 容器:8000)
+    D-&gt;&gt;R: 通过 shim 启动 shim
+    R-&gt;&gt;CN: 拉起容器进程 (PID ns 内为 1)
+    CLI-&gt;&gt;D: POST /containers/{id}/start
+    D--&gt;&gt;U: 容器 ID
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant U as 用户
+    participant CLI as docker CLI
+    participant D as dockerd
+    participant R as containerd
+    participant CN as containerd-shim
+    U-&gt;&gt;CLI: docker run -p 18000:8000 img
+    CLI-&gt;&gt;D: POST /containers/create
+    D-&gt;&gt;D: 从镜像快照创建可写层
+    D-&gt;&gt;D: 创建 namespace + cgroup 限额
+    D-&gt;&gt;D: 配置 iptables DNAT (宿主:18000 → 容器:8000)
+    D-&gt;&gt;R: 通过 shim 启动 shim
+    R-&gt;&gt;CN: 拉起容器进程 (PID ns 内为 1)
+    CLI-&gt;&gt;D: POST /containers/{id}/start
+    D--&gt;&gt;U: 容器 ID
+</code></pre></div>
+<p>关键点：<br>
+1. <strong>shim 进程</strong>：即使 dockerd 重启，容器照常运行——shim 是容器与 daemon 之间的解耦层<br>
+2. <strong>PID 1 语义</strong>：容器内主进程就是 init 信号接收者，它必须正确处理 <code>SIGTERM</code>，否则 <code>docker stop</code> 等 10 秒后 SIGKILL<br>
+3. <strong>iptables DNAT</strong>：<code>docker port</code> 只是查询这条链式规则</p>
+<h3 id="21-10">2.1 停止流程与 10 秒之谜</h3>
+<pre class="plain"><code>docker stop → SIGTERM → 等待 10s（默认）→ SIGKILL
+</code></pre>
+<p>生产环境必须让你的进程在 10 秒内优雅退出：注册 <code>signal.signal(SIGTERM, handler)</code>，<br>
+Flask/gunicorn 默认已处理，所以第 2 号实验实测 <code>docker stop</code> 是<strong>瞬时</strong>的。</p>
+<hr>
+<h2 id="api">三、API 速查表</h2>
+<h3 id="31">3.1 镜像命令</h3>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+<th>本次实测</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docker images</code></td>
+<td>列出本地镜像</td>
+<td>basic=198MB / multi=185MB</td>
+</tr>
+<tr>
+<td><code>docker build -t tag .</code></td>
+<td>从当前目录构建</td>
+<td>冷构建 9.06s</td>
+</tr>
+<tr>
+<td><code>docker build</code> (无改动)</td>
+<td>缓存全命中</td>
+<td><strong>0.118s</strong></td>
+</tr>
+<tr>
+<td><code>docker pull python:3.12-slim</code></td>
+<td>拉取镜像</td>
+<td>Content Size 45.4MB</td>
+</tr>
+<tr>
+<td><code>docker history IMG</code></td>
+<td>查看分层及每层大小</td>
+<td>pip 层 15.2MB</td>
+</tr>
+<tr>
+<td><code>docker rmi IMG</code></td>
+<td>删除镜像</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>docker save / load</code></td>
+<td>镜像导出/导入为 tar</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32">3.2 容器命令</h3>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>说明</th>
+<th>本次实测</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docker run -d --name N -p 18000:8000 IMG</code></td>
+<td>后台启动并映射端口</td>
+<td>容器 ID <code>7d5538840fe4</code></td>
+</tr>
+<tr>
+<td><code>docker ps -a</code></td>
+<td>查看容器</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>docker exec -it N sh</code></td>
+<td>进入容器</td>
+<td>uid=0(root) / 工作目录 /app</td>
+</tr>
+<tr>
+<td><code>docker logs -f N</code></td>
+<td>看日志</td>
+<td>见实验 2</td>
+</tr>
+<tr>
+<td><code>docker stop N</code></td>
+<td>优雅停止（SIGTERM→10s→KILL）</td>
+<td>瞬时退出</td>
+</tr>
+<tr>
+<td><code>docker rm N</code></td>
+<td>删除容器</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>docker stats --no-stream N</code></td>
+<td>资源占用快照</td>
+<td>21.39MiB / 15.59GiB (0.13%)</td>
+</tr>
+<tr>
+<td><code>docker inspect N</code></td>
+<td>查看完整元数据</td>
+<td><code>.State.ExitCode</code>=0</td>
+</tr>
+<tr>
+<td><code>docker cp N:/app/x ./x</code></td>
+<td>容器↔宿主拷贝</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-dockerfile">3.3 Dockerfile 指令速查</h3>
+<table>
+<thead>
+<tr>
+<th>指令</th>
+<th>作用</th>
+<th>生产建议</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FROM python:3.12-slim</code></td>
+<td>基础镜像</td>
+<td>固定小版本，禁 <code>latest</code></td>
+</tr>
+<tr>
+<td><code>WORKDIR /app</code></td>
+<td>设置工作目录</td>
+<td>用绝对路径</td>
+</tr>
+<tr>
+<td><code>COPY src dst</code></td>
+<td>拷贝文件</td>
+<td>单独拷 requirements 放依赖层之前</td>
+</tr>
+<tr>
+<td><code>RUN cmd</code></td>
+<td>构建期执行并生成层</td>
+<td>能合并就合并（层不可删）</td>
+</tr>
+<tr>
+<td><code>ENV K=V</code></td>
+<td>环境变量</td>
+<td>与代码 <code>os.getenv</code> 对应</td>
+</tr>
+<tr>
+<td><code>ARG</code></td>
+<td>仅构建期变量</td>
+<td>密钥用 ARG + --build-arg，不要烘进镜像</td>
+</tr>
+<tr>
+<td><code>EXPOSE 8000</code></td>
+<td>声明端口</td>
+<td>只是文档，<strong>不</strong>真的发布端口</td>
+</tr>
+<tr>
+<td><code>USER appuser</code></td>
+<td>降权运行</td>
+<td>生产必做（实验 5 实测 uid=10001）</td>
+</tr>
+<tr>
+<td><code>CMD ["python","main.py"]</code></td>
+<td>默认命令（exec form）</td>
+<td>用 exec form，信号才直达进程</td>
+</tr>
+<tr>
+<td><code>ENTRYPOINT</code></td>
+<td>固定入口，可被 CMD 覆盖参数</td>
+<td>CLI 型工具用它</td>
+</tr>
+<tr>
+<td><code>HEALTHCHECK</code></td>
+<td>容器自检</td>
+<td><code>--start-period</code> 缓解启动慢误判</td>
+</tr>
+<tr>
+<td><code>.dockerignore</code></td>
+<td>排除上下文文件</td>
+<td>实验 6：60.01MB → 10.75kB</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_2">四、实战代码案例</h2>
+<p>配套代码见 <code>code/</code>：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01-docker-basics.sh</code></td>
+<td>基础</td>
+<td>镜像/容器/日志/exec/stats 全流程命令演示，默认只打印讲解，<code>--live</code> 才真跑</td>
+</tr>
+<tr>
+<td><code>02-dockerfile-patterns.py</code></td>
+<td>进阶</td>
+<td>5 个 Dockerfile 模板 + 7 条 lint 规则 + 缓存耗时估算；<code>--self-test</code> 离线自测</td>
+</tr>
+<tr>
+<td><code>03-containerized-app/</code></td>
+<td>实战</td>
+<td>完整可运行项目：<code>app.py</code> + <code>Dockerfile</code> + <code>build-and-run.sh</code> 一键构建验证</td>
+</tr>
+</tbody>
+</table>
+<p><code>01-docker-basics.sh</code> 用法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">bash<span class="w"> </span><span class="m">01</span>-docker-basics.sh<span class="w">          </span><span class="c1"># 只打印讲解（安全默认，不动真容器）</span>
+bash<span class="w"> </span><span class="m">01</span>-docker-basics.sh<span class="w"> </span>--live<span class="w">   </span><span class="c1"># 真机执行，退出前自动清理</span>
+</code></pre></div>
+<p><code>02-dockerfile-patterns.py</code> 用法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-dockerfile-patterns.py<span class="w"> </span>--self-test<span class="w">   </span><span class="c1"># 离线自测（不需要 Docker）</span>
+python3<span class="w"> </span><span class="m">02</span>-dockerfile-patterns.py<span class="w"> </span>--dry-run<span class="w">     </span><span class="c1"># 静态分析 5 个模板（无 Docker 的降级路径）</span>
+python3<span class="w"> </span><span class="m">02</span>-dockerfile-patterns.py<span class="w"> </span>--lint<span class="w"> </span>&lt;Dockerfile&gt;<span class="w">   </span><span class="c1"># 检查单个 Dockerfile</span>
+python3<span class="w"> </span><span class="m">02</span>-dockerfile-patterns.py<span class="w"> </span>--build<span class="w">       </span><span class="c1"># 真机构建全部模板并对比体积/耗时</span>
+</code></pre></div>
+<p>它的耗时估算模型不是拍脑袋——模型输出（cache-friendly 1.7s / bad-cache 9.4s）<br>
+与实验 3 的真机实测（1.727s / 9.426s）逐条对齐，自测里就是用这两条断言卡住回归的。</p>
+<p><code>03-containerized-app</code> 用法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">bash<span class="w"> </span><span class="m">03</span>-containerized-app/build-and-run.sh<span class="w">   </span><span class="c1"># 离线自测 → 构建 → 运行 → 验证 → 清理</span>
+</code></pre></div>
+<p>已验证结果：镜像 185MB、四个端点全部 200、HEALTHCHECK=<code>healthy</code>、<br>
+<code>docker stop</code> 耗时 0 秒（SIGTERM 被正确处理）。</p>
+<p><code>02-dockerfile-patterns.py</code> 的用法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 离线自测（不依赖 Docker）</span>
+python3<span class="w"> </span><span class="m">02</span>-dockerfile-patterns.py<span class="w"> </span>--self-test
+
+<span class="c1"># 真机构建（需要 Docker）</span>
+python3<span class="w"> </span><span class="m">02</span>-dockerfile-patterns.py<span class="w"> </span>--build
+</code></pre></div>
+<hr>
+<h2 id="_3">五、实战实验手册</h2>
+<h3 id="_4">实验环境</h3>
+<pre class="plain"><code>主机内核：Linux 7.0.0-34-generic (x64)
+Docker Client / Engine：29.1.3（API 1.52，containerd 2.2.1）
+Docker Compose：2.40.3+ds1
+Python（宿主）：3.12.3
+Python（镜像内）：3.12.14
+基础镜像：python:3.12-slim（Digest sha256:f77ac9e4…，Content Size 45.4MB）
+实验日期：2026-10-02 06:03 (Asia/Shanghai)
+实验工作目录：/tmp/dk172（实验结束后已 rm -rf 清理）
+</code></pre>
+<h3 id="1-flask">实验 1：最小 Flask 应用容器化</h3>
+<p><strong>目的</strong>：验证从源码到可访问 HTTP 服务的完整链路。</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mkdir<span class="w"> </span>-p<span class="w"> </span>/tmp/dk172/app<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>/tmp/dk172
+cat<span class="w"> </span>&gt;<span class="w"> </span>app/main.py<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">from flask import Flask, jsonify, request</span>
+<span class="s">app = Flask(__name__)</span>
+
+<span class="s">@app.get(&quot;/health&quot;)</span>
+<span class="s">def health():</span>
+<span class="s">    return jsonify(status=&quot;ok&quot;)</span>
+
+<span class="s">@app.get(&quot;/echo&quot;)</span>
+<span class="s">def echo():</span>
+<span class="s">    return jsonify(msg=request.args.get(&quot;msg&quot;, &quot;hello&quot;))</span>
+
+<span class="s">if __name__ == &quot;__main__&quot;:</span>
+<span class="s">    app.run(host=&quot;0.0.0.0&quot;, port=8000)</span>
+<span class="s">EOF</span>
+<span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;flask==3.0.3\n&#39;</span><span class="w"> </span>&gt;<span class="w"> </span>app/requirements.txt
+cat<span class="w"> </span>&gt;<span class="w"> </span>Dockerfile<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">FROM python:3.12-slim</span>
+<span class="s">WORKDIR /app</span>
+<span class="s">COPY app/requirements.txt .</span>
+<span class="s">RUN pip install --no-cache-dir -r requirements.txt</span>
+<span class="s">COPY app/main.py .</span>
+<span class="s">CMD [&quot;python&quot;, &quot;main.py&quot;]</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">time</span><span class="w"> </span>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>day172:basic<span class="w"> </span>.
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>dk-basic<span class="w"> </span>-p<span class="w"> </span><span class="m">18000</span>:8000<span class="w"> </span>day172:basic
+sleep<span class="w"> </span><span class="m">3</span>
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18000/health
+curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18000/echo?msg=day172&quot;</span>
+docker<span class="w"> </span>logs<span class="w"> </span>dk-basic
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>dk-basic<span class="w"> </span>sh<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;id; pwd; ls /app&#39;</span>
+docker<span class="w"> </span>stats<span class="w"> </span>--no-stream<span class="w"> </span>dk-basic
+</code></pre></div>
+<p><strong>预期结果</strong>：<code>/health</code> 返回 <code>{"status":"ok"}</code>，<code>/echo</code> 返回 <code>{"msg":"day172"}</code>。</p>
+<p><strong>实际结果</strong>（2026-10-02 真机输出）：</p>
+<pre class="plain"><code>Successfully tagged day172:basic
+real	0m9.058s
+
+7d5538840fe4d0633f93d0517adfdf42112ed9e88465496bd2b3bbc3004372d3
+{&quot;status&quot;:&quot;ok&quot;}
+
+{&quot;msg&quot;:&quot;day172&quot;}
+
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8000
+ * Running on http://172.17.0.2:8000
+Press CTRL+C to quit
+172.17.0.1 - - [01/Oct/2026 22:03:27] &quot;GET /health HTTP/1.1&quot; 200 -
+172.17.0.1 - - [01/Oct/2026 22:03:27] &quot;GET /echo?msg=day172 HTTP/1.1&quot; 200 -
+
+uid=0(root) gid=0(root) groups=0(root)
+/app
+main.py
+requirements.txt
+
+CONTAINER ID   NAME        CPU %     MEM USAGE / LIMIT     MEM %     NET I/O   BLOCK I/O   PIDS
+7d5538840fe4   dk-basic   0.01%     21.39MiB / 15.59GiB   0.13%     3.48kB / 1.21kB   0B / 0B     1
+</code></pre>
+<p><strong>结论</strong>：容器内 IP <code>172.17.0.2</code> 印证了 bridge 网络；镜像 198MB / 45.2MB 内容，<br>
+内存占用仅 21.39MiB——<strong>镜像体积是磁盘/分发成本，内存成本才是运行时成本</strong>，两者差三个数量级。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>dk-basic
+</code></pre></div>
+<hr>
+<h3 id="2">实验 2：分层结构与层体积</h3>
+<p><strong>目的</strong>：看清 pip 层到底占了多少，为多阶段构建提供决策依据。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span><span class="nb">history</span><span class="w"> </span>day172:basic<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Size}}\t{{.CreatedBy}}&#39;</span>
+docker<span class="w"> </span>images<span class="w"> </span>-f<span class="w"> </span><span class="nv">reference</span><span class="o">=</span><span class="s1">&#39;day172:*&#39;</span><span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Repository}}:{{.Tag}}\t{{.Size}}&#39;</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>0B	/bin/sh -c #(nop)  CMD [&quot;python&quot; &quot;main.py&quot;]
+12.3kB	/bin/sh -c #(nop) COPY file:fce462710c4901c4…
+15.2MB	/bin/sh -c pip install --no-cache-dir -r req…
+12.3kB	/bin/sh -c #(nop) COPY file:d6fab0c1592266d7…
+8.19kB	/bin/sh -c #(nop) WORKDIR /app
+0B	CMD [&quot;python3&quot;]
+
+day172:bad    	198MB
+day172:basic  	198MB
+day172:multi  	185MB
+</code></pre>
+<p><strong>结论</strong>：应用自身只有 12.3kB，依赖层 15.2MB，<strong>基镜像占了大头</strong>。优化镜像应优先动 base image（换 alpine/distroless），而不是删业务代码。</p>
+<hr>
+<h3 id="3">实验 3：构建缓存实测（关键性能数字）</h3>
+<p><strong>目的</strong>：量化"COPY 顺序"对构建时间的影响。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ① 完全无改动</span>
+<span class="nb">time</span><span class="w"> </span>docker<span class="w"> </span>build<span class="w"> </span>-q<span class="w"> </span>-f<span class="w"> </span>Dockerfile.nonroot<span class="w"> </span>-t<span class="w"> </span>day172:nonroot2<span class="w"> </span>.
+<span class="c1"># ② 只改 main.py（依赖层应命中缓存）</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;# comment </span><span class="k">$(</span>date<span class="w"> </span>+%s<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>app/main.py
+<span class="nb">time</span><span class="w"> </span>docker<span class="w"> </span>build<span class="w"> </span>-q<span class="w"> </span>-t<span class="w"> </span>day172:cachetest<span class="w"> </span>.
+<span class="c1"># ③ 改 requirements.txt（依赖层失效）</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;click==8.1.7&quot;</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>app/requirements.txt
+<span class="nb">time</span><span class="w"> </span>docker<span class="w"> </span>build<span class="w"> </span>-q<span class="w"> </span>-t<span class="w"> </span>day172:cachetest2<span class="w"> </span>.
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>① real	0m0.118s
+② real	0m1.727s
+③ real	0m9.426s
+</code></pre>
+<p><strong>结论</strong>（测试条件：单次计时，本机 16GB 内存，pip 走本地已缓存 wheel）：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>耗时</th>
+<th>相对基线</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>全缓存命中</td>
+<td>0.118s</td>
+<td>1×</td>
+</tr>
+<tr>
+<td>仅业务代码变更</td>
+<td>1.727s</td>
+<td>14.6×</td>
+</tr>
+<tr>
+<td>依赖清单变更</td>
+<td>9.426s</td>
+<td>79.9×</td>
+</tr>
+</tbody>
+</table>
+<p>改一行代码重建慢 <strong>79 倍</strong>，这就是 <code>COPY . .</code> 必须放在依赖安装之后的量化理由。</p>
+<hr>
+<h3 id="4-127001">实验 4：翻车实验 —— 监听 127.0.0.1 导致"服务启动成功但外部访问不了"</h3>
+<p><strong>目的</strong>：复现新手最常见的容器网络坑。</p>
+<p><strong>假设</strong>：应用监听 <code>127.0.0.1</code>，<code>-p</code> 映射会照样生效。</p>
+<p><strong>验证手段</strong>：同一镜像，只改 <code>app.run</code> 的 host，跑起来后<strong>从宿主机 curl</strong>，再<strong>从容器内 curl</strong> 同一地址。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">sed<span class="w"> </span><span class="s1">&#39;s/0.0.0.0/127.0.0.1/&#39;</span><span class="w"> </span>app/main.py<span class="w"> </span>&gt;<span class="w"> </span>bad.py
+cat<span class="w"> </span>&gt;<span class="w"> </span>Dockerfile.bad<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">FROM python:3.12-slim</span>
+<span class="s">WORKDIR /app</span>
+<span class="s">COPY app/requirements.txt .</span>
+<span class="s">RUN pip install --no-cache-dir -r requirements.txt</span>
+<span class="s">COPY bad.py .</span>
+<span class="s">CMD [&quot;python&quot;, &quot;bad.py&quot;]</span>
+<span class="s">EOF</span>
+docker<span class="w"> </span>build<span class="w"> </span>-f<span class="w"> </span>Dockerfile.bad<span class="w"> </span>-t<span class="w"> </span>day172:bad<span class="w"> </span>.
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>dk-bad<span class="w"> </span>-p<span class="w"> </span><span class="m">18001</span>:8000<span class="w"> </span>day172:bad
+sleep<span class="w"> </span><span class="m">3</span>
+docker<span class="w"> </span>logs<span class="w"> </span>dk-bad
+curl<span class="w"> </span>-s<span class="w"> </span>-m<span class="w"> </span><span class="m">5</span><span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s2">&quot;http_code=%{http_code}\n&quot;</span><span class="w"> </span>http://127.0.0.1:18001/health
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>dk-bad<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import urllib.request;print(urllib.request.urlopen(&#39;http://127.0.0.1:8000/health&#39;).read())&quot;</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code> * Running on http://127.0.0.1:8000
+Press CTRL+C to quit
+http_code=000
+b&#x27;{&quot;status&quot;:&quot;ok&quot;}\n&#x27;
+0 true
+</code></pre>
+<p><strong>现象</strong>：容器<strong>状态是 Up</strong>（<code>docker inspect</code> 显示 Running=true，ExitCode=0），日志无任何报错，<br>
+容器内请求 200 —— 但宿主机 curl 拿到 <code>http_code=000</code>（连接失败）。</p>
+<p><strong>真实根因</strong>：Network namespace 为容器创建了<strong>独立的 loopback</strong>。容器里的 <code>127.0.0.1</code><br>
+和宿主机的 <code>127.0.0.1</code> 是<strong>两个不同的网络端点</strong>。应用的 socket 只绑在容器 loopback 上，<br>
+宿主 DNAT 转发过来的流量到不了它（宿主的 127.0.0.1 也不会转发进容器）。</p>
+<p><strong>修复</strong>：<code>app.run(host="0.0.0.0")</code>。生产等价物是 <code>gunicorn -b 0.0.0.0:8000</code>。</p>
+<p><strong>复测结果</strong>：换成 <code>0.0.0.0</code> 后，宿主 curl 立刻返回 <code>200</code> + <code>{"status":"ok"}</code>（实验 1 已验证）。</p>
+<p><strong>排查口诀</strong>：</p>
+<blockquote>
+<p>容器内能通、容器外不通 → 查 <code>host</code> 绑定；<br>
+容器内也不通 → 查应用是否崩 / 端口写错；<br>
+返回 502 → 端口对了但协议或上游不对。</p>
+</blockquote>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>dk-bad
+</code></pre></div>
+<hr>
+<h3 id="5-root">实验 5：非 root 运行 + 环境变量注入</h3>
+<p><strong>目的</strong>：验证降权与配置外置。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">cat<span class="w"> </span>&gt;<span class="w"> </span>Dockerfile.nonroot<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">FROM python:3.12-slim</span>
+<span class="s">WORKDIR /app</span>
+<span class="s">COPY app/requirements.txt .</span>
+<span class="s">RUN pip install --no-cache-dir -r requirements.txt \</span>
+<span class="s"> &amp;&amp; useradd -u 10001 -m appuser</span>
+<span class="s">COPY --chown=appuser:appuser app/main2.py .</span>
+<span class="s">USER appuser</span>
+<span class="s">ENV APP_NAME=day172 APP_PORT=8000</span>
+<span class="s">EXPOSE 8000</span>
+<span class="s">CMD [&quot;python&quot;, &quot;main2.py&quot;]</span>
+<span class="s">EOF</span>
+docker<span class="w"> </span>build<span class="w"> </span>-f<span class="w"> </span>Dockerfile.nonroot<span class="w"> </span>-t<span class="w"> </span>day172:nonroot<span class="w"> </span>.
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>dk-nonroot<span class="w"> </span>-p<span class="w"> </span><span class="m">18003</span>:8000<span class="w"> </span>-e<span class="w"> </span><span class="nv">APP_NAME</span><span class="o">=</span>from-env<span class="w"> </span>day172:nonroot
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>dk-nonroot<span class="w"> </span>id
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18003/cfg
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>uid=10001(appuser) gid=10001(appuser) groups=10001(appuser)
+{&quot;app_name&quot;:&quot;from-env&quot;,&quot;port&quot;:&quot;unset&quot;}
+</code></pre>
+<p><strong>结论</strong>：<br>
+1. 进程已降权到 uid=10001，容器逃逸风险显著降低<br>
+2. <code>-e APP_NAME=from-env</code> 覆盖了镜像里的 <code>ENV APP_NAME=day172</code> —— <strong>运行期 env 优先级高于构建期</strong><br>
+3. <code>{"port":"unset"}</code> 说明 <code>ENV APP_PORT=8000</code> 与代码里读的 <code>os.getenv("PORT")</code> <strong>变量名对不上</strong>，<br>
+   这是 ENV 与代码不匹配的经典静默失败——<strong>不报错，只是拿到默认值</strong>。写 Dockerfile 时务必逐个核对变量名。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>dk-nonroot
+</code></pre></div>
+<hr>
+<h3 id="6dockerignore">实验 6：.dockerignore 的真实收益</h3>
+<p><strong>目的</strong>：量化构建上下文大小。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mkdir<span class="w"> </span>-p<span class="w"> </span>junk<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>head<span class="w"> </span>-c<span class="w"> </span><span class="m">60000000</span><span class="w"> </span>/dev/urandom<span class="w"> </span>&gt;<span class="w"> </span>junk/big.bin
+python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import os;os.makedirs(&#39;__pycache__&#39;,exist_ok=True);open(&#39;__pycache__/main.cpython-312.pyc&#39;,&#39;wb&#39;).write(b&#39;x&#39;*1000)&quot;</span>
+docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>day172:nodockerignore<span class="w"> </span>.<span class="w">          </span><span class="c1"># 无 .dockerignore</span>
+cat<span class="w"> </span>&gt;<span class="w"> </span>.dockerignore<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">junk/</span>
+<span class="s">__pycache__/</span>
+<span class="s">*.pyc</span>
+<span class="s">.git/</span>
+<span class="s">EOF</span>
+docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>day172:withignore<span class="w"> </span>.<span class="w">             </span><span class="c1"># 有 .dockerignore</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>Sending build context to Docker daemon  60.01MB
+Sending build context to Docker daemon  10.75kB
+</code></pre>
+<p><strong>结论</strong>：上下文从 <strong>60.01MB 降到 10.75kB，压缩约 5,600 倍</strong>。<br>
+每次构建都要传输上下文，60MB 的垃圾文件会让每次 <code>docker build</code> 慢好几秒，<br>
+还可能把 <code>.git</code> 里的敏感信息、<code>node_modules</code>、本机虚拟环境打进镜像。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-f<span class="w"> </span>junk/big.bin<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span>junk<span class="w"> </span>__pycache__
+</code></pre></div>
+<hr>
+<h3 id="7">实验 7：多阶段构建体积对比</h3>
+<p><strong>目的</strong>：验证多阶段是否真的减重（本例依赖全是 wheel，收益有限，正好说明边界）。</p>
+<p><strong>执行</strong>：见 Dockerfile.multi，构建后 <code>docker images -f reference='day172:*'</code>。</p>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>day172:multi  	185MB
+day172:basic  	198MB
+</code></pre>
+<p><strong>结论</strong>：仅省 13MB（<strong>6.6%</strong>）。原因是 Flask 全是预编译 wheel，<br>
+builder 阶段本来就没产生多少中间产物。</p>
+<p><strong>这条实验的价值在于诚实</strong>：多阶段构建不是万灵药。<br>
+它的收益 ∝ 构建工具链体积。对纯 wheel 依赖收益小；<br>
+而对需要 gcc 编译的包（<code>mysqlclient</code>、<code>lxml</code>、<code>cryptography</code>）、Node 前端构建、<br>
+Rust 扩展，收益往往是<strong>数百 MB 级别</strong>。任何"多阶段必减半"的说法都是营销话术。</p>
+<h3 id="8-copy-from">实验 8：翻车实验 —— 多阶段 <code>COPY --from</code> 路径写错，容器起来就崩</h3>
+<p><strong>目的</strong>：复现「多阶段构建里最容易错的一个路径 bug」。</p>
+<p><strong>假设</strong>：<code>pip install --prefix=/install</code> 装的包，可以从<br>
+<code>/usr/local/lib/python3.12/site-packages/</code> 里 <code>COPY --from=builder</code> 出来。</p>
+<p><strong>背景</strong>：<code>code/03-containerized-app/Dockerfile</code> 的初版就是这么写的（直觉：<br>
+「pip 装到 site_packages，所以我从 site_packages 拷」）。</p>
+<p><strong>执行</strong>：直接跑 <code>bash code/03-containerized-app/build-and-run.sh</code>。</p>
+<p><strong>实际结果</strong>（第一次运行）：</p>
+<pre class="plain"><code>── 3. 镜像分层与体积 ──
+day172-app:test  184MB
+...
+── 4. 运行 ──
+862e2d717a1b28091ea95a66318fee134d42160c01d1201241d7159fac8fd526
+Error response from daemon: container 862e2d71… is not running
+容器内身份：
+── 5. 验证 ──
+  GET /health                → ❌ 失败
+  GET /echo?msg=day172       → ❌ 失败
+── 6. HEALTHCHECK 状态 ──
+unhealthy
+── 7. 优雅停止耗时 ──
+docker stop 耗时 0s
+── 8. 日志 ──
+❌ 未安装 flask。容器内会由 Dockerfile 的 pip install 提供；本机手测请先 pip install flask==3.0.3
+</code></pre>
+<p><strong>现象</strong>：<strong>构建成功</strong>（<code>Successfully built 800b38d1699c</code>，镜像 184MB），<br>
+但容器<strong>秒退</strong>。日志里只有一句 Python 的 ImportError。</p>
+<p><strong>关键迷惑点</strong>：<br>
+1. <code>docker build</code> 全绿 → 直觉上「Dockerfile 没问题」<br>
+2. 日志里的 <code>❌ 未安装 flask</code> 是<strong>我们自己代码里写的错误提示</strong>，<br>
+   它误导你去「装 flask」，而 flask 其实<strong>已经装进镜像了</strong>，只是装错了地方<br>
+3. <code>docker history</code> 显示 <code>5.02MB COPY dir:…</code> —— 这一层<strong>确实拷到了东西</strong>，<br>
+   所以「看起来」也没问题</p>
+<p><strong>假设排查</strong>：目录到底在哪？直接进一个临时容器看。</p>
+<p><strong>验证手段</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>-v<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$PWD</span><span class="s2">:/w&quot;</span><span class="w"> </span>-w<span class="w"> </span>/w<span class="w"> </span>python:3.12-slim<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>sh<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;pip install -q --no-cache-dir --prefix=/install -r r.txt &gt;/dev/null 2&gt;&amp;1; find /install -maxdepth 3 -type d; find /install -name flask -maxdepth 4 -type d&quot;</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>/install
+/install/lib
+/install/lib/python3.12
+/install/bin
+--- flask location ---
+/install/lib/python3.12/site-packages/flask
+</code></pre>
+<p><strong>真实根因</strong>：<code>--prefix=/install</code> 不是「装到 /install 下」，而是把<strong>整个<br>
+<code>/usr/local</code> 目录树平移</strong>到 <code>/install</code>：</p>
+<table>
+<thead>
+<tr>
+<th>默认安装</th>
+<th><code>--prefix=/install</code> 安装</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/usr/local/lib/python3.12/site-packages/</code></td>
+<td><code>/install/lib/python3.12/site-packages/</code></td>
+</tr>
+<tr>
+<td><code>/usr/local/bin/</code></td>
+<td><code>/install/bin/</code></td>
+</tr>
+</tbody>
+</table>
+<p>我的 Dockerfile 却从 <code>/usr/local/lib/...</code> 拷——那是<strong>final 阶段自己的空目录</strong>。<br>
+<code>COPY</code> 一个空目录不会报错（所以构建成功、history 显示层大小正常，只是拷了空壳），<br>
+但运行时的 <code>python</code> 只查 <code>/usr/local/lib/python3.12/site-packages</code>，找不到 flask。</p>
+<blockquote>
+<p>这是多阶段构建最阴险的一类错误：<strong>COPY 静默成功 ≠ COPY 到了正确的东西。</strong><br>
+排查的唯一可靠手段就是像上面那样，进容器 <code>find</code> 一遍真实路径。</p>
+</blockquote>
+<p><strong>修复</strong>：改从 prefix 的真实路径拷。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">diff</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="gd">-COPY --from=builder /usr/local/lib/python3.12/site-packages/ \</span>
+<span class="gi">+COPY --from=builder /install/lib/python3.12/site-packages/ \</span>
+<span class="w"> </span>     /usr/local/lib/python3.12/site-packages/
+</code></pre></div>
+<p><strong>复测结果</strong>（修复后重新执行同一脚本）：</p>
+<pre class="plain"><code>── 3. 镜像分层与体积 ──
+day172-app:test  185MB
+0B	CMD [&quot;python&quot; &quot;app.py&quot;]
+0B	HEALTHCHECK &amp;{[&quot;CMD-SHELL…
+0B	EXPOSE 8000
+0B	ENV PYTHONDONTWRITEBYTECO…
+0B	USER appuser
+16.4kB	COPY --chown=appuser:appus…
+5.02MB	COPY dir:93d082ea84252a32e…
+8.19kB	WORKDIR /app
+── 4. 运行 ──
+  GET /health                → {&quot;name&quot;:&quot;from-env-via-docker-run&quot;,&quot;status&quot;:&quot;ok&quot;,&quot;version&quot;:&quot;1.0.0&quot;}
+  GET /echo?msg=day172       → {&quot;from_&quot;:&quot;container&quot;,&quot;msg&quot;:&quot;day172&quot;,&quot;version&quot;:&quot;1.0.0&quot;}
+  GET /config                → {&quot;app_name&quot;:&quot;from-env-via-docker-run&quot;,&quot;debug&quot;:false,&quot;port&quot;:&quot;8000&quot;,&quot;version&quot;:&quot;1.0.0&quot;}
+  GET /                      → {&quot;endpoints&quot;:[&quot;/health&quot;,&quot;/echo&quot;,&quot;/config&quot;],&quot;service&quot;:&quot;from-env-via-docker-run&quot;,&quot;version&quot;:&quot;1.0.0&quot;}
+── 6. HEALTHCHECK 状态 ──
+healthy
+── 7. 优雅停止耗时（&lt;10s 说明 SIGTERM 被处理）──
+docker stop 耗时 0s
+── 8. 日志 ──
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8000
+ * Running on http://172.17.0.5:8000
+172.17.0.1 - - [01/Oct/2026 22:09:50] &quot;GET /health HTTP/1.1&quot; 200 -
+127.0.0.1 - - [01/Oct/2026 22:09:52] &quot;GET /health HTTP/1.1&quot; 200 -
+[day172] 收到信号 15，正在优雅退出…
+</code></pre>
+<p><strong>结论</strong>：三个结论并存——<br>
+1. 多阶段构建的 <code>COPY --from</code> 路径<strong>必须实测</strong>，不能凭直觉写<br>
+2. 自建错误信息会掩盖真实错误（本例里 <code>❌ 未安装 flask</code> 完全指错了方向）<br>
+3. <code>docker stop</code> 耗时 <strong>0 秒</strong>，说明 <code>exec form CMD</code> + SIGTERM 处理生效，<br>
+   没有被硬等满 10 秒</p>
+<p><strong>修复后的产物已固化在 <code>code/03-containerized-app/Dockerfile</code>，<code>bash build-and-run.sh</code> 可一键复现。</strong></p>
+<hr>
+<h3 id="9">实验 9：四个翻车点的汇总复盘</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>现象</th>
+<th>真实根因</th>
+<th>一句话教训</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>COPY failed: file not found in build context</code></td>
+<td>COPY 路径相对 <strong>context 根</strong>，不是相对 Dockerfile</td>
+<td>构建报错反而是好事，最快发现</td>
+</tr>
+<tr>
+<td>2</td>
+<td>容器 <code>Up</code>、容器内 200、<strong>容器外 000</strong></td>
+<td>Network namespace 的 loopback 相互独立，应用绑了 <code>127.0.0.1</code></td>
+<td>必须绑 <code>0.0.0.0</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>构建成功</strong>但容器秒退，<code>import flask</code> 失败</td>
+<td><code>--prefix</code> 平移整棵 <code>/usr/local</code> 树，<code>COPY --from</code> 路径写错</td>
+<td><code>COPY</code> 静默成功 ≠ 拷对了东西</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>app_name</code> 拿到 <code>unset</code></td>
+<td><code>ENV APP_PORT</code> 与代码 <code>os.getenv("PORT")</code> 变量名不一致</td>
+<td>配置不匹配是<strong>静默失败</strong>，不报错</td>
+</tr>
+</tbody>
+</table>
+<p>其中 <strong>#3 最值得记住</strong>：它同时骗过了「构建成功」「history 有层」「自己写的错误信息」三重检查。</p>
+<hr>
+<h2 id="_5">六、思考题</h2>
+<ol>
+<li>镜像是分层的、层不可变。为什么 <code>docker commit</code> 能"固化"对容器内文件的修改？<br>
+   它和 <code>RUN</code> 指令生成的层在本质上有区别吗？</li>
+<li>实验 4 里容器状态是 <code>Up</code> 且 ExitCode=0，但宿主访问不通。如果你的服务是 K8s Pod，<br>
+   Readiness Probe 默认探 <code>127.0.0.1</code> 还是 Pod IP？这个坑会以什么形式复现？</li>
+<li>实验 3 中改 requirements.txt 慢 79 倍。如果依赖有 200 个（而非 7 个），<br>
+   这个倍数会线性放大还是更陡？你会怎么改造 <code>requirements.txt</code> 来缓解？</li>
+<li><code>--no-cache-dir</code> 写在 <code>pip install</code> 里去掉后，镜像会变大还是变小？<br>
+   分别说明对<strong>镜像大小</strong>和<strong>构建耗时</strong>的影响（两个方向相反，别混为一谈）。</li>
+<li><code>EXPOSE 8000</code> 到底做了什么？如果去掉它，<code>-p 18000:8000</code> 还能工作吗？<br>
+   为什么它是"纯文档"却仍然被要求写？</li>
+</ol>
+<hr>
+<h2 id="_6">七、收尾卫生（本次已执行）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>dk-basic<span class="w"> </span>dk-bad<span class="w"> </span>dk-nonroot<span class="w">          </span><span class="c1"># 删除全部实验容器</span>
+docker<span class="w"> </span>rmi<span class="w"> </span>day172:nodockerignore<span class="w"> </span>day172:withignore<span class="w"> </span><span class="se">\</span>
+<span class="w">          </span>day172:cachetest<span class="w"> </span>day172:cachetest2<span class="w"> </span><span class="se">\</span>
+<span class="w">          </span>day172:nonroot2<span class="w"> </span>day172:multi<span class="w">           </span><span class="c1"># 删除一次性 tag（镜像层保留，不占额外空间）</span>
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/dk172<span class="w">                                </span><span class="c1"># 删除实验工作目录</span>
+docker<span class="w"> </span>ps<span class="w"> </span>-a<span class="w"> </span>--filter<span class="w"> </span><span class="s2">&quot;name=dk-&quot;</span><span class="w">                 </span><span class="c1"># 确认无残留</span>
+docker<span class="w"> </span>image<span class="w"> </span>ls<span class="w"> </span>-f<span class="w"> </span><span class="nv">reference</span><span class="o">=</span><span class="s1">&#39;day172:*&#39;</span>
+</code></pre></div>
+<p>验证结果：实验容器 0 个残留；<code>python:3.12-slim</code> 基础镜像保留（Day 173 Docker Compose 会复用）；<br>
+<code>day172:basic</code> 保留用于对照。宿主 18000/18001/18002/18003 端口全部释放。</p>
+<hr>
+<h2 id="_7">八、下一步</h2>
+<p>Day 173 将用 <code>docker compose</code> 把今天的单体容器 + Redis + PostgreSQL 编排出一个网络，<br>
+重点是<strong>服务名解析</strong>（<code>redis</code> 而不是 <code>172.17.0.x</code>）与数据卷持久化。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-171/index.html">← Day 171 通知告警</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

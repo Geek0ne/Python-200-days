@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 172 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 172 正文</a>
+  <h1>Day 172 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-172-docker">Day 172 练习与验收清单 — Docker 容器化</h1>
+<blockquote>
+<p>全部命令均可在 Linux 机器上直接复制执行。带 ⚠️ 的会创建容器/镜像，<strong>执行完请务必按「清理」小节撤销</strong>。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、今日完成清单</h2>
+<ul>
+<li>[ ] 能说清容器与虚拟机的隔离层次差异（namespace + cgroup vs Hypervisor）</li>
+<li>[ ] 能手写不踩缓存坑的 Dockerfile（依赖清单与业务代码分开 COPY）</li>
+<li>[ ] 能解释为什么 <code>docker history</code> 显示的 pip 层删不掉</li>
+<li>[ ] 能复现实验 4：应用绑 <code>127.0.0.1</code> 导致「容器内 200、容器外 000」</li>
+<li>[ ] 能说清 <code>EXPOSE</code> 是纯文档、<code>-p</code> 才是真发布端口</li>
+<li>[ ] 能复现实验 8：<code>--prefix</code> + <code>COPY --from</code> 路径不匹配导致容器秒退</li>
+<li>[ ] 能写出带 <code>USER</code> + <code>HEALTHCHECK</code> + exec form <code>CMD</code> 的生产 Dockerfile</li>
+</ul>
+<hr>
+<h2 id="_2">二、练习题</h2>
+<h3 id="1">基础 1：构建并验证最小镜像</h3>
+<p><strong>目标</strong>：走通 build → run → verify → cleanup 闭环。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-172-Docker容器化/code/03-containerized-app
+
+<span class="c1"># 1. 先离线自测（不需要 Docker，验证核心逻辑）</span>
+python3<span class="w"> </span>app.py<span class="w"> </span>--self-test
+
+<span class="c1"># 2. 构建</span>
+docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>day172-ex1<span class="w"> </span>.
+
+<span class="c1"># 3. 查看分层：哪一层最贵？</span>
+docker<span class="w"> </span><span class="nb">history</span><span class="w"> </span>day172-ex1<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Size}}\t{{.CreatedBy}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-8
+
+<span class="c1"># 4. 运行（换一个端口，避免与教材实验冲突）</span>
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>day172-ex1<span class="w"> </span>-p<span class="w"> </span><span class="m">18077</span>:8000<span class="w"> </span>day172-ex1
+
+<span class="c1"># 5. 验证四个端点</span>
+sleep<span class="w"> </span><span class="m">3</span>
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18077/health<span class="p">;</span><span class="w">  </span><span class="nb">echo</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18077/echo?msg=ex1&quot;</span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span>
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18077/config<span class="p">;</span><span class="w">     </span><span class="nb">echo</span>
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18077/<span class="p">;</span><span class="w">           </span><span class="nb">echo</span>
+
+<span class="c1"># 6. 容器内身份（应是非 root）</span>
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>day172-ex1<span class="w"> </span>id
+
+<span class="c1"># 7. 优雅停止耗时（应 &lt; 10 秒）</span>
+<span class="nb">time</span><span class="w"> </span>docker<span class="w"> </span>stop<span class="w"> </span>day172-ex1
+</code></pre></div>
+<p><strong>验收标准</strong>：四个端点均返回 JSON 且含 <code>"version":"1.0.0"</code>；
+<code>docker exec … id</code> 输出含 <code>uid=10001(appuser)</code>；<code>docker stop</code> 耗时 &lt; 10s。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>day172-ex1
+docker<span class="w"> </span>rmi<span class="w"> </span>-f<span class="w"> </span>day172-ex1
+</code></pre></div>
+<hr>
+<h3 id="2">基础 2：复现「容器内通、容器外不通」</h3>
+<p><strong>目标</strong>：亲手踩一次 Day 172 翻车实验 #4。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mkdir<span class="w"> </span>-p<span class="w"> </span>/tmp/ex2<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>/tmp/ex2
+cat<span class="w"> </span>&gt;<span class="w"> </span>app.py<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">from flask import Flask, jsonify</span>
+<span class="s">app = Flask(__name__)</span>
+<span class="s">@app.get(&quot;/health&quot;)</span>
+<span class="s">def health(): return jsonify(status=&quot;ok&quot;)</span>
+<span class="s">app.run(host=&quot;127.0.0.1&quot;, port=8000)   # 故意绑回环</span>
+<span class="s">PY</span>
+<span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;flask==3.0.3\n&#39;</span><span class="w"> </span>&gt;<span class="w"> </span>requirements.txt
+cat<span class="w"> </span>&gt;<span class="w"> </span>Dockerfile<span class="w"> </span><span class="s">&lt;&lt;&#39;DOCKER&#39;</span>
+<span class="s">FROM python:3.12-slim</span>
+<span class="s">WORKDIR /app</span>
+<span class="s">COPY requirements.txt .</span>
+<span class="s">RUN pip install --no-cache-dir -r requirements.txt</span>
+<span class="s">COPY app.py .</span>
+<span class="s">CMD [&quot;python&quot;, &quot;app.py&quot;]</span>
+<span class="s">DOCKER</span>
+
+docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>day172-ex2<span class="w"> </span>.
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>day172-ex2<span class="w"> </span>-p<span class="w"> </span><span class="m">18078</span>:8000<span class="w"> </span>day172-ex2
+sleep<span class="w"> </span><span class="m">3</span>
+
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;--- 容器状态（注意：Up，但外部连不上）---&quot;</span>
+docker<span class="w"> </span>ps<span class="w"> </span>--filter<span class="w"> </span><span class="nv">name</span><span class="o">=</span>day172-ex2<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Status}}&#39;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;--- 容器内 curl ---&quot;</span>
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>day172-ex2<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import urllib.request;print(urllib.request.urlopen(&#39;http://127.0.0.1:8000/health&#39;).read())&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;--- 宿主 curl（预期 000）---&quot;</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-m<span class="w"> </span><span class="m">5</span><span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s2">&quot;http_code=%{http_code}\n&quot;</span><span class="w"> </span>http://127.0.0.1:18078/health
+</code></pre></div>
+<p><strong>思考</strong>：容器显示 <code>Up</code> 却连不上——如果只看 <code>docker ps</code> 或编排系统的
+Deployment 副本数（容器活着 = 副本就绪），会得出「服务正常」的错误结论。
+这就是为什么必须配 <code>HEALTHCHECK</code> / Readiness Probe。</p>
+<p><strong>修复并复测</strong>：<code>sed -i 's/127.0.0.1/0.0.0.0/' app.py</code> 重建重跑，宿主 curl 应返回 200。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>day172-ex2
+docker<span class="w"> </span>rmi<span class="w"> </span>-f<span class="w"> </span>day172-ex2
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/ex2
+</code></pre></div>
+<hr>
+<h3 id="3">进阶 3：量化缓存，并解释你的数字</h3>
+<p><strong>目标</strong>：自己跑出缓存对比，而不是背结论。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-172-Docker容器化/code
+python3<span class="w"> </span><span class="m">02</span>-dockerfile-patterns.py<span class="w"> </span>--self-test<span class="w">     </span><span class="c1"># 先跑离线自测</span>
+python3<span class="w"> </span><span class="m">02</span>-dockerfile-patterns.py<span class="w"> </span>--dry-run<span class="w">       </span><span class="c1"># 看 5 个模板的静态分析</span>
+</code></pre></div>
+<p><strong>验收标准</strong>：
+1. <code>--self-test</code> 退出码为 0，输出 <code>🎉 全部自测通过</code>
+2. 自测里包含两条断言：<code>BAD_CACHE 模型预测 hot≈9.4s</code> 与
+   <code>CACHE_FRIENDLY 模型预测 hot≈1.7s</code>，它们分别对应真机实测 9.426s / 1.727s
+3. <code>--dry-run</code> 输出中 <code>bad-cache</code> 必须被报出错误码 <code>002</code> 和 <code>004</code></p>
+<p><strong>进阶部分</strong>：在 <code>/tmp/ex3</code> 里自己写两份 Dockerfile（一份 <code>COPY . .</code> 放前面、
+一份依赖清单分离），然后实测三次构建耗时，填下表：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>你的实测(s)</th>
+<th>教材实测(s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>无改动重建</td>
+<td></td>
+<td>0.118</td>
+</tr>
+<tr>
+<td>只改 app.py</td>
+<td></td>
+<td>1.727</td>
+</tr>
+<tr>
+<td>改 requirements.txt</td>
+<td></td>
+<td>9.426</td>
+</tr>
+</tbody>
+</table>
+<p><strong>要求</strong>：三个数字必须递增。若「只改 app.py」反而比「改 requirements.txt」慢，
+说明你的 <code>COPY</code> 顺序有问题，用 <code>docker history</code> 和 <code>docker build</code> 的 <code>Step</code> 输出自查。</p>
+<hr>
+<h3 id="4-prefix">进阶 4：修好一个多阶段构建的 prefix 陷阱</h3>
+<p><strong>目标</strong>：亲手复现并修复 Day 172 翻车实验 #8。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mkdir<span class="w"> </span>-p<span class="w"> </span>/tmp/ex4<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>/tmp/ex4
+cat<span class="w"> </span>&gt;<span class="w"> </span>app.py<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import flask</span>
+<span class="s">print(&quot;flask ok:&quot;, flask.__version__ if hasattr(flask,&#39;__version__&#39;) else &#39;loaded&#39;, flush=True)</span>
+<span class="s">PY</span>
+<span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;flask==3.0.3\n&#39;</span><span class="w"> </span>&gt;<span class="w"> </span>requirements.txt
+
+<span class="c1"># 故意写错的版本：从 final 阶段自己的空目录拷</span>
+cat<span class="w"> </span>&gt;<span class="w"> </span>Dockerfile<span class="w"> </span><span class="s">&lt;&lt;&#39;DOCKER&#39;</span>
+<span class="s">FROM python:3.12-slim AS builder</span>
+<span class="s">WORKDIR /build</span>
+<span class="s">COPY requirements.txt .</span>
+<span class="s">RUN pip install --no-cache-dir --prefix=/install -r requirements.txt</span>
+
+<span class="s">FROM python:3.12-slim</span>
+<span class="s">COPY --from=builder /usr/local/lib/python3.12/site-packages/ \</span>
+<span class="s">     /usr/local/lib/python3.12/site-packages/</span>
+<span class="s">COPY app.py .</span>
+<span class="s">CMD [&quot;python&quot;, &quot;app.py&quot;]</span>
+<span class="s">DOCKER</span>
+
+docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>day172-ex4<span class="w"> </span>.<span class="w">                          </span><span class="c1"># 注意：构建会「成功」</span>
+docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>day172-ex4<span class="w">                            </span><span class="c1"># 但运行会失败</span>
+</code></pre></div>
+<p><strong>思考三连</strong>：
+1. 为什么 <code>docker build</code> 成功而 <code>docker run</code> 失败？
+2. <code>docker history</code> 里那一层 COPY 显示 5.02MB——它拷到东西了吗？
+3. 怎么用一条命令确认真实安装路径？
+   （提示：<code>docker run --rm python:3.12-slim sh -c "pip install --prefix=/install … &amp;&amp; find /install -maxdepth 3 -type d"</code>）</p>
+<p><strong>修复</strong>：把 <code>COPY --from=builder</code> 的源路径改成
+<code>/install/lib/python3.12/site-packages/</code>，重建后 <code>docker run --rm</code> 应输出 <code>flask ok: …</code>。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/ex4
+docker<span class="w"> </span>rmi<span class="w"> </span>-f<span class="w"> </span>day172-ex4
+</code></pre></div>
+<hr>
+<h3 id="5-day-173">挑战 5：给 Day 173 预热</h3>
+<p>Docker Compose（明天的主题）会把多个容器连成网络。请先想清楚两个问题，
+明天会用实验直接验证：</p>
+<ol>
+<li>同一 network 里，容器 A 该用 <code>172.17.0.3</code> 还是服务名 <code>redis</code> 去连容器 B？
+   为什么？（提示：容器重启后 IP 会变；docker 会在 DNS 里注册服务名）</li>
+<li><code>docker run -v /host/data:/var/lib/postgresql/data</code> 与容器可写层相比，
+   哪个更适合放数据库？容器删除后数据还在吗？</li>
+</ol>
+<hr>
+<h2 id="_3">三、验收清单（完成后逐项打勾）</h2>
+<ul>
+<li>[ ] 练习 1 四个端点全部 200，<code>id</code> 显示 uid=10001</li>
+<li>[ ] 练习 2 复现出宿主 <code>http_code=000</code>，并能解释 namespace loopback 独立</li>
+<li>[ ] 练习 3 <code>02-dockerfile-patterns.py --self-test</code> 退出码 0</li>
+<li>[ ] 练习 4 复现容器秒退，并能说出 <code>--prefix</code> 的真实目录语义</li>
+<li>[ ] 练习 4 修复后 <code>docker run --rm</code> 成功</li>
+<li>[ ] 全部临时容器已删除：<code>docker ps -a --filter "name=day172-ex"</code> 输出为空</li>
+<li>[ ] 临时镜像已删除：<code>docker image ls -f reference='day172-ex*'</code> 输出为空</li>
+</ul>
+<h3 id="_4">一次性清理（全部做完后执行）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>ps<span class="w"> </span>-a<span class="w"> </span>--filter<span class="w"> </span><span class="s2">&quot;name=day172-&quot;</span><span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Names}}&#39;</span><span class="w">   </span><span class="c1"># 应为空</span>
+docker<span class="w"> </span>image<span class="w"> </span>ls<span class="w"> </span>-f<span class="w"> </span><span class="nv">reference</span><span class="o">=</span><span class="s1">&#39;day172-ex*&#39;</span><span class="w">                     </span><span class="c1"># 应为空</span>
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/ex2<span class="w"> </span>/tmp/ex3<span class="w"> </span>/tmp/ex4
+docker<span class="w"> </span>builder<span class="w"> </span>prune<span class="w"> </span>-f<span class="w">                                      </span><span class="c1"># 清构建缓存（约回收数 GB）</span>
+</code></pre></div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
