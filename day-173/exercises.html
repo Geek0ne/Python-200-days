@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 173 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 173 正文</a>
+  <h1>Day 173 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-173-docker-compose">Day 173 · Docker Compose 练习与验收清单</h1>
+<hr>
+<h2 id="_1">一、今日完成清单</h2>
+<ul>
+<li>[ ] 能手写一份含 5 个服务（app / worker / redis / postgres / nginx）的 compose.yaml</li>
+<li>[ ] 说清 <code>service_started</code> / <code>service_healthy</code> / <code>service_completed_successfully</code> 三种依赖语义的区别</li>
+<li>[ ] 理解为什么容器里跨服务要用<strong>服务名</strong>而不是 <code>localhost</code></li>
+<li>[ ] 分清绑定挂载 / 命名卷 / tmpfs 三种存储，以及 <code>down</code> 与 <code>down -v</code> 的差别</li>
+<li>[ ] 独立完成 <code>code/03-compose-stack</code> 的真机拉起，并解释 <code>docker compose up</code> 的输出顺序</li>
+<li>[ ] 用 <code>--scale</code> 扩出一个无状态服务的多副本</li>
+<li>[ ] 清理干净全部实验残留（容器 / 卷 / 网络 / 端口）</li>
+</ul>
+<hr>
+<h2 id="docker30">二、离线自证（无需 Docker，30 秒跑完）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-173-DockerCompose/code
+
+python3<span class="w"> </span><span class="m">01</span>-compose-basics.py<span class="w"> </span>--self-test
+<span class="c1"># 期望：01-compose-basics self-test: PASS（5 组断言全过）</span>
+
+python3<span class="w"> </span><span class="m">02</span>-compose-pitfalls.py<span class="w"> </span>--self-test
+<span class="c1"># 期望：02-compose-pitfalls self-test: PASS（4 组断言全过）</span>
+
+python3<span class="w"> </span><span class="m">01</span>-compose-basics.py<span class="w">            </span><span class="c1"># 看概念演示输出</span>
+python3<span class="w"> </span><span class="m">02</span>-compose-pitfalls.py<span class="w">          </span><span class="c1"># 逐条看六类坑的复现</span>
+</code></pre></div>
+<p>应用脚本也能离线自证：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-compose-stack/app.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">03</span>-compose-stack/app.py<span class="w"> </span>--dry-run<span class="w">   </span><span class="c1"># 只打印将要连接的目标，不发起连接</span>
+</code></pre></div>
+<p><strong>验收标准</strong>：三行 self-test 全部输出 <code>PASS</code>，<code>--dry-run</code> 打印出
+<code>redis: redis:6379</code> / <code>postgres: postgres:5432</code>。</p>
+<hr>
+<h2 id="_2">三、练习题</h2>
+<h3 id="1-compose">基础 1 — 写一份最小 compose</h3>
+<p><strong>要求</strong>：写一份 <code>compose.yaml</code>，含一个 <code>web</code> 服务（<code>nginx:alpine</code>，映射 <code>8080:80</code>）
+和一个 <code>api</code> 服务（<code>python:3.12-slim</code>，跑 <code>python -m http.server 8000</code>，映射 <code>8090:8000</code>），
+<code>api</code> 依赖 <code>web</code>，用 <code>service_started</code>。</p>
+<p><strong>验收命令</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mkdir<span class="w"> </span>-p<span class="w"> </span>/tmp/compose-ex1<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>/tmp/compose-ex1
+<span class="c1"># 写好 compose.yaml 后：</span>
+docker<span class="w"> </span>compose<span class="w"> </span>config<span class="w">          </span><span class="c1"># 必须能校验通过</span>
+docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s1">&#39;%{http_code}\n&#39;</span><span class="w"> </span>http://127.0.0.1:8090/<span class="w">   </span><span class="c1"># 期望 200</span>
+docker<span class="w"> </span>compose<span class="w"> </span>down
+</code></pre></div>
+<p><strong>思考</strong>：从 <code>api</code> 容器内部应该怎么访问 <code>web</code>？写出来并验证。</p>
+<hr>
+<h3 id="2">基础 2 — 找出并修复三个错</h3>
+<p>下面这份 compose 有三个问题，逐个说明原因并修好：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">db</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgres:16</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">POSTGRES_PASSWORD</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">secret</span>
+<span class="w">  </span><span class="nt">app</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">myapp:latest</span>
+<span class="w">    </span><span class="nt">environment</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">DATABASE_URL</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">postgres://app@db:5432/appdb</span><span class="w">    </span><span class="c1"># (A)</span>
+<span class="w">    </span><span class="nt">depends_on</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">db</span>
+<span class="w">    </span><span class="nt">ports</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;8000:8000:8000&quot;</span><span class="w">                            </span><span class="c1"># (B)</span>
+</code></pre></div>
+<p><strong>验收</strong>：解释每个错误的后果，并用 <code>docker compose config</code> 与一次 <code>up -d</code> 证明修复有效。</p>
+<hr>
+<h3 id="3-service_healthy">进阶 3 — 量化 <code>service_healthy</code> 的代价</h3>
+<p><strong>要求</strong>：复用 <code>code/03-compose-stack/</code>，把 <code>bench_startup.sh</code> 改成<strong>重复 5 次</strong>，
+取每种策略的均值与极差。</p>
+<p><strong>验收命令</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-173-DockerCompose/code/03-compose-stack
+<span class="k">for</span><span class="w"> </span>i<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="m">3</span><span class="w"> </span><span class="m">4</span><span class="w"> </span><span class="m">5</span><span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span>./bench_startup.sh<span class="p">;</span><span class="w"> </span><span class="k">done</span>
+</code></pre></div>
+<p>本课实测的 3 次采样（2026-10-04，Docker 29.1.3 / Compose v2.40.3）为：</p>
+<pre class="plain"><code>service_healthy    = 12344 ms
+service_started    = 7313 ms
+service_healthy(2) = 9573 ms
+</code></pre>
+<p>你跑出的 5 次均值应落在一个相近量级。<strong>结论要写清</strong>：多出的 2–5 秒买到了什么？
+如果换成 50 个服务各等 5 秒，这个成本会不会变成问题？</p>
+<hr>
+<h3 id="4">进阶 4 — 加一个一次性迁移任务</h3>
+<p><strong>要求</strong>：给 <code>03-compose-stack</code> 增加一个 <code>migrate</code> 服务，跑一次建表后退出；
+让 <code>app</code> 用 <code>condition: service_completed_successfully</code> 等它。</p>
+<p><strong>验收命令</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-173-DockerCompose/code/03-compose-stack
+docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+docker<span class="w"> </span>compose<span class="w"> </span>ps<span class="w"> </span>-a<span class="w"> </span>migrate<span class="w">       </span><span class="c1"># 期望 Exited (0)</span>
+docker<span class="w"> </span>compose<span class="w"> </span>logs<span class="w"> </span>migrate
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18080/stats<span class="w">   </span><span class="c1"># 期望 postgres 段有真实数据</span>
+docker<span class="w"> </span>compose<span class="w"> </span>down<span class="w"> </span>-v
+</code></pre></div>
+<p><strong>思考</strong>：<code>restart: "no"</code> 这一行删掉会怎样？<code>depends_on</code> 不加条件会怎样？</p>
+<hr>
+<h3 id="5">挑战 5 — 自己搭一套带网络隔离的栈</h3>
+<p><strong>要求</strong>：改造 <code>compose.yaml</code>，拆成 <code>front</code>（nginx + app）与 <code>back</code>（postgres + redis）
+两个网络：<code>app</code> 同时接入两个网络，<code>postgres</code>/<code>redis</code> 只在 <code>back</code>，
+<code>nginx</code> 只在 <code>front</code>。</p>
+<p><strong>验收命令</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>compose<span class="w"> </span>up<span class="w"> </span>-d
+docker<span class="w"> </span>network<span class="w"> </span>inspect<span class="w"> </span>day173-lab_back<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{range .Containers}}{{.Name}} {{end}}&#39;</span>
+<span class="c1"># 期望只出现 postgres / redis，不含 app?（app 也在 back，因为它要连它们）</span>
+<span class="c1"># front 则只应出现 nginx / app</span>
+docker<span class="w"> </span>compose<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>-T<span class="w"> </span>nginx<span class="w"> </span>getent<span class="w"> </span>hosts<span class="w"> </span>postgres<span class="w">   </span><span class="c1"># 期望失败（查不到）</span>
+docker<span class="w"> </span>compose<span class="w"> </span>down<span class="w"> </span>-v
+</code></pre></div>
+<p><strong>思考</strong>：这个拓扑挡住了什么？如果 <code>nginx</code> 被攻破，攻击者还能直连数据库吗？</p>
+<hr>
+<h2 id="_3">四、收尾检查（每次实验后必做）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-173-DockerCompose/code/03-compose-stack
+docker<span class="w"> </span>compose<span class="w"> </span>down<span class="w"> </span>-v
+
+<span class="c1"># 全局残留检查，四条都应无输出</span>
+docker<span class="w"> </span>ps<span class="w"> </span>-a<span class="w">    </span>--filter<span class="w"> </span><span class="nv">name</span><span class="o">=</span>day173-lab<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Names}}&#39;</span>
+docker<span class="w"> </span>volume<span class="w"> </span>ls<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Name}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="m">173</span>
+docker<span class="w"> </span>network<span class="w"> </span>ls<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Name}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="m">173</span>
+ss<span class="w"> </span>-ltn<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;18080|18081&#39;</span>
+</code></pre></div>
+<p>镜像 <code>day173-app:1.0</code> 建议保留（构建缓存能显著缩短下次实验时间），
+不需要时用 <code>docker rmi day173-app:1.0</code> 删除。</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
