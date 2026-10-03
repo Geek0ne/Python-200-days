@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 172 / 200** · 进度的 86.0% · 当前：Phase 11 自动化运维与 DevOps（Day 172 Docker 容器化已完成）
+> **Day 173 / 200** · 进度的 86.5% · 当前：Phase 11 自动化运维与 DevOps（Day 173 Docker Compose 已完成）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **172 天** |
-| 📝 总提交次数 | **1,205 commits** |
-| 📄 总代码行数 | **176,157 行** |
-| 📂 总文件数 | **1,196 个** |
-| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 172/185） |
+| 📅 已完成天数 | **173 天** |
+| 📝 总提交次数 | **1,217 commits** |
+| 📄 总代码行数 | **176,879 行** |
+| 📂 总文件数 | **1,210 个** |
+| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 173/185） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -293,7 +293,8 @@
 - ✅ 定时任务：漂移原理与四件套（Trigger/JobStore/Executor/Scheduler）+ schedule vs APScheduler 能力边界 + coalesce/max_instances/misfire_grace_time 三参数分工 + 持久化 JobStore（pickle 要求顶层函数 + 跨重启 next_run_time）+ 多实例互斥三种解法 + 事件监听把失败变可见 + 定时备份系统（备份→校验→保留→报告）+ 十一大陷阱实测（含 AndTrigger 死循环）（Day 170）
 - ✅ 通知告警：四层模型（采集/判定/路由/送达）+ ⭐ 真机实测证明「HTTP 200 不等于成功」（钉钉 errcode=300005 / 企微 93000 均返回 200）+ SMTP 多轮会话与 MIME/RFC 2047 原理 + 手写抓包 SMTP 服务器（stdlib，因 smtpd 已被 PEP 594 移除）+ 三平台 Webhook 统一封装（传输层+业务层双重判定、限流感知退避、钉钉加签）+ 指纹去重与令牌桶限流 + 九大陷阱离线复现 + 多渠道告警中枢 AlertHub（扇出/去重/恢复/分级/降级兜底/脱敏/审计，压测 600 事件→21 条）+ 5 个真实翻车实验（Day 171）
 - ✅ Docker 容器化：容器 vs 虚拟机隔离层次（namespace+cgroup vs Hypervisor）+ 一次 docker run 完整链路（shim/可写层/iptables DNAT）+ 分层文件系统与层不可变推论（rm 不减体积）+ ⭐ 缓存实测（无改动 0.118s / 改代码 1.727s / 改依赖 9.426s，差 80 倍）+ 构建上下文 60.01MB → 10.75kB + 非 root 与 HEALTHCHECK + 多阶段（198MB → 185MB，仅 6.6%，诚实记录其局限）+ 9 个真机实验 + 4 个翻车复盘（COPY 路径 / 绑 127.0.0.1 导致容器外 000 / --prefix 与 COPY --from 不匹配致构建绿而运行崩 / ENV 变量名不一致静默失败）（Day 172）
-- 🚀 下一课：Day 173 — Docker Compose
+- ✅ Docker Compose：compose 声明模型（声明/连线/排序/挂载/一起收）+ 内置 DNS 为什么让服务名成为稳定地址 + 三种存储（绑定挂载/命名卷/tmpfs）与 `down` vs `down -v` + depends_on 三种 condition 语义 + healthcheck 真实机制（`start_period` 宽限、CMD vs CMD-SHELL、无 healthcheck 永远等不到 healthy）+ 编排期依赖图 vs 运行期故障（运行期只能靠应用重试）+ 一个镜像两个角色（build 去重，app/worker 版本天然一致）+ `--scale` 的两条限制（container_name / 固定宿主端口）+ ⭐ 真机五服务栈（app+worker+redis+postgres+nginx，同一 `front` 网络 + `pgdata` 命名卷）实测 DNS 解析 redis→172.18.0.2 / postgres→172.18.0.3，nginx 反代后 Redis 计数 1→2 证明共享同一实例 + ⭐ 启动时延实测（service_healthy 12344/9573ms vs service_started 7313ms，多花 2–5s，波动 ±22%）+ `--scale worker=3` 零代码改动扩容 + 6 个真机实验与翻车复盘（Day 173）
+- 🚀 下一课：Day 174 — CI/CD（GitHub Actions）
 
 </details>
 
