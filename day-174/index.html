@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 174 — CI/CD（GitHub Actions）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 174 — CI/CD（GitHub Actions）</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">682 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-174-ci-cd-github-actions" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一、概念解释</a>
+<a class="toc-l3" href="#11-ci">1.1 CI 是什么</a>
+<a class="toc-l3" href="#12-cd">1.2 CD 是什么</a>
+<a class="toc-l3" href="#13-ci-cd">1.3 CI 与 CD 的分界点</a>
+<a class="toc-l3" href="#14-workflow">1.4 Workflow 是什么</a>
+<a class="toc-l2" href="#_2">二、原理深入</a>
+<a class="toc-l3" href="#21-push">2.1 一次 push 的完整生命周期</a>
+<a class="toc-l3" href="#22-step">2.2 step 的五阶段生命周期</a>
+<a class="toc-l3" href="#23-success">2.3 表达式的隐含 success()</a>
+<a class="toc-l3" href="#24">2.4 矩阵展开的完整语义</a>
+<a class="toc-l3" href="#25-cache-artifact-github">2.5 为什么 cache / artifact 需要 GitHub 后端</a>
+<a class="toc-l2" href="#api">三、API 速查</a>
+<a class="toc-l3" href="#31-workflow">3.1 workflow 顶层键</a>
+<a class="toc-l3" href="#32-on">3.2 常见 on: 写法</a>
+<a class="toc-l3" href="#33">3.3 常用内置环境变量</a>
+<a class="toc-l3" href="#34-context">3.4 常用 context 表达式</a>
+<a class="toc-l3" href="#35-action">3.5 常用官方 action</a>
+<a class="toc-l2" href="#_3">四、图解</a>
+<a class="toc-l2" href="#_4">五、实战代码案例</a>
+<a class="toc-l3" href="#_5">实战脚本的实测输出</a>
+<a class="toc-l2" href="#_6">六、实战实验手册</a>
+<a class="toc-l3" href="#1-act-pipeline">实验 1：用 act 在本机跑通完整 pipeline</a>
+<a class="toc-l3" href="#2-pip">实验 2：实测 pip 缓存的真实收益</a>
+<a class="toc-l3" href="#3cd">实验 3：CD 流水线的门禁与回滚</a>
+<a class="toc-l2" href="#_7">七、翻车实验（最有价值的部分）</a>
+<a class="toc-l3" href="#upload-artifact-act">翻车一：upload-artifact 在 act 里永远跑不通</a>
+<a class="toc-l3" href="#_8">翻车二：缓存基准第一次测出了假数据</a>
+<a class="toc-l3" href="#bc">翻车三（附带）：bc 在容器里不存在</a>
+<a class="toc-l2" href="#_9">八、思考题</a>
+<a class="toc-l2" href="#_10">九、参考产出</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-174-cicdgithub-actions">Day 174 — CI/CD（GitHub Actions）</h1>
+<blockquote>
+<p>Phase 11 — 自动化运维与 DevOps · 实战</p>
+<p>本课所有输出均为 <strong>2026-10-05 在本机真机执行捕获</strong>，不是示意。<br>
+环境：Ubuntu 5.15 / Docker 29.1.3 (overlayfs) / act 0.2.89 / Python 3.12.15 (容器内) / Python 3.11.17 (矩阵另一实例)</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11-ci">1.1 CI 是什么</h3>
+<p><strong>Continuous Integration（持续集成）</strong>：每次有人往仓库推代码，机器立刻自动做一遍「这份代码还是好的吗」的验证。</p>
+<p>它要回答的问题只有三个，且必须快：</p>
+<ol>
+<li><strong>语法/风格对吗</strong> → lint</li>
+<li><strong>行为还对吗</strong> → 单元测试、集成测试</li>
+<li><strong>在所有承诺支持的环境里都对吗</strong> → 矩阵</li>
+</ol>
+<p><strong>为什么需要它</strong>：没有 CI 时，「代码能不能跑」只有作者知道。作者本地环境能跑 ≠ 生产能跑。<br>
+CI 把「我这边能跑」这个不可验证的信念，换成了一份所有人都能点开看的绿/红记录。</p>
+<p><strong>为什么它必须是自动的</strong>：需要人手动点一下才跑的东西，一周后必然没人点。</p>
+<h3 id="12-cd">1.2 CD 是什么</h3>
+<p><strong>Continuous Delivery / Deployment</strong>：把通过 CI 验证的产物，自动送到用户能拿到的地方。</p>
+<ul>
+<li><strong>Delivery</strong>：能发，但需要人点一下「发布」按钮</li>
+<li><strong>Deployment</strong>：连按钮都不要，合到主干就自动上线</li>
+</ul>
+<p>CD 的目标不是「更快上线」，而是<strong>把上线这个动作的风险降到可控</strong>。所以它必须回答：</p>
+<ul>
+<li>能不能回滚？（这是硬要求，不是加分项）</li>
+<li>上线后怎么知道是好的？（健康检查）</li>
+<li>坏了怎么通知？（对应本仓库 Day 171 通知告警）</li>
+</ul>
+<h3 id="13-ci-cd">1.3 CI 与 CD 的分界点</h3>
+<p>两者共用同一个 workflow 文件，靠 <code>needs</code> 串成一条链，靠一个 <code>if</code> 分界：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">jobs</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">lint</span><span class="p">:</span><span class="w">    </span><span class="l l-Scalar l-Scalar-Plain">...</span>
+<span class="w">  </span><span class="nt">test:    needs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">lint</span><span class="p p-Indicator">]</span>
+<span class="w">  </span><span class="nt">package: needs</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">test</span><span class="p p-Indicator">]</span>
+<span class="w">           </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">github.ref == &#39;refs/heads/main&#39;</span><span class="w">   </span><span class="c1"># ← 这行就是分界</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>CI</th>
+<th>CD</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>触发</td>
+<td>每个 PR、每次 push</td>
+<td>只在主干分支</td>
+</tr>
+<tr>
+<td>目标</td>
+<td>证明改动是安全的</td>
+<td>把产物送到用户手里</td>
+</tr>
+<tr>
+<td>速度要求</td>
+<td><strong>快</strong>（开发者还在等着看结果）</td>
+<td>稳</td>
+</tr>
+<tr>
+<td>失败代价</td>
+<td>几分钟，当场能修</td>
+<td>影响真实用户</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14-workflow">1.4 Workflow 是什么</h3>
+<p>一个 workflow = 放在 <code>.github/workflows/*.yml</code> 下的一个 YAML 文件，描述「什么事件触发、跑哪些 job、每个 job 做哪几步」。</p>
+<p>同一个仓库可以有任意多个 workflow 文件，各管一件事（CI、发布、代码质量……）。<br>
+GitHub 会<strong>按文件名</strong>排序去触发，所以 <code>00-lint.yml</code> 会排在 <code>99-deploy.yml</code> 前面执行。</p>
+<p><strong>GitHub Actions 本身不执行任何东西。</strong> 它只做一件事：把 event 匹配到 workflow，<br>
+再把 job 分配给某个 runner。真正跑代码的是 runner —— <code>ubuntu-latest</code> 是一台临时开的<br>
+虚拟机（4 核 16G），用完即销毁，代码留在上面也是转瞬即逝。</p>
+<p>这个理解很重要：因为 runner 是<strong>无状态的</strong>，所以：<br>
+- 想跨 job 传文件？必须用 artifact（而 artifact 需要 GitHub 的后端，<code>act</code> 跑不了）<br>
+- 想跨 job 复用依赖？必须用 cache<br>
+- 想在 runner 上留下手工排查的现场？做不到，得靠日志</p>
+<hr>
+<h2 id="_2">二、原理深入</h2>
+<h3 id="21-push">2.1 一次 push 的完整生命周期</h3>
+<pre class="plain"><code>git push
+   │
+   ▼
+GitHub 生成 event payload（JSON，含 ref / commit / 发送者…）
+   │
+   ▼
+按每个 workflow 的 on: 规则匹配 → 决定哪些 workflow 被触发
+   │
+   ▼
+对被触发的 workflow：读 jobs 的 needs，构 DAG，拓扑排序
+   │
+   ▼
+入度为 0 的 job 立刻分配 runner（并行，上限 256）
+   │  ┌─ lint  ─┐
+   │  └─ test ─┘   同层并行
+   ▼
+某个 job 结束 → 检查它的下游是否入度归零 → 是则启动
+   │
+   ▼
+全部完成 → 汇总状态 → 通知（邮件 / GitHub 通知 / Webhook）
+</code></pre>
+<p><strong>推论</strong>：流水线总时长 ≈ 最长路径之和，不是所有 job 之和。<br>
+所以依赖少串行是慢的主因，而「加缓存」是缩短单步时长的手段——两者要分清。</p>
+<h3 id="22-step">2.2 step 的五阶段生命周期</h3>
+<pre class="plain"><code>Set up job          ← GitHub 自动生成，下载并准备 action
+      ▼
+Main: step 1        ← 你写的 steps 依次执行
+Main: step 2
+      ▼
+Post: 逆序执行     ← ⚠️ 即使 Main 失败也照跑
+      ▼
+Complete job        ← 汇总：任一 step 非 0 退出码 → job 失败
+</code></pre>
+<p><strong>Post 步骤无条件执行</strong>是新手最容易忽略的点。它的正确用途是清理<br>
+（停掉后台进程、关掉数据库连接）；错误用法是「成功后才做的事」——那样在失败路径上会误触发。</p>
+<h3 id="23-success">2.3 表达式的隐含 success()</h3>
+<p><code>if</code> 条件如果不显式调用状态函数，会<strong>隐含前置 <code>success()</code></strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">matrix.py == &#39;3.12&#39;</span>
+<span class="c1"># 实际含义：</span>
+<span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">success() &amp;&amp; matrix.py == &#39;3.12&#39;</span>
+</code></pre></div>
+<p>这解释了一个常见困惑：「为什么我写的 <code>if</code> 在失败后从来不执行？」<br>
+因为前面失败了，<code>success()</code> 就是 false，短路了。</p>
+<p>要「无论成败都执行」必须显式写：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">always() &amp;&amp; github.event_name == &#39;push&#39;</span>
+</code></pre></div>
+<p>四把状态钥匙：</p>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>语义</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>success()</code></td>
+<td>至今无失败（默认隐含）</td>
+<td>大多数条件</td>
+</tr>
+<tr>
+<td><code>always()</code></td>
+<td>恒为真</td>
+<td>无论成败的通知/清理</td>
+</tr>
+<tr>
+<td><code>failure()</code></td>
+<td>有步骤失败过</td>
+<td>失败时导出诊断日志</td>
+</tr>
+<tr>
+<td><code>cancelled()</code></td>
+<td>被取消</td>
+<td>记录中断原因</td>
+</tr>
+</tbody>
+</table>
+<h3 id="24">2.4 矩阵展开的完整语义</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">strategy</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">fail-fast</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">        </span><span class="c1"># 关键：跑兼容性矩阵必须设 false</span>
+<span class="w">  </span><span class="nt">matrix</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">py</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;3.11&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;3.12&quot;</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">os</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">ubuntu</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">macos</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">exclude</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">py</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3.11&quot;</span><span class="p p-Indicator">,</span><span class="nt"> os</span><span class="p">:</span><span class="w"> </span><span class="nv">macos</span><span class="p p-Indicator">}</span>
+<span class="w">    </span><span class="nt">include</span><span class="p">:</span>
+<span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">py</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;3.12&quot;</span><span class="p p-Indicator">,</span><span class="nt"> experimental</span><span class="p">:</span><span class="w"> </span><span class="nv">true</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p>展开顺序是<strong>先笛卡尔积，再 exclude，最后 include</strong>：</p>
+<pre class="plain"><code>初始 2×2 = 4 组
+  {3.11,ubuntu}  {3.11,macos}  {3.12,ubuntu}  {3.12,macos}
+
+exclude 剔除 {3.11, macos} → 3 组
+  {3.11,ubuntu}  {3.12,ubuntu}  {3.12,macos}
+
+include 的 {py:3.12} 能对上后两条 → 就地扩展它们 → 3 组
+  {3.11,ubuntu}
+  {3.12,ubuntu, experimental:true}
+  {3.12,macos,  experimental:true}
+</code></pre>
+<p><code>include</code> 的匹配规则是：<strong>对 include 里出现的每个 key，若组合中已有该 key，则值必须相等</strong>。<br>
+如果 include 的所有 key 都对不上任何已有组合，它会作为<strong>新组合追加</strong>。</p>
+<p><code>fail-fast</code> 默认 <code>true</code>：一组失败立刻取消其余。默认行为在测兼容性矩阵时是错的——<br>
+因为最先挂的往往是老版本，你反而看不到老版本的具体错误。</p>
+<h3 id="25-cache-artifact-github">2.5 为什么 cache / artifact 需要 GitHub 后端</h3>
+<p><code>actions/cache</code> 和 <code>actions/upload-artifact</code> 都需要一个环境变量<br>
+<code>ACTIONS_RUNTIME_TOKEN</code> 来向 GitHub 的存储服务换取上传/下载凭证。</p>
+<p>在真实 runner 上，这个 token 由 GitHub 在 job 启动时注入。<br>
+在 <code>act</code> 跑的本机容器里，<strong>没有任何东西注入它</strong>——因为根本没有那个后端服务。</p>
+<p>这就是为什么本课实验 4 的 <code>upload-artifact</code> 步骤会报<br>
+<code>Unable to get the ACTIONS_RUNTIME_TOKEN env variable</code>：<br>
+不是配置错了，是本地根本没有这个东西可以取。</p>
+<p>理解了这一点，就不会去 debug 一个根本不可能在本地修好的问题。</p>
+<hr>
+<h2 id="api">三、API 速查</h2>
+<h3 id="31-workflow">3.1 workflow 顶层键</h3>
+<table>
+<thead>
+<tr>
+<th>键</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>否</td>
+<td>UI 上显示的名字</td>
+</tr>
+<tr>
+<td><code>on</code></td>
+<td><strong>是</strong></td>
+<td>触发条件</td>
+</tr>
+<tr>
+<td><code>env</code></td>
+<td>否</td>
+<td>全局环境变量</td>
+</tr>
+<tr>
+<td><code>jobs</code></td>
+<td><strong>是</strong></td>
+<td>至少一个 job</td>
+</tr>
+<tr>
+<td><code>concurrency</code></td>
+<td>否</td>
+<td>并发控制</td>
+</tr>
+<tr>
+<td><code>permissions</code></td>
+<td>否</td>
+<td>令牌权限</td>
+</tr>
+<tr>
+<td><code>defaults.run</code></td>
+<td>否</td>
+<td><code>run</code> 的默认 shell / working-directory</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-on">3.2 常见 <code>on:</code> 写法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">on</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">push</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">pull_request</span><span class="p p-Indicator">]</span><span class="w">                     </span><span class="c1"># 数组</span>
+<span class="nt">on</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">push</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">branches</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">main</span><span class="p p-Indicator">]}}</span><span class="w">               </span><span class="c1"># 限定分支</span>
+<span class="nt">on</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">push</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">branches</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">main</span><span class="p p-Indicator">]</span>
+<span class="w">    </span><span class="nt">paths-ignore</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&#39;docs/**&#39;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&#39;*.md&#39;</span><span class="p p-Indicator">]</span><span class="w">        </span><span class="c1"># 改文档不触发</span>
+<span class="w">  </span><span class="nt">pull_request</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">types</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">opened</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">synchronize</span><span class="p p-Indicator">]</span><span class="w">             </span><span class="c1"># 只关心哪几类事件</span>
+<span class="w">  </span><span class="nt">schedule</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">cron</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;0</span><span class="nv"> </span><span class="s">3</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">*</span><span class="nv"> </span><span class="s">*&quot;</span><span class="w">                      </span><span class="c1"># 每天 03:00 UTC</span>
+<span class="w">  </span><span class="nt">workflow_dispatch</span><span class="p">:</span><span class="w">                         </span><span class="c1"># 允许手动点按钮触发</span>
+<span class="w">  </span><span class="nt">workflow_call</span><span class="p">:</span><span class="w">                             </span><span class="c1"># 被别的 workflow 复用</span>
+</code></pre></div>
+<h3 id="33">3.3 常用内置环境变量</h3>
+<table>
+<thead>
+<tr>
+<th>变量</th>
+<th>含义</th>
+<th>典型用法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GITHUB_SHA</code></td>
+<td>触发 commit 的完整 SHA</td>
+<td>打 tag / docker tag</td>
+</tr>
+<tr>
+<td><code>GITHUB_REF</code></td>
+<td>完整 ref，如 <code>refs/heads/main</code></td>
+<td>判断分支</td>
+</tr>
+<tr>
+<td><code>GITHUB_REF_NAME</code></td>
+<td>短名，如 <code>main</code></td>
+<td>生成 tag 名</td>
+</tr>
+<tr>
+<td><code>GITHUB_EVENT_NAME</code></td>
+<td>事件名，如 <code>push</code></td>
+<td>判断触发源</td>
+</tr>
+<tr>
+<td><code>GITHUB_REPOSITORY</code></td>
+<td><code>owner/repo</code></td>
+<td>生成镜像全名</td>
+</tr>
+<tr>
+<td><code>GITHUB_RUN_ID</code></td>
+<td>本次 run 的唯一 ID</td>
+<td>关联日志/trace</td>
+</tr>
+<tr>
+<td><code>GITHUB_TOKEN</code></td>
+<td>内置令牌</td>
+<td>默认只读，权限靠 <code>permissions</code> 提权</td>
+</tr>
+</tbody>
+</table>
+<h3 id="34-context">3.4 常用 context 表达式</h3>
+<table>
+<thead>
+<tr>
+<th>表达式</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>github.ref == 'refs/heads/main'</code></td>
+<td>在主干上</td>
+</tr>
+<tr>
+<td><code>github.event_name == 'push'</code></td>
+<td>由 push 触发</td>
+</tr>
+<tr>
+<td><code>matrix.py</code></td>
+<td>矩阵里的 py 值</td>
+</tr>
+<tr>
+<td><code>steps.&lt;id&gt;.outputs.&lt;name&gt;</code></td>
+<td>某 step 通过 <code>$GITHUB_OUTPUT</code> 传出的值</td>
+</tr>
+<tr>
+<td><code>hashFiles('requirements.txt')</code></td>
+<td>文件内容哈希，用作 cache key</td>
+</tr>
+<tr>
+<td><code>secrets.DOCKER_TOKEN</code></td>
+<td>仓库密钥</td>
+</tr>
+<tr>
+<td><code>env.FOO</code></td>
+<td>环境变量</td>
+</tr>
+</tbody>
+</table>
+<h3 id="35-action">3.5 常用官方 action</h3>
+<table>
+<thead>
+<tr>
+<th>action</th>
+<th>用途</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>actions/checkout@v4</code></td>
+<td>拉代码</td>
+<td>不用它，工作区是空的</td>
+</tr>
+<tr>
+<td><code>actions/setup-python@v5</code></td>
+<td>装指定 Python</td>
+<td>装依赖前必须有</td>
+</tr>
+<tr>
+<td><code>actions/cache@v4</code></td>
+<td>缓存目录</td>
+<td>key 用 hashFiles</td>
+</tr>
+<tr>
+<td><code>actions/upload-artifact@v4</code></td>
+<td>上传产物</td>
+<td>job 之间传文件的唯一方式</td>
+</tr>
+<tr>
+<td><code>docker/build-push-action@v6</code></td>
+<td>构建并推镜像</td>
+<td>配 cache-from/to 加速</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>版本号用 <code>@v4</code> 这种 major tag。严格安全要求可锁到 commit SHA（<code>@v4.2.1</code> 或<br>
+<code>@8f4b7f8...</code>），代价是升级要手动改——对生产部署的流水线值得。</p>
+</blockquote>
+<hr>
+<h2 id="_3">四、图解</h2>
+<p>完整图解见 <a href="diagrams/README.md"><code>diagrams/README.md</code></a>，含 7 张图：</p>
+<ol>
+<li>一次 push 的完整调度链路</li>
+<li>needs 构成的有向无环图</li>
+<li>step 的五阶段生命周期（Set up / Main / Post / Complete）</li>
+<li><code>if</code> 表达式的隐含 <code>success()</code> 与四把状态钥匙</li>
+<li>matrix 展开规则（笛卡尔积 → exclude → include）</li>
+<li>CI 与 CD 的分界</li>
+<li><code>act</code> 的工作方式与能力边界</li>
+</ol>
+<hr>
+<h2 id="_4">五、实战代码案例</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>定位</th>
+<th>用法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code/01-workflow-lint.py</code></td>
+<td><strong>基础</strong>：用 Python 校验 workflow YAML</td>
+<td><code>python3 code/01-workflow-lint.py workflows/ci.yml</code></td>
+</tr>
+<tr>
+<td><code>code/02-pipeline-builder.py</code></td>
+<td><strong>进阶</strong>：needs 拓扑排序 + 环检测 + 矩阵展开 + 生成</td>
+<td><code>python3 code/02-pipeline-builder.py topo workflows/ci.yml</code></td>
+</tr>
+<tr>
+<td><code>code/03-cd-deploy-pipeline.py</code></td>
+<td><strong>实战</strong>：CD 全流程演练（门禁→构建→发布→回滚）</td>
+<td><code>python3 code/03-cd-deploy-pipeline.py run</code></td>
+</tr>
+</tbody>
+</table>
+<p>三个脚本都支持 <code>--self-test</code>，离线可跑：</p>
+<pre class="plain"><code>$ python3 code/01-workflow-lint.py --self-test
+✅ self-test 通过：好文件 0 error，坏文件捕获 4 个 error
+
+$ python3 code/02-pipeline-builder.py --self-test
+✅ self-test 通过：环检测/拓扑/矩阵/生成 6 组断言全过
+
+$ python3 code/03-cd-deploy-pipeline.py --self-test
+✅ self-test 通过：版本/发布/回滚/门禁 6 组断言全过
+</code></pre>
+<h3 id="_5">实战脚本的实测输出</h3>
+<pre class="plain"><code>$ rm -rf /tmp/cd-pipeline
+$ python3 code/03-cd-deploy-pipeline.py run
+▶ CD 部署流水线
+  ✅ lint   语法检查通过  (0.07s)
+  ✅ test   coverage=100.0% (阈值 80.0%)  (0.00s)
+  ✅ build  产物 dist/app-v1.0.1.tar.gz  (0.00s)
+  ✅ deploy ✅ registry.local/app:v1.0.1 上线  (0.00s)
+────────────────────────────────────────────────────────────
+结果: 发布成功  总耗时 0.068s
+
+$ python3 code/03-cd-deploy-pipeline.py run      # 第二次
+  ✅ deploy ✅ registry.local/app:v1.0.2 上线  (0.00s)
+
+$ python3 code/03-cd-deploy-pipeline.py run --flaky   # 故意让新版不健康
+  ❌ deploy ❌ registry.local/app:v1.0.3 健康检查失败，已回滚到 registry.local/app:v1.0.2
+────────────────────────────────────────────────────────────
+结果: 发布失败并回滚  总耗时 0.039s
+
+$ cat /tmp/cd-pipeline/releases.json | python3 -c &quot;import json,sys;print([r[&#x27;version&#x27;] for r in json.load(sys.stdin)])&quot;
+[&#x27;v1.0.1&#x27;, &#x27;v1.0.2&#x27;]
+</code></pre>
+<p>注意最后一行：<strong><code>v1.0.3</code> 不在里面</strong>。回滚的正确语义是「新版本从未进入可用列表」，<br>
+而不是「上了再撤」——后者会有一段用户请求打到坏实例的时间窗。</p>
+<hr>
+<h2 id="_6">六、实战实验手册</h2>
+<h3 id="1-act-pipeline">实验 1：用 act 在本机跑通完整 pipeline</h3>
+<p><strong>目的</strong>：验证一个含 lint / 测试矩阵 / 打包的 pipeline 能真的从 YAML 跑出绿色结果，<br>
+并搞清 GitHub Actions 的调度与 step 语义。</p>
+<p><strong>环境</strong>：<br>
+- act 0.2.89（<code>nektos/act</code>）<br>
+- Docker 29.1.3，overlayfs 存储驱动<br>
+- runner 镜像 <code>catthehacker/ubuntu:act-latest</code>（约 2GB）<br>
+- 容器内 Python 3.12.15 / 3.11.17</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1) 安装 act</span>
+curl<span class="w"> </span>-sL<span class="w"> </span>https://github.com/nektos/act/releases/download/v0.2.89/act_Linux_x86_64.tar.gz<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="p">|</span><span class="w"> </span>tar<span class="w"> </span>xz<span class="w"> </span>act<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>sudo<span class="w"> </span>mv<span class="w"> </span>act<span class="w"> </span>/usr/local/bin/
+
+<span class="c1"># 2) 告诉 act 用哪个镜像当 ubuntu-latest</span>
+<span class="c1">#    （不配的话 act 会弹交互式菜单选择镜像大小，非交互环境下会直接 EOF 退出）</span>
+mkdir<span class="w"> </span>-p<span class="w"> </span>/root/.config/act
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;-P medium=catthehacker/ubuntu:act-latest&quot;</span><span class="w"> </span>&gt;<span class="w"> </span>/root/.config/act/actrc
+
+<span class="c1"># 3) 拉 runner 镜像</span>
+docker<span class="w"> </span>pull<span class="w"> </span>catthehacker/ubuntu:act-latest
+</code></pre></div>
+<p><strong>执行</strong>（在 <code>/tmp/gha-demo</code>，一个最小 Python 项目）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">act<span class="w"> </span>-P<span class="w"> </span>ubuntu-latest<span class="o">=</span>catthehacker/ubuntu:act-latest<span class="w"> </span>push
+</code></pre></div>
+<p><strong>预期结果</strong>：4 个 job（<code>lint</code> / <code>test-1</code> / <code>test-2</code> / <code>package</code>）全部 <code>Job succeeded</code>。</p>
+<p><strong>实际结果</strong>（经过 6 次失败修正后，最终成功的一次；完整日志见下）：</p>
+<pre class="plain"><code>[CI Pipeline/lint]   🏁  Job succeeded
+[CI Pipeline/test-1] 🏁  Job succeeded
+[CI Pipeline/test-2] 🏁  Job succeeded
+[CI Pipeline/package] 🏁  Job succeeded
+exit=0
+</code></pre>
+<p>最终 pipeline 的关键输出：</p>
+<pre class="plain"><code>[CI Pipeline/lint]   | All checks passed!
+[CI Pipeline/test-1] | ...                            [100%]
+[CI Pipeline/test-1] | Name               Stmts   Miss  Cover
+[CI Pipeline/test-1] | src/__init__.py        0      0   100%
+[CI Pipeline/test-1] | src/calc.py            6      0   100%
+[CI Pipeline/test-1] | src/test_calc.py       9      0   100%
+[CI Pipeline/test-1] | TOTAL                 15      0   100%
+[CI Pipeline/test-1] | 3 passed in 0.03s
+[CI Pipeline/test-2] | 3 passed in 0.04s
+[CI Pipeline/package] | Successfully built gha_demo-0.1.0-py3-none-any.whl
+[CI Pipeline/package] | -rw-r--r-- 1 root root 1774 Oct  4 22:09 gha_demo-0.1.0-py3-none-any.whl
+[CI Pipeline/package] | Processing ./dist/gha_demo-0.1.0-py3-none-any.whl
+[CI Pipeline/package] | wheel ok: 5
+</code></pre>
+<p><strong>实测的各 step 耗时</strong>（第二次运行，工具链已缓存）：</p>
+<table>
+<thead>
+<tr>
+<th>step</th>
+<th>耗时</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>actions/checkout@v4</code></td>
+<td>26–32 ms</td>
+</tr>
+<tr>
+<td><code>actions/setup-python@v5</code></td>
+<td>632–685 ms（已缓存 toolcache；首次 14.4 s）</td>
+</tr>
+<tr>
+<td><code>pip install -r requirements.txt</code></td>
+<td>835–886 ms</td>
+</tr>
+<tr>
+<td><code>pytest -q --cov=src</code></td>
+<td>443–480 ms</td>
+</tr>
+<tr>
+<td><code>python -m build --wheel</code></td>
+<td>4.15 s</td>
+</tr>
+<tr>
+<td>wheel 验证（装 wheel + import）</td>
+<td>644 ms</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：验证了——(a) <code>needs</code> 串起的三级 DAG 真实生效，<br>
+执行顺序 <code>lint → test(×2 并行) → package</code> 与拓扑序一致；<br>
+(b) matrix 确实展开成 2 个独立 job，各自装到不同 Python 版本；<br>
+(c) <code>actions/setup-python</code> 首次约 14.4 s，命中 toolcache 后降到 0.6 s 左右。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># act 的 job 容器在结束时自动删除，残留的是 act 的 action 缓存</span>
+docker<span class="w"> </span>ps<span class="w"> </span>-a<span class="w"> </span>--filter<span class="w"> </span><span class="s2">&quot;name=act-&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">&#39;{print $1}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>xargs<span class="w"> </span>-r<span class="w"> </span>docker<span class="w"> </span>rm<span class="w"> </span>-f
+rm<span class="w"> </span>-rf<span class="w"> </span>/root/.cache/act
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/gha-demo
+<span class="c1"># 镜像按需保留（复用可省下 2GB 下载）；确定不用了再删：</span>
+<span class="c1"># docker rmi catthehacker/ubuntu:act-latest</span>
+</code></pre></div>
+<hr>
+<h3 id="2-pip">实验 2：实测 pip 缓存的真实收益</h3>
+<p><strong>目的</strong>：量化「加 <code>actions/cache</code> 缓存 <code>~/.cache/pip</code>」到底能省多少秒。</p>
+<p><strong>环境</strong>：同实验 1；依赖集 <code>bench-requirements.txt</code>（8 个包，含 sqlalchemy / pydantic 等带传递依赖的），<br>
+冷/热各跑一次，取单次值。</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 用同一个 workflow（workflows/cache-bench.yml）跑两次安装，</span>
+<span class="c1"># 关键是两次必须装进【互相隔离的 venv】，否则第二次全是 &quot;already satisfied&quot;，</span>
+<span class="c1"># 下载量为 0，测出来的数毫无意义（见下方翻车实验二）</span>
+</code></pre></div>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">act<span class="w"> </span>-P<span class="w"> </span>ubuntu-latest<span class="o">=</span>catthehacker/ubuntu:act-latest<span class="w"> </span>workflow_dispatch
+</code></pre></div>
+<p><strong>预期结果</strong>：热安装应明显快于冷安装。</p>
+<p><strong>实际结果</strong>（2026-10-05，本机）：</p>
+<pre class="plain"><code>[Cache Bench/bench]   | COLD_secs=11.66
+[Cache Bench/bench]   | WARM_secs=7.45
+[Cache Bench/bench]   | cache_size=14M
+</code></pre>
+<p><strong>结论</strong>：冷装 11.66 s → 热装 7.45 s，<strong>省 4.21 s，约 36%</strong>；缓存体积 14 MB。</p>
+<p><strong>这个数字怎么用</strong>：省下的绝对时间不大（4 秒），所以<strong>不要为了 4 秒去引入 cache 的复杂度</strong>。<br>
+但如果依赖里有大型二进制轮子（torch、opencv、playwright），下载量能从几十 MB 涨到 GB，<br>
+同一个比例换算下来就是几十秒——那才值得加 cache。<br>
+判断标准是<strong>依赖体积</strong>，不是「包的数量」。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/gha-demo<span class="w">   </span><span class="c1"># 缓存目录在容器内，随容器销毁，无需额外清理</span>
+</code></pre></div>
+<hr>
+<h3 id="3cd">实验 3：CD 流水线的门禁与回滚</h3>
+<p><strong>目的</strong>：验证「门禁失败能阻断部署」和「新版本不健康能自动回滚」这两件事真的成立。</p>
+<p><strong>环境</strong>：纯 Python 标准库，无外部依赖，Linux 本机。</p>
+<p><strong>准备</strong>：无。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/cd-pipeline
+python3<span class="w"> </span>code/03-cd-deploy-pipeline.py<span class="w"> </span>run
+python3<span class="w"> </span>code/03-cd-deploy-pipeline.py<span class="w"> </span>run
+python3<span class="w"> </span>code/03-cd-deploy-pipeline.py<span class="w"> </span>run<span class="w"> </span>--flaky
+cat<span class="w"> </span>/tmp/cd-pipeline/releases.json
+</code></pre></div>
+<p><strong>预期结果</strong>：前两次成功且版本递增；第三次失败并回滚，<code>releases.json</code> 不含 <code>v1.0.3</code>。</p>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>第一次:
+  ✅ deploy ✅ registry.local/app:v1.0.1 上线
+  结果: 发布成功  总耗时 0.068s
+
+第二次:
+  ✅ deploy ✅ registry.local/app:v1.0.2 上线
+  结果: 发布成功  总耗时 0.065s
+
+第三次（--flaky）:
+  ❌ deploy ❌ registry.local/app:v1.0.3 健康检查失败，已回滚到 registry.local/app:v1.0.2
+  结果: 发布失败并回滚  总耗时 0.039s
+
+releases.json:
+[{&quot;version&quot;: &quot;v1.0.1&quot;, &quot;image&quot;: &quot;registry.local/app:v1.0.1&quot;, &quot;healthy&quot;: true},
+ {&quot;version&quot;: &quot;v1.0.2&quot;, &quot;image&quot;: &quot;registry.local/app:v1.0.2&quot;, &quot;healthy&quot;: true}]
+</code></pre>
+<p><strong>结论</strong>：<code>v1.0.3</code> 确实没有进入记录 —— 回滚发生在「新版本被记为可用」<strong>之前</strong>，<br>
+不是先上线再撤。这正是自动化部署该有的语义。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/cd-pipeline
+</code></pre></div>
+<hr>
+<h2 id="_7">七、翻车实验（最有价值的部分）</h2>
+<h3 id="upload-artifact-act">翻车一：<code>upload-artifact</code> 在 act 里永远跑不通</h3>
+<p><strong>现象</strong>：</p>
+<pre class="plain"><code>[CI Pipeline/package]   ❌  Failure - Main actions/upload-artifact@v4 [592.195905ms]
+[CI Pipeline/package]   ❗  ::error::Unable to get the ACTIONS_RUNTIME_TOKEN env variable
+[CI Pipeline/package]   exitcode &#x27;1&#x27;: failure
+</code></pre>
+<p><strong>假设</strong>：版本不对 / 路径写错 / <code>path</code> 没匹配到文件。</p>
+<p><strong>验证手段</strong>：翻日志发现前面三行都是绿的——<br>
+<code>With the provided path, there will be 1 file uploaded</code> / <code>Artifact name is valid!</code> /<br>
+<code>Root directory input is valid!</code>——说明配置和文件都没问题，是凭证环节挂了。</p>
+<p><strong>真实根因</strong>：<code>upload-artifact</code> 需要 <code>ACTIONS_RUNTIME_TOKEN</code> 向 GitHub 的存储后端换取上传凭证。<br>
+本机跑 act 时没有任何东西注入这个变量，因为<strong>那个后端根本不存在</strong>。<br>
+同理 <code>actions/cache@v4</code> 在 act 里也跑不通（我为此卡了 6 分钟，见下）。</p>
+<p><strong>修复</strong>：不是「修好它」，而是承认边界——加一道本地可跳过的条件：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Verify wheel</span><span class="w">          </span><span class="c1"># 真正想验证的东西：wheel 能装能用</span>
+<span class="w">  </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<span class="w">    </span><span class="no">pip install dist/*.whl</span>
+<span class="w">    </span><span class="no">python -c &quot;from src.calc import add; print(&#39;wheel ok:&#39;, add(2, 3))&quot;</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">actions/upload-artifact@v4</span>
+<span class="w">  </span><span class="nt">if</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">env.ACTIONS_RUNTIME_TOKEN != &#39;&#39;</span><span class="w">   </span><span class="c1"># act 本地跳过，真实 runner 上才上传</span>
+<span class="w">  </span><span class="nt">with</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="nv">dist</span><span class="p p-Indicator">,</span><span class="nt"> path</span><span class="p">:</span><span class="w"> </span><span class="nv">dist/</span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p><strong>复测结果</strong>：4 个 job 全绿，且 <code>wheel ok: 5</code> 证明产物确实可用。</p>
+<p><strong>教训</strong>：<code>act</code> 跑绿 ≠ GitHub 上跑绿，反之亦然。act 的价值是秒级反馈，<br>
+它的边界（artifact / cache / 真实 GitHub API 上下文）必须心里有数，<br>
+否则会把「本地环境缺后端」误当成「我的配置写错了」，白查半小时。</p>
+<hr>
+<h3 id="_8">翻车二：缓存基准第一次测出了假数据</h3>
+<p><strong>现象</strong>：第一次跑冷/热对照，得到</p>
+<pre class="plain"><code>COLD_secs=0.81
+WARM_secs=0.47
+cache_size=80K
+</code></pre>
+<p>比第二次的 11.66 / 7.45 快了十几倍，明显不对。</p>
+<p><strong>假设</strong>：容器里已有缓存（runner 镜像预置了 toolcache）。</p>
+<p><strong>验证手段</strong>：看 <code>cache_size=80K</code>。14 MB 的依赖只存下 80 KB，说明<strong>几乎没有下载发生</strong>。<br>
+再看 pip 输出，满屏 <code>Requirement already satisfied: ... in site-packages</code>。</p>
+<p><strong>真实根因</strong>：两个 job 写在<strong>同一个 workflow</strong>里，act 复用了同一个 site-packages 目录。<br>
+第一次跑完，依赖已经装进 site-packages；第二次执行 <code>pip install</code> 只是确认了版本一致，<br>
+下载量为 0。所谓「热装 0.47 秒」测的是 pip 的版本检查速度，<strong>跟缓存一点关系都没有</strong>。</p>
+<p><strong>修复</strong>：让两次安装互相隔离——各建一个空 venv，只共享 <code>PIP_CACHE_DIR</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;python3&quot;</span><span class="p">,</span> <span class="s2">&quot;-m&quot;</span><span class="p">,</span> <span class="s2">&quot;venv&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp/venv1&quot;</span><span class="p">])</span>
+<span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s2">&quot;python3&quot;</span><span class="p">,</span> <span class="s2">&quot;-m&quot;</span><span class="p">,</span> <span class="s2">&quot;venv&quot;</span><span class="p">,</span> <span class="s2">&quot;/tmp/venv2&quot;</span><span class="p">])</span>
+<span class="c1"># venv1 用空缓存装（冷），venv2 用 venv1 填好的缓存装（热）</span>
+</code></pre></div>
+<p><strong>复测结果</strong>：</p>
+<pre class="plain"><code>COLD_secs=11.66
+WARM_secs=7.45
+cache_size=14M
+</code></pre>
+<p>14 MB 的缓存体积对上了 8 个包（含传递依赖）的合理量级。</p>
+<p><strong>教训</strong>：<strong>基准测试的第一要务是确认被测变量真的变了</strong>。<br>
+跑出「好得离谱」的数时，先怀疑自己的实验设计，而不是庆祝。<br>
+这个坑在 Day 173 测 Compose 启动时延时也踩过一次（当时靠对照 workflow 组的<br>
+差异才确认测的是依赖等待而非镜像拉取）。</p>
+<hr>
+<h3 id="bc">翻车三（附带）：<code>bc</code> 在容器里不存在</h3>
+<p>用 <code>date +%s.%N</code> 前后取差来计时是最直白的写法，但 act 的 runner 镜像里<strong>没有 <code>bc</code></strong>：</p>
+<pre class="plain"><code>[Cache Bench/bench]   | cold_secs=
+[Cache Bench/bench]   | warm_secs=
+</code></pre>
+<p><code>echo "$E - $S" | bc</code> 失败了，<code>$( )</code> 得到空串，但 <strong>step 依然返回 0</strong>——<br>
+所以流水线是绿的，数字却是空的。这比直接报错更危险。</p>
+<p><strong>修复</strong>：既然容器里就有 Python，用 <code>time.perf_counter()</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span> <span class="nn">time</span>
+<span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+<span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="o">...</span><span class="p">],</span> <span class="n">check</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">_secs=</span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">t0</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>教训</strong>：在 CI 里，任何"计算类"步骤都要<strong>校验输出非空</strong>。静默的空结果比崩溃难查得多。</p>
+<hr>
+<h2 id="_9">八、思考题</h2>
+<ol>
+<li>
+<p><strong><code>actions/checkout</code> 为什么是几乎所有 workflow 的第一步？</strong><br>
+   提示：runner 是全新虚拟机，工作区是空的。没有 checkout，<code>run: pytest</code> 会报<br>
+   "no tests ran" 或 "file not found"——而且<strong>不报错</strong>，只是没有测试通过，<br>
+   是很隐蔽的一种失败（pytest 找不到文件时退出码非 0，但如果配置成<br>
+<code>pytest || true</code> 就会假绿）。</p>
+</li>
+<li>
+<p><strong><code>needs</code> 和 <code>dependencies</code> 式的「顺序」有什么本质区别？</strong><br>
+   提示：没有 <code>needs</code> 的 job 一定并行。想强制顺序，除了 <code>needs</code> 还能用什么？<br>
+   （答案之一是 <code>concurrency</code> + 同一个 group，或者把两个 job 合并成一个。<br>
+   合并的代价是并行度丧失，权衡点在哪？）</p>
+</li>
+<li>
+<p><strong>矩阵测试时 <code>fail-fast: false</code> 是必须的，还是可选的？</strong><br>
+   想清楚：默认的 <code>true</code> 在什么情况下更省资源？什么情况下更危险？<br>
+   一个 20 个组合的矩阵，某几个老版本装不上依赖，你希望看到什么信息？</p>
+</li>
+<li>
+<p><strong>如果 <code>test</code> job 失败了，<code>package</code> job 在日志里显示什么？</strong><br>
+   是「没有日志」还是「skipped」？这两种在排查时体验有何不同？<br>
+   （答案是 <code>skipped</code>，会明确标注。这引出一个设计问题：门禁失败时，<br>
+   你希望 <code>package</code> 静默跳过，还是跳过并发一条「为什么不发布」的说明？）</p>
+</li>
+<li>
+<p><strong>Day 174 的实验全部在 Linux 容器上跑。如果要做 macOS/Windows 矩阵，</strong><br>
+<strong>哪些部分能复用、哪些必须重来？</strong> 提示：想想路径分隔符、shell 差异、<br>
+   以及 <code>runs-on: macos-latest</code> 的计费（macOS runner 的倍率是 Linux 的多少倍？）。</p>
+</li>
+<li>
+<p><strong>CD 里的「健康检查」应该由谁做？</strong><br>
+   提示：容器自报的 <code>/health</code> 说"我活着"和你从外部探测 <code>/health</code> 说"用户能访问到"<br>
+   是两件事。蓝绿部署时，新旧实例同时在线，你探测哪个？<br>
+   什么时候才把旧实例下线？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_10">九、参考产出</h2>
+<p>本次真机验证最终通过的 workflow 已随本课保存：</p>
+<ul>
+<li><code>workflows/ci.yml</code> —— 三级 pipeline（lint → test 矩阵 → package），含 5 条踩坑注释</li>
+<li><code>workflows/cache-bench.yml</code> —— 冷/热缓存对照</li>
+<li><code>bench-requirements.txt</code> —— 基准用的依赖集</li>
+</ul>
+<p><code>workflows/ci.yml</code> 末尾附了本课所有踩坑的注释，可以直接拷进自己的项目。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-173/index.html">← Day 173 Day 173 · Docker Compose</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>
