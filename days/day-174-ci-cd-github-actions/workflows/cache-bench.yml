@@ -1,0 +1,33 @@
+name: Cache Bench
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: cold vs warm in isolated venv
+        run: |
+          export PIP_CACHE_DIR=/tmp/pipcache
+          python3 -m venv /tmp/venv1
+          python3 -m venv /tmp/venv2
+          python3 - <<'PY'
+          import os, subprocess, time
+          cache = "/tmp/pipcache"
+          def run(venv, cache):
+              env = dict(os.environ, PIP_CACHE_DIR=cache)
+              subprocess.run([f"{venv}/bin/pip", "install", "-q", "-r",
+                              "bench-requirements.txt"], check=True, env=env)
+          for label, venv, c in (("COLD", "/tmp/venv1", cache),
+                                 ("WARM", "/tmp/venv2", cache)):
+              t0 = time.perf_counter()
+              run(venv, c)
+              print(f"{label}_secs={time.perf_counter() - t0:.2f}", flush=True)
+          size = subprocess.run(["du", "-sh", cache], capture_output=True, text=True)
+          print("cache_size=" + size.stdout.split()[0])
+          PY
