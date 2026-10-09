@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-176%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1236-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-177%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1242-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 176 / 200** · 进度的 88.0% · 当前：Phase 11 自动化运维与 DevOps（进行中，Day 176 ELK 日志系统已完成）
+> **Day 177 / 200** · 进度的 88.5% · 当前：Phase 11 自动化运维与 DevOps（进行中，Day 177 Prometheus + Grafana 已完成）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **176 天** |
-| 📝 总提交次数 | **1,236 commits** |
-| 📄 总代码行数 | **178,411 行** |
-| 📂 总文件数 | **1,219 个** |
-| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 176/185） |
+| 📅 已完成天数 | **177 天** |
+| 📝 总提交次数 | **1,242 commits** |
+| 📄 总代码行数 | **179,054 行** |
+| 📂 总文件数 | **1,229 个** |
+| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 177/185） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -204,6 +204,17 @@
   - 实战部署：Docker Compose 一键部署、日志采集、查询分析
   - 可视化：Kibana 仪表板、Discover、Visualize
   - 真机验证：ELK 集群部署成功、日志采集查询正常
+
+
+- 🚀 已完成：Day 177 — Prometheus + Grafana
+
+  - 拉（pull）模型：`up` 为什么是白送的、为什么改采集范围不用动应用
+  - 四种指标类型：counter / gauge / histogram / summary 的语义与选型
+  - PromQL 窗口陷阱实测：同一表达式先给 `0`、补流量后给 `0.393`
+  - 采集与看板：`scrape_configs` + Grafana provisioning（看板即 JSON，可进版本库）
+  - 真机验证：Prometheus v3.0.1 拉起 `app` / `prometheus` 两个 target 均为 `up`；
+    Grafana 镜像本机多个源都拉不下来，**容器启动与看板渲染未实测**（正文已写明）
+  - 翻车复盘 ×3：指标重复注册 `DuplicateTimeseries`、`Summary` 的 `quantiles=` 已被移除、`rate()` 返回 0
 </details>
 
 <details>
@@ -311,6 +322,17 @@
   - 实战部署：Docker Compose 一键部署、日志采集、查询分析
   - 可视化：Kibana 仪表板、Discover、Visualize
   - 真机验证：ELK 集群部署成功、日志采集查询正常
+
+
+- 🚀 已完成：Day 177 — Prometheus + Grafana
+
+  - 拉（pull）模型：`up` 为什么是白送的、为什么改采集范围不用动应用
+  - 四种指标类型：counter / gauge / histogram / summary 的语义与选型
+  - PromQL 窗口陷阱实测：同一表达式先给 `0`、补流量后给 `0.393`
+  - 采集与看板：`scrape_configs` + Grafana provisioning（看板即 JSON，可进版本库）
+  - 真机验证：Prometheus v3.0.1 拉起 `app` / `prometheus` 两个 target 均为 `up`；
+    Grafana 镜像本机多个源都拉不下来，**容器启动与看板渲染未实测**（正文已写明）
+  - 翻车复盘 ×3：指标重复注册 `DuplicateTimeseries`、`Summary` 的 `quantiles=` 已被移除、`rate()` 返回 0
 </details>
 
 ---
