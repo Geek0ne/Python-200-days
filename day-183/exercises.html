@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 183 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 183 正文</a>
+  <h1>Day 183 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-183">Day 183 · 练习与检查表</h1>
+<blockquote>
+<p>目标：亲手跑通「构建镜像 → 起容器 → 一键部署 → 坏版本自动回滚 → CI 在本机跑绿」这条链，
+并亲眼看见<strong>七个「绿着但没干活」的坑</strong>。
+<strong>前置</strong>：Docker 可用；本机有 <code>python3</code>。全部命令都在 <code>days/day-183-运维平台-容器化部署/</code> 下执行。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、动手题（必做）</h2>
+<h3 id="1-5">练习 1 — 先把靶子跑起来（5 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-183-运维平台-容器化部署
+python3<span class="w"> </span>code/01-ops-service.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/01-ops-service.py<span class="w"> </span>--once
+</code></pre></div>
+<ul>
+<li>[ ] 自检 8 项全过？注意 <code>backend=</code> 后面是什么（宿主上应该是 <code>stdlib-fallback</code>）</li>
+<li>[ ] <code>--once</code> 输出里 <code>by_role</code> 和 <code>alerts</code> 分别是什么？为什么 <code>db-01</code> 进了 alerts？</li>
+<li>[ ] 手动起服务（<code>--port 18080</code>）+ <code>curl -s localhost:18080/readyz</code>，再用
+      <code>--fail-mode readiness</code> 起一次，同一个端点返回什么？状态码是多少？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+`by_role` = `{"web": 2, "db": 1, "cache": 1}`（按 role 计数）；
+`alerts` 是 mem > 70 的主机 → `db-01`（72.4）。
+`--fail-mode readiness` 时 `/readyz` 返回 **503** `{"status": "not-ready"}`，而 `/healthz` 仍是 200 ——
+**「进程活着」与「能接流量」是两件事**。
+
+</details>
+
+<h3 id="2-dockerfile10">练习 2 — 生成 Dockerfile，先别构建（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/02-multistage-image.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/02-multistage-image.py<span class="w"> </span>--out<span class="w"> </span>/tmp/day183/build<span class="w"> </span>--write-only
+cat<span class="w"> </span>/tmp/day183/build/Dockerfile.multi
+cat<span class="w"> </span>/tmp/day183/build/.dockerignore
+</code></pre></div>
+<ul>
+<li>[ ] <code>Dockerfile.multi</code> 里有两个 <code>FROM</code>，分别是哪两个阶段？哪个装了 gcc？</li>
+<li>[ ] <code>COPY --from=builder</code> 搬的是什么？为什么不是搬整个 <code>/build</code>？</li>
+<li>[ ] <code>.dockerignore</code> 里排掉了什么？如果漏掉 <code>.env</code>，后果是什么？</li>
+<li>[ ] 自检里有一条 <code>两者都不依赖 curl</code>，为什么 Dockerfile 的注释里会出现 curl 这个词？（提示：翻车复盘第 1 条）</li>
+</ul>
+<details><summary>参考答案</summary>
+
+`builder` 装了 gcc，`runtime` 没有。搬到 runtime 的只有 `/opt/venv`（依赖）与 `ops_service.py`；
+不搬整个 `/build` 是因为那里还有 requirements.txt、字节码等构建期残留。
+漏掉 `.env` → 密钥被打进镜像，而镜像会被推到仓库、被别的主机拉走。
+注释里出现 curl 是因为注释在解释「为什么探针用 python3 而不是 curl」，断言必须先剥注释再判断。
+
+</details>
+
+<h3 id="3-15-docker">练习 3 — 真构建，量出差异（15 分钟，需要 Docker）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/02-multistage-image.py<span class="w"> </span>--out<span class="w"> </span>/tmp/day183/build<span class="w"> </span>--build<span class="w"> </span>both
+docker<span class="w"> </span>images<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Repository}}:{{.Tag}}\t{{.Size}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>day183
+docker<span class="w"> </span>image<span class="w"> </span>inspect<span class="w"> </span>day183-ops:single<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Size}}&#39;</span><span class="p">;</span><span class="w"> </span>docker<span class="w"> </span>image<span class="w"> </span>inspect<span class="w"> </span>day183-ops:multi<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Size}}&#39;</span>
+</code></pre></div>
+<ul>
+<li>[ ] 两个变体的 <code>inspect .Size</code> 各是多少？差多少（MiB 和百分比）？</li>
+<li>[ ] <code>docker images</code> 的 SIZE 列和 <code>inspect .Size</code> 差多少倍？你会在 README 里写哪个，怎么标注？</li>
+<li>[ ] 多阶段的<strong>构建时间</strong>是更长还是更短？为什么值这个代价？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+本机实测：single 114,586,798 B（≈109.3 MiB）/ multi 47,352,410 B（≈45.2 MiB），省 64.1 MiB ≈ 58.7%。
+`docker images` 列在**本机 legacy builder + overlayfs** 下比 `inspect .Size` 大约 4 倍
+（434MB / 196MB）——**口径不同**，写文档要标清用哪个命令测的。
+多阶段构建更慢（48.73s vs 40.67s），换来的是每个部署节点少拉 64 MB。
+
+</details>
+
+<h3 id="4-10">练习 4 — 起容器，看「健康」的两个时钟（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>d183-ops<span class="w"> </span>-p<span class="w"> </span><span class="m">18080</span>:8080<span class="w"> </span>-e<span class="w"> </span><span class="nv">APP_VERSION</span><span class="o">=</span>try1<span class="w"> </span>day183-ops:multi
+<span class="k">for</span><span class="w"> </span>i<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="k">$(</span>seq<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">30</span><span class="k">)</span><span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s1">&#39;%{http_code} &#39;</span><span class="w"> </span>localhost:18080/healthz<span class="p">;</span><span class="w"> </span>sleep<span class="w"> </span><span class="m">0</span>.5<span class="p">;</span><span class="w"> </span><span class="k">done</span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span>
+docker<span class="w"> </span>inspect<span class="w"> </span>d183-ops<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.State.Health.Status}}&#39;</span>
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>d183-ops<span class="w"> </span>sh<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;command -v gcc || echo 没有 gcc&#39;</span>
+</code></pre></div>
+<ul>
+<li>[ ] <code>curl</code> 第几次拿到 200？<code>.State.Health.Status</code> 什么时候变成 <code>healthy</code>？</li>
+<li>[ ] 两个时间差在哪？分别由 Dockerfile 里的哪几个参数决定？</li>
+<li>[ ] 容器里有没有 gcc？这验证了多阶段的哪一点？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+本机实测：第 2 次探测（0.549s）就 200；HEALTHCHECK 到第 10 次（≈5s）才 `healthy`。
+差值由 `--interval` / `--start-period` / `--retries` 决定：`start-period` 内的失败不计入 retries，
+所以第一次判定点落在 `interval`。
+没有 gcc → 构建期工具链确实没进运行镜像。
+
+</details>
+
+<h3 id="5-20">练习 5 — 一键部署 + 回滚演练（20 分钟，重点）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/05-rollback-drill.py<span class="w"> </span>--dry-run
+python3<span class="w"> </span>code/05-rollback-drill.py
+cat<span class="w"> </span>/tmp/day183/state/releases.json
+</code></pre></div>
+<ul>
+<li>[ ] 第二幕的 rc 是多少？它和「失败」是一回事吗？</li>
+<li>[ ] 「判死耗时」和「回滚耗时」分别是多少？哪个是策略参数、哪个是性能？</li>
+<li>[ ] <code>releases.json</code> 里 <code>v2.0.0</code> 出现在 <code>current</code> 了吗？为什么这个区别很重要？</li>
+<li>[ ] 第三幕为什么必须存在？（提示：谁在自证）</li>
+</ul>
+<details><summary>参考答案</summary>
+
+rc=2（**失败但已回滚**），与 rc=3（失败且无救）和 rc=0 都不同。
+判死 ≈30.4s（= 健康检查超时，是**策略**）；回滚 ≈0.5s（是**性能**）。
+v2.0.0 只在 `history` 且 `result: "failed"`，从不进 `current` ——
+意味着它**从未接过流量**（先判后切 vs 先切后撤）。
+第三幕用独立 curl 复核，因为**部署脚本的自述不能当证据**。
+
+</details>
+
+<h3 id="6-ci-20">练习 6 — 让 CI 在本机跑绿（20 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/03-ci-pipeline.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/03-ci-pipeline.py<span class="w"> </span>--force-fallback<span class="w"> </span>--self-test<span class="w">    </span><span class="c1"># 降级后端也要过（会显示 3 项跳过）</span>
+python3<span class="w"> </span>code/03-ci-pipeline.py<span class="w"> </span>--out<span class="w"> </span>/tmp/day183/ci<span class="w"> </span>--dry-run<span class="w">  </span><span class="c1"># 只看会跑什么</span>
+<span class="c1"># 真跑：见 README 实验 5（需要 --act-mode / --path-prefix / --bind 三件套）</span>
+</code></pre></div>
+<ul>
+<li>[ ] <code>--dry-run</code> 打出的拓扑序是什么？4 个 job 是并行还是串行？</li>
+<li>[ ] 为什么 <code>build</code> / <code>deploy</code> 在 PR 上不跑？由哪一行控制？</li>
+<li>[ ] <code>--force-fallback</code> 下哪几条断言被跳过？为什么是「跳过」而不是「失败」？</li>
+<li>[ ] 如果你把 test job 里的 venv 那步删掉、改回 <code>pip install -r</code>，会发生什么？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+顺序 `lint → test → build → deploy`（串行链，4 层）。
+由 `if: github.event_name == 'push' && github.ref == 'refs/heads/main'` 控制。
+跳过的 3 条需要读深层结构（permissions.packages、matrix.fail-fast、steps 数量），
+正则后端解不出来——**标跳过是诚实，标通过是骗人**。
+删掉 venv 会撞 PEP 668：`error: externally-managed-environment`，test job 两个腿全红（实测过）。
+
+</details>
+
+<hr>
+<h2 id="_2">二、判断题（对/错 + 一句话理由）</h2>
+<ul>
+<li>[ ] <code>docker run -d</code> 返回 0 就说明服务已经可以接流量了。</li>
+<li>[ ] <code>EXPOSE 8080</code> 会把端口发布到宿主机。</li>
+<li>[ ] 多阶段构建之所以省空间，是因为 Docker 把中间层压缩合并了。</li>
+<li>[ ] <code>HEALTHCHECK</code> 可以用 <code>curl</code> 写，因为 <code>python:3.12-slim</code> 里自带 curl。</li>
+<li>[ ] 健康检查失败时，应该先把坏容器停掉再去收集日志。</li>
+<li>[ ] 镜像标签用 <code>latest</code> 就够了，反正部署脚本会记下版本号。</li>
+<li>[ ] CI 里某一步返回 0，就说明这一步真的干了它该干的事。</li>
+</ul>
+<details><summary>答案</summary>
+
+1. ✗ 只是容器被创建了，进程可能还没绑定端口（本机实测 0.77s vs 0.549s 才可用）。
+2. ✗ `EXPOSE` 只是声明；发布要靠 `-p`。
+3. ✗ 没有合并——是**没搬**那些层过来。
+4. ✗ slim 里没有 curl（本课实测踩过这个想当然），探针要用 `python3 -c`。
+5. ✗ **先收日志**（`docker logs --tail`）再 `rm -f`，否则现场没了。
+6. ✗ `latest` 是移动的靶子，回滚时无法精确指向；必须用 SHA。
+7. ✗ 反例见翻车复盘第 10 条：`compileall` 对不存在的路径也返回 0。
+
+</details>
+
+<hr>
+<h2 id="_3">三、排障演练</h2>
+<p>给三个现象，说出<strong>先查什么</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>你的第一步</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docker run</code> 成功，但 <code>curl localhost:18080</code> 一直连不上</td>
+<td></td>
+</tr>
+<tr>
+<td>镜像构建成功，但容器一启动就退出（<code>Exited (1)</code>）</td>
+<td></td>
+</tr>
+<tr>
+<td>部署脚本报「已回滚」，但用户说还是坏的</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<details><summary>参考答案</summary>
+
+1. 先 `docker ps -a` 看状态（是不是 `Exited`），再 `docker logs`；
+   若 Up 但连不上 → 看 `-p` 是否写对、服务是否绑 `0.0.0.0`（绑 `127.0.0.1` 时宿主访问不到）。
+2. `docker logs <name>` 看退出原因；最常见是 `CMD` 里的路径/入口写错——
+   **构建期就该跑一次 `--once` 冒烟**（本课 Dockerfile 的 builder 阶段就是这么做的）。
+3. 不信自述，独立复核：`curl /version` 看到底是哪个版本在服务；
+   再看 `releases.json` 的 `current`；最后确认回滚目标的健康检查**真的**通过过。
+
+</details>
+
+<hr>
+<h2 id="_4">四、验收清单（做完打勾）</h2>
+<p><strong>离线部分（不需要 Docker）</strong></p>
+<ul>
+<li>[ ] <code>01 --self-test</code>：8 项断言全过</li>
+<li>[ ] <code>02 --self-test</code>：12 项断言全过</li>
+<li>[ ] <code>03 --self-test</code>：14 项全过（PyYAML 后端）</li>
+<li>[ ] <code>03 --force-fallback --self-test</code>：11 通过 / 3 跳过 / 0 失败</li>
+<li>[ ] <code>04 --self-test</code>：12 项断言全过（FakeRuntime）</li>
+<li>[ ] <code>04 --dry-run</code>、<code>05 --dry-run</code>、<code>03 --dry-run</code> 都能打印计划且不碰 Docker</li>
+</ul>
+<p><strong>需要 Docker</strong></p>
+<ul>
+<li>[ ] <code>02 --build both</code> 真构建出两个镜像，能说出体积差与耗时差</li>
+<li>[ ] 容器起来后 <code>/healthz</code>、<code>/readyz</code>、<code>/version</code>、<code>/api/summary</code> 都能返回 200</li>
+<li>[ ] <code>docker exec … command -v gcc</code> 返回空（多阶段生效）</li>
+<li>[ ] <code>05-rollback-drill.py</code> 演练通过：坏版本 rc=2、独立复核回到 v1.0.0</li>
+<li>[ ] 说出「判死耗时」为什么等于健康检查超时</li>
+</ul>
+<p><strong>CI（可选，需要 act）</strong></p>
+<ul>
+<li>[ ] <code>03 --out … --act-mode --path-prefix …</code> 生成成功</li>
+<li>[ ] <code>act push --bind … -j lint -j test</code> 三个 job 全绿</li>
+<li>[ ] 能解释<strong>为什么必须加 <code>--bind</code></strong>（不加时容器里是空目录）</li>
+</ul>
+<p><strong>收尾</strong></p>
+<ul>
+<li>[ ] 执行了 README「清理」章节的全部命令</li>
+<li>[ ] <code>docker ps -a | grep d183</code> 无输出；<code>ss -ltnp | grep 18080</code> 无输出</li>
+<li>[ ] <code>/tmp/day183</code> 与 <code>/tmp/day183-probe</code> 已删除</li>
+</ul>
+<hr>
+<h2 id="_5">五、延伸（选做）</h2>
+<ol>
+<li>给 <code>04-deploy-rollback.py</code> 加一个 <code>--canary</code>：先起新容器在 18081 上跑健康检查，
+   通过了再切换端口映射——体会「先判后切」再往前一步（蓝绿部署的雏形）。</li>
+<li>把 <code>.dockerignore</code> 故意删掉 <code>.env</code>，往上下文里放一个假的 <code>.env</code>，
+   构建后用 <code>docker run … sh -c 'ls -la /app'</code> 证明它进了镜像。想清楚为什么这很危险。</li>
+<li>给 CI 加第三个 job <code>security</code>：用 <code>pip-audit</code> 检查依赖漏洞，并让 <code>build</code> 依赖它。
+   注意它是「必须绿」还是「允许红」（不同团队答案不同，但<strong>必须有人明确决定</strong>）。</li>
+<li>把 <code>latest</code> 从 workflow 的 tags 里删掉，只留 SHA 标签。然后写清楚：
+   人怎么找到「当前线上是哪个 SHA」？（提示：靠 <code>releases.json</code> 这种账本，而不是靠标签）</li>
+<li>给 <code>05-rollback-drill.py</code> 加第五幕：模拟<strong>回滚目标也不健康</strong>（把两个版本都注入故障），
+   看脚本是不是老实报 rc=3。<strong>不要让它假装成功</strong>。</li>
+</ol></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

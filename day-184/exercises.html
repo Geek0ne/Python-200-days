@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 184 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 184 正文</a>
+  <h1>Day 184 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-184">Day 184 练习与验收清单 —— 日志收集 + 可视化</h1>
+<blockquote>
+<p>所有命令都可以<strong>直接复制执行</strong>。每个脚本都带 <code>--self-test</code>，
+所以在没有外部服务的机器上也能先自证代码是对的（离线、零第三方依赖）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">✅ 今日完成清单</h2>
+<ul>
+<li>[ ] 读完 <code>concepts.md</code>，能说清「为什么要结构化日志」而不是「日志加个格式」</li>
+<li>[ ] 跑通 01：人读格式 vs JSON Lines 的对比输出</li>
+<li>[ ] 跑通 02：起一个真实 HTTP 接收端，用 <code>curl</code> 打一条日志进去，再查 <code>/stats</code></li>
+<li>[ ] 跑通 03：真机做一次 <code>mv app.log app.log.1</code> 轮转，确认采集器<strong>没有丢</strong></li>
+<li>[ ] 跑通 03 <code>--naive</code>：用同一个轮转动作，确认 naive 模式<strong>真的丢</strong></li>
+<li>[ ] 跑通 04：复现 <code>database is locked</code>，再用 WAL + <code>busy_timeout</code> 修掉</li>
+<li>[ ] 跑通 05：拿到本机自己的四组写入吞吐数字</li>
+<li>[ ] 跑通 06：从库里生成 ASCII 看板 + 单文件 HTML 报告</li>
+<li>[ ] 实验收尾：确认没有残留进程、没有残留端口、临时目录已删</li>
+</ul>
+<h3 id="_2">一键离线自证（不需要起任何服务）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">0</span>*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;== </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;❌ </span><span class="nv">$f</span><span class="s2"> 失败&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">done</span>
+</code></pre></div>
+<h3 id="_3">真机端到端（本课实验手册的精简版）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+mkdir<span class="w"> </span>-p<span class="w"> </span>/tmp/day184
+
+<span class="c1"># 1) 起接收端</span>
+python3<span class="w"> </span><span class="m">02</span>-log-ingest-server.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8099</span><span class="w"> </span>--db<span class="w"> </span>/tmp/day184/logs.db<span class="w"> </span><span class="p">&amp;</span>
+
+<span class="c1"># 2) 起采集器（抗轮转）</span>
+python3<span class="w"> </span><span class="m">03</span>-log-collector.py<span class="w"> </span>--file<span class="w"> </span>/tmp/day184/app.log<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--url<span class="w"> </span>http://127.0.0.1:8099/ingest<span class="w"> </span>--seconds<span class="w"> </span><span class="m">20</span><span class="w"> </span><span class="p">&amp;</span>
+
+<span class="c1"># 3) 造日志</span>
+python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">import json</span>
+<span class="s2">p=&#39;/tmp/day184/app.log&#39;</span>
+<span class="s2">for i in range(5):</span>
+<span class="s2">    open(p,&#39;a&#39;).write(json.dumps({&#39;level&#39;:&#39;INFO&#39;,&#39;msg&#39;:&#39;before-%d&#39;%i})+chr(10))</span>
+<span class="s2">&quot;</span>
+
+<span class="c1"># 4) 轮转（这一步才是重点）</span>
+mv<span class="w"> </span>/tmp/day184/app.log<span class="w"> </span>/tmp/day184/app.log.1
+python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;</span>
+<span class="s2">import json</span>
+<span class="s2">p=&#39;/tmp/day184/app.log&#39;</span>
+<span class="s2">for i in range(5):</span>
+<span class="s2">    open(p,&#39;a&#39;).write(json.dumps({&#39;level&#39;:&#39;INFO&#39;,&#39;msg&#39;:&#39;after-%d&#39;%i})+chr(10))</span>
+<span class="s2">&quot;</span>
+
+sleep<span class="w"> </span><span class="m">3</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="s1">&#39;127.0.0.1:8099/stats&#39;</span><span class="w">        </span><span class="c1"># 期望 INFO=10（轮转前后都不丢）</span>
+
+<span class="c1"># 5) 看板</span>
+python3<span class="w"> </span><span class="m">06</span>-log-report.py<span class="w"> </span>--db<span class="w"> </span>/tmp/day184/logs.db<span class="w"> </span>--html<span class="w"> </span>/tmp/day184/report.html
+
+<span class="c1"># 6) 清理</span>
+pkill<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;[l]og-ingest-server&#39;</span><span class="w"> </span><span class="p">;</span><span class="w"> </span>pkill<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;[l]og-collector&#39;</span>
+ss<span class="w"> </span>-ltn<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="m">8099</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;端口已释放&quot;</span>
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day184
+</code></pre></div>
+<hr>
+<h2 id="_4">📝 基础练习</h2>
+<h3 id="1">练习 1：给结构化日志补一个字段，并让查询能用上</h3>
+<p>给 <code>01-structured-logging.py</code> 的 <code>JsonLineFormatter</code> 增加一个固定字段 <code>host</code>
+（值取 <code>socket.gethostname()</code>），并说明：为什么用「格式化器统一加」比「每条日志手写」更好？
+（提示：漏写一个字段的日志，会在按 host 聚合时变成"未知主机"，静默地把数据算错。）</p>
+<h3 id="2">练习 2：让接收端能按时间范围过滤</h3>
+<p><code>02-log-ingest-server.py</code> 目前只支持 <code>/stats?window=N</code>。加一个
+<code>/logs?level=ERROR&amp;limit=20</code>：返回最近 N 条指定级别的原始行。
+要求：参数缺失时给合理的默认值；<code>limit</code> 上限 100（防止有人 <code>limit=99999999</code> 把内存打爆）。</p>
+<h3 id="3">练习 3：把「半行」写进自证脚本</h3>
+<p>在 <code>03-log-collector.py --self-test</code> 里增加一个用例：<strong>一条 JSON 被拆成三段</strong>
+（<code>a⏎b⏎c</code> 这种，中间还带空行），断言最终刚好产出 1 条完整行、且缓冲区内没有残留。
+为什么中间的空行必须不能产生"空日志"？</p>
+<h3 id="4">练习 4：给写入失败加一条告警</h3>
+<p>现在 <code>Sender</code> 投递失败只是 <code>print</code> 到 stderr。改成：连续失败 3 次时向
+<code>/tmp/day184/alerts.log</code> 追加一行 JSON 告警（含 <code>lines_lost_if_any</code>）。
+思考：这条告警本身如果也写不进去，怎么办？（提示：日志系统的最后一道防线是 stderr + 退出码，
+所以不要吞掉异常直接 <code>pass</code>。）</p>
+<hr>
+<h2 id="_5">🚀 进阶挑战</h2>
+<h3 id="1_1">挑战 1：让"重复入库"变成不可能（幂等）</h3>
+<p>本日实验中真实出现过：接收端响应慢 → 采集器重试 → <strong>同一批日志入库两次</strong>。
+请设计并实现去重：在 <code>logs</code> 表加 <code>dedup_key</code>（如 <code>sha1(service+ts+msg+request_id)</code>）
+并建 UNIQUE 索引，插入用 <code>INSERT OR IGNORE</code>。
+验收标准：造 100 条日志，用 <code>curl</code> 把<strong>同一批</strong> POST 三次，<code>SELECT COUNT(*)</code> 必须仍是 100。</p>
+<h3 id="2_1">挑战 2：写一个"日志丢失检测"的对照实验</h3>
+<p>用 <code>wc -l</code> 数出应用写进文件的<strong>总行数</strong>，再取 <code>SELECT COUNT(*) FROM logs</code>，
+两者差值必须为 0。然后故意把采集器换成 <code>--naive</code> 并做一次轮转，
+证明差值 &gt; 0，再把结论写成一句话贴在 README 里。
+（这是把"日志丢了"从"感觉"变成"数字"的练习。）</p>
+<h3 id="3_1">挑战 3：把看板变成真正的"告警"</h3>
+<p>给 <code>06-log-report.py</code> 加 <code>--alert-error-rate 0.05</code>：当窗口内 ERROR 占比
+超过阈值时，<code>exit 2</code>（而不是 0/1，方便区分"跑失败"和"触发了告警"）。
+再用 cron/systemd timer 每分钟跑一次，把退出码接到你的告警通道。</p>
+<h3 id="4_1">挑战 4：压测接收端，找出它的天花板</h3>
+<p>用 <code>05-bench-insert.py</code> 的思路给接收端做压测：并发 4 个客户端，
+每批 200 条，跑 30 秒，分别测 <code>batch_size=1/50/1000</code> 三种配置下的
+<strong>每秒入库条数</strong>与 <code>database is locked</code> 出现次数。
+要求给出表格 + 你机器上的真实数字，并解释"为什么 batch 越大不一定越好"。</p>
+<h3 id="5">挑战 5：换存储，验证理解</h3>
+<p>把 <code>LogStore</code> 换成"追加 JSONL 文件 + 按天切分"的实现（不用 SQLite），
+保持 <code>query_summary</code> / <code>query_timeseries</code> 的接口不变（读时再扫文件）。
+对比：查询延迟、写入吞吐、磁盘占用、崩溃安全。什么规模下你会换回 SQLite，什么规模下该上 Loki？</p>
+<hr>
+<h2 id="_6">🧪 验收标准（能不能算"今天过关"）</h2>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>达标线</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>离线自证</td>
+<td>6 个脚本 <code>--self-test</code> 全绿</td>
+</tr>
+<tr>
+<td>端到端</td>
+<td>轮转前后共 10 条日志，库里 <code>COUNT(*)=10</code></td>
+</tr>
+<tr>
+<td>反面验证</td>
+<td>naive 采集器在同一动作下丢行数 &gt; 0</td>
+</tr>
+<tr>
+<td>并发</td>
+<td><code>04</code> 能复现 <code>database is locked</code>，且 <code>good</code> 模式成功</td>
+</tr>
+<tr>
+<td>实测数字</td>
+<td>至少报出 2 个本机实测吞吐/等待数字（不是引用的）</td>
+</tr>
+<tr>
+<td>卫生</td>
+<td>无残留进程、端口释放、<code>/tmp/day184</code> 已删</td>
+</tr>
+</tbody>
+</table></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

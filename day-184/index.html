@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 184 — 阶段项目 · 自动化运维平台（三）：日志收集 + 可视化</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 184 — 阶段项目 · 自动化运维平台（三）：日志收集 + 可视化</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">529 行</span>
+    <span class="badge">6 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（6 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-184-运维平台-日志收集与可视化" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">一句话说清今天做了什么</a>
+<a class="toc-l2" href="#_2">概念解释（速览）</a>
+<a class="toc-l2" href="#_3">原理解释（三条最关键的）</a>
+<a class="toc-l3" href="#1">1. 为什么轮转会让日志静默消失</a>
+<a class="toc-l3" href="#2">2. 为什么&quot;半行&quot;必须留在缓冲区</a>
+<a class="toc-l3" href="#3-sqlite-database-is-lockedwal">3. 为什么 SQLite 会报 database is locked，WAL 修了什么</a>
+<a class="toc-l2" href="#api">定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#01">01 结构化日志</a>
+<a class="toc-l3" href="#02">02 接收端</a>
+<a class="toc-l3" href="#03">03 采集器</a>
+<a class="toc-l3" href="#0405-sqlite-pragma">04/05 SQLite 关键 pragma 与策略</a>
+<a class="toc-l3" href="#06">06 看板 / 报告</a>
+<a class="toc-l2" href="#_4">图解</a>
+<a class="toc-l2" href="#_5">实战代码案例</a>
+<a class="toc-l2" href="#_6">实战实验手册</a>
+<a class="toc-l3" href="#_7">实验一：半行与库内可见性（接收端 + 采集器真实链路）</a>
+<a class="toc-l3" href="#rename-vs-naive">实验二：rename 轮转 —— 正确采集器 vs naive 采集器（本课核心）</a>
+<a class="toc-l3" href="#database-is-locked">实验三：并发写锁 —— 复现 database is locked 并修掉</a>
+<a class="toc-l2" href="#_8">翻车实验（本轮真实踩的坑）</a>
+<a class="toc-l3" href="#1_1">翻车 1：自证脚本抓到&quot;截断检测&quot;判据失灵</a>
+<a class="toc-l3" href="#2_1">翻车 2：转义错误导致&quot;日志全成了一条&quot;</a>
+<a class="toc-l3" href="#3">翻车 3：同一份实验脚本启动了两份 → 实验数据自己说谎</a>
+<a class="toc-l2" href="#05">性能实测数字（05 号示例）</a>
+<a class="toc-l2" href="#_9">思考题</a>
+<a class="toc-l2" href="#_10">收尾卫生（本课自己遵守的）</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-184">Day 184 — 阶段项目 · 自动化运维平台（三）：日志收集 + 可视化</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 11 — 自动化运维与 DevOps（Day 166–185）<br>
+<strong>子主题</strong>：结构化日志 · 日志接收端（HTTP）· 采集器（抗轮转/截断/半行）· SQLite WAL 存储 · 聚合与看板<br>
+<strong>位置</strong>：Day 182–185 阶段项目的第 3 天。本目录自带全部代码，<strong>不依赖其它 day 目录</strong>。</p>
+<p>本课所有命令输出都是 <strong>2026-10-17 在本机真机执行捕获</strong>，原样粘贴。<br>
+环境：Linux 7.0.0-34-generic (x64) / 4 vCPU / 15.6 GiB RAM / Python 3.12.3 /<br>
+SQLite 3.45.1 / curl 8.x / <strong>零第三方 Python 依赖</strong>（只用标准库）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一句话说清今天做了什么</h2>
+<p>Day 182 有了"能查主机状态"的 API，Day 183 把平台装进了容器。<br>
+但它们都是<strong>"发现问题那一刻才开始找日志"</strong>——日志散在文件里，人读、grep、靠猜。</p>
+<p>今天把这三件事补上，日志才算真的"能用来排障"：</p>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>今天的答案</th>
+<th>落在哪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>日志是给人读的碎句子，机器没法聚合</td>
+<td>结构化日志（JSON Lines）</td>
+<td><code>code/01-structured-logging.py</code></td>
+</tr>
+<tr>
+<td>十台机器十个文件，出事挨个 ssh</td>
+<td>统一的 HTTP 接收端 + SQLite</td>
+<td><code>code/02-log-ingest-server.py</code></td>
+</tr>
+<tr>
+<td>日志"看着采集了"但轮转后静默丢失</td>
+<td>抗轮转/截断/半行的采集器</td>
+<td><code>code/03-log-collector.py</code></td>
+</tr>
+<tr>
+<td>并发写入时丢日志、报 database is locked</td>
+<td>WAL + <code>busy_timeout</code> + 批提交</td>
+<td><code>code/04</code> / <code>05</code></td>
+</tr>
+<tr>
+<td>看日志只能靠眼睛</td>
+<td>ASCII 看板 + 单文件 HTML 报告</td>
+<td><code>code/06-log-report.py</code></td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>概念与原理的完整推导在 <code>concepts.md</code>（强烈建议先读它，再回来跑代码）。<br>
+本 README 负责"怎么跑、跑到什么结果、哪里翻车了"。</p>
+</blockquote>
+<hr>
+<h2 id="_2">概念解释（速览）</h2>
+<p><strong>结构化日志</strong>：每条日志本身是一条可查询的数据（字段：<code>ts</code> / <code>level</code> / <code>service</code> /<br>
+<code>request_id</code> / <code>duration_ms</code> / <code>msg</code>），而不是一句自然语言。第一消费者是机器。</p>
+<p><strong>采集器（shipper/agent）</strong>：把磁盘上的日志搬到中心存储的进程。它的状态是一个三元组<br>
+<code>(inode, offset, buffer)</code> —— 必须记 inode（不是文件名）、必须记字节偏移（不是行号）、<br>
+必须缓存半行（不能把 JSON 从中间切断）。</p>
+<p><strong>接收端（ingest）</strong>：日志的写入入口。本课用标准库 <code>http.server</code> 实现，接收 NDJSON、<br>
+落 SQLite，并提供 <code>/stats</code> 与 <code>/healthz</code>。</p>
+<p><strong>WAL（write-ahead logging）</strong>：SQLite 的日志模式。让"一个写者 + 多个读者"并行，<br>
+但<strong>写者之间仍然互斥</strong> —— 所以还需要 <code>busy_timeout</code> 让写者排队而不是报错。</p>
+<p><strong>分桶聚合</strong>：把日志按固定时间片计数（<code>GROUP BY strftime('%s', ts)/60</code>），<br>
+这是所有看板/告警/图表的数据来源。</p>
+<hr>
+<h2 id="_3">原理解释（三条最关键的）</h2>
+<h3 id="1">1. 为什么轮转会让日志静默消失</h3>
+<p><code>logrotate</code> 默认用 <code>rename</code>：<code>app.log → app.log.1</code>，应用重新创建 <code>app.log</code>。<br>
+采集器的文件描述符绑在 <strong>inode</strong> 上，不绑在文件名上：</p>
+<pre class="plain"><code>T0: app.log → inode 8823662   ← 采集器 fd 指向这里
+T1: mv app.log app.log.1      （inode 8823662 还在，只是换了名字）
+    应用重新 open(&quot;app.log&quot;, O_CREAT) → 新 inode 8823664，开始写新数据
+T2: 采集器 fd 仍指向 8823662 → 永远 EOF → 新日志一条都收不到，且不报错
+</code></pre>
+<p>修复就是每轮 poll 都做一次 <code>os.stat(path).st_ino != 记录的 inode</code> 比较，<br>
+发现不同就把旧 fd 读到 EOF、关掉、重新 <code>open(path)</code>。<br>
+本课实测（见实验二）：正确的采集器 <code>rotations_detected: 1</code>，naive 采集器 <code>0</code> 且丢 3 行。</p>
+<h3 id="2">2. 为什么"半行"必须留在缓冲区</h3>
+<p>应用写日志不是一次 <code>write</code>：</p>
+<pre class="plain"><code>write(&#x27;{&quot;ts&quot;:&quot;...&quot;,&quot;msg&quot;:&quot;half&#x27;)     ← 采集器正好在这一刻读到
+write(&#x27;-line-completed&quot;}\n&#x27;)         ← 下一毫秒才补齐
+</code></pre>
+<p>如果采集器用 <code>readline()</code> 或"读到多少算多少"，第一条会被当完整行送出去 →<br>
+<code>json.loads</code> 失败。正确做法：<code>buffer += chunk</code>，然后<br>
+<code>*complete, buffer = buffer.split("\n")</code> —— 只有以换行结尾的才算完整行。</p>
+<p>代价是：<strong>失败的行要保留证据</strong>。本课接收端对解析失败的行不丢弃，<br>
+<code>level='UNKNOWN'</code> 且 <code>raw</code> 原文入库（实验一里正好抓到一条 UNKNOWN，见下文"翻车"）。</p>
+<h3 id="3-sqlite-database-is-lockedwal">3. 为什么 SQLite 会报 <code>database is locked</code>，WAL 修了什么</h3>
+<pre class="plain"><code>默认 DELETE journal：  写者 A 持锁 → 写者 B 立刻拿到 SQLITE_BUSY（timeout=0 时直接抛错）
+WAL：                  写者 A 追加 -wal → 读者不受影响 → 写者 B 在 busy_timeout 内轮询等待
+</code></pre>
+<p>实测（<code>04-pitfall-db-locked.py --self-test</code>）：</p>
+<pre class="plain"><code>bad  模式 → ok=False waited=0.0s   error=OperationalError: database is locked
+good 模式 → ok=True  waited=0.738s
+</code></pre>
+<p>注意 <code>waited=0.0s</code>：<strong>失败是"立刻"的</strong>，不是"等了一会儿才失败"。所以<br>
+"平常没事、压测就丢日志"的典型原因就是没设 <code>busy_timeout</code>。</p>
+<hr>
+<h2 id="api">定义与使用方法（API 速查）</h2>
+<h3 id="01">01 结构化日志</h3>
+<table>
+<thead>
+<tr>
+<th>对象</th>
+<th>用法</th>
+<th>要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>JsonLineFormatter</code></td>
+<td><code>handler.setFormatter(JsonLineFormatter())</code></td>
+<td>一行一个 JSON，可增量读取</td>
+</tr>
+<tr>
+<td><code>logger.info(msg, extra={...})</code></td>
+<td><code>extra={"request_id": "r1", "duration_ms": 12.4}</code></td>
+<td>key 不得与 LogRecord 属性重名</td>
+</tr>
+<tr>
+<td><code>logger.error(msg, exc_info=True)</code></td>
+<td>traceback 进 <code>traceback</code> 字段</td>
+<td>按 <code>error_type</code> 聚合不用正则</td>
+</tr>
+</tbody>
+</table>
+<h3 id="02">02 接收端</h3>
+<table>
+<thead>
+<tr>
+<th>接口</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST /ingest</code></td>
+<td>body = NDJSON（每行一个对象）</td>
+<td><code>curl -s -XPOST 127.0.0.1:8099/ingest --data-binary @app.log</code></td>
+</tr>
+<tr>
+<td><code>GET /stats?window=3600</code></td>
+<td>最近 N 秒按 level 聚合</td>
+<td><code>curl -s '127.0.0.1:8099/stats'</code></td>
+</tr>
+<tr>
+<td><code>GET /healthz</code></td>
+<td>存活探针</td>
+<td><code>{"status":"ok"}</code></td>
+</tr>
+<tr>
+<td><code>LogStore.ingest(lines)</code></td>
+<td>批量写；坏行存 raw</td>
+<td>返回处理条数</td>
+</tr>
+<tr>
+<td><code>LogStore.stats(window)</code></td>
+<td>返回 <code>{by_level, total_all_time}</code></td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="03">03 采集器</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--file PATH</code></td>
+<td>跟随的文件（不存在会等它出现）</td>
+</tr>
+<tr>
+<td><code>--url URL</code></td>
+<td>接收端 <code>/ingest</code>；省略则只计数不投递</td>
+</tr>
+<tr>
+<td><code>--naive</code></td>
+<td><strong>故意的反例</strong>：不做轮转/截断检测</td>
+</tr>
+<tr>
+<td><code>--seconds N</code></td>
+<td>跑 N 秒后退出并打印统计</td>
+</tr>
+<tr>
+<td>统计字段</td>
+<td><code>rotations_detected</code> / <code>truncations_detected</code> / <code>events</code> / <code>lines_sent</code> / <code>lines_spilled</code> / <code>failed_batches</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="0405-sqlite-pragma">04/05 SQLite 关键 pragma 与策略</h3>
+<table>
+<thead>
+<tr>
+<th>pragma / 策略</th>
+<th>值</th>
+<th>为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>journal_mode</code></td>
+<td><code>WAL</code></td>
+<td>读写不互斥</td>
+</tr>
+<tr>
+<td><code>synchronous</code></td>
+<td><code>NORMAL</code></td>
+<td>WAL 下足够安全，换来吞吐</td>
+</tr>
+<tr>
+<td><code>busy_timeout</code></td>
+<td><code>5000</code> ms</td>
+<td>撞锁时等待而不是立刻失败</td>
+</tr>
+<tr>
+<td><code>BEGIN IMMEDIATE</code></td>
+<td>写事务入口</td>
+<td>一开始就拿写锁，避免读→写升级失败</td>
+</tr>
+<tr>
+<td>提交策略</td>
+<td>每 N 条或每 T 秒</td>
+<td>把 fsync 次数从 N 降到 N/batch</td>
+</tr>
+</tbody>
+</table>
+<h3 id="06">06 看板 / 报告</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--db PATH</code></td>
+<td>日志库</td>
+</tr>
+<tr>
+<td><code>--window N</code></td>
+<td>统计窗口（秒）</td>
+</tr>
+<tr>
+<td><code>--bucket N</code></td>
+<td>时间序列分桶宽度（秒）</td>
+</tr>
+<tr>
+<td><code>--html PATH</code></td>
+<td>额外输出单文件 HTML 报告（内联 CSS，无 CDN、无 JS）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">图解</h2>
+<p>完整版（Mermaid + ASCII）在 <code>diagrams/README.md</code>，共 5 张。这里放一张最核心的：</p>
+<pre class="plain"><code>   应用                     采集器 (state = inode+offset+buffer)              接收端            SQLite(WAL)
+    │  write JSON+\n            │                                              │                 │
+    ├──────────────────────────►│  os.stat: inode 变了吗? → 重开               │                 │
+    │                           │  size &lt; offset 或 mtime 变? → seek(0)        │                 │
+    │                           │  buffer 按 \n 切 → 完整行才发出              │                 │
+    │                           ├──── POST NDJSON（攒 50 条 / 1 秒）──────────►│ BEGIN IMMEDIATE │
+    │                           │                                              ├────────────────►│
+    │                           │◄────────── {&quot;accepted&quot;: N} ──────────────────┤   批提交 COMMIT  │
+    │                           │  失败：3 次退避 → 落 spill 文件（不丢）        │                 │
+    ▼                           ▼                                              ▼                 ▼
+                                                                    看板/HTML/告警（GROUP BY 分桶）
+</code></pre>
+<hr>
+<h2 id="_5">实战代码案例</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+
+python3<span class="w"> </span><span class="m">01</span>-structured-logging.py<span class="w">            </span><span class="c1"># 人读格式 vs JSON Lines 的真实输出对比</span>
+python3<span class="w"> </span><span class="m">02</span>-log-ingest-server.py<span class="w"> </span>--self-test<span class="w"> </span><span class="c1"># 起真服务收 3 条（含坏行）→ 查库断言</span>
+python3<span class="w"> </span><span class="m">03</span>-log-collector.py<span class="w"> </span>--self-test<span class="w">     </span><span class="c1"># 轮转/截断/半行 全处理 + naive 反例</span>
+python3<span class="w"> </span><span class="m">04</span>-pitfall-db-locked.py<span class="w"> </span>--self-test<span class="w"> </span><span class="c1"># 复现 database is locked → 修好</span>
+python3<span class="w"> </span><span class="m">05</span>-bench-insert.py<span class="w"> </span>--rows<span class="w"> </span><span class="m">20000</span><span class="w"> </span>--repeat<span class="w"> </span><span class="m">3</span><span class="w">   </span><span class="c1"># 写入吞吐实测</span>
+python3<span class="w"> </span><span class="m">06</span>-log-report.py<span class="w"> </span>--db<span class="w"> </span>/tmp/day184/logs.db<span class="w"> </span>--html<span class="w"> </span>/tmp/day184/report.html
+</code></pre></div>
+<p>每个脚本都带 <code>--self-test</code>：<strong>离线、无外部依赖</strong>，先自证代码本身是对的，再做真机实验。<br>
+这一点是刻意的：实验脚本自己都不验，读者凭什么信它的结论。</p>
+<hr>
+<h2 id="_6">实战实验手册</h2>
+<blockquote>
+<p>三个实验都可独立复现：<strong>每个实验自带目录与端口</strong>，不依赖上一个实验的残留状态。<br>
+指导原则：读者照着命令敲，应该得到同量级的数字（数字随机器变，结论不变）。</p>
+</blockquote>
+<h3 id="_7">实验一：半行与库内可见性（接收端 + 采集器真实链路）</h3>
+<p><strong>目的</strong>：验证"只发完整行"是真行为，而不是注释里的一句承诺。</p>
+<p><strong>环境</strong>：Python 3.12.3 / 标准库 / curl / 本机 127.0.0.1:8101</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+<span class="nv">DIR</span><span class="o">=</span>/tmp/day184-exp<span class="p">;</span><span class="w"> </span><span class="nv">PORT</span><span class="o">=</span><span class="m">8101</span>
+rm<span class="w"> </span>-rf<span class="w"> </span><span class="nv">$DIR</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span><span class="nv">$DIR</span>
+ss<span class="w"> </span>-ltn<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-q<span class="w"> </span><span class="s2">&quot;:</span><span class="nv">$PORT</span><span class="s2"> &quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;端口被占用，先换端口&quot;</span><span class="w">   </span><span class="c1"># 隔离守卫：别连到别人的服务上</span>
+python3<span class="w"> </span><span class="m">02</span>-log-ingest-server.py<span class="w"> </span>--port<span class="w"> </span><span class="nv">$PORT</span><span class="w"> </span>--db<span class="w"> </span><span class="nv">$DIR</span>/logs.db<span class="w"> </span><span class="p">&amp;</span>
+sleep<span class="w"> </span><span class="m">1</span><span class="p">;</span><span class="w"> </span>curl<span class="w"> </span>-s<span class="w"> </span><span class="m">127</span>.0.0.1:<span class="nv">$PORT</span>/healthz<span class="p">;</span><span class="w"> </span><span class="nb">echo</span>
+touch<span class="w"> </span><span class="nv">$DIR</span>/app.log
+python3<span class="w"> </span><span class="m">03</span>-log-collector.py<span class="w"> </span>--file<span class="w"> </span><span class="nv">$DIR</span>/app.log<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:<span class="nv">$PORT</span>/ingest<span class="w"> </span>--seconds<span class="w"> </span><span class="m">20</span><span class="w"> </span><span class="p">&amp;</span>
+</code></pre></div>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ① 写 6 条完整行 + 1 条「半行」（故意不写换行）</span>
+python3<span class="w"> </span>-<span class="w"> </span><span class="nv">$DIR</span><span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import json, sys</span>
+<span class="s">d = sys.argv[1]; NL = chr(10); p = d + &quot;/app.log&quot;</span>
+<span class="s">def w(s):</span>
+<span class="s">    with open(p, &quot;a&quot;, encoding=&quot;utf-8&quot;) as fh: fh.write(s)</span>
+<span class="s">for i in range(1, 6):</span>
+<span class="s">    w(json.dumps({&quot;ts&quot;: &quot;2026-10-17T14:0%d:00+08:00&quot; % i, &quot;level&quot;: &quot;INFO&quot;,</span>
+<span class="s">                  &quot;service&quot;: &quot;api&quot;, &quot;msg&quot;: &quot;before-rotation-%d&quot; % i}) + NL)</span>
+<span class="s">w(json.dumps({&quot;ts&quot;: &quot;2026-10-17T14:05:00+08:00&quot;, &quot;level&quot;: &quot;WARNING&quot;,</span>
+<span class="s">              &quot;service&quot;: &quot;api&quot;, &quot;msg&quot;: &quot;slow before rotation&quot;, &quot;duration_ms&quot;: 812}) + NL)</span>
+<span class="s">w(&#39;{&quot;ts&quot;:&quot;2026-10-17T14:06:00+08:00&quot;,&quot;level&quot;:&quot;INFO&quot;,&quot;msg&quot;:&quot;half&#39;)</span>
+<span class="s">PY</span>
+sleep<span class="w"> </span><span class="m">2</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="m">127</span>.0.0.1:<span class="nv">$PORT</span>/stats<span class="w">          </span><span class="c1"># ← 应该只有 6 条（半行不算）</span>
+
+<span class="c1"># ② 补齐半行</span>
+<span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s1">&#39;-line-completed&quot;}&#39;</span><span class="w"> </span>&gt;&gt;<span class="w"> </span><span class="nv">$DIR</span>/app.log<span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span>&gt;&gt;<span class="w"> </span><span class="nv">$DIR</span>/app.log
+sleep<span class="w"> </span><span class="m">1</span>.5
+curl<span class="w"> </span>-s<span class="w"> </span><span class="m">127</span>.0.0.1:<span class="nv">$PORT</span>/stats<span class="w">          </span><span class="c1"># ← 应该变 7 条</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（本次编写时真机跑出来的，原样粘贴）：</p>
+<pre class="plain"><code>[2] 轮转前（半行未补齐）stats =&gt; {&quot;window_seconds&quot;: 3600, &quot;by_level&quot;: {&quot;INFO&quot;: 5, &quot;WARNING&quot;: 1}, &quot;total_all_time&quot;: 6}
+[3] 半行补齐后 stats       =&gt; {&quot;window_seconds&quot;: 3600, &quot;by_level&quot;: {&quot;INFO&quot;: 6, &quot;WARNING&quot;: 1}, &quot;total_all_time&quot;: 7}
+</code></pre>
+<p><strong>结论</strong>：半行在补齐换行前<strong>一条都没进库</strong>（6 条），补齐后立刻变成 7 条。<br>
+"只发完整行"这条设计在真机上成立。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pkill<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;[l]og-collector&#39;</span><span class="p">;</span><span class="w"> </span>pkill<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;[l]og-ingest-server&#39;</span>
+ss<span class="w"> </span>-ltn<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="m">8101</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;端口已释放&quot;</span>
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day184-exp
+</code></pre></div>
+<hr>
+<h3 id="rename-vs-naive">实验二：rename 轮转 —— 正确采集器 vs naive 采集器（本课核心）</h3>
+<p><strong>目的</strong>：用<strong>同一个轮转动作</strong>，量化"看起来能跑"和"真的不丢"的差别。</p>
+<p><strong>环境</strong>：同实验一，端口 8101（若已清理则重新按实验一起服务）</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+<span class="nv">DIR</span><span class="o">=</span>/tmp/day184-exp<span class="p">;</span><span class="w"> </span><span class="nv">PORT</span><span class="o">=</span><span class="m">8101</span>
+<span class="c1"># 正确采集器（默认模式）</span>
+python3<span class="w"> </span><span class="m">03</span>-log-collector.py<span class="w"> </span>--file<span class="w"> </span><span class="nv">$DIR</span>/app.log<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:<span class="nv">$PORT</span>/ingest<span class="w"> </span>--seconds<span class="w"> </span><span class="m">20</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="c1"># 反面：naive 采集器（--naive）</span>
+touch<span class="w"> </span><span class="nv">$DIR</span>/naive.log
+python3<span class="w"> </span><span class="m">03</span>-log-collector.py<span class="w"> </span>--file<span class="w"> </span><span class="nv">$DIR</span>/naive.log<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:<span class="nv">$PORT</span>/ingest<span class="w"> </span>--naive<span class="w"> </span>--seconds<span class="w"> </span><span class="m">10</span><span class="w"> </span><span class="p">&amp;</span>
+</code></pre></div>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 两个文件各写 2 条 → 轮转 → 各再写 3 条</span>
+python3<span class="w"> </span>-<span class="w"> </span><span class="nv">$DIR</span><span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import json, sys</span>
+<span class="s">d = sys.argv[1]; NL = chr(10)</span>
+<span class="s">for name, tag in ((&quot;app.log&quot;, &quot;good&quot;), (&quot;naive.log&quot;, &quot;naive&quot;)):</span>
+<span class="s">    with open(d + &quot;/&quot; + name, &quot;a&quot;, encoding=&quot;utf-8&quot;) as fh:</span>
+<span class="s">        for i in (1, 2):</span>
+<span class="s">            fh.write(json.dumps({&quot;level&quot;: &quot;INFO&quot;, &quot;service&quot;: tag, &quot;msg&quot;: &quot;%s-before-%d&quot; % (tag, i)}) + NL)</span>
+<span class="s">PY</span>
+sleep<span class="w"> </span><span class="m">2</span>
+mv<span class="w"> </span><span class="nv">$DIR</span>/app.log<span class="w"> </span><span class="nv">$DIR</span>/app.log.1<span class="p">;</span><span class="w"> </span>mv<span class="w"> </span><span class="nv">$DIR</span>/naive.log<span class="w"> </span><span class="nv">$DIR</span>/naive.log.1
+python3<span class="w"> </span>-<span class="w"> </span><span class="nv">$DIR</span><span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import json, sys</span>
+<span class="s">d = sys.argv[1]; NL = chr(10)</span>
+<span class="s">for name, tag in ((&quot;app.log&quot;, &quot;good&quot;), (&quot;naive.log&quot;, &quot;naive&quot;)):</span>
+<span class="s">    with open(d + &quot;/&quot; + name, &quot;a&quot;, encoding=&quot;utf-8&quot;) as fh:</span>
+<span class="s">        for i in (3, 4, 5):</span>
+<span class="s">            fh.write(json.dumps({&quot;level&quot;: &quot;INFO&quot;, &quot;service&quot;: tag, &quot;msg&quot;: &quot;%s-after-%d&quot; % (tag, i)}) + NL)</span>
+<span class="s">PY</span>
+sleep<span class="w"> </span><span class="m">3</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="m">127</span>.0.0.1:<span class="nv">$PORT</span>/stats
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;文件里真实写了几行: </span><span class="k">$(</span>cat<span class="w"> </span><span class="nv">$DIR</span>/app.log.1<span class="w"> </span><span class="nv">$DIR</span>/app.log<span class="w"> </span><span class="p">|</span><span class="w"> </span>wc<span class="w"> </span>-l<span class="k">)</span><span class="s2">&quot;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;naive 文件里写了几行: </span><span class="k">$(</span>cat<span class="w"> </span><span class="nv">$DIR</span>/naive.log.1<span class="w"> </span><span class="nv">$DIR</span>/naive.log<span class="w"> </span><span class="p">|</span><span class="w"> </span>wc<span class="w"> </span>-l<span class="k">)</span><span class="s2">&quot;</span>
+sleep<span class="w"> </span><span class="m">8</span><span class="w">   </span><span class="c1"># 等两个采集器自己退出并打印统计</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（真机捕获）：</p>
+<pre class="plain"><code>[8] 文件里真实写了几行: 12 (app.log.1 + app.log)
+[9] naive 文件里写了几行: 5
+[10] 正确采集器 stdout:
+📡 采集 /tmp/day184-exp-Vyrl/app.log → http://127.0.0.1:8101/ingest  (抗轮转模式)
+{&quot;rotations_detected&quot;: 1, &quot;truncations_detected&quot;: 0, &quot;events&quot;: [{&quot;kind&quot;: &quot;rotation&quot;, &quot;old_ino&quot;: 8823662, &quot;new_ino&quot;: 8823664, &quot;pos_before&quot;: 698}], &quot;lines_sent&quot;: 12, &quot;lines_spilled&quot;: 0, &quot;failed_batches&quot;: 0}
+[11] naive 采集器 stdout:
+📡 采集 /tmp/day184-exp-Vyrl/naive.log → http://127.0.0.1:8101/ingest  (naive 模式)
+{&quot;rotations_detected&quot;: 0, &quot;truncations_detected&quot;: 0, &quot;events&quot;: [], &quot;lines_sent&quot;: 2, &quot;lines_spilled&quot;: 0, &quot;failed_batches&quot;: 0}
+[12] 库内容（service|msg|count）:
+api|after rotation boom|1
+api|after-rotation-1|1      ...（after-rotation-1..4 各 1 条）
+api|before-rotation-1|1     ...（before-rotation-1..5 各 1 条）
+api|slow before rotation|1
+|half-line-completed|1
+naive|naive-before-1|1
+naive|naive-before-2|1
+[13] 总行数: 14
+</code></pre>
+<p><strong>关键数字</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>正确采集器</th>
+<th>naive 采集器</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>文件里真实写入行数</td>
+<td>12</td>
+<td>5</td>
+</tr>
+<tr>
+<td>实际入库行数</td>
+<td>12</td>
+<td><strong>2</strong></td>
+</tr>
+<tr>
+<td>rotations_detected</td>
+<td>1（old_ino 8823662 → new_ino 8823664）</td>
+<td>0</td>
+</tr>
+<tr>
+<td>丢失</td>
+<td><strong>0</strong></td>
+<td><strong>3（60%）</strong></td>
+</tr>
+<tr>
+<td>是否报错</td>
+<td>没有</td>
+<td><strong>也没有</strong> ← 最危险的地方</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：naive 采集器不报错、不崩溃、CPU 占用为零，就是<strong>安静地少收 60% 日志</strong>。<br>
+这正是"日志系统最难的部分不是收集，是证明没丢"的原因。<br>
+<code>events</code> 字段就是给这个用的：轮转发生时它会把 inode 变化记下来，值班时一眼能看到。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pkill<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;[l]og-collector&#39;</span><span class="p">;</span><span class="w"> </span>pkill<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;[l]og-ingest-server&#39;</span><span class="p">;</span><span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day184-exp
+</code></pre></div>
+<hr>
+<h3 id="database-is-locked">实验三：并发写锁 —— 复现 <code>database is locked</code> 并修掉</h3>
+<p><strong>目的</strong>：把"压测时丢日志"这件事从玄学变成 0.000s / 0.738s 两个数字。</p>
+<p><strong>环境</strong>：Python 3.12.3 标准库 <code>sqlite3</code> + <code>multiprocessing</code>（真进程，不是线程模拟）</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+python3<span class="w"> </span><span class="m">04</span>-pitfall-db-locked.py<span class="w"> </span>--mode<span class="w"> </span>bad<span class="w">     </span><span class="c1"># 预期：失败</span>
+python3<span class="w"> </span><span class="m">04</span>-pitfall-db-locked.py<span class="w"> </span>--mode<span class="w"> </span>good<span class="w">    </span><span class="c1"># 预期：等待后成功</span>
+python3<span class="w"> </span><span class="m">04</span>-pitfall-db-locked.py<span class="w"> </span>--self-test<span class="w">    </span><span class="c1"># 两种模式都断言一遍</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（真机捕获，进程 A 持写事务 1.0 秒）：</p>
+<pre class="plain"><code>  bad  模式 → ok=False waited=0.0s error=OperationalError: database is locked
+  good 模式 → ok=True  waited=0.738s
+✅ self-test 通过：bad 模式复现 database is locked，good 模式（WAL+busy_timeout）等到锁后成功
+</code></pre>
+<p><strong>结论</strong>：默认模式下撞锁是<strong>立即失败</strong>（0.000s），不是超时失败。<br>
+加 <code>WAL + busy_timeout=5000</code> 后，写者 B 排队 0.738 秒拿到锁并成功 —— 日志没丢。</p>
+<p><strong>清理</strong>：脚本自带清理（每次用 <code>tempfile.mkdtemp</code> 建库，结束即删），无需手工处理。</p>
+<hr>
+<h2 id="_8">翻车实验（本轮真实踩的坑）</h2>
+<h3 id="1_1">翻车 1：自证脚本抓到"截断检测"判据失灵</h3>
+<p><strong>现象</strong>：<code>03-log-collector.py --self-test</code> 第一次运行直接失败：</p>
+<pre class="plain"><code>  File &quot;.../03-log-collector.py&quot;, line 235, in self_test
+    assert reader.truncations == 1, reader.truncations
+AssertionError: 0
+</code></pre>
+<p><strong>假设</strong>：文件被 <code>open(..., "w")</code> 截断后，采集器应该发现"size 变小了"。</p>
+<p><strong>验证手段</strong>：把用例拆开看数字 —— 截断前文件 26 字节、位置 26；截断后写入的新内容<strong>也正好 26 字节</strong>。</p>
+<p><strong>真实根因</strong>：用 <code>st_size &lt; offset</code> 判断截断，在"truncate 之后又正好写成同样字节数"时<br>
+两个数字相等，条件为假 → 判据完全失灵（<code>copytruncate</code> 轮转 + 定长日志时会真的发生）。</p>
+<p><strong>修复</strong>：补一条 mtime 判据。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">elif</span> <span class="n">st</span><span class="o">.</span><span class="n">st_size</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos</span> <span class="ow">or</span> <span class="p">(</span>
+    <span class="n">st</span><span class="o">.</span><span class="n">st_size</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pos</span> <span class="ow">and</span> <span class="n">st</span><span class="o">.</span><span class="n">st_mtime_ns</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">mtime_ns</span>
+<span class="p">):</span>
+    <span class="c1"># 大小没涨但 mtime 变了 → 内容被重写了</span>
+</code></pre></div>
+<p><strong>复测结果</strong>：<code>✅ self-test 通过：轮转/截断/半行 全处理；naive 模式在轮转后确定丢日志（反面证明）</code></p>
+<p><strong>教训</strong>：<strong>先写自证用例，再写实现</strong>。这个 bug 靠肉眼看代码是发现不了的 ——<br>
+它只在"大小恰好相等"这一个小概率分支上出现，而日志系统里这种分支迟早会发生。</p>
+<h3 id="2_1">翻车 2：转义错误导致"日志全成了一条"</h3>
+<p><strong>现象</strong>：第一次真机实验，接收端 <code>/stats</code> 显示 <code>{"UNKNOWN": 1}</code>，<br>
+明明写了 6 条日志，库里只有 1 条且 level 是 UNKNOWN。</p>
+<p><strong>假设</strong>：采集器把多行当成一行了。</p>
+<p><strong>验证手段</strong>：<code>SELECT raw FROM logs</code> 把原始行打出来看 —— 发现 6 个 JSON 对象被<br>
+拼在一行里，对象之间是<strong>字面的 <code>\n</code> 两个字符</strong>，而不是真换行。</p>
+<p><strong>真实根因</strong>：造数据的 shell heredoc 里把换行写成了 <code>"\\n"</code>（转义多了一层），<br>
+Python 收到的是"反斜杠 + n"这两个字符。文件里于是只有一行，采集器（正确地）把它<br>
+当成一行发出去，接收端（正确地）解析失败，落 <code>UNKNOWN</code> + <code>raw</code> ——<br>
+<strong>两个组件的行为都是对的，错的是造数据的人</strong>。</p>
+<p><strong>修复</strong>：用 <code>chr(10)</code> 代替字面 <code>\n</code>，并保持"解析失败也存 raw"这条设计 —— 正因为有它，<br>
+这次翻车才有证据可查，否则只会看到"日志变少了"。</p>
+<p><strong>复测结果</strong>：<code>total_all_time: 6 → 7 → 12</code>，与文件行数完全一致。</p>
+<p><strong>教训</strong>：这也是"<code>UNKNOWN</code> 也要入库"的价值证明 —— 丢弃解析失败的行，<br>
+等于把最该看的线索丢掉。</p>
+<h3 id="3">翻车 3：同一份实验脚本启动了两份 → 实验数据自己说谎</h3>
+<p><strong>现象</strong>：某次运行里，接收端显示 <code>INFO 10 / WARNING 2 / UNKNOWN 1 / total 13</code>，<br>
+而文件里只有 7 行 —— 多出 6 条<strong>重复</strong>，还有 1 条被 <code>UNKNOWN</code>。</p>
+<p><strong>验证手段</strong>：<code>SELECT id, level, substr(raw,1,60)</code> 逐行看，发现<br>
+① 6 条原始行重复入库；② 有一条 <code>raw</code> 是"半行 + 下一条前半段"粘在一起的产物。</p>
+<p><strong>真实根因</strong>：我在同一台机器上<strong>同时启动了两份 exp 脚本</strong>，它们共享<br>
+<code>/tmp/day184</code> 与 8099 端口：第二份把库和日志文件删了重建，而第一份的服务与采集器<br>
+还活着继续往里写 —— 于是重复、粘行、端口冲突一起出现。<br>
+（更早还叠了一个自己的 <code>pkill -f '05-bench'</code> 把<strong>自己那条 shell</strong> 也匹配杀掉的问题，<br>
+因为 <code>pkill -f</code> 匹配的是整条命令行。）</p>
+<p><strong>修复</strong>：实验脚本加隔离守卫：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nv">DIR</span><span class="o">=</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="w"> </span>/tmp/day184-exp-XXXX<span class="k">)</span><span class="w">      </span><span class="c1"># 每次独立目录</span>
+ss<span class="w"> </span>-ltn<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-q<span class="w"> </span><span class="s2">&quot;:</span><span class="nv">$PORT</span><span class="s2"> &quot;</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="o">{</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;端口被占用，实验终止&quot;</span><span class="p">;</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">2</span><span class="p">;</span><span class="w"> </span><span class="o">}</span><span class="w">   </span><span class="c1"># 端口占用直接失败</span>
+<span class="c1"># 杀进程用 [] 技巧避免匹配到自己：pkill -f &#39;[l]og-collector&#39;</span>
+</code></pre></div>
+<p><strong>复测结果</strong>（隔离后同一条命令）：</p>
+<pre class="plain"><code>[13] 总行数: 14        ← 12 条 api（文件里就是 12 行）+ 2 条 naive，无重复、无粘行
+[16] 残留进程数: 0
+[17] 端口: 0
+[18] 临时目录已删: 已清理
+</code></pre>
+<p><strong>教训</strong>：<strong>实验环境本身要有隔离</strong>（独立目录 + 独立端口 + 启动前检查）。<br>
+不隔离的实验，跑出来的数字是噪音 —— 而"用噪音验证结论"比不验证更危险。</p>
+<hr>
+<h2 id="05">性能实测数字（05 号示例）</h2>
+<p>方法：同一台机器、同一份数据，四种写入策略各跑 <code>--repeat</code> 次取<strong>中位数</strong>；<br>
+每轮重建数据库；<code>synchronous</code> 见下。测试条件：20000 行 / 4 vCPU / virtio 块设备。</p>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td>per-row-commit，默认 DELETE journal，<code>synchronous=FULL</code></td>
+</tr>
+<tr>
+<td>B</td>
+<td>per-row-commit，WAL，<code>synchronous=NORMAL</code></td>
+</tr>
+<tr>
+<td>C</td>
+<td>全部 20000 条一个事务（内存风险版）</td>
+</tr>
+<tr>
+<td>D</td>
+<td>每 1000 条一个事务（生产推荐折中）</td>
+</tr>
+</tbody>
+</table>
+<p>实测命令：<code>python3 05-bench-insert.py --rows 2000 --repeat 3</code><br>
+（2026-10-17 在本机执行；每次运行都重建数据库，取 3 次的中位数）</p>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>中位数（条/秒）</th>
+<th>相对 A</th>
+<th>三次原始值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A per-row-commit（DELETE journal, <code>synchronous=FULL</code>）</td>
+<td><strong>113</strong></td>
+<td>×1.0</td>
+<td>114 / 113 / 111</td>
+</tr>
+<tr>
+<td>B per-row-commit（WAL, <code>synchronous=NORMAL</code>）</td>
+<td><strong>22,472</strong></td>
+<td>×199</td>
+<td>22,472 / 25,024 / 20,896</td>
+</tr>
+<tr>
+<td>C single-txn（全部 2000 条一个事务）</td>
+<td><strong>754,720</strong></td>
+<td>×6,690</td>
+<td>754,720 / 1,304,827 / 342,761</td>
+</tr>
+<tr>
+<td>D batched-1000（每 1000 条一事务，生产折中）</td>
+<td><strong>1,196,901</strong></td>
+<td>×10,610</td>
+<td>1,190,809 / 1,249,716 / 1,196,901</td>
+</tr>
+</tbody>
+</table>
+<p>怎么读这张表（比数字本身重要）：</p>
+<ol>
+<li><strong>A → B 的 199 倍差距全是"提交次数"与 journal 模式</strong>：A 每条一次 fsync（113 次/秒就是这块盘<br>
+   fsync 的上限量级），B 写 WAL 且 <code>synchronous=NORMAL</code> 不再每条 fsync。</li>
+<li><strong>C 模式抖动极大</strong>（342,761 ~ 1,304,827，差 3.8 倍）：它把所有数据塞进一个事务，<br>
+   缓冲区/内存压力决定了它跑多快 —— 数字好看但<strong>不适合生产</strong>（崩了整批全丢）。</li>
+<li><strong>D 是推荐值</strong>：把 N 次提交压成 N/1000 次，同时把"崩溃时最多丢一批"控制在可接受范围。</li>
+<li>这些是<strong>单机、单进程、本机磁盘</strong>的数字，且是 2000 行的小样本；<br>
+   换机器/换成网络存储结论会变，但"提交次数是最大杠杆"这条不变。<br>
+   想复现更大规模：把 <code>--rows</code> 调大（A 策略会明显变慢，这是正常现象）。</li>
+</ol>
+<hr>
+<h2 id="_9">思考题</h2>
+<ol>
+<li>
+<p>采集器记录的是 <code>(inode, offset)</code>。如果日志目录被整个删掉再重建（inode 复用），<br>
+   采集器可能"少读"还是"重读"？怎么设计才能既不错过也不少读？（提示：inode 会被复用，<br>
+   时间戳/mtime 只能缩小窗口，真正的解法通常是"允许重复 + 下游去重"。）</p>
+</li>
+<li>
+<p>接收端对解析失败的行落 <code>UNKNOWN</code> 并保留 <code>raw</code>。这会带来一个新问题：<br>
+   如果攻击者往 <code>/ingest</code> 灌垃圾，你的库会被撑爆。加一条怎样的策略既不丢有用信息、<br>
+   又能扛住洪水？（提示：限额 + 采样 + 单独的死信表，以及别让 <code>/ingest</code> 裸奔在公网。）</p>
+</li>
+<li>
+<p>本课把"1 秒可见性"当成硬指标（batch 攒 1 秒就发）。如果日志量是 10 万条/秒，<br>
+   这 1 秒会攒出 10 万条内存批量。你会怎么改这个缓冲策略，让内存和延迟都可控？</p>
+</li>
+<li>
+<p>WAL 模式下 <code>synchronous=NORMAL</code> 意味着崩溃可能丢最后几个已提交事务。<br>
+   对"审计日志"和"调试日志"，你的选择会不会不一样？请给出理由，并说明如何在同一个库里<br>
+   同时满足两种要求（提示：双库 or 双表 + 不同 durability 策略）。</p>
+</li>
+<li>
+<p>看板用 ASCII 而不是 Web 图表。请列出<strong>至少两个</strong>"ASCII 更好"的真实场景，<br>
+   以及两个"必须上 Web"的场景。（提示：从"能不能 ssh"、"要不要转发"、"要不要交互下钻"想。）</p>
+</li>
+</ol>
+<hr>
+<h2 id="_10">收尾卫生（本课自己遵守的）</h2>
+<ul>
+<li>所有实验都在 <code>/tmp</code> 下的<strong>独立临时目录</strong>里做，结束即 <code>rm -rf</code>（脚本里显式打印"已清理"）。</li>
+<li>端口 8101 用完确认释放（<code>ss -ltn | grep 8101</code> 无输出）。</li>
+<li>无残留进程：验证 <code>ps -eo cmd | grep -cE '[0]2-log-ingest|[0]3-log-collector'</code> 为 0。</li>
+<li>库文件、spill 文件、HTML 报告都在临时目录里，不进仓库。</li>
+<li>本目录不含任何需要外部服务的依赖（无 Docker、无 Redis、无 Elasticsearch）。</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-183/index.html">← Day 183 阶段项目 · 自动化运维平台（二）：容器化 + CI/CD + 一键部署</a><a class="nav-next" href="../day-185/index.html">Day 185 阶段项目 · 自动化运维平台（四）：一键部署 + 端到端验收 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

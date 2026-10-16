@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 177 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 177 正文</a>
+  <h1>Day 177 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-177">Day 177 — 原理图解</h1>
+<p>五张图，从「谁拉谁」到「看板怎么出数」。</p>
+<hr>
+<h2 id="1-pull">图 1 · 拉（pull）模型时序</h2>
+<pre class="plain"><code>   应用 (localhost:9101)              Prometheus (localhost:9090)
+        │                                     │
+        │                                     │  每 5s 一轮
+        │◀────── ① GET /metrics ──────────────┤
+        │                                     │
+        ├─────── ② 200 OK + 文本 ────────────▶│
+        │        # TYPE ... 30.0              │
+        │                                     │  ③ 用「自己的」当前时间打戳
+        │                                     │  ④ 写 WAL + 内存
+        │                                     │
+        │◀────── ⑤ GET /metrics ──────────────┤   （下一轮）
+        │                                     │
+        │        ✗ 连接被拒                    │  ⑥ 目标挂了
+        │                                     ├──▶ up{job=&quot;app&quot;} = 0   ← 自动生成
+        │                                     │
+</code></pre>
+<p>要点：<strong>发起方永远是 Prometheus</strong>；应用没有任何「上报」逻辑；
+<code>up</code> 是第 ⑥ 步的副产品，不是应用给的。</p>
+<hr>
+<h2 id="2-scrape">图 2 · 一次 scrape 的六步链路</h2>
+<pre class="plain"><code>┌────────────────────────────────────────────────────────────────┐
+│ ① 读配置          scrape_configs: [{job: app, targets: [:9101]}]│
+│         │                                                       │
+│ ② HTTP 拉取       GET http://localhost:9101/metrics             │
+│         │                                                       │
+│ ③ 解析文本        每行 → (name, {labels}, value)                │
+│         │          &quot;# TYPE app_http_requests_total counter&quot;     │
+│         │          → 决定这族指标怎么存、怎么算                  │
+│ ④ 打时间戳        用采集端时钟（客户端说了不算）                 │
+│         │                                                       │
+│ ⑤ 落库            WAL（顺序写）→ 内存 → 每 2h 压成不可变块       │
+│         │                                                       │
+│ ⑥ 写 up           up{job=&quot;app&quot;,instance=&quot;localhost:9101&quot;} = 1/0  │
+└────────────────────────────────────────────────────────────────┘
+</code></pre>
+<p>第 ④ 步是「为什么样本里没有时间戳」的答案；第 ⑥ 步是「为什么排障第一眼看 <code>up</code>」。</p>
+<hr>
+<h2 id="3-tsdb">图 3 · TSDB 的写入路径与保留策略</h2>
+<pre class="plain"><code>   新样本
+     │
+     ▼
+ ┌─────────┐   顺序追加，崩溃只丢最近这点   ┌──────────────┐
+ │   WAL   │ ────────────────────────────▶ │  内存 head   │
+ └─────────┘                                └──────┬───────┘
+                                                   │ 每 2h 封存
+                                                   ▼
+                              ┌─────────────────────────────┐
+                              │  block（不可变）             │
+                              │  chunks  +  index           │
+                              │  [00:00–02:00]              │
+                              └──────────────┬──────────────┘
+                                             │ 后台压缩合并
+                                             ▼
+                              ┌─────────────────────────────┐
+                              │  更大的 block [00:00–06:00]  │
+                              └──────────────┬──────────────┘
+                                             │ 超过保留期（默认 15d）
+                                             ▼
+                                     整块删目录（不是扫全表）
+</code></pre>
+<p>「块不可变」→ 查询不加锁 → 高并发；代价是<strong>改历史数据很别扭</strong>
+（这正是长期存储要交给 Thanos / VictoriaMetrics 的原因）。</p>
+<hr>
+<h2 id="4">图 4 · 四种指标类型的数据形状</h2>
+<pre class="plain"><code>Counter（只增）            Gauge（可增可减）
+   │  ╱                     │    ╱╲    ╱╲
+   │ ╱                      │   ╱  ╲  ╱  ╲
+   │╱                       │  ╱    ╲╱    ╲
+   └──────────▶ t           └──────────────▶ t
+   查法：rate() / increase()   查法：直接读 / avg_over_time()
+
+Histogram（桶累计）                   Summary（客户端聚合）
+  _bucket{le=&quot;0.01&quot;} 1.0               _count 6.0
+  _bucket{le=&quot;0.05&quot;} 2.0               _sum   2.563
+  _bucket{le=&quot;0.1&quot;}  4.0               （0.26.0 起分位已被移除：
+  _bucket{le=&quot;0.5&quot;}  5.0                 要分位请用 Histogram）
+  _bucket{le=&quot;1.0&quot;}  5.0
+  _bucket{le=&quot;+Inf&quot;} 6.0  ← 等于 _count
+  _sum / _count
+  查法：histogram_quantile(0.95, rate(_bucket[5m]))
+</code></pre>
+<p><strong>为什么 <code>_bucket</code> 一定要配 <code>rate()</code></strong>：
+<code>_bucket</code> 是 counter（累计），跨重启会归零，直接算分位会被历史累计污染。</p>
+<hr>
+<h2 id="5">图 5 · 从指标到看板：数据流</h2>
+<pre class="plain"><code>  ┌──────────────┐   GET /metrics   ┌──────────────┐
+  │  Python 应用  │ ◀────────────────│  Prometheus  │
+  │  :9101       │ ────文本────────▶ │  :9090       │
+  └──────────────┘                  └───────┬──────┘
+                                            │ HTTP API
+                     ┌──────────────────────┴──────────────────────┐
+                     │                                             │
+              ┌──────▼──────┐                            ┌─────────▼─────────┐
+              │  Grafana    │  /api/v1/query (instant)   │  你的脚本 / 告警   │
+              │  :3000      │  /api/v1/query_range       │  (cron / CI)      │
+              │             │                            └───────────────────┘
+              │ 数据源 uid  │  看板 JSON:
+              │ day177-prom │  panel.expr = 一句 PromQL
+              └─────────────┘
+</code></pre>
+<p><strong>Grafana 不存数据</strong>；每条曲线背后都是一次 <code>query_range</code> 调用。
+所以「图不对」时，先用同样的 PromQL 直接打 Prometheus API 验证——
+这就是 <code>code/03-promql-query.py</code> 存在的意义。</p>
+<hr>
+<h2 id="_1">一句话速记</h2>
+<table>
+<thead>
+<tr>
+<th>图</th>
+<th>一句话</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Prometheus 主动来拉，<code>up</code> 是白送的</td>
+</tr>
+<tr>
+<td>2</td>
+<td>时间戳由采集端打，所以格式里没有时间</td>
+</tr>
+<tr>
+<td>3</td>
+<td>块不可变 → 查得快、改历史难</td>
+</tr>
+<tr>
+<td>4</td>
+<td>counter 配 <code>rate()</code>，分布配 <code>histogram_quantile()</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td>Grafana 只画不算，图背后是 PromQL</td>
+</tr>
+</tbody>
+</table></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

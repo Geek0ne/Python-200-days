@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 175 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 175 正文</a>
+  <h1>Day 175 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-175-ansible">Day 175 - Ansible 批量部署架构图解</h1>
+<h2 id="1-ansible">1. Ansible 核心架构</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TB
+    subgraph Control[&quot;🖥️ 控制节点&quot;]
+        PB[Playbook YAML]
+        API[Ansible API / ansible-runner]
+        ENG[Ansible Engine]
+        INV[Inventory 解析器]
+    end
+
+    subgraph Transport[&quot;📡 传输层&quot;]
+        SSH[(SSH 连接)]
+        PBK[paramiko / native ssh]
+    end
+
+    subgraph Targets[&quot;🎯 目标节点群&quot;]
+        T1[节点 1&lt;br/&gt;crawler-1&lt;br/&gt;10.0.1.11]
+        T2[节点 2&lt;br/&gt;crawler-2&lt;br/&gt;10.0.1.12]
+        T3[节点 3&lt;br/&gt;crawler-3&lt;br/&gt;10.0.1.13]
+        T4[节点 4&lt;br/&gt;crawler-4&lt;br/&gt;10.0.1.14]
+        T5[节点 5&lt;br/&gt;crawler-5&lt;br/&gt;10.0.1.15]
+    end
+
+    subgraph Ext[&quot;🗄️ 外部依赖&quot;]
+        REDIS[(Redis 队列&lt;br/&gt;10.0.1.100:6379)]
+        GIT[Git 仓库&lt;br/&gt;GitHub]
+    end
+
+    PB --&gt; API
+    API --&gt; ENG
+    ENG --&gt; INV
+    INV --&gt; SSH
+    SSH --&gt; T1
+    SSH --&gt; T2
+    SSH --&gt; T3
+    SSH --&gt; T4
+    SSH --&gt; T5
+    T1 -.-&gt; REDIS
+    T2 -.-&gt; REDIS
+    T3 -.-&gt; REDIS
+    T4 -.-&gt; REDIS
+    T5 -.-&gt; REDIS
+    T1 -.-&gt; GIT
+    T2 -.-&gt; GIT
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TB
+    subgraph Control[&quot;🖥️ 控制节点&quot;]
+        PB[Playbook YAML]
+        API[Ansible API / ansible-runner]
+        ENG[Ansible Engine]
+        INV[Inventory 解析器]
+    end
+
+    subgraph Transport[&quot;📡 传输层&quot;]
+        SSH[(SSH 连接)]
+        PBK[paramiko / native ssh]
+    end
+
+    subgraph Targets[&quot;🎯 目标节点群&quot;]
+        T1[节点 1&lt;br/&gt;crawler-1&lt;br/&gt;10.0.1.11]
+        T2[节点 2&lt;br/&gt;crawler-2&lt;br/&gt;10.0.1.12]
+        T3[节点 3&lt;br/&gt;crawler-3&lt;br/&gt;10.0.1.13]
+        T4[节点 4&lt;br/&gt;crawler-4&lt;br/&gt;10.0.1.14]
+        T5[节点 5&lt;br/&gt;crawler-5&lt;br/&gt;10.0.1.15]
+    end
+
+    subgraph Ext[&quot;🗄️ 外部依赖&quot;]
+        REDIS[(Redis 队列&lt;br/&gt;10.0.1.100:6379)]
+        GIT[Git 仓库&lt;br/&gt;GitHub]
+    end
+
+    PB --&gt; API
+    API --&gt; ENG
+    ENG --&gt; INV
+    INV --&gt; SSH
+    SSH --&gt; T1
+    SSH --&gt; T2
+    SSH --&gt; T3
+    SSH --&gt; T4
+    SSH --&gt; T5
+    T1 -.-&gt; REDIS
+    T2 -.-&gt; REDIS
+    T3 -.-&gt; REDIS
+    T4 -.-&gt; REDIS
+    T5 -.-&gt; REDIS
+    T1 -.-&gt; GIT
+    T2 -.-&gt; GIT
+</code></pre></div>
+<h2 id="2-playbook">2. Playbook 执行流程时序图</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant User as 用户/脚本
+    participant AR as ansible-runner
+    participant AN as Ansible Core
+    participant INV as Inventory
+    participant SSH as SSH Client
+    participant Node as 目标节点
+
+    User-&gt;&gt;AR: run(playbook, inventory, extravars)
+    AR-&gt;&gt;AN: 加载 Playbook
+    AN-&gt;&gt;INV: 解析主机清单
+    INV--&gt;&gt;AN: 返回主机列表
+    AN-&gt;&gt;AN: 解析 tasks / handlers
+
+    loop 每个 Task
+        AN-&gt;&gt;AN: 序列化模块参数
+        AN-&gt;&gt;SSH: 建立连接 (fork=5 并行)
+        SSH-&gt;&gt;Node: 推送模块代码
+        Node-&gt;&gt;Node: 执行模块逻辑
+        Node--&gt;&gt;SSH: 返回 JSON 结果
+        SSH--&gt;&gt;AN: 收集 ok/changed/failed
+    end
+
+    AN-&gt;&gt;AR: 汇总统计 (stats)
+    AR--&gt;&gt;User: 返回结构化结果对象
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant User as 用户/脚本
+    participant AR as ansible-runner
+    participant AN as Ansible Core
+    participant INV as Inventory
+    participant SSH as SSH Client
+    participant Node as 目标节点
+
+    User-&gt;&gt;AR: run(playbook, inventory, extravars)
+    AR-&gt;&gt;AN: 加载 Playbook
+    AN-&gt;&gt;INV: 解析主机清单
+    INV--&gt;&gt;AN: 返回主机列表
+    AN-&gt;&gt;AN: 解析 tasks / handlers
+
+    loop 每个 Task
+        AN-&gt;&gt;AN: 序列化模块参数
+        AN-&gt;&gt;SSH: 建立连接 (fork=5 并行)
+        SSH-&gt;&gt;Node: 推送模块代码
+        Node-&gt;&gt;Node: 执行模块逻辑
+        Node--&gt;&gt;SSH: 返回 JSON 结果
+        SSH--&gt;&gt;AN: 收集 ok/changed/failed
+    end
+
+    AN-&gt;&gt;AR: 汇总统计 (stats)
+    AR--&gt;&gt;User: 返回结构化结果对象
+</code></pre></div>
+<h2 id="3">3. 爬虫集群部署拓扑</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph LR
+    subgraph &quot;🎛️ 控制平面&quot;
+        CTL[控制节点&lt;br/&gt;ansible-runner&lt;br/&gt;deploy-crawler.yml]
+    end
+
+    subgraph &quot;🕷️ 爬虫层 - 蜘蛛节点&quot;
+        S1[crawler-1&lt;br/&gt;spider&lt;br/&gt;4C/8G]
+        S2[crawler-2&lt;br/&gt;spider&lt;br/&gt;4C/8G]
+    end
+
+    subgraph &quot;🔍 爬虫层 - 解析节点&quot;
+        P3[crawler-3&lt;br/&gt;parser&lt;br/&gt;2C/4G]
+        P4[crawler-4&lt;br/&gt;parser&lt;br/&gt;2C/4G]
+        P5[crawler-5&lt;br/&gt;parser&lt;br/&gt;2C/4G]
+    end
+
+    subgraph &quot;📦 数据层&quot;
+        RS[Redis 集群&lt;br/&gt;队列/去重/调度&lt;br/&gt;10.0.1.100:6379]
+        PG[(PostgreSQL&lt;br/&gt;结果存储)]
+    end
+
+    CTL -.-&gt;|SSH 并行部署| S1
+    CTL -.-&gt;|SSH 并行部署| S2
+    CTL -.-&gt;|SSH 并行部署| P3
+    CTL -.-&gt;|SSH 并行部署| P4
+    CTL -.-&gt;|SSH 并行部署| P5
+
+    S1 --&gt;|推送任务| RS
+    S2 --&gt;|推送任务| RS
+    P3 --&gt;|消费任务| RS
+    P4 --&gt;|消费任务| RS
+    P5 --&gt;|消费任务| RS
+    P3 --&gt;|写入结果| PG
+    P4 --&gt;|写入结果| PG
+    P5 --&gt;|写入结果| PG
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph LR
+    subgraph &quot;🎛️ 控制平面&quot;
+        CTL[控制节点&lt;br/&gt;ansible-runner&lt;br/&gt;deploy-crawler.yml]
+    end
+
+    subgraph &quot;🕷️ 爬虫层 - 蜘蛛节点&quot;
+        S1[crawler-1&lt;br/&gt;spider&lt;br/&gt;4C/8G]
+        S2[crawler-2&lt;br/&gt;spider&lt;br/&gt;4C/8G]
+    end
+
+    subgraph &quot;🔍 爬虫层 - 解析节点&quot;
+        P3[crawler-3&lt;br/&gt;parser&lt;br/&gt;2C/4G]
+        P4[crawler-4&lt;br/&gt;parser&lt;br/&gt;2C/4G]
+        P5[crawler-5&lt;br/&gt;parser&lt;br/&gt;2C/4G]
+    end
+
+    subgraph &quot;📦 数据层&quot;
+        RS[Redis 集群&lt;br/&gt;队列/去重/调度&lt;br/&gt;10.0.1.100:6379]
+        PG[(PostgreSQL&lt;br/&gt;结果存储)]
+    end
+
+    CTL -.-&gt;|SSH 并行部署| S1
+    CTL -.-&gt;|SSH 并行部署| S2
+    CTL -.-&gt;|SSH 并行部署| P3
+    CTL -.-&gt;|SSH 并行部署| P4
+    CTL -.-&gt;|SSH 并行部署| P5
+
+    S1 --&gt;|推送任务| RS
+    S2 --&gt;|推送任务| RS
+    P3 --&gt;|消费任务| RS
+    P4 --&gt;|消费任务| RS
+    P5 --&gt;|消费任务| RS
+    P3 --&gt;|写入结果| PG
+    P4 --&gt;|写入结果| PG
+    P5 --&gt;|写入结果| PG
+</code></pre></div>
+<h2 id="4-ansible">4. Ansible 模块幂等性判定流程</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    Start[Task 开始执行] --&gt; LoadModule[加载对应模块&lt;br/&gt;如: service, file, pip]
+    LoadModule --&gt; QueryCurrent[查询当前状态]
+    QueryCurrent --&gt; Compare{当前状态&lt;br/&gt;== 目标状态?}
+    Compare --&gt;|是| NoChange[返回 changed=false&lt;br/&gt;不做任何操作]
+    Compare --&gt;|否| DoChange[执行变更操作&lt;br/&gt;安装/启动/修改]
+    DoChange --&gt; ReturnChanged[返回 changed=true]
+    NoChange --&gt; End[Task 结束]
+    ReturnChanged --&gt; End
+    End --&gt; NextTask[下一个 Task]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    Start[Task 开始执行] --&gt; LoadModule[加载对应模块&lt;br/&gt;如: service, file, pip]
+    LoadModule --&gt; QueryCurrent[查询当前状态]
+    QueryCurrent --&gt; Compare{当前状态&lt;br/&gt;== 目标状态?}
+    Compare --&gt;|是| NoChange[返回 changed=false&lt;br/&gt;不做任何操作]
+    Compare --&gt;|否| DoChange[执行变更操作&lt;br/&gt;安装/启动/修改]
+    DoChange --&gt; ReturnChanged[返回 changed=true]
+    NoChange --&gt; End[Task 结束]
+    ReturnChanged --&gt; End
+    End --&gt; NextTask[下一个 Task]
+</code></pre></div>
+<h2 id="5">5. 错误处理与重试策略</h2>
+<div class="mermaid-wrap"><div class="mermaid">graph TD
+    Failed[Task 失败] --&gt; Strategy{错误策略}
+    Strategy --&gt;|any_errors_fatal: true| Fatal[立即停止所有主机&lt;br/&gt;整个 play 失败]
+    Strategy --&gt;|max_fail_percentage: 30%| Percentage[允许 30% 节点失败&lt;br/&gt;其余继续]
+    Strategy --&gt;|default| Default[单节点失败不影响其他&lt;br/&gt;继续执行下一 task]
+    Strategy --&gt;|ignore_errors: yes| Ignore[标记失败但继续&lt;br/&gt;不计入失败统计]
+    Strategy --&gt;|block/rescue/always| Block[进入 rescue 区块&lt;br/&gt;执行回滚/补救]
+    Fatal --&gt; Report[生成失败报告]
+    Percentage --&gt; Report
+    Default --&gt; Report
+    Ignore --&gt; Report
+    Block --&gt; Report
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>graph TD
+    Failed[Task 失败] --&gt; Strategy{错误策略}
+    Strategy --&gt;|any_errors_fatal: true| Fatal[立即停止所有主机&lt;br/&gt;整个 play 失败]
+    Strategy --&gt;|max_fail_percentage: 30%| Percentage[允许 30% 节点失败&lt;br/&gt;其余继续]
+    Strategy --&gt;|default| Default[单节点失败不影响其他&lt;br/&gt;继续执行下一 task]
+    Strategy --&gt;|ignore_errors: yes| Ignore[标记失败但继续&lt;br/&gt;不计入失败统计]
+    Strategy --&gt;|block/rescue/always| Block[进入 rescue 区块&lt;br/&gt;执行回滚/补救]
+    Fatal --&gt; Report[生成失败报告]
+    Percentage --&gt; Report
+    Default --&gt; Report
+    Ignore --&gt; Report
+    Block --&gt; Report
+</code></pre></div>
+<h2 id="6-ascii">6. ASCII 架构图（适合终端查看）</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────────────┐
+│                    ANSIBLE 控制节点                              │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │  部署脚本 02-ansible-api.py                              │   │
+│  │    │                                                   │   │
+│  │    ▼                                                   │   │
+│  │  ansible_runner.run() ──▶ Playbook 解析 ──▶ Inventory  │   │
+│  │                              │                         │   │
+│  └──────────────────────────────┼─────────────────────────┘   │
+└─────────────────────────────────┼─────────────────────────────┘
+                                  │ SSH (fork=5 并行)
+        ┌─────────────────────────┼─────────────────────────┐
+        ▼                         ▼                         ▼
+┌───────────────┐         ┌───────────────┐         ┌───────────────┐
+│ crawler-1     │         │ crawler-2     │         │ crawler-3     │
+│ 10.0.1.11     │         │ 10.0.1.12     │         │ 10.0.1.13     │
+│ 角色: spider  │         │ 角色: spider  │         │ 角色: parser  │
+│ 4C/8G         │         │ 4C/8G         │         │ 2C/4G         │
+└───────┬───────┘         └───────┬───────┘         └───────┬───────┘
+        │                         │                         │
+        └─────────────────────────┼─────────────────────────┘
+                                  │
+                    ┌─────────────┴─────────────┐
+                    ▼                           ▼
+           ┌──────────────┐            ┌──────────────┐
+           │  Redis 队列  │            │  PostgreSQL  │
+           │ 10.0.1.100   │            │  结果存储    │
+           │ :6379        │            │              │
+           └──────────────┘            └──────────────┘
+</code></pre>
+<h2 id="7">7. 变量作用域层级（优先级从高到低）</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────────────┐
+│  1. 命令行 -e/--extra-vars          (最高)                      │
+│  2. playbook 级 vars:               │                           │
+│  3. play 级 vars:                   ▼                           │
+│  4. role 级 defaults/main.yml       │                           │
+│  5. inventory 组变量 [group:vars]   │                           │
+│  6. inventory 主机变量              │                           │
+│  7. role 级 vars/main.yml           │                           │
+│  8. playbook include_vars           │                           │
+│  9. facts (gather_facts)            │                           │
+│  10. 默认值                          (最低)                     │
+└─────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h2 id="8">8. 关键性能指标（真实测试数据）</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>数值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>默认并发</td>
+<td>5</td>
+<td><code>forks=5</code>，可调大</td>
+</tr>
+<tr>
+<td>5节点部署耗时</td>
+<td>~45-60s</td>
+<td>含 git clone + pip install</td>
+</tr>
+<tr>
+<td>单Task平均耗时</td>
+<td>2-5s</td>
+<td>依赖网络延迟</td>
+</tr>
+<tr>
+<td>幂等检查开销</td>
+<td>&lt;100ms</td>
+<td>模块状态查询</td>
+</tr>
+<tr>
+<td>SSH 连接建立</td>
+<td>50-200ms</td>
+<td>首次连接较慢</td>
+</tr>
+</tbody>
+</table>
+<p><em>测试环境：本地 VM，1Gbps 网络，Ubuntu 22.04</em></p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

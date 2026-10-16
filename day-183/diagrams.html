@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 183 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 183 正文</a>
+  <h1>Day 183 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-183">Day 183 — 原理图解</h1>
+<p>六张图，从「镜像是什么」到「坏了怎么退回去」。全部对应本日真跑过的实验。</p>
+<hr>
+<h2 id="1">图 1 · 镜像 = 层的链表（以及为什么多阶段能瘦）</h2>
+<pre class="plain"><code>单阶段镜像                                  多阶段镜像
+┌───────────────────────────────┐          ┌───────────────────────────────┐
+│ ⑥ COPY ops_service.py         │          │ runtime                       │
+│ ⑤ RUN pip install             │          │  ⑥ COPY --from=builder /opt/venv
+│ ④ COPY requirements.txt       │          │  ⑤ COPY ops_service.py        │
+│ ③ RUN apt-get install gcc     │ ← 105 MB │  ④ ENV PATH / HEALTHCHECK      │
+│ ② RUN apt-get update          │          └───────────────────────────────┘
+│ ① FROM python:3.12-slim (41MB)│                 ↑ 只有 ② 之后的**搬运结果**
+└───────────────────────────────┘          ┌───────────────────────────────┐
+  宿主机看到的体积：109.3 MiB                │ builder（构建完就丢）           │
+                                            │  ③ gcc + venv + 构建期自检      │
+                                            └───────────────────────────────┘
+                                              运行镜像体积：45.2 MiB
+</code></pre>
+<p>要点：<strong>不是「把层合并了」，而是「没把那几层搬过来」</strong>。
+<code>COPY --from=builder</code> 只在 runtime 里新建一层，内容是 builder 那个目录的快照。</p>
+<hr>
+<h2 id="2">图 2 · 构建缓存：层的命中与失效</h2>
+<pre class="plain"><code>改动              Dockerfile 指令        缓存       谁重建
+──────────────────────────────────────────────────────────────
+（无）            ① COPY requirements    HIT       —
+                 ② RUN pip install      HIT       —
+                 ③ COPY ops_service.py  HIT       —
+──────────────────────────────────────────────────────────────
+改一行代码        ① COPY requirements    HIT       —
+                 ② RUN pip install      HIT       —        ← 依赖没变，白赚
+                 ③ COPY ops_service.py  MISS      只重建这一层
+──────────────────────────────────────────────────────────────
+加了依赖          ① COPY requirements    MISS      —
+                 ② RUN pip install      MISS      重装全部依赖
+                 ③ COPY ops_service.py  MISS      重建
+</code></pre>
+<p><strong>结论</strong>：把「变化频率低的」放在前面。Dockerfile 里的顺序是<strong>性能参数</strong>，不是风格问题。</p>
+<hr>
+<h2 id="3">图 3 · 容器从「创建」到「健康」的时间线（本日实测）</h2>
+<pre class="plain"><code>t=0.00s   docker run -d 返回（容器被创建，进程还没绑端口）
+t=0.05s   python 启动，服务开始监听 8080
+t=0.55s   GET /healthz → 200            ← 部署脚本的轮询（0.5s 一次）在这里就放行
+t=5.00s   docker HEALTHCHECK 第 1 次真正的 interval 检查
+          └ start-period=3s 内不计入 retries，所以第一次判定点落在 interval=5s
+t≈5.0s    docker inspect .State.Health.Status: starting → healthy
+
+  healthy
+     │              ┌─────────────── healthy ───────────────────
+     │              │
+  starting ─────────┘
+     │
+     └────── 前 9 次探测都是 starting（本日实测 10 次轮询到 healthy）──────▶ t
+</code></pre>
+<p>两个「健康」不是一回事：<strong>部署门禁看 <code>/healthz/</code></strong>（快，0.5s 级），
+<strong>运行期守护看 Docker HEALTHCHECK</strong>（慢，interval 级）。</p>
+<hr>
+<h2 id="4-ci-job-dag-cicd">图 4 · CI 四个 job 的 DAG 与 CI/CD 分界</h2>
+<pre class="plain"><code>            每一次 push / PR                     只在 main 的 push
+    ┌───────────────────────────────┐   ┌────────────────────────────┐
+    │  lint                         │   │                            │
+    │    │                          │   │                            │
+    │    ▼                          │   │                            │
+    │  test  (matrix: py3.11/3.12)  │   │                            │
+    └───────────────┬───────────────┘   │                            │
+                    │                   │                            │
+                    ▼                   ▼                            │
+              build &amp; push ───────────▶ deploy                        │
+              (docker/build-push-action) (一键部署 + 回滚)              │
+                    ▲                   ▲                            │
+                    └── if: github.event_name == &#x27;push&#x27;              │
+                        &amp;&amp; github.ref == &#x27;refs/heads/main&#x27; ──────────┘
+
+   总时长 = 最长路径之和（这里是串行链，所以就是各段相加）
+   PR 上永远只跑到 test —— 既省钱，也避免 PR 拿到推镜像的权限
+</code></pre>
+<hr>
+<h2 id="5">图 5 · 一键部署 + 回滚时序（本日真实演练）</h2>
+<pre class="plain"><code>部署脚本                   Docker                       服务
+   │                         │                            │
+   │ ① docker rm -f 旧容器    │                            │
+   │────────────────────────▶│        （旧版本下线）        │
+   │ ② docker run -d 新容器   │                            │
+   │────────────────────────▶│────────── 启动 ───────────▶ │
+   │ ③ 轮询 /healthz /readyz  │                            │
+   │◀─────────────────────── 200/503 ◀──────────────────────│
+   │                         │                            │
+   │   ┌── 全 200 ──────────▶ ④ 冒烟 /version /api/hosts /api/summary
+   │   │                      ⑤ 写 releases.json: current = 新版本        ✅
+   │   │
+   │   └── 任一 503 ─────────▶ ④&#x27; docker logs --tail 20（先留证据）
+   │                          ⑤&#x27; docker rm -f 坏容器
+   │                          ⑥&#x27; 起上一个可用版本 + 重新健康检查
+   │                          ⑦&#x27; 只有 ⑥&#x27; 也过了才说「已回滚」
+   │                             账本里：坏版本 result=failed，**从不进 current**
+</code></pre>
+<p>本日实测：坏版本用了 <strong>30.364 s</strong> 才被判死（健康检查超时 30s），
+回滚起 v1 并验证通过只用了 <strong>0.506 s</strong>——「判死」这一段的耗时完全是<strong>超时阈值</strong>决定的，
+不是服务本身慢。这是部署脚本要调的第一个参数。</p>
+<hr>
+<h2 id="6">图 6 · 本日翻车点地图（每个都在实测中出现过）</h2>
+<pre class="plain"><code>       概念层                      脚本层                        环境层
+  ┌──────────────┐          ┌──────────────────┐          ┌──────────────────┐
+  │ 自检断言写错  │          │ 占位符被自己吃掉  │          │ act 工作区是空的  │
+  │ (注释里的curl)│          │ (模板 vs 渲染后)  │          │ (缺 --bind)       │
+  └──────┬───────┘          └────────┬─────────┘          └────────┬─────────┘
+         │                            │                            │
+  ┌──────▼───────┐          ┌────────▼─────────┐          ┌────────▼─────────┐
+  │ 负向断言回溯  │          │ PyYAML 把 on 读成 │          │ compileall 对不  │
+  │ 假通过        │          │ 布尔 True         │          │ 存在的路径返回 0  │
+  └──────┬───────┘          └────────┬─────────┘          └────────┬─────────┘
+         │                            │                            │
+  ┌──────▼────────────────────────────▼────────────────────────────▼─────────┐
+  │ 共同点：**它们都是「绿」的**。                                  │
+  │ 不看输出、只信退出码，七个坑你一个都发现不了。                    │
+  └──────────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="_1">一句话速记</h2>
+<table>
+<thead>
+<tr>
+<th>图</th>
+<th>一句话</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>多阶段不是合并层，是<strong>不搬</strong>那些层</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Dockerfile 的顺序 = 构建速度</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>docker run</code> 返回 ≠ 服务可用；门禁看 <code>/healthz</code>，守护看 HEALTHCHECK</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>needs</code> 决定并行形状，<code>if</code> 决定 CI/CD 分界</td>
+</tr>
+<tr>
+<td>5</td>
+<td>先判后切：坏版本从不进可用列表</td>
+</tr>
+<tr>
+<td>6</td>
+<td>七个坑全是「绿的」——退出码不是证据</td>
+</tr>
+</tbody>
+</table></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

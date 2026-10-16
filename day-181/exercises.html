@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 181 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 181 正文</a>
+  <h1>Day 181 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-181">Day 181 · 练习与检查表</h1>
+<blockquote>
+<p>目标：亲手把「提交 → CHANGELOG → 版本号 → 构建 → 校验 → 上传」
+这条链路跑通，并且亲眼看见三种坏情况被拦在门外。
+<strong>前置</strong>：Python 3.9+（本机 3.12.3）。四个脚本纯标准库即可自检；
+只有「官方 build 前端 + twine check」两步需要
+<code>python3 -m pip install --target /tmp/day181/.deps build twine</code>。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、动手题（必做）</h2>
+<h3 id="1-5">练习 1 — 把版本号排成一队（5 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-181-release-management
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--sort<span class="w"> </span><span class="m">1</span>.0.0<span class="w"> </span><span class="m">1</span>.0.0-alpha<span class="w"> </span><span class="m">1</span>.0.0-beta.2<span class="w"> </span><span class="m">1</span>.0.0-beta.11<span class="w"> </span><span class="m">1</span>.0.0-rc.1<span class="w"> </span><span class="m">0</span>.9.9
+</code></pre></div>
+<ul>
+<li>[ ] 把上面 6 个版本号按优先级排序，写出来</li>
+<li>[ ] <code>1.0.0-beta.11</code> 和 <code>1.0.0-beta.2</code> 谁在前？为什么？</li>
+<li>[ ] <code>--compare 1.0.0+build.1 1.0.0+build.999</code> 的结果是什么？解释这个结果</li>
+</ul>
+<details><summary>参考答案</summary>
+
+排序：`0.9.9 → 1.0.0-alpha → 1.0.0-beta.2 → 1.0.0-beta.11 → 1.0.0-rc.1 → 1.0.0`
+`beta.2 < beta.11`：数字段按**数值**比较（2 < 11），不是字典序。
+`+build` 不参与优先级比较，两者**相等**（返回 0）。
+
+</details>
+
+<h3 id="2-10">练习 2 — 从假提交日志推出下一个版本（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s\n&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w"> </span><span class="s1">&#39;a1b2c3d feat(api): 新增分页参数&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w"> </span><span class="s1">&#39;9f8e7d6 fix(api): 修正越界读取&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w"> </span><span class="s1">&#39;7d6c5b4 docs: 补充说明&#39;</span><span class="w"> </span>&gt;<span class="w"> </span>/tmp/day181.log
+python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--from<span class="w"> </span>/tmp/day181.log<span class="w"> </span>--current<span class="w"> </span><span class="m">1</span>.1.4<span class="w"> </span>--dry-run
+</code></pre></div>
+<ul>
+<li>[ ] 下一个版本是多少？依据是什么？</li>
+<li>[ ] <code>docs</code> 那条去哪了？怎么才能让它进 CHANGELOG？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+`1.2.0`（有 `feat`、无 breaking → MINOR +1）。
+`docs` 属于内部改动，默认被跳过（`跳过 1 条`）；
+加 `--include-internal` 会让它落到 Changed。
+
+</details>
+
+<h3 id="3-10">练习 3 — 让「破坏性变更」改变结论（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s\n&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w"> </span><span class="s1">&#39;a1b2c3d feat(api): 新增分页参数&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w"> </span><span class="s1">&#39;8b7a6f5 refactor(cli)!: 重命名 --output 为 --format&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w"> </span><span class="s1">&#39;&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w"> </span><span class="s1">&#39;BREAKING CHANGE: --output 已移除&#39;</span><span class="w"> </span>&gt;<span class="w"> </span>/tmp/day181b.log
+python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--from<span class="w"> </span>/tmp/day181b.log<span class="w"> </span>--current<span class="w"> </span><span class="m">1</span>.1.4<span class="w"> </span>--dry-run
+</code></pre></div>
+<ul>
+<li>[ ] 版本变成多少？和第 2 题差在哪？</li>
+<li>[ ] <code>BREAKING CHANGES</code> 区里出现了几条？内容是什么？</li>
+<li>[ ] 把 <code>!</code> 删掉但保留正文里的 <code>BREAKING CHANGE:</code>，结论会变吗？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+变成 `2.0.0`（有 breaking → MAJOR +1）。
+BREAKING 区一条：`重命名 --output 为 --format`。
+**不会变**——正文里的 `BREAKING CHANGE:` 与 `!` 等价，两者任一成立即为 breaking。
+（可以再说一次：这就是为什么两种写法都必须认。）
+
+</details>
+
+<h3 id="4-15">练习 4 — 真机构建一次，并核对三件事（15 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mkdir<span class="w"> </span>-p<span class="w"> </span>/tmp/day181<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--quiet<span class="w"> </span>--target<span class="w"> </span>/tmp/day181/.deps<span class="w"> </span>build<span class="w"> </span>twine
+python3<span class="w"> </span>code/03-build-verify.py<span class="w"> </span>--self-test
+</code></pre></div>
+<ul>
+<li>[ ] 产物是哪两个文件？各自多少字节？（写清测量条件：哪次运行）</li>
+<li>[ ] wheel 里有几个文件？METADATA 里的 Name/Version 是什么？</li>
+<li>[ ] 把 wheel 的<strong>文件名版本</strong>改成 9.9.9（内容不动），再跑一次校验，
+      脚本报了几个问题？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+`demo_release_pkg-1.2.3-py3-none-any.whl`（本机实测 1458 字节）与
+`demo_release_pkg-1.2.3.tar.gz`（实测 1210–1227 字节，**每次不同**，
+因为 tar 写入打包时刻）。
+wheel 内含 5 个文件；METADATA 里 `Name: demo-release-pkg`、
+`Version: 1.2.3`。
+改名成 9.9.9 后报 **2 个问题**（文件名版本与元数据不一致、wheel/sdist 版本不一致）——
+这证明校验器不是安慰剂。
+
+</details>
+
+<h3 id="5-15">练习 5 — 端到端跑一遍，看清哪一步在拦人（15 分钟，重点）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/04-release-pipeline.py<span class="w"> </span>--self-test
+</code></pre></div>
+<ul>
+<li>[ ] 六步里哪一步负责「tag 与包内版本对不上」？它拦下时，构建发生了吗？</li>
+<li>[ ] 没有 token 时脚本的行为是什么？这属于 fail open 还是 fail closed？</li>
+<li>[ ] 桩为什么必须真的算一遍 sha256？如果不算，自检会变成什么样？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+第 2 步（对版本）。拦下时**连构建都没做**——实测输出里那之后直接是下一条反向验证，
+没有 `[4/6]`。
+没有 token → 拒绝上传并返回失败，是 **fail closed**（宁可明确失败，也不发半成品）。
+桩如果不算摘要，只会无条件回 200；那「篡改摘要必须被发现」这条断言就永远通过——
+**一个自我麻醉的空测试**（本日翻车复盘第 5 条就是这个问题的真实版本）。
+
+</details>
+
+<h3 id="6-10">练习 6 — 真实索引只能验到边界（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import json, urllib.request</span>
+<span class="s">with urllib.request.urlopen(&#39;https://test.pypi.org/pypi/sampleproject/json&#39;, timeout=15) as r:</span>
+<span class="s">    d = json.load(r)</span>
+<span class="s">print(r.status, d[&#39;info&#39;][&#39;name&#39;], d[&#39;info&#39;][&#39;version&#39;])</span>
+<span class="s">for f in d[&#39;urls&#39;]:</span>
+<span class="s">    print(f[&#39;filename&#39;], f[&#39;size&#39;], f[&#39;digests&#39;][&#39;sha256&#39;][:16])</span>
+<span class="s">PY</span>
+</code></pre></div>
+<ul>
+<li>[ ] 这个 JSON 里的 <code>digests.sha256</code> 和 <code>size</code> 有什么用？</li>
+<li>[ ] 如果自己真发布了，怎么用它确认「索引上的文件 = 我构建的文件」？</li>
+<li>[ ] 为什么本日<strong>没有</strong>真的上传一次？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+它们是**发布后校验**的依据：拿本地产物算 sha256，与索引公布的值逐字节比对，
+就能确认中间没有损坏或错版。
+本日没真传，是因为需要一个有效 token（真实凭据），且发出去就是公开且不可逆的——
+所以只实测到「假 token 被 403 拒绝」这个边界，成功上传标注为**未实测**，
+并写清了原因、预期结果、验证方法（README 实验 6）。
+
+</details>
+
+<hr>
+<h2 id="_2">二、判断题（对/错 + 一句话理由）</h2>
+<ul>
+<li>[ ] <code>1.0.0+build.9</code> 比 <code>1.0.0+build.1</code> 新。</li>
+<li>[ ] <code>1.2.3-rc.1</code> 的 patch 递增是 <code>1.2.4</code>。</li>
+<li>[ ] 只要 <code>twine check</code> 通过，包就一定能正常安装。</li>
+<li>[ ] CHANGELOG 应该包含 <code>chore: 升级 CI 缓存</code> 这类提交，这样才完整。</li>
+<li>[ ] 上传时 <code>Authorization</code> 的用户名应该填自己的 PyPI 用户名。</li>
+<li>[ ] 版本号写错时，可以删掉再从同版本号重新上传一次。</li>
+<li>[ ] 校验失败时应该先怀疑产物，而不是先怀疑校验器。</li>
+</ul>
+<details><summary>答案</summary>
+
+1. ✗ 构建元数据不参与比较，两者优先级相等。
+2. ✗ 预发布转正是 `1.2.3`（丢弃预发布段，patch 不再 +1）。
+3. ✗ 它只检查元数据与 README 渲染；检查不到「包能不能 import」、
+   「依赖是否写全」、「包数据是否漏打」等。
+4. ✗ 内部改动对使用者无意义，默认应过滤掉。
+5. ✗ 用户名固定 `__token__`，密码才是 token；否则 403。
+6. ✗ PyPI 不允许覆盖同名文件，只能发新版本（或 yank 旧的）。
+7. ✗ **先怀疑校验器**——本日第 1 条翻车就是校验器自己的正则错了，
+   让所有合法产物都变红。
+
+</details>
+
+<hr>
+<h2 id="_3">三、排障演练</h2>
+<p>给三个现象，说出「先查哪一步 / 哪个命令」：</p>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>你的第一步</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pip install</code> 报 <code>ModuleNotFoundError</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>twine upload</code> 返回 403</td>
+<td></td>
+</tr>
+<tr>
+<td>索引上的版本与 git tag 不一致</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<details><summary>参考答案</summary>
+
+1. 先 `python3 -m zipfile -l dist/*.whl` 看包里到底有没有那个模块——
+   多半是 `packages.find` 的 `where` 配错（src 布局常见）。
+2. 检查 token：是不是设了 `DAY181_INDEX_TOKEN`、用户名是不是 `__token__`、
+   token 的 scope 是否覆盖这个项目名。本日实验 6 实测过：假 token 就是 403。
+3. 跑流水线第 2 步的比对（`tag 版本 vs pyproject version`），
+   再确认 tag 打在了正确的提交上。
+
+</details>
+
+<hr>
+<h2 id="_4">四、验收清单（做完打勾）</h2>
+<ul>
+<li>[ ] <code>01 --self-test</code> 退出码 0，能背出「预发布低于正式版 + <code>+build</code> 不参与比较」</li>
+<li>[ ] <code>02 --self-test</code> 退出码 0，能解释「为什么 7 条提交跳过了 2 条」</li>
+<li>[ ] <code>03 --self-test</code> 退出码 0，说出「反向断言」（改错文件名版本要能被抓到）为什么必须有</li>
+<li>[ ] <code>04 --self-test</code> 退出码 0，并<strong>用 <code>echo REAL_EXIT=$?</code> 确认过退出码</strong>
+      （不要用管道后的 <code>$?</code>，那是 grep 的）</li>
+<li>[ ] 亲手构建出过 wheel + sdist，并 <code>pip install</code> + <code>import</code> 成功一次</li>
+<li>[ ] 亲眼见过三种拦截：版本不一致 / 无 token / 摘要不符</li>
+<li>[ ] 知道本日哪些是<strong>未实测</strong>的（真实成功上传、隔离构建、CI、GPG 签名）</li>
+<li>[ ] 清理完成：<code>ls -d /tmp/day181-* 2&gt;/dev/null</code> 无输出，<code>ss -ltnp</code> 无 181xx 端口</li>
+</ul>
+<hr>
+<h2 id="_5">五、延伸（选做）</h2>
+<ol>
+<li>给 <code>02</code> 加一条 <code>--commit-msg</code> 检查：模拟 <code>commit-msg</code> 钩子，
+   非规范提交直接拒绝（退出码非 0），并想清楚为什么这一步放在<strong>本地</strong>比放在 CI 更省事。</li>
+<li>用 <code>setuptools_scm</code> 把版本改成单一数据源，然后<strong>故意</strong>让 tag 与包内版本
+   不一致，看流水线第 2 步是否还能拦住（提示：这一改动会让该事故在结构上消失，
+   请想清楚「变安全」和「少了一个检查」之间的差别）。</li>
+<li>把 <code>03</code> 的校验加一条「wheel 里必须包含 README 声明的 license 文件」，
+   并先构造一个<strong>缺文件</strong>的 wheel 验证这条新检查真的会红。</li>
+</ol></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

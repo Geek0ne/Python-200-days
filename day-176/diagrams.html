@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 176 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 176 正文</a>
+  <h1>Day 176 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="elk">ELK 日志系统架构图解</h1>
+<blockquote>
+<p><strong>Day 176 · ELK 日志系统</strong><br>
+这张图展示了从业务服务器日志产出到最终在 Kibana 中可视化的完整链路。</p>
+</blockquote>
+<hr>
+<h2 id="ascii">完整链路图（ASCII）</h2>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────────────┐
+│                         业务服务器集群                                │
+│                                                                        │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                           │
+│  │  Web-01  │  │  Web-02  │  │  App-01  │  ...                        │
+│  │ nginx    │  │  nginx   │  │  flask   │                           │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘                           │
+│       │ logs        │ logs        │ logs                            │
+│  ┌────▼─────────────▼─────────────▼─────┐                          │
+│  │           Filebeat (每个节点)          │                          │
+│  └────────────────────┬─────────────────┘                          │
+└───────────────────────┼────────────────────────────────────────────┘
+                        │ syslog/HTTP
+                        ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         采集层                                         │
+│                                                                        │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐      │
+│  │   Logstash A    │  │   Logstash B    │  │   Kafka         │      │
+│  │  (管道加工)      │  │  (管道加工)      │  │  (缓冲队列)      │      │
+│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘      │
+│           └─────────────────────┼───────────────────┘               │
+│                                 ▼                                    │
+└─────────────────────────────────┼────────────────────────────────────┘
+                                  │ 写入
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         存储层                                         │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    Elasticsearch 集群                          │   │
+│  │                                                               │   │
+│  │   Node-1         Node-2         Node-3                        │   │
+│  │   ┌──────┐      ┌──────┐      ┌──────┐                       │   │
+│  │   │shard │      │shard │      │shard │  ← 主分片              │   │
+│  │   │  03  │      │  01  │      │  02  │                       │   │
+│  │   └──┬───┘      └──┬───┘      └──┬───┘                       │   │
+│  │      │replica     │replica     │replica                      │   │
+│  │   ┌──▼───┐      ┌──▼───┐      ┌──▼───┐                       │   │
+│  │   │shard │      │shard │      │shard │  ← 副本分片            │   │
+│  │   │  03  │      │  01  │      │  02  │                       │   │
+│  │   └──────┘      └──────┘      └──────┘                       │   │
+│  │                                                               │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+└──────────────────────────────────────────────────────────────────────┘
+                                  │ 查询
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         展示层                                         │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                         Kibana                                │   │
+│  │   Dashboard  │  Discover  │  Visualize  │  Dev Tools          │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<hr>
+<h2 id="_1">倒排索引原理图</h2>
+<pre class="plain"><code>传统索引（正排）:
+┌────────┬───────────────────┐
+│ doc_id │ content           │
+├────────┼───────────────────┤
+│   1    │ &quot;error occurred&quot;  │
+│   2    │ &quot;warning issued&quot;  │
+│   3    │ &quot;error fixed&quot;     │
+└────────┴───────────────────┘
+         查 &quot;error&quot; → 扫 3 行
+
+倒排索引:
+&quot;error&quot;   → [1, 3]
+&quot;occurred&quot;→ [1]
+&quot;warning&quot; → [2]
+&quot;issued&quot;  → [2]
+&quot;fixed&quot;   → [3]
+         查 &quot;error&quot; → 直接 [1,3]，O(1)
+</code></pre>
+<hr>
+<h2 id="logstash-pipeline">Logstash pipeline 数据流</h2>
+<pre class="plain"><code>  ┌─────────┐     ┌─────────┐     ┌─────────┐     ┌─────────────┐
+  │  input  │ ──► │ filter  │ ──► │ mutate  │ ──► │   output    │
+  │  (文件) │     │ (grok)  │     │ (重命名)│     │(ES + stdout)│
+  └─────────┘     └─────────┘     └─────────┘     └─────────────┘
+       │               │
+  raw text        {clientip, request, response, ...}
+  {message}
+</code></pre>
+<hr>
+<h2 id="docker-compose">Docker Compose 网络拓扑</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│              Docker Compose 网络             │
+├──────────────┬──────────────┬──────────────┤
+│ elasticsearch│ logstash     │ kibana       │
+│  9200        │              │  5601        │
+│              │ 5044         │              │
+├──────────────┴──────────────┴──────────────┤
+│             elk-net (内部桥接网络)          │
+└─────────────────────────────────────────────┘
+
+端口映射:
+- 9200: Elasticsearch HTTP API
+- 5601: Kibana Web 界面
+- 5044: Logstash Beats 输入（如 Filebeat）
+</code></pre>
+<hr>
+<h2 id="_2">索引分片与副本示意图</h2>
+<pre class="plain"><code>索引: logs-2026.10.06
+分片数: 3
+副本数: 1
+
+Node-1:               Node-2:               Node-3:
+┌─────────────┐       ┌─────────────┐       ┌─────────────┐
+│  主分片 0   │       │  主分片 1   │       │  主分片 2   │
+│  副本分片 1 │       │  副本分片 2 │       │  副本分片 0 │
+└─────────────┘       └─────────────┘       └─────────────┘
+</code></pre>
+<p>主分片提供写入和读取能力，副本分片提供冗余和读取扩展能力。</p>
+<div align="center">
+  <sub>Day 176 · ELK 日志系统 · 架构图解</sub>
+</div></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

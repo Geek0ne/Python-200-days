@@ -1,0 +1,1143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 181 — 发布管理</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 181 — 发布管理</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">1005 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-181-release-management" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概念解释</a>
+<a class="toc-l3" href="#_2">发布管理在管什么</a>
+<a class="toc-l3" href="#semver-200">语义化版本 SemVer 2.0.0</a>
+<a class="toc-l3" href="#changelog-keep-a-changelog">Changelog 规范：Keep a Changelog</a>
+<a class="toc-l3" href="#conventional-commits">Conventional Commits</a>
+<a class="toc-l3" href="#pypi-token">PyPI 发布：两个产物、两个工具、一个 token</a>
+<a class="toc-l2" href="#_3">原理深入</a>
+<a class="toc-l3" href="#wheel-pep-427-pep-503-pep-625">wheel 文件名就是元数据（PEP 427 / PEP 503 / PEP 625）</a>
+<a class="toc-l3" href="#_4">一次发布的完整链路，以及它的不可逆性</a>
+<a class="toc-l3" href="#tag">tag 和包内版本为什么会不一致</a>
+<a class="toc-l3" href="#changelog">信息是怎么从提交流到 CHANGELOG 的</a>
+<a class="toc-l2" href="#_5">定义与方法（速查）</a>
+<a class="toc-l3" href="#semver-code01-semverpy">SemVer 操作速查（code/01-semver.py）</a>
+<a class="toc-l3" href="#changelog-code02-changelogpy">CHANGELOG 速查（code/02-changelog.py）</a>
+<a class="toc-l3" href="#code03-build-verifypy">构建与校验速查（code/03-build-verify.py）</a>
+<a class="toc-l3" href="#code04-release-pipelinepy">流水线速查（code/04-release-pipeline.py）</a>
+<a class="toc-l3" href="#legacy-twine">legacy 上传协议字段（twine 用的就是它）</a>
+<a class="toc-l3" href="#_6">版本决策速查</a>
+<a class="toc-l2" href="#_7">实战环境</a>
+<a class="toc-l2" href="#_8">图解</a>
+<a class="toc-l2" href="#1semver">实验 1：SemVer 的规则是不是真能算出来</a>
+<a class="toc-l2" href="#2-changelog">实验 2：从提交生成 CHANGELOG，并算出下一个版本</a>
+<a class="toc-l2" href="#3-build-sdist-wheel">实验 3：真机构建 —— 用官方 build 前端出 sdist + wheel</a>
+<a class="toc-l2" href="#4-build">实验 4：降级路径 —— 没有 build 也能出产物</a>
+<a class="toc-l2" href="#5">实验 5：端到端流水线（含真上传到一个本地索引桩）</a>
+<a class="toc-l2" href="#6">实验 6：真实索引能碰到什么程度（含未实测部分）</a>
+<a class="toc-l2" href="#_9">翻车复盘（七个真问题，全部在本日实测中出现）</a>
+<a class="toc-l3" href="#1-">1. 正则里漏了一个 [^-]+，校验器把合法产物判成非法</a>
+<a class="toc-l3" href="#2-pep-503">2. 不做 PEP 503 归一化，同一个包被判成两个名字</a>
+<a class="toc-l3" href="#3">3. 提交日志按空行切，把一批提交全吸进了第一个</a>
+<a class="toc-l3" href="#4-sdist">4. 断言「排序后 sdist 在前」——想当然的排序假设</a>
+<a class="toc-l3" href="#5-patch-patch">5. 一个自我麻醉的空测试：patch 把校验双方一起 patch 掉了</a>
+<a class="toc-l3" href="#6-exit-grep">6. EXIT=$? 出现在管道后面，看到的是 grep 的退出码</a>
+<a class="toc-l3" href="#7-upload_artifact-path">7. upload_artifact 只接受 Path，传字符串直接崩</a>
+<a class="toc-l2" href="#_10">清理（每次实验后都做）</a>
+<a class="toc-l2" href="#_11">思考题</a>
+<a class="toc-l2" href="#_12">交付清单</a>
+<a class="toc-l2" href="#_13">延伸（选做）</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-181">Day 181 — 发布管理</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 11 — 自动化运维与 DevOps（Day 166–185）<br>
+<strong>子主题</strong>：语义化版本（SemVer）· Changelog 规范（Keep a Changelog / Conventional Commits）· PyPI 发布流程（build / twine / API token）· <strong>实战</strong>：自动化发布流水线（打 tag → 构建 → 校验 → 发布）</p>
+</blockquote>
+<hr>
+<h2 id="_1">概念解释</h2>
+<h3 id="_2">发布管理在管什么</h3>
+<p>写代码不是终点，<strong>把代码交到别人手里</strong>才是。发布管理就是这段路上的规矩，<br>
+它由三层相互咬合的约定组成，每一层解决的问题不同：</p>
+<table>
+<thead>
+<tr>
+<th>层</th>
+<th>规范</th>
+<th>回答的问题</th>
+<th>对谁负责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>版本号</td>
+<td><strong>SemVer 2.0.0</strong></td>
+<td>「这次升级会不会弄坏我的代码？」</td>
+<td>使用者（依赖方）</td>
+</tr>
+<tr>
+<td>变更记录</td>
+<td><strong>Keep a Changelog</strong></td>
+<td>「两个版本之间到底改了什么？」</td>
+<td>使用者（包括未来的你）</td>
+</tr>
+<tr>
+<td>提交信息</td>
+<td><strong>Conventional Commits</strong></td>
+<td>「这条提交属于哪一类改动？」</td>
+<td>工具链（自动生成上两层）</td>
+</tr>
+</tbody>
+</table>
+<p>关键在于<strong>它们是可推导的</strong>：提交规范了 → CHANGELOG 能自动生成 → 改动类型已知<br>
+→ 下一个版本号能算出来 → 整条发布链路可以无人值守。</p>
+<pre class="plain"><code>Conventional Commits ──▶ Keep a Changelog ──▶ SemVer ──▶ tag ──▶ 构建 ──▶ 发布
+      （人写）              （机器生成）        （机器算）        （机器做）
+</code></pre>
+<p>这条链上<strong>唯一必须人写的东西是提交信息</strong>。这也是本仓库 CONTRIBUTING.md<br>
+要求 Conventional Commits 的真正原因：不是为了「好看」，是为了下游能自动化。</p>
+<h3 id="semver-200">语义化版本 SemVer 2.0.0</h3>
+<p>格式只有这四种成分，顺序固定：</p>
+<pre class="plain"><code>MAJOR . MINOR . PATCH  -  PRERELEASE   +  BUILD
+  1   .   2   .   3    -    rc.1        +  sha.5114f85
+</code></pre>
+<p><strong>三条递增规则</strong>（这是 SemVer 的全部实用性所在）：</p>
+<table>
+<thead>
+<tr>
+<th>改动性质</th>
+<th>递增</th>
+<th>例子</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>破坏性变更（不兼容）</td>
+<td>MAJOR</td>
+<td>1.2.3 → 2.0.0</td>
+</tr>
+<tr>
+<td>新增功能（向后兼容）</td>
+<td>MINOR</td>
+<td>1.2.3 → 1.3.0</td>
+</tr>
+<tr>
+<td>修 bug（向后兼容）</td>
+<td>PATCH</td>
+<td>1.2.3 → 1.2.4</td>
+</tr>
+</tbody>
+</table>
+<p><strong>两条容易被忽略的细节</strong>：</p>
+<ol>
+<li><strong>构建元数据不参与比较</strong>。1.0.0+build.1 和 1.0.0+build.999 的优先级<strong>完全相等</strong><br>
+   （规范第 10 条）。它只是给人看的构建信息，机器比版本时直接忽略。</li>
+<li><strong>预发布版比对应正式版低</strong>。1.0.0-rc.1 &lt; 1.0.0。预发布之间比大小靠一套<br>
+   很短的规则：<strong>先逐段比，数字段按数值比，数字段 &lt; 字母段，段数少的 &lt; 段数多的</strong>。</li>
+</ol>
+<p>规范原文给的这串例子就是全部规则的最好证明（本日脚本逐对断言过）：</p>
+<pre class="plain"><code>1.0.0-alpha &lt; 1.0.0-alpha.1 &lt; 1.0.0-alpha.beta &lt; 1.0.0-beta
+            &lt; 1.0.0-beta.2 &lt; 1.0.0-beta.11 &lt; 1.0.0-rc.1 &lt; 1.0.0
+</code></pre>
+<p>注意 <code>beta.11</code> 排在 <code>beta.2</code> 之后：<strong>数字段按数值比，不是字典序</strong>。<br>
+把 <code>11</code> 当成字符串比会得出 <code>11</code> &lt; <code>2</code> 的错误结论，把「11」判成更早的版本。</p>
+<p><strong>关于 0.x.y</strong>：规范里说「初始开发阶段，任何东西都可能随时改变」。<br>
+所以 0.x 的 MINOR 递增就可以带破坏性变更，社区惯例是<br>
+<code>BREAKING → 0.(y+1).0</code>、其余 → <code>0.y.(z+1)</code>。本日脚本用<br>
+<code>--zero-major</code> 实现了这条惯例（因为它是<strong>惯例</strong>，不是规范强制）。</p>
+<p><strong>常见误解速查</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>写法</th>
+<th>判断</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>v1.2.3</code></td>
+<td>❌ 不是 SemVer。<code>v</code> 是 git tag 的习惯，不属于版本号本身</td>
+</tr>
+<tr>
+<td><code>1.2</code></td>
+<td>❌ 必须三段</td>
+</tr>
+<tr>
+<td><code>01.2.3</code></td>
+<td>❌ 数字段不允许前导零</td>
+</tr>
+<tr>
+<td><code>1.2.3-01</code></td>
+<td>❌ 预发布的数字标识符同样不允许前导零</td>
+</tr>
+<tr>
+<td><code>1.2.3+build.5</code></td>
+<td>✅ 合法；但比较时忽略 <code>+build.5</code></td>
+</tr>
+<tr>
+<td><code>1.2.3-alpha.beta</code></td>
+<td>✅ 合法：字母段可以连着字母段</td>
+</tr>
+</tbody>
+</table>
+<h3 id="changelog-keep-a-changelog">Changelog 规范：Keep a Changelog</h3>
+<p>它规定了一份面向<strong>人</strong>的变更记录长什么样，核心是六类 + 一个未发布区：</p>
+<pre class="plain"><code># Changelog
+
+## [Unreleased]        ← 已合并但还没发版的改动住这里
+
+## [1.3.0] - 2026-10-16
+### Added              ← 新增功能
+### Changed            ← 行为变化
+### Deprecated         ← 还能用，但下个版本要删
+### Removed            ← 这个版本删掉了
+### Fixed              ← 修 bug
+### Security           ← 安全修复
+</code></pre>
+<p><strong>为什么不直接用 <code>git log</code> 当 CHANGELOG？</strong> 因为两者面向的读者不同：</p>
+<ul>
+<li><code>git log</code> 的记录单位是<strong>提交</strong>（实现过程），一条 feat 可能拆成 6 个提交；</li>
+<li>CHANGELOG 的记录单位是<strong>变动</strong>（对外影响），使用者只关心「我升级了会不会有事」。</li>
+</ul>
+<p>所以 CHANGELOG 是 <code>git log</code> 的<strong>投影与摘要</strong>，不是复制。<br>
+<code>chore: 升级 CI 镜像</code> 对使用者毫无意义，不该出现在 CHANGELOG 里——<br>
+本日脚本默认就把它过滤掉（<code>docs</code>/<code>chore</code>/<code>ci</code> 一类内部改动不进 CHANGELOG）。</p>
+<h3 id="conventional-commits">Conventional Commits</h3>
+<p>格式一句话就能说完：</p>
+<pre class="plain"><code>&lt;type&gt;(&lt;scope&gt;)!: &lt;description&gt;
+</code></pre>
+<ul>
+<li><code>type</code>：<code>feat</code> / <code>fix</code> / <code>perf</code> / <code>refactor</code> / <code>docs</code> / <code>test</code> / <code>chore</code> / <code>ci</code> / <code>build</code> / <code>style</code> / <code>revert</code></li>
+<li><code>(scope)</code>：影响范围，可选，比如 <code>(api)</code></li>
+<li><code>!</code>：<strong>这个记号表示破坏性变更</strong>，等价于正文里写 <code>BREAKING CHANGE:</code></li>
+<li>正文里以 <code>BREAKING CHANGE:</code> 开头的段落，是破坏性变更的正式声明位置</li>
+</ul>
+<p>映射到 Keep a Changelog 的六类（本日脚本内置的映射表）：</p>
+<table>
+<thead>
+<tr>
+<th>Conventional type</th>
+<th>Keep a Changelog 分类</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>feat</code></td>
+<td>Added</td>
+</tr>
+<tr>
+<td><code>fix</code></td>
+<td>Fixed</td>
+</tr>
+<tr>
+<td><code>perf</code> / <code>refactor</code> / 任何 <code>!</code></td>
+<td>Changed</td>
+</tr>
+<tr>
+<td><code>revert</code></td>
+<td>Removed</td>
+</tr>
+<tr>
+<td><code>docs</code> / <code>chore</code> / <code>ci</code> / <code>build</code> / <code>style</code> / <code>test</code></td>
+<td>不进 CHANGELOG（内部改动）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pypi-token">PyPI 发布：两个产物、两个工具、一个 token</h3>
+<p><strong>产物有两种，用途不同</strong>：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>sdist（<code>.tar.gz</code>）</th>
+<th>wheel（<code>.whl</code>）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>内容</td>
+<td>源码 + 构建配置</td>
+<td>已构建好的、可直接解压安装的归档</td>
+</tr>
+<tr>
+<td>安装时</td>
+<td>需要现场构建（要编译器/依赖）</td>
+<td>直接解压安装</td>
+</tr>
+<tr>
+<td>平台</td>
+<td>与平台无关</td>
+<td>可能带平台标签（<code>cp312-manylinux…</code>）</td>
+</tr>
+<tr>
+<td>谁需要</td>
+<td>唯一能完整还原源码的形态</td>
+<td>绝大多数用户（快、不需要编译器）</td>
+</tr>
+<tr>
+<td>关系</td>
+<td>wheel 从同一份构建配置产出</td>
+<td>不是替代，是它的<strong>产物</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>两个工具，职责不同</strong>：</p>
+<ul>
+<li><code>build</code> —— <strong>PEP 517 前端</strong>。它本身不做构建，只负责「建一个隔离环境 →<br>
+  装 build-system.requires 里的后端 → 调后端的 build_wheel/build_sdist」。</li>
+<li><code>twine</code> —— <strong>上传客户端 + 校验器</strong>。<code>twine check</code> 检查元数据与 README 渲染，<br>
+<code>twine upload</code> 按 PyPI 的 legacy 上传协议发 multipart。<strong>PyPI 已拒绝<br>
+<code>setup.py upload</code></strong>，twine 是官方指定的路径。</li>
+</ul>
+<p><strong>一个 token</strong>：PyPI 的 API token 是唯一凭据，用法有个固定套路——<br>
+<strong>用户名固定填 <code>__token__</code>，密码才是 token 本体</strong>（<code>pypi-</code> 开头）。<br>
+写反了或者用真用户名，会直接 403。本日脚本的本地桩专门断言了这一点。</p>
+<hr>
+<h2 id="_3">原理深入</h2>
+<h3 id="wheel-pep-427-pep-503-pep-625">wheel 文件名就是元数据（PEP 427 / PEP 503 / PEP 625）</h3>
+<p><code>demo_release_pkg-1.2.3-py3-none-any.whl</code> 这段文件名，每个字段都有含义：</p>
+<pre class="plain"><code>demo_release_pkg - 1.2.3 - py3 - none - any .whl
+   ▲               ▲       ▲     ▲     ▲
+   │               │       │     │     └─ 平台：any = 纯 Python，哪都能装
+   │               │       │     └─────── ABI：none = 不依赖某个 C ABI
+   │               │       └───────────── 支持的 Python：py3 = Python 3
+   │               └───────────────────── 版本（就在文件名里！）
+   └───────────────────────────────────── 发行名（PEP 503 归一化后）
+</code></pre>
+<p><strong>为什么文件名这么重要</strong>：PyPI 的索引<strong>只认文件名</strong>。上传时索引从 multipart 的<br>
+<code>metadata</code> 字段读 Name/Version，但索引页展示、依赖解析、<br>
+「这个文件名占不占用」都依赖文件名。文件名里的版本写错，<br>
+在索引上就是一个<strong>看起来正常、实际错版</strong>的产物。</p>
+<p>另外两条容易踩的规范：</p>
+<ul>
+<li><strong>PEP 503 归一化</strong>：发行名比较时必须「小写 + 把连续的 <code>-</code> <code>_</code> <code>.</code> 都压成单个 <code>-</code>」。<br>
+  所以 sdist 文件名里的 <code>demo_release_pkg</code> 和元数据里的 <code>demo-release-pkg</code><br>
+<strong>是同一个包</strong>。不做归一化，校验器就会把合法产物误判成错（本日真踩过，见翻车复盘 2）。</li>
+<li><strong>PEP 625</strong>：sdist 文件名必须是 <code>{归一化名}-{版本}.tar.gz</code>，<br>
+  老式的 <code>{name}-{version}.zip</code> 已经不被接受。</li>
+</ul>
+<h3 id="_4">一次发布的完整链路，以及它的不可逆性</h3>
+<pre class="plain"><code> ① 打 tag          git tag v1.2.3 &amp;&amp; git push --tags
+        │
+ ② 校验一致性      tag 版本 == pyproject 里的 version ？（对不上就该停）
+        │
+ ③ 构建            python -m build  →  dist/*.whl + dist/*.tar.gz
+        │
+ ④ 校验产物        文件名 / 元数据 / wheel 与 sdist 版本一致 / twine check
+        │
+ ⑤ 上传            twine upload（或任何按 legacy 协议实现的客户端）
+        │
+ ⑥ 索引生效        PyPI 生成页面、JSON API、可 pip install
+</code></pre>
+<p><strong>第 ⑤ 步是不可逆的</strong>：PyPI 不允许覆盖同名文件。版本号 1.2.3 一旦上传，<br>
+你<strong>不能</strong>再传一个「修好的 1.2.3」——只能发 1.2.4。<br>
+（可以 yank 掉旧版本，但文件仍然占着位置、仍然能被已锁定版本的用户安装。）</p>
+<p>这条性质决定了整条链路的形状：<strong>所有校验必须发生在第 ⑤ 步之前</strong>。<br>
+本日脚本的六步顺序就是为了这个——第 2 步不一致就在第 2 步停下，<br>
+根本不会走到构建，更不会走到上传。</p>
+<h3 id="tag">tag 和包内版本为什么会不一致</h3>
+<p>这是发布事故里最常见的一类，来源通常有三个：</p>
+<ol>
+<li><strong>版本号写死在多个地方</strong>：<code>pyproject.toml</code> 写 1.2.3、<code>__init__.py</code> 里<br>
+<code>__version__</code> 还写 1.2.2、README 徽章又是另一个数。</li>
+<li><strong>tag 打错地方</strong>：在别人的提交上打了 tag，或者 tag 是 <code>v1.2.4</code> 但<br>
+   那批代码里的版本还没升。</li>
+<li><strong>手改版本忘了改 tag</strong>：本地 bump 了，tag 复用了上一次。</li>
+</ol>
+<p>根治办法是<strong>单一数据源</strong>：让 <code>pyproject.toml</code> 只写一次版本，<br>
+其他位置（<code>__init__.py</code>、CI、打包脚本）从它读。<br>
+在第 ② 步做一次机械比对，比任何「仔细一点」都可靠。</p>
+<h3 id="changelog">信息是怎么从提交流到 CHANGELOG 的</h3>
+<pre class="plain"><code>  git log 的一条提交
+  ┌────────────────────────────────────────────────────┐
+  │ 8b7a6f5 feat(cli)!: 把 --output 参数改名为 --format  │
+  │                                                     │
+  │ BREAKING CHANGE: --output 已移除，请改用 --format     │
+  └────────────────────────────────────────────────────┘
+        │
+        ├─▶ 解析 subject → type=feat  scope=cli  bang=!
+        ├─▶ 解析 body    → 有 BREAKING CHANGE: → breaking=True，摘出说明句
+        │
+        ├─▶ 分类：breaking 优先 → Changed（额外进 BREAKING 区）
+        ├─▶ 版本决策：出现过 breaking → MAJOR 递增
+        └─▶ 渲染：把 scope 拼进条目，附上短 sha 便于回溯
+</code></pre>
+<p>注意 <code>!</code> 和 <code>BREAKING CHANGE:</code> <strong>两种标记都要认</strong>——只认一个，<br>
+就会漏掉一半破坏性变更，进而算错版本号。本日脚本的自检专门断言了这两种。</p>
+<hr>
+<h2 id="_5">定义与方法（速查）</h2>
+<h3 id="semver-code01-semverpy">SemVer 操作速查（<code>code/01-semver.py</code>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--self-test<span class="w">                    </span><span class="c1"># 规范原文例子逐对断言</span>
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--check<span class="w"> </span><span class="m">1</span>.2.3-rc.1<span class="w">             </span><span class="c1"># 合法性，退出码 0/1</span>
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--parse<span class="w"> </span><span class="m">2</span>.0.0-rc.1+build.5<span class="w">     </span><span class="c1"># 拆解成字段</span>
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--compare<span class="w"> </span><span class="m">1</span>.0.0-alpha.1<span class="w"> </span><span class="m">1</span>.0.0-beta
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--bump<span class="w"> </span><span class="m">1</span>.2.3<span class="w"> </span>--part<span class="w"> </span>minor
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--match<span class="w"> </span><span class="s1">&#39;^1.2.3&#39;</span><span class="w"> </span><span class="m">1</span>.9.9
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--sort<span class="w"> </span><span class="m">1</span>.0.0<span class="w"> </span><span class="m">1</span>.0.0-rc.1<span class="w"> </span><span class="m">0</span>.9.9
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>范围表达式</th>
+<th>含义</th>
+<th>边界用例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>^1.2.3</code></td>
+<td>&gt;=1.2.3 &lt;2.0.0</td>
+<td>1.9.9 ✅ / 2.0.0 ❌</td>
+</tr>
+<tr>
+<td><code>^0.2.3</code></td>
+<td>&gt;=0.2.3 &lt;0.3.0（0.x 只放开 patch）</td>
+<td>0.2.9 ✅ / 0.3.0 ❌</td>
+</tr>
+<tr>
+<td><code>~1.2.3</code></td>
+<td>&gt;=1.2.3 &lt;1.3.0</td>
+<td>1.2.9 ✅ / 1.3.0 ❌</td>
+</tr>
+<tr>
+<td><code>&gt;=1.2.3, &lt;2.0.0</code></td>
+<td>区间</td>
+<td>1.5.0 ✅ / 2.0.0 ❌</td>
+</tr>
+<tr>
+<td><code>1.2.x</code></td>
+<td>&gt;=1.2.0 &lt;1.3.0</td>
+<td>通配</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>递增的两个反直觉点：<code>bump('1.2.3-rc.1','patch') = '1.2.3'</code>（预发布转正是<strong>丢弃</strong><br>
+预发布，不是变成 <code>1.2.4</code>）；<code>bump('1.2.3','prerelease') = '1.2.4-0'</code><br>
+（先把 patch 挑上去，再加预发布）。</p>
+</blockquote>
+<h3 id="changelog-code02-changelogpy">CHANGELOG 速查（<code>code/02-changelog.py</code>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--from<span class="w"> </span>gitlog.txt<span class="w"> </span>--current<span class="w"> </span><span class="m">1</span>.1.4<span class="w"> </span>--dry-run
+python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--from<span class="w"> </span>gitlog.txt<span class="w"> </span>--current<span class="w"> </span><span class="m">0</span>.3.1<span class="w"> </span>--zero-major
+python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--lint<span class="w"> </span>CHANGELOG.md<span class="w">          </span><span class="c1"># 体检，退出码 0/1</span>
+</code></pre></div>
+<p>提交记录的输入格式（等价于 <code>git log --pretty=format:'%h %s%n%b'</code>）：</p>
+<pre class="plain"><code>a1b2c3d feat(api): 新增分页参数 page/page_size
+8b7a6f5 feat(cli)!: 把 --output 参数改名为 --format
+
+BREAKING CHANGE: --output 已移除，请改用 --format
+</code></pre>
+<h3 id="code03-build-verifypy">构建与校验速查（<code>code/03-build-verify.py</code>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/03-build-verify.py<span class="w"> </span>--self-test<span class="w">                       </span><span class="c1"># 自造包真构建真校验</span>
+python3<span class="w"> </span>code/03-build-verify.py<span class="w"> </span>--project<span class="w"> </span>.<span class="w"> </span>--out<span class="w"> </span>dist<span class="w">            </span><span class="c1"># 优先官方 build 前端</span>
+python3<span class="w"> </span>code/03-build-verify.py<span class="w"> </span>--project<span class="w"> </span>.<span class="w"> </span>--out<span class="w"> </span>dist<span class="w"> </span>--dry-run<span class="w">  </span><span class="c1"># 只打印计划</span>
+<span class="nv">PYTHONPATH</span><span class="o">=</span>./.deps<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>build<span class="w"> </span>--no-isolation<span class="w"> </span>--outdir<span class="w"> </span>dist<span class="w"> </span>.<span class="w">   </span><span class="c1"># 等价的原生命令</span>
+<span class="nv">PYTHONPATH</span><span class="o">=</span>./.deps<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>twine<span class="w"> </span>check<span class="w"> </span>dist/*
+</code></pre></div>
+<p><code>--no-isolation</code> 的含义：不让 build 建隔离环境、去下载 build-system.requires，<br>
+而是直接用当前环境里的后端。<strong>离线可用、快</strong>；代价是后端版本不受 pyproject 约束。<br>
+生产 CI 里推荐去掉它以获得可复现构建。</p>
+<h3 id="code04-release-pipelinepy">流水线速查（<code>code/04-release-pipeline.py</code>）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/04-release-pipeline.py<span class="w"> </span>--self-test<span class="w">                  </span><span class="c1"># 起本地桩，端到端</span>
+python3<span class="w"> </span>code/04-release-pipeline.py<span class="w"> </span>--tag<span class="w"> </span>v1.2.3<span class="w"> </span>--project<span class="w"> </span>.<span class="w"> </span>--dry-run
+<span class="nv">DAY181_INDEX_TOKEN</span><span class="o">=</span>pypi-xxx<span class="w"> </span>python3<span class="w"> </span>code/04-release-pipeline.py<span class="w"> </span>--tag<span class="w"> </span>v1.2.3<span class="w"> </span>--project<span class="w"> </span>.<span class="w"> </span>--repository<span class="w"> </span>testpypi
+</code></pre></div>
+<p>token 只从环境变量读（<code>DAY181_INDEX_TOKEN</code>），<strong>不接受命令行传参</strong>——<br>
+命令行参数会出现在 <code>ps</code>、shell history 和 CI 日志里。</p>
+<h3 id="legacy-twine">legacy 上传协议字段（twine 用的就是它）</h3>
+<p><code>POST https://upload.pypi.org/legacy/</code>，<code>multipart/form-data</code>：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>:action</code></td>
+<td>固定 <code>file_upload</code></td>
+</tr>
+<tr>
+<td><code>protocol_version</code></td>
+<td>固定 <code>1</code></td>
+</tr>
+<tr>
+<td><code>name</code> / <code>version</code></td>
+<td>来自 METADATA</td>
+</tr>
+<tr>
+<td><code>filetype</code></td>
+<td><code>sdist</code> 或 <code>bdist_wheel</code></td>
+</tr>
+<tr>
+<td><code>metadata</code></td>
+<td>完整 core metadata 文本（RFC 822 风格）</td>
+</tr>
+<tr>
+<td><code>sha256_digest</code> / <code>md5_digest</code></td>
+<td>内容摘要，索引端校验传输完整性</td>
+</tr>
+<tr>
+<td><code>content</code></td>
+<td>文件本体，带 <code>filename=</code></td>
+</tr>
+</tbody>
+</table>
+<p>认证头：<code>Authorization: Basic base64("__token__:pypi-****")</code></p>
+<h3 id="_6">版本决策速查</h3>
+<table>
+<thead>
+<tr>
+<th>提交里出现了什么</th>
+<th>下一个版本</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任意 <code>!</code> 或 <code>BREAKING CHANGE:</code></td>
+<td>MAJOR +1（0.x 时按惯例只是 MINOR +1）</td>
+</tr>
+<tr>
+<td>有 <code>feat</code>，无 breaking</td>
+<td>MINOR +1</td>
+</tr>
+<tr>
+<td>只有 <code>fix</code> / 内部改动</td>
+<td>PATCH +1</td>
+</tr>
+<tr>
+<td>什么都没有</td>
+<td>不该发版</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_7">实战环境</h2>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>版本 / 说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主机</td>
+<td>Linux 7.0.0-34-generic (x64)，Docker 29.1.3</td>
+</tr>
+<tr>
+<td>Python</td>
+<td>3.12.3（<code>python3 -V</code> 实测）</td>
+</tr>
+<tr>
+<td>pip</td>
+<td>24.0</td>
+</tr>
+<tr>
+<td>构建后端</td>
+<td>setuptools 83.0.0、wheel 0.42.0（系统已装）</td>
+</tr>
+<tr>
+<td>官方工具</td>
+<td><code>build</code> <strong>1.6.1</strong>、<code>twine</code> <strong>7.0.0</strong>（<code>pip install --target /tmp/day181/.deps</code> 隔离安装，不进仓库）</td>
+</tr>
+<tr>
+<td>本日代码</td>
+<td><code>code/</code> 下四个脚本，全部纯标准库</td>
+</tr>
+</tbody>
+</table>
+<p>四个脚本都能<strong>脱离第三方依赖</strong>跑自检：<code>01</code>（纯 stdlib）、<code>02</code>（纯 stdlib）、<br>
+<code>03</code>（没装 build 时降级到 setuptools 后端）、<code>04</code>（起本地桩，不碰外网）。<br>
+只有「真跑官方 build 前端」和「真 twine check」两步需要那三个包。</p>
+<table>
+<thead>
+<tr>
+<th>脚本</th>
+<th><code>--self-test</code> 耗时（实测）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>01-semver.py</td>
+<td>0.03 s</td>
+</tr>
+<tr>
+<td>02-changelog.py</td>
+<td>0.03 s</td>
+</tr>
+<tr>
+<td>03-build-verify.py</td>
+<td>0.62 s</td>
+</tr>
+<tr>
+<td>04-release-pipeline.py</td>
+<td>2.04 s</td>
+</tr>
+</tbody>
+</table>
+<p>（测速条件：<code>/usr/bin/time -f '%e s'</code>，同一台机器，单次运行，<br>
+包含一次真实构建；不同运行的耗时会有 ±30% 波动。）</p>
+<hr>
+<h2 id="_8">图解</h2>
+<p>见 <a href="diagrams/README.md"><code>diagrams/README.md</code></a>：语义化版本的比较规则可视化、<br>
+六步发布链路、构建产物关系、提交到 CHANGELOG 的数据流、上传协议时序。</p>
+<hr>
+<h2 id="1semver">实验 1：SemVer 的规则是不是真能算出来</h2>
+<p><strong>目的</strong>：把「靠眼看版本号」换成「靠规则算」，并亲眼确认两条反直觉规则。</p>
+<p><strong>准备</strong>：无（纯标准库）。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--parse<span class="w"> </span><span class="m">2</span>.0.0-rc.1+build.5
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--compare<span class="w"> </span><span class="m">1</span>.0.0-alpha.beta<span class="w"> </span><span class="m">1</span>.0.0-beta
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--bump<span class="w"> </span><span class="m">1</span>.2.3-rc.1<span class="w"> </span>--part<span class="w"> </span>patch
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--match<span class="w"> </span><span class="s1">&#39;^1.2.3&#39;</span><span class="w"> </span><span class="m">1</span>.9.9
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--match<span class="w"> </span><span class="s1">&#39;^1.2.3&#39;</span><span class="w"> </span><span class="m">2</span>.0.0
+python3<span class="w"> </span>code/01-semver.py<span class="w"> </span>--sort<span class="w"> </span><span class="m">1</span>.0.0<span class="w"> </span><span class="m">1</span>.0.0-rc.1<span class="w"> </span><span class="m">1</span>.0.0-beta.11<span class="w"> </span><span class="m">0</span>.9.9
+</code></pre></div>
+<p><strong>预期结果</strong>：<code>--self-test</code> 退出码 0；<code>--compare</code> 输出 <code>&lt;</code>。</p>
+<p><strong>实际结果</strong>（本机真实 stdout，2026-10-16，耗时 0.03 s）：</p>
+<pre class="plain"><code>✅ self-test 通过：规范优先级链 8 个版本全序正确 / +build 不参与比较 / 数字段按数值比 / 8 个非法输入被拒 / 6 条递增规则 / 5 条范围匹配规则成立
+
+2.0.0-rc.1+build.5
+  major=2 minor=0 patch=0
+  prerelease=[&#x27;rc&#x27;, &#x27;1&#x27;]
+  build=[&#x27;build&#x27;, &#x27;5&#x27;]
+  是否预发布=True
+
+1.0.0-alpha.beta &lt; 1.0.0-beta   (compare=-1)
+
+1.2.3-rc.1  --patch--&gt;  1.2.3
+
+1.9.9 ✅ 落在 范围 ^1.2.3
+2.0.0 ❌ 不落在 范围 ^1.2.3
+
+0.9.9 -&gt; 1.0.0-beta.11 -&gt; 1.0.0-rc.1 -&gt; 1.0.0
+</code></pre>
+<p><strong>结论</strong>：</p>
+<ul>
+<li>排序把 <code>1.0.0-beta.11</code> 放在 <code>1.0.0-rc.1</code> 之前、<code>1.0.0</code> 之前——<br>
+  预发布永远低于对应正式版，这条规则算得出来；</li>
+<li><code>bump('1.2.3-rc.1','patch')</code> 得到 <strong>1.2.3</strong>：预发布的「转正」是丢掉预发布段，<br>
+  不是把 patch 再 +1；</li>
+<li><code>--sort</code> 的输出顺序与规范第 11 条的链条完全一致，说明比较函数不是「看起来对」。</li>
+</ul>
+<p><strong>清理</strong>：无（只读，不写盘、不起服务）。</p>
+<hr>
+<h2 id="2-changelog">实验 2：从提交生成 CHANGELOG，并算出下一个版本</h2>
+<p><strong>目的</strong>：验证「提交 → 分类 → 版本决策 → CHANGELOG」这条推导链，<br>
+并且<strong>只从提交</strong>得到 <code>2.0.0</code> 这个结论。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--current<span class="w"> </span><span class="m">1</span>.1.4<span class="w"> </span>--repo-url<span class="w"> </span>https://github.com/Geek0ne/SEOClaw<span class="w"> </span>--dry-run
+python3<span class="w"> </span>code/02-changelog.py<span class="w"> </span>--current<span class="w"> </span><span class="m">0</span>.3.1<span class="w"> </span>--zero-major<span class="w"> </span>--dry-run<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-8
+</code></pre></div>
+<p><strong>实际结果</strong>（本机真实 stdout，2026-10-16，耗时 0.03 s）：</p>
+<pre class="plain"><code>✅ self-test 通过：7 个提交解析（含无空行情形）/ 2 类 BREAKING 识别 / 4 条分类规则 / 4 条版本决策（含 0.x 惯例）/ 渲染 3 条断言 / lint 正反两例
+</code></pre>
+<p><code>--dry-run</code> 的输出：</p>
+<pre class="plain"><code># 提交 7 条 · 跳过 2 条（非规范或内部改动） · 版本决策 1.1.4 -&gt; 2.0.0（依据：BREAKING CHANGE）
+
+## [2.0.0] - 2026-10-16
+
+### BREAKING CHANGES
+
+- 把 --output 参数改名为 --format (8b7a6f5)
+
+### Added
+
+- **api**: 新增分页参数 page/page_size (a1b2c3d)
+
+### Changed
+
+- **db**: 用批量查询替换 N+1 查询 (4c3b2a1)
+- **cli**: 把 --output 参数改名为 --format (8b7a6f5)
+
+### Fixed
+
+- **api**: 修正 page=0 时的越界读取 (9f8e7d6)
+- **cli**: 修正 --format json 时的缩进 (3a2b1c0)
+
+[2.0.0]: https://github.com/Geek0ne/SEOClaw/compare/v1.1.4...v2.0.0
+
+# --dry-run：未写文件
+</code></pre>
+<p>同一个输入换成 0.x 项目惯例（<code>--zero-major</code>）：</p>
+<pre class="plain"><code># 提交 7 条 · 跳过 2 条（非规范或内部改动） · 版本决策 0.3.1 -&gt; 0.4.0（依据：BREAKING CHANGE）
+</code></pre>
+<p><strong>结论</strong>：</p>
+<ul>
+<li>7 条提交里 <code>docs</code> 和 <code>chore</code> 被跳过（<strong>内部改动不进 CHANGELOG</strong>），<br>
+  对外可见的 5 条各归其位；</li>
+<li>版本决策完全由提交推导：有 breaking → 1.1.4 直接跳 <strong>2.0.0</strong>；<br>
+  同样的提交在 0.x 项目里只升到 <strong>0.4.0</strong>；</li>
+<li><code>!</code> 和正文里的 <code>BREAKING CHANGE:</code> 被识别成同一条 breaking，<br>
+  并且正文的说明句被摘出来单独展示——两者缺一都会漏判。</li>
+</ul>
+<p><strong>清理</strong>：<code>--dry-run</code> 不写盘。去掉 <code>--dry-run</code> 会写出 <code>CHANGELOG.entry.md</code>，记得删。</p>
+<hr>
+<h2 id="3-build-sdist-wheel">实验 3：真机构建 —— 用官方 build 前端出 sdist + wheel</h2>
+<p><strong>目的</strong>：拿到一份<strong>真的</strong>构建产物，并验证「产物能装、能用」。</p>
+<p><strong>准备</strong>（隔离安装官方工具，不进仓库）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mkdir<span class="w"> </span>-p<span class="w"> </span>/tmp/day181<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>/tmp/day181
+python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--target<span class="w"> </span>./.deps<span class="w"> </span>build<span class="w"> </span>twine
+<span class="nv">PYTHONPATH</span><span class="o">=</span>/tmp/day181/.deps<span class="w"> </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import build,twine;print(build.__version__,twine.__version__)&quot;</span>
+</code></pre></div>
+<p>实测输出 <code>1.6.1 7.0.0</code>。</p>
+<p><strong>执行</strong>：先造一个最小可构建项目（脚本内置的 <code>make_demo_project</code>），再跑官方命令：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>/tmp/day181/demo
+<span class="nv">PYTHONPATH</span><span class="o">=</span>/tmp/day181/.deps<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>build<span class="w"> </span>--no-isolation<span class="w"> </span>--outdir<span class="w"> </span>dist<span class="w"> </span>.
+<span class="nv">PYTHONPATH</span><span class="o">=</span>/tmp/day181/.deps<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>twine<span class="w"> </span>check<span class="w"> </span>dist/*
+ls<span class="w"> </span>-l<span class="w"> </span>dist
+python3<span class="w"> </span>-m<span class="w"> </span>zipfile<span class="w"> </span>-l<span class="w"> </span>dist/*.whl
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-16；测速条件：<code>/usr/bin/time -f '%e s'</code>，首次冷启动、单次运行）：</p>
+<pre class="plain"><code>Successfully built demo_release_pkg-1.2.3.tar.gz and demo_release_pkg-1.2.3-py3-none-any.whl
+REAL_BUILD_WALL=1.94 s
+
+-rw-r--r-- 1 root root 1458 10月 16 22:25 demo_release_pkg-1.2.3-py3-none-any.whl
+-rw-r--r-- 1 root root 1222 10月 16 22:25 demo_release_pkg-1.2.3.tar.gz
+
+Checking dist/demo_release_pkg-1.2.3-py3-none-any.whl: PASSED
+Checking dist/demo_release_pkg-1.2.3.tar.gz: PASSED
+
+File Name                                             Modified             Size
+demo_pkg/__init__.py                           2026-10-16 14:25:28          103
+demo_release_pkg-1.2.3.dist-info/METADATA      2026-10-16 14:25:30          262
+demo_release_pkg-1.2.3.dist-info/WHEEL         2026-10-16 14:25:30           91
+demo_release_pkg-1.2.3.dist-info/top_level.txt 2026-10-16 14:25:30            9
+demo_release_pkg-1.2.3.dist-info/RECORD        2026-10-16 14:25:30          408
+</code></pre>
+<p>wheel 里的 METADATA 全文（这就是上传时 <code>metadata</code> 字段的来源）：</p>
+<pre class="plain"><code>Metadata-Version: 2.4
+Name: demo-release-pkg
+Version: 1.2.3
+Summary: Day 181 演示包：只用来验证构建与校验链路
+License: MIT
+Requires-Python: &gt;=3.9
+Description-Content-Type: text/markdown
+
+# demo-release-pkg
+
+Day 181 构建演示用的最小包。
+</code></pre>
+<p><strong>再往前一步：证明这个 wheel 真的能装、能用</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--quiet<span class="w"> </span>--no-deps<span class="w"> </span>--target<span class="w"> </span>/tmp/day181/installed<span class="w"> </span>/tmp/day181/demo/dist/*.whl
+<span class="nv">PYTHONPATH</span><span class="o">=</span>/tmp/day181/installed<span class="w"> </span>python3<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import demo_pkg; print(demo_pkg.__version__, demo_pkg.greet(&#39;day181&#39;))&quot;</span>
+</code></pre></div>
+<p>实测输出：</p>
+<pre class="plain"><code>1.2.3 hello, day181
+</code></pre>
+<p><strong>结论</strong>：</p>
+<ul>
+<li>构建产物很小：wheel <strong>1458 字节</strong>、sdist <strong>1222 字节</strong>，因为包里只有 1 个<br>
+  103 字节的模块——<strong>wheel 的体积几乎全是元数据</strong>（METADATA/WHEEL/RECORD）；</li>
+<li><code>twine check</code> 两个产物都 PASSED：元数据完整、README 能被正确渲染成描述；</li>
+<li>wheel 能装能 import，<code>__version__</code> 与文件名一致——<strong>这才是「构建成功」的完整含义</strong>；</li>
+<li>注意 setuptools 对 <code>project.license</code> 写成 TOML 表发了弃用警告<br>
+  （2027-02-18 后必须改成 SPDX 字符串）。<strong>警告不等于失败</strong>，但它说明<br>
+  「能构建」和「符合未来规范」是两件事，实测原话是：</li>
+</ul>
+<pre class="plain"><code>WARNING `project.license` as a TOML table is deprecated ... By 2027-Feb-18, you need to update
+</code></pre>
+<p><strong>清理</strong>（本实验产物都在 /tmp，仓库里不留东西）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day181/demo<span class="w"> </span>/tmp/day181/installed
+</code></pre></div>
+<hr>
+<h2 id="4-build">实验 4：降级路径 —— 没有 build 也能出产物</h2>
+<p><strong>目的</strong>：验证「前端不在，构建能力还在」，并让校验器接受正反两面的检验。</p>
+<p><strong>执行</strong>（不带 <code>PYTHONPATH</code>，即环境里没有 <code>build</code> / <code>twine</code>）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/03-build-verify.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/03-build-verify.py<span class="w"> </span>--project<span class="w"> </span>/tmp/day181/demo<span class="w"> </span>--out<span class="w"> </span>/tmp/day181/demo/dist<span class="w"> </span>--dry-run
+<span class="nv">PYTHONPATH</span><span class="o">=</span>/tmp/day181/.deps<span class="w"> </span>python3<span class="w"> </span>code/03-build-verify.py<span class="w"> </span>--project<span class="w"> </span>/tmp/day181/demo<span class="w"> </span>--out<span class="w"> </span>/tmp/day181/demo/dist
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-16，无 build/twine 环境，耗时 0.62 s）：</p>
+<pre class="plain"><code># 自检：临时项目 /tmp/day181-build-rdifugn9/proj
+  build 未安装 → 降级用 setuptools.build_meta 后端直接构建
+  | sdist: demo_release_pkg-1.2.3.tar.gz
+  | wheel: demo_release_pkg-1.2.3-py3-none-any.whl
+# 构建后端=setuptools-backend  耗时=513 ms
+wheel  demo_release_pkg-1.2.3-py3-none-any.whl
+       字节=1458  sha256=7384e0eb81207830…
+       METADATA Name=demo-release-pkg Version=1.2.3  Requires-Python=&gt;=3.9  内含文件=5
+sdist  demo_release_pkg-1.2.3.tar.gz
+       字节=1217  sha256=74067333889029ad…
+       METADATA Name=demo-release-pkg Version=1.2.3  Requires-Python=&gt;=3.9  内含文件=13
+  ✅ 文件名、内部元数据、wheel/sdist 版本一致，四项必填字段齐全
+# 反向验证：多放一个只改了文件名版本号的 demo_release_pkg-9.9.9-py3-none-any.whl，校验器报出 2 个问题（符合预期）
+# 产物体积：{&#x27;demo_release_pkg-1.2.3-py3-none-any.whl&#x27;: 1458, &#x27;demo_release_pkg-1.2.3.tar.gz&#x27;: 1217}
+  twine 未安装 → 跳过 twine check（上面是内置校验，覆盖的是同一批事实：文件名 + 元数据一致性）
+✅ self-test 通过：真构建出 wheel+sdist，元数据一致，且校验器能抓出人名错误
+# 已清理临时目录 /tmp/day181-build-rdifugn9
+</code></pre>
+<p>带上官方工具时，同一个脚本自己会切到前端路径（<strong>注意 <code>构建后端=build-frontend</code></strong>）：</p>
+<pre class="plain"><code># 项目=/tmp/day181/demo
+# 工具：build=有 · twine=有
+# 构建后端=build-frontend 耗时=1921 ms 退出码=0
+  Checking /tmp/day181/demo/dist/demo_release_pkg-1.2.3-py3-none-any.whl: PASSED
+  Checking /tmp/day181/demo/dist/demo_release_pkg-1.2.3.tar.gz: PASSED
+</code></pre>
+<p><strong>结论</strong>：</p>
+<ul>
+<li><strong><code>build</code> 前端只是个壳</strong>：它建隔离环境、装后端、调后端的<br>
+<code>build_wheel</code>/<code>build_sdist</code>。壳不在了，直接调后端（<code>setuptools.build_meta</code>）<br>
+  一样能出全套产物——这就是「降级」为什么可行；</li>
+<li>耗时对比（同机、单次、本项目用 <code>--no-isolation</code>）：后端直调 <strong>513 ms</strong><br>
+  vs 前端 <strong>1921 ms</strong>。差距不是下载依赖造成的（没开隔离），而是前端额外的<br>
+  环境准备与产物检查；换来的是隔离与规范符合性检查；</li>
+<li>自检里<strong>必须有一条反向断言</strong>：故意放一个「文件名版本被改成 9.9.9、内容没动」的<br>
+  wheel，校验器报出 2 个问题。<strong>没有这条，校验器可能只是个永远通过的安慰剂</strong>；</li>
+<li>sdist 的体积每次略有差异（1217 / 1210 / 1222 字节都出现过）——因为 tar 会把<br>
+  打包时刻写进头部，<strong>同一个源码两次构建的 sdist 不是逐字节相同的</strong>。<br>
+  wheel 则稳定在 1458 字节。</li>
+</ul>
+<p><strong>清理</strong>：自检自己用 <code>tempfile.mkdtemp</code> 并在 <code>finally</code> 里 <code>shutil.rmtree</code>，<br>
+实测输出末尾那行 <code># 已清理临时目录 …</code> 就是证据。</p>
+<hr>
+<h2 id="5">实验 5：端到端流水线（含真上传到一个本地索引桩）</h2>
+<p><strong>目的</strong>：把六步串起来，并且<strong>真的把包「传」出去一次</strong>——不是在脑子里模拟。</p>
+<p><strong>为什么用本地桩</strong>：真发到 TestPyPI 需要一个有效 token，而发出去的包是公开的、<br>
+不可撤回的。桩实现了 legacy 上传协议里被用到的部分（multipart 解析、Basic 认证头、<br>
+<code>sha256_digest</code> 校验），所以「上传这一步真的跑通过」是被证明的，<br>
+而不是被假设的。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/04-release-pipeline.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-16，本机真实 stdout，耗时 2.04 s）：</p>
+<pre class="plain"><code>[1/6] tag v1.2.3 -&gt; 版本 1.2.3 · SemVer 合法 (0 ms)
+[2/6] pyproject version = 1.2.3
+[3/6] CHANGELOG CHANGELOG.md: 1 个版本段，0 个问题
+  build 未安装 → 降级用 setuptools.build_meta 后端直接构建
+[4/6] 构建 backend=setuptools-backend 耗时=543 ms rc=0
+wheel  demo_release_pkg-1.2.3-py3-none-any.whl
+       字节=1458  sha256=1ef6a777fc4f6f09…
+       METADATA Name=demo-release-pkg Version=1.2.3  Requires-Python=&gt;=3.9  内含文件=5
+sdist  demo_release_pkg-1.2.3.tar.gz
+       字节=1213  sha256=dfd1e95e1a10bc67…
+       METADATA Name=demo-release-pkg Version=1.2.3  Requires-Python=&gt;=3.9  内含文件=13
+  ✅ 文件名、内部元数据、wheel/sdist 版本一致，四项必填字段齐全
+[5/6] 校验 通过（0 个问题）
+[6/6] --dry-run / 未指定仓库：不发布。真实执行时会做：
+        POST &lt;url&gt;  file=demo_release_pkg-1.2.3-py3-none-any.whl  Authorization: Basic ***
+        POST &lt;url&gt;  file=demo_release_pkg-1.2.3.tar.gz  Authorization: Basic ***
+# 反向验证：tag=v9.9.9 而包内是 1.2.3 -&gt; 第 2 步拦下（未构建、未上传）
+# 反向验证：无 token 时拒绝上传（fail closed，不是 fail open）
+[6/6] ✅ demo_release_pkg-1.2.3-py3-none-any.whl -&gt; HTTP 200 {&quot;message&quot;: &quot;OK&quot;}
+[6/6] ✅ demo_release_pkg-1.2.3.tar.gz -&gt; HTTP 200 {&quot;message&quot;: &quot;OK&quot;}
+# 全流程 389 ms
+# 桩收到的上传：[{&quot;name&quot;: &quot;demo-release-pkg&quot;, &quot;version&quot;: &quot;1.2.3&quot;, &quot;filename&quot;: &quot;demo_release_pkg-1.2.3-py3-none-any.whl&quot;, &quot;size&quot;: 1458, &quot;sha256&quot;: &quot;1ef6a777fc4f6f09&quot;}, {&quot;name&quot;: &quot;demo-release-pkg&quot;, &quot;version&quot;: &quot;1.2.3&quot;, &quot;filename&quot;: &quot;demo_release_pkg-1.2.3.tar.gz&quot;, &quot;size&quot;: 1224, &quot;sha256&quot;: &quot;23bee8e7e4994185&quot;}]
+# 反向验证：把 sha256 改坏后桩返回 HTTP 400（{&quot;message&quot;: &quot;sha256_digest 与实际内容不符&quot;}）
+✅ self-test 通过：六步全跑通（含真上传到本地桩）；版本不一致/无 token/摘要不符 三种坏情况都被拦下
+# 已清理临时目录 /tmp/day181-pipeline-jq45fy14
+</code></pre>
+<p><strong>结论</strong>：</p>
+<ul>
+<li>六步全绿时，桩收到了<strong>两个</strong>文件，且 <code>name</code>/<code>version</code> 与文件名一致——<br>
+  说明 multipart 编码、<code>metadata</code> 字段、<code>sha256_digest</code> 都是按协议发的；</li>
+<li>三种坏情况都被<strong>拦在门外</strong>：tag 与包内版本不一致（第 2 步、连构建都没做）、<br>
+  没有 token（拒绝上传，<strong>fail closed</strong>）、内容摘要对不上（索引端 400）；</li>
+<li>最后一条最值得注意：它是<strong>校验器自己的校验</strong>。桩如果无条件返回 200，<br>
+  这个自检就变成了自我麻醉——所以桩必须真的算一遍摘要（见翻车复盘 5）。</li>
+</ul>
+<p><strong>清理</strong>：<code>--self-test</code> 在 <code>finally</code> 里关服务、删临时目录；实测输出末尾两行即是证据。<br>
+不占端口（绑的是 0 号端口，由内核分配）。</p>
+<hr>
+<h2 id="6">实验 6：真实索引能碰到什么程度（含未实测部分）</h2>
+<p><strong>目的</strong>：把「和真 PyPI 的边界」划清楚——哪些我验过，哪些没验过。</p>
+<p><strong>执行</strong>（只读查询 + 用假 token 试一次上传）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import json, urllib.request</span>
+<span class="s">for url in [&#39;https://test.pypi.org/pypi/sampleproject/json&#39;,</span>
+<span class="s">            &#39;https://pypi.org/pypi/sampleproject/json&#39;]:</span>
+<span class="s">    with urllib.request.urlopen(url, timeout=15) as r:</span>
+<span class="s">        d = json.load(r)</span>
+<span class="s">    print(url, &#39;-&gt; HTTP&#39;, r.status)</span>
+<span class="s">    print(&#39;   name=%s version=%s&#39; % (d[&#39;info&#39;][&#39;name&#39;], d[&#39;info&#39;][&#39;version&#39;]))</span>
+<span class="s">    for f in d[&#39;urls&#39;]:</span>
+<span class="s">        print(&#39;   file:&#39;, f[&#39;filename&#39;], f[&#39;size&#39;], &#39;bytes&#39;,</span>
+<span class="s">              &#39;sha256=&#39; + f[&#39;digests&#39;][&#39;sha256&#39;][:16] + &#39;...&#39;)</span>
+<span class="s">PY</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-16）：</p>
+<pre class="plain"><code>https://test.pypi.org/pypi/sampleproject/json -&gt; HTTP 200
+   name=sampleproject version=1.2.0 requires_python=None
+   release file: sampleproject-1.2.0-py2.py3-none-any.whl 3795 bytes sha256=716f2195be41bd98...
+   release file: sampleproject-1.2.0.tar.gz 3148 bytes sha256=9a99bb2beb2acba2...
+https://pypi.org/pypi/sampleproject/json -&gt; HTTP 200
+   name=sampleproject version=4.0.0 requires_python=&gt;=3.9
+   release file: sampleproject-4.0.0-py3-none-any.whl 4661 bytes sha256=c23e447ea90d796d...
+   release file: sampleproject-4.0.0.tar.gz 5760 bytes sha256=0ace7980f82c5815...
+</code></pre>
+<p>再用一个<strong>假 token</strong> 打真实的 TestPyPI 上传端点（不会发布任何东西，因为认证会失败）：</p>
+<pre class="plain"><code>HTTP 403
+403 Invalid or non-existent authentication information. See https://test.pypi.org/help/#invalid-auth for more information.
+</code></pre>
+<p><strong>已实测的边界</strong>：</p>
+<ul>
+<li>真实索引的 JSON API 可用，且<strong>返回的正是我们构建产物的同类信息</strong><br>
+  （文件名、字节数、sha256）——所以「上传成功后拿什么校验」是有答案的；</li>
+<li>真实上传端点<strong>存在且强制认证</strong>：假 token 立刻 403。这证明<br>
+  客户端（我们的 <code>upload_artifact</code>）在编码、认证头、协议字段上<br>
+  已经能走到「被服务端正确理解并拒绝」这一步——如果协议本身发错了，<br>
+  更可能拿到的是 400 而不是 403。</li>
+</ul>
+<p><strong>未实测：真实的成功上传</strong>。</p>
+<ul>
+<li><strong>原因</strong>：需要一个有效的 PyPI / TestPyPI API token。本日没有使用任何真实凭据<br>
+  （也不应该为了教学把包公开出去）。所以「上传成功 → 索引页出现新版本」这一段<br>
+<strong>没有在本机跑过</strong>。</li>
+<li><strong>预期结果</strong>：<code>twine upload --repository testpypi dist/*</code> 打印<br>
+<code>Uploading distributions to https://test.pypi.org/legacy/</code> 与<br>
+<code>View at: https://test.pypi.org/project/&lt;name&gt;/&lt;version&gt;/</code>；<br>
+  随后 <code>https://test.pypi.org/pypi/&lt;name&gt;/json</code> 能查到刚上传的文件名与 sha256。</li>
+<li><strong>验证方法</strong>：注册 TestPyPI 账号 → 在账户页生成 scope 为<br>
+<code>Entire account (all projects)</code> 的 token → 设置<br>
+<code>DAY181_INDEX_TOKEN=pypi-...</code> → 跑<br>
+<code>python3 code/04-release-pipeline.py --tag v1.2.3 --project . --repository testpypi</code>，<br>
+  脚本第 6 步会把两个产物的 HTTP 状态码逐个打出来；再按上面的 JSON API<br>
+  用 <code>sha256</code> 与本地产物比对。<strong>注意 TestPyPI 与 PyPI 是两套账号、两套 token。</strong></li>
+</ul>
+<p><strong>其他未实测项</strong>（明确列出，避免读者误以为都验过）：</p>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>状态</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>build</code> 的隔离构建（不加 <code>--no-isolation</code>）</td>
+<td>未实测</td>
+<td>本日全部用 <code>--no-isolation</code> 以避开网络依赖；隔离模式会另建虚拟环境并下载后端</td>
+</tr>
+<tr>
+<td>GitHub Actions 上的 release workflow</td>
+<td>未实测</td>
+<td>本日只做本地流水线，未接 CI；写法见文末延伸</td>
+</tr>
+<tr>
+<td><code>twine</code> 的 GPG 签名（<code>--sign</code>）</td>
+<td>未实测</td>
+<td>需要密钥对与 <code>gpg</code>，本日未配置</td>
+</tr>
+<tr>
+<td>私有索引 / devpi</td>
+<td>未实测</td>
+<td>本日只用本地桩验证协议</td>
+</tr>
+<tr>
+<td>从 TestPyPI 装回刚上传的包</td>
+<td>未实测</td>
+<td>依赖上一条（需要真的传上去）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_9">翻车复盘（七个真问题，全部在本日实测中出现）</h2>
+<h3 id="1-">1. 正则里漏了一个 <code>[^-]+</code>，校验器把合法产物判成非法</h3>
+<p><strong>症状</strong>：<code>03 --self-test</code> 直接失败：</p>
+<pre class="plain"><code>  ❌ demo_release_pkg-1.2.3.tar.gz: 文件名不符合 PEP 625
+  ❌ 缺少 wheel 或 sdist（只有 [&#x27;wheel&#x27;]）
+</code></pre>
+<p><strong>假设</strong>：setuptools 生成的 sdist 名字不符合规范？不太可能。<br>
+<strong>验证</strong>：把正则单独拿出来试：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">SDIST_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^(?P&lt;name&gt;.+)-(?P&lt;version&gt;)\.tar\.gz$&quot;</span><span class="p">)</span>
+<span class="n">SDIST_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="s2">&quot;demo_release_pkg-1.2.3.tar.gz&quot;</span><span class="p">)</span>   <span class="c1"># -&gt; None</span>
+</code></pre></div>
+<p><strong>根因</strong>：<code>(?P&lt;version&gt;)</code> 这个分组<strong>里面什么都没写</strong>，它只能匹配空字符串，<br>
+于是正则变成「一串字符 + 一个 '-' + 立刻是 '.tar.gz'」，永远匹配不上。<br>
+改法是补上 <code>[^-]+</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">SDIST_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^(?P&lt;name&gt;.+)-(?P&lt;version&gt;[^-]+)\.tar\.gz$&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>复测</strong>：sdist 被正确解析，校验通过。</p>
+<blockquote>
+<p>教训：「校验失败」的第一反应不该是「产物有问题」，而是<strong>先证明校验器本身没毛病</strong>。<br>
+一个写错的正则会让所有合法产物都变红，这和「所有产物真的都坏了」看起来一模一样。</p>
+</blockquote>
+<h3 id="2-pep-503">2. 不做 PEP 503 归一化，同一个包被判成两个名字</h3>
+<p><strong>症状</strong>：</p>
+<pre class="plain"><code>  ❌ demo_release_pkg-1.2.3.tar.gz: 文件名里的名字 demo_release_pkg 与元数据 demo-release-pkg 不一致
+</code></pre>
+<p><strong>假设</strong>：元数据里 Name 写错了？<br>
+<strong>验证</strong>：读产物内部的 METADATA —— 里面写的是 <code>Name: demo-release-pkg</code>，完全正确。<br>
+<strong>根因</strong>：sdist 文件名用下划线（<code>demo_release_pkg</code>），wheel/元数据里用连字符<br>
+（<code>demo-release-pkg</code>）——规范规定这两者<strong>是同一个名字</strong>。我的比较是裸字符串比较，<br>
+于是把合法状态判成了错误。<br>
+<strong>修复</strong>：加 <code>normalize_name()</code>（小写 + 把连续 <code>-_.</code> 压成单个 <code>-</code>），<br>
+两边都过一遍再比。<br>
+<strong>复测</strong>：<code>✅ 文件名、内部元数据、wheel/sdist 版本一致，四项必填字段齐全</code>。</p>
+<blockquote>
+<p>教训：<strong>「看起来不一样」和「真的不一样」是两个判断</strong>。包名、邮箱、路径、<br>
+时区这类东西都有「同一实体的多种写法」，比较前先归一化。</p>
+</blockquote>
+<h3 id="3">3. 提交日志按空行切，把一批提交全吸进了第一个</h3>
+<p><strong>症状</strong>：<code>02 --self-test</code> 断言失败：<code>应该解析出 7 个提交，得到 2</code>。<br>
+<strong>假设</strong>：正则没匹配上？但结果只有 2 个，说明是<strong>切分</strong>的问题，不是匹配。<br>
+<strong>根因</strong>：我一开始的解析逻辑是「遇到空行才算一个提交结束」。而<br>
+<code>git log --pretty=format:'%h %s%n%b'</code> 的输出在提交之间<strong>并不加空行</strong>，<br>
+于是前 5 条普通提交全部被当成第 1 条提交的正文，实际只切出 2 个块。<br>
+<strong>修复</strong>：改成<strong>按行首模式判断新提交</strong>（7–40 位十六进制 sha + 空格 + 主题），<br>
+而不是靠空行。<br>
+<strong>复测</strong>：<code>✅ self-test 通过：7 个提交解析（含无空行情形）…</code></p>
+<blockquote>
+<p>教训：解析「别人生成的文本格式」时，先问一句<strong>分隔符到底是什么</strong>。<br>
+我这里是凭印象写了「空行分隔」——直到自检把数字报出来（7 vs 2），<br>
+印象才被证伪。</p>
+</blockquote>
+<h3 id="4-sdist">4. 断言「排序后 sdist 在前」——想当然的排序假设</h3>
+<p><strong>症状</strong>：</p>
+<pre class="plain"><code>AssertionError: [&#x27;demo_release_pkg-1.2.3-py3-none-any.whl&#x27;, &#x27;demo_release_pkg-1.2.3.tar.gz&#x27;]
+</code></pre>
+<p><strong>根因</strong>：两个文件名共享前缀 <code>demo_release_pkg-1.2.3.</code>，下一位是 <code>p</code>（wheel 的<br>
+<code>py3</code>）和 <code>t</code>（sdist 的 <code>tar.gz</code>），<code>p &lt; t</code>，所以<strong>排序后 wheel 在前</strong>。<br>
+我写断言时脑子里想的是「sdist 一般排在前面」，就把顺序硬编码进去了。<br>
+<strong>修复</strong>：断言改成「两种文件各存在一个」，而不是「第 0 个必须是 sdist」。<br>
+<strong>复测</strong>：自检通过（退出码 0）。</p>
+<blockquote>
+<p>教训：<strong>断言应该断言不变量，而不是断言顺带观察到的巧合顺序</strong>。<br>
+排序依赖文件名，文件名依赖构建后端，这属于实现细节。</p>
+</blockquote>
+<h3 id="5-patch-patch">5. 一个自我麻醉的空测试：patch 把校验双方一起 patch 掉了</h3>
+<p><strong>症状</strong>：<code>AssertionError: 篡改 digest 后桩仍返回 200，说明校验是假的</code><br>
+——也就是说，这条「篡改必须被发现」的断言<strong>本该失败，它却在替我遮掩问题</strong>。<br>
+<strong>根因</strong>：自检里用 <code>mock.patch("hashlib.sha256")</code> 篡改发送端的摘要，<br>
+但<strong>桩的校验端也在同一个进程里调 <code>hashlib.sha256</code></strong>——<br>
+patch 是模块级的，两边都拿到了篡改后的同一个函数，算出的错值一模一样，<br>
+于是服务端认为「摘要匹配」，返回 200。<br>
+<strong>修复</strong>：桩在模块加载时先抓住真函数的引用（<code>_SHA256 = hashlib.sha256</code>），<br>
+校验时用这个引用，不在运行时去查模块属性。<br>
+<strong>复测</strong>：</p>
+<pre class="plain"><code># 反向验证：把 sha256 改坏后桩返回 HTTP 400（{&quot;message&quot;: &quot;sha256_digest 与实际内容不符&quot;}）
+</code></pre>
+<blockquote>
+<p>教训：<strong>用 mock 篡改一个全局函数时，要问「还有谁在用它」</strong>。<br>
+如果被测的两端共享同一个全局，patch 就不是「注入错误」，而是「把尺子也改短了」。<br>
+这类测试最危险的地方在于它<strong>看起来是绿的</strong>。</p>
+</blockquote>
+<h3 id="6-exit-grep">6. <code>EXIT=$?</code> 出现在管道后面，看到的是 grep 的退出码</h3>
+<p><strong>症状</strong>：我一度认为 <code>04</code> 的自检是绿的，因为命令写成</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/04-release-pipeline.py<span class="w"> </span>--self-test<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-v<span class="w"> </span><span class="s1">&#39;^  |&#39;</span><span class="w"> </span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="nv">EXIT</span><span class="o">=</span><span class="nv">$?</span>
+</code></pre></div>
+<p>而 <code>$?</code> 取的是<strong>整个管道最后一条命令</strong>（<code>grep</code>）的状态。<br>
+<code>grep</code> 找到了行就返回 0，所以那个 <code>EXIT=0</code> 是 grep 的 0，<br>
+Python 其实已经断言失败退出了 1。</p>
+<p><strong>修复</strong>：先把输出落盘再判断（本日最终采用的方式）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/04-release-pipeline.py<span class="w"> </span>--self-test<span class="w"> </span>&gt;/tmp/day181/04.out<span class="w"> </span><span class="m">2</span>&gt;/dev/null
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;REAL_EXIT=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p><strong>复测</strong>：四个脚本 <code>REAL_EXIT=0</code>（修掉上面第 4、5 两条之后）。</p>
+<blockquote>
+<p>教训：<strong>「命令看起来绿了」和「命令真的绿了」中间隔着一个 <code>$?</code></strong>。<br>
+一切「跑一下看看」的验证，都要确保退出码来自那个你真正关心的进程。</p>
+</blockquote>
+<h3 id="7-upload_artifact-path">7. <code>upload_artifact</code> 只接受 <code>Path</code>，传字符串直接崩</h3>
+<p><strong>症状</strong>：</p>
+<pre class="plain"><code>AttributeError: &#x27;str&#x27; object has no attribute &#x27;read_bytes&#x27;
+</code></pre>
+<p><strong>根因</strong>：函数内部按 <code>Path</code> 用，但没做转换，外部传 <code>str</code> 就炸——<br>
+而且炸在函数第一行，看起来像调用方的问题。<br>
+<strong>修复</strong>：函数入口加 <code>path = Path(path)</code>。<br>
+<strong>复测</strong>：用字符串路径调用，正常拿到 <code>HTTP 403</code>（见实验 6）。</p>
+<blockquote>
+<p>教训：<strong>脚本里的「对外函数」要对自己声明的参数类型宽容一点</strong>。<br>
+尤其当这条路径只在「手动调用」时才走到——自检全走 <code>Path</code> 的话，<br>
+这个 bug 永远不会被自检发现。</p>
+</blockquote>
+<hr>
+<h2 id="_10">清理（每次实验后都做）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day181-build-*<span class="w"> </span>/tmp/day181-pipeline-*<span class="w">   </span><span class="c1"># 自检的临时目录（正常已自删）</span>
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day181/demo<span class="w"> </span>/tmp/day181/installed<span class="w">       </span><span class="c1"># 实验 3 的构建产物与安装目录</span>
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day181/.deps<span class="w">                            </span><span class="c1"># 隔离安装的 build/twine</span>
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day181<span class="w">                                  </span><span class="c1"># 全部清掉</span>
+</code></pre></div>
+<p>自检项：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">ls<span class="w"> </span>-d<span class="w"> </span>/tmp/day181-*<span class="w"> </span><span class="m">2</span>&gt;/dev/null<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;无遗留临时目录&quot;</span>
+ss<span class="w"> </span>-ltnp<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;:181[0-9]&#39;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;无遗留端口&quot;</span>
+docker<span class="w"> </span>ps<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Names}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-i<span class="w"> </span>day181<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;无遗留容器&quot;</span>
+git<span class="w"> </span>status<span class="w"> </span>--short<span class="w"> </span>days/day-181-release-management<span class="w">   </span><span class="c1"># 应该只看到本日新增文件</span>
+</code></pre></div>
+<p>本日<strong>没有起任何容器</strong>（全部实验都是本地进程 + 一个绑 0 号端口的临时 HTTP 桩），<br>
+所以不需要 <code>docker rm</code>；桩进程随 <code>srv.shutdown()</code> 结束，端口由内核回收。</p>
+<hr>
+<h2 id="_11">思考题</h2>
+<ol>
+<li><code>1.0.0+build.1</code> 和 <code>1.0.0+build.2</code> 谁更大？为什么规范要这么规定？<br>
+   如果构建元数据参与比较，会给依赖解析带来什么麻烦？</li>
+<li><code>1.0.0-alpha.1</code> 和 <code>1.0.0-alpha.beta</code> 谁大？<code>1.0.0-alpha.9</code> 和<br>
+<code>1.0.0-alpha.10</code> 呢？（提示：数字段按数值比）</li>
+<li>你的项目在 0.9.0，这次做了破坏性变更。按规范<strong>应该</strong>发什么版本？<br>
+   按社区惯例<strong>通常</strong>发什么？两种选择各自的代价是什么？</li>
+<li>为什么 PyPI 不允许覆盖同名版本？如果允许覆盖，一个用了<br>
+<code>pip install foo==1.2.3</code> 的 CI 会在什么情况下「昨天能过今天不能过」？</li>
+<li><code>twine check</code> 通过能保证包一定能装吗？说出至少两件它检查不到的事。</li>
+<li>为什么 API token 的用户名要固定写 <code>__token__</code>？如果直接用自己的用户名会怎样？</li>
+<li>你的流水线第 5 步（校验）通过了、第 6 步上传也成功了，但用户装了报<br>
+<code>ModuleNotFoundError</code>。问题最可能出在哪一步？怎么在下一次发布前发现它？</li>
+<li>实验 5 里「篡改摘要后桩返回 400」这条断言，如果不写会有什么后果？<br>
+   举一个「自检全绿但功能其实坏了」的例子（本日正文里有一个真的）。</li>
+</ol>
+<hr>
+<h2 id="_12">交付清单</h2>
+<ul>
+<li><code>code/01-semver.py</code> —— SemVer 解析/比较/递增/范围匹配（纯标准库，<code>--self-test</code>）</li>
+<li><code>code/02-changelog.py</code> —— Conventional Commits → Keep a Changelog（<code>--lint</code> / <code>--dry-run</code> / <code>--self-test</code>）</li>
+<li><code>code/03-build-verify.py</code> —— 构建 + 产物校验，缺 <code>build</code> 时降级到 setuptools 后端（<code>--project</code> / <code>--dry-run</code> / <code>--self-test</code>）</li>
+<li><code>code/04-release-pipeline.py</code> —— 六步发布流水线 + 本地索引桩（<code>--repository</code> / <code>--dry-run</code> / <code>--self-test</code>）</li>
+<li><code>diagrams/README.md</code> —— 五张原理图</li>
+<li><code>exercises/checklist.md</code> —— 练习与检查表</li>
+</ul>
+<hr>
+<h2 id="_13">延伸（选做）</h2>
+<ol>
+<li>把 <code>04</code> 接进 GitHub Actions：<code>on: push: tags: ['v*']</code> 触发，<br>
+   token 用 <code>secrets.PYPI_API_TOKEN</code>（<strong>不要</strong>写进仓库），<br>
+   环境用 <code>environment: release</code> 做人工审批门，<code>permissions:</code><br>
+   最小化（<code>contents: read</code>，Trusted Publishing 时加 <code>id-token: write</code>）。</li>
+<li>把版本改成<strong>单一数据源</strong>：<code>pyproject.toml</code> 用<br>
+<code>dynamic = ["version"]</code> + <code>setuptools_scm</code>，版本直接来自 git tag，<br>
+   于是「tag 与包内版本不一致」这类事故在结构上就不可能发生。</li>
+<li>给 <code>03</code> 加一条「构建可复现性」检查：同一个 commit 构建两次，<br>
+   比较 wheel 的 <code>RECORD</code> 里每个文件的 sha256，看哪些字段天生不稳定<br>
+   （提示：<code>RECORD</code> 自身、时间戳），想想为什么 PyPI 上的 wheel 仍然能对上摘要。</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-180/index.html">← Day 180 自动化测试</a><a class="nav-next" href="../day-182/index.html">Day 182 阶段项目 · 自动化运维平台（一）：服务器监控 + 告警 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 185 — 阶段项目 · 自动化运维平台（四）：一键部署 + 端到端验收</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 185 — 阶段项目 · 自动化运维平台（四）：一键部署 + 端到端验收</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">350 行</span>
+    <span class="badge">6 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（6 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-185-运维平台-一键部署与验收" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">这个项目最后长成什么样</a>
+<a class="toc-l2" href="#conceptsmd">概念解释（速览，完整版在 concepts.md）</a>
+<a class="toc-l2" href="#_2">原理解释（三条实测结论）</a>
+<a class="toc-l3" href="#1-sigterm-handler">1. &quot;我注册了 SIGTERM handler&quot; ≠ &quot;在途请求会被做完&quot;（本日最重要的翻车）</a>
+<a class="toc-l3" href="#2-pid">2. PID 号不是身份凭证</a>
+<a class="toc-l3" href="#3-bind-time_wait">3. 端口冲突要用&quot;身份&quot;判定，bind() 要认 TIME_WAIT</a>
+<a class="toc-l2" href="#api">定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#00">00 服务本体</a>
+<a class="toc-l3" href="#01">01 进程管理三件套</a>
+<a class="toc-l3" href="#02">02 一键部署</a>
+<a class="toc-l3" href="#03-05">03 验收 / 05 演练</a>
+<a class="toc-l2" href="#_3">图解</a>
+<a class="toc-l2" href="#_4">实战代码案例</a>
+<a class="toc-l2" href="#_5">实战实验手册</a>
+<a class="toc-l3" href="#_6">实验一：就绪语义 + 在途请求排空（真实链路）</a>
+<a class="toc-l3" href="#_7">实验二：一键部署的三个场景（成功 / 坏版本自动回滚 / 端口冲突）</a>
+<a class="toc-l3" href="#mttr">实验三：故障演练 —— MTTR / 端口冲突 / 停机对比</a>
+<a class="toc-l2" href="#_8">翻车实验（本日真机踩的坑，全部保留证据）</a>
+<a class="toc-l3" href="#1">翻车 1：优雅停机是假的（最重要）</a>
+<a class="toc-l3" href="#2">翻车 2：僵尸进程让&quot;停机&quot;永远等不到</a>
+<a class="toc-l3" href="#3">翻车 3：自证脚本自己泄漏端口，第二次就跑不动</a>
+<a class="toc-l3" href="#4-bind-time_wait">翻车 4：演练脚本 bind() 被 TIME_WAIT 挡住</a>
+<a class="toc-l2" href="#_9">思考题</a>
+<a class="toc-l2" href="#_10">收尾卫生（本课自己遵守的）</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-185">Day 185 — 阶段项目 · 自动化运维平台（四）：一键部署 + 端到端验收</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 11 — 自动化运维与 DevOps（Day 166–185，本日收官）<br>
+<strong>子主题</strong>：预检（端口身份）· 存活/就绪双探针 · 一键部署与自动回滚 · 端到端冒烟验收 · 故障演练（MTTR）<br>
+<strong>位置</strong>：Day 182–185 阶段项目的第 4 天，也是这个项目的收尾。本目录自带全部代码，<strong>不依赖其它 day 目录</strong>。</p>
+<p>本课所有命令输出都是 <strong>2026-10-17 在本机真机执行捕获</strong>，原样粘贴。<br>
+环境：Linux 7.0.0-34-generic (x64) / 4 vCPU / 15.6 GiB / Python 3.12.3 /<br>
+零第三方依赖（只用标准库：<code>http.server</code> / <code>subprocess</code> / <code>signal</code> / <code>socket</code>）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">这个项目最后长成什么样</h2>
+<table>
+<thead>
+<tr>
+<th>天</th>
+<th>交付物</th>
+<th>回答的问题</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Day 182</td>
+<td>平台 API（主机清单/健康/指标）</td>
+<td>"现在系统什么状态？"</td>
+</tr>
+<tr>
+<td>Day 183</td>
+<td>容器化 + CI + 一键部署脚本雏形</td>
+<td>"怎么把它搬上别的机器？"</td>
+</tr>
+<tr>
+<td>Day 184</td>
+<td>日志接收端 + 采集器 + 看板</td>
+<td>"出事了去哪看日志？"</td>
+</tr>
+<tr>
+<td><strong>Day 185（今天）</strong></td>
+<td>部署流水线 + 验收 + 演练</td>
+<td><strong>"发布敢不敢按下去？坏了多久能好？"</strong></td>
+</tr>
+</tbody>
+</table>
+<p>今天的核心命题只有一句：<strong>把"部署成功"变成程序能判定的结论</strong>，并且用<strong>真实数字</strong>回答"多快能恢复"。</p>
+<hr>
+<h2 id="conceptsmd">概念解释（速览，完整版在 <code>concepts.md</code>）</h2>
+<p><strong>预检（preflight）</strong>：动手前回答"现在能不能安全地改线上"。关键是<strong>判身份而不是判空</strong>：<br>
+端口被占时，先看 ocupier 是不是自己的服务（pidfile + <code>cmdline</code> 标记），是则允许原地升级，<br>
+不是则失败退出 —— <strong>绝不杀无名进程</strong>。</p>
+<p><strong>存活 vs 就绪</strong>：<code>/healthz</code> 答"进程还在吗"（失败→重启）；<br>
+<code>/readyz</code> 答"现在能接流量吗"（失败→摘流量，不重启）。合并成一个探针是发布事故的常见来源。</p>
+<p><strong>优雅停机</strong>：收到 SIGTERM 后 ①停止 accept ②排空在途请求 ③退出。<br>
+注意 <code>socketserver</code> 的 daemon 线程<strong>不会</strong>被 <code>server_close()</code> 等待，必须自己记账。</p>
+<p><strong>回滚</strong>：判定条件必须是外部可观测的（就绪超时 / 验收断言失败），且回滚路径必须演练过。</p>
+<p><strong>MTTR</strong>：从故障注入到业务恢复的时间。探针间隔是它的下限 —— 这个数字决定了告警阈值该定多少。</p>
+<hr>
+<h2 id="_2">原理解释（三条实测结论）</h2>
+<h3 id="1-sigterm-handler">1. "我注册了 SIGTERM handler" ≠ "在途请求会被做完"（本日最重要的翻车）</h3>
+<p>第一版实现（<code>signal.signal + httpd.shutdown()</code>）的实测结果：</p>
+<pre class="plain"><code>在途请求结果: {&quot;code&quot;: 0, &quot;err&quot;: &quot;RemoteDisconnected&quot;, &quot;el&quot;: 0.547}
+SIGTERM 后进程仍存活: 0.297s        ← 进程 0.3 秒就没了
+api.log: sigterm_received(45.800) → stopped(46.085)   ← 285ms 就退场
+</code></pre>
+<p>根因：处理线程是 daemon 线程，主线程一返回，解释器就把它带走。<br>
+修复：自己维护在途请求计数（<code>TrackingServer</code>），停机顺序改为<br>
+<code>shutdown()</code>（停收）→ <code>wait_idle(宽限期)</code>（排空）→ <code>server_close()</code>（收尾）。复测：</p>
+<pre class="plain"><code>在途请求结果: {&quot;code&quot;: 200, &quot;body&quot;: {&quot;slept_ms&quot;: 1500, &quot;done&quot;: true}, &quot;el&quot;: 1.502}
+api.log: {&quot;msg&quot;:&quot;drained&quot;,&quot;waited_s&quot;:0.839,&quot;active&quot;:0,&quot;max_concurrent&quot;:1}
+</code></pre>
+<h3 id="2-pid">2. PID 号不是身份凭证</h3>
+<p>04 号示例真机跑了一遍"照 pidfile kill"的错误逻辑，结果就是<strong>静默杀掉一个无关进程</strong>：</p>
+<pre class="plain"><code>洞2: {&quot;scenario&quot;:&quot;pidfile-指向别的进程（PID 复用）&quot;,&quot;victim_pid&quot;:2167648,
+      &quot;naive_is_running&quot;:true,&quot;correct_is_running&quot;:false,
+      &quot;correct_reason&quot;:&quot;pid-reused(cmdline=&#x27;sleep 120&#x27;)&quot;,
+      &quot;naive_action&quot;:{&quot;killed&quot;:2167648,&quot;by&quot;:&quot;naive(kill -9, 未验证身份)&quot;},
+      &quot;victim_alive_after_naive_kill&quot;:false}     ← 无辜进程真的没了
+洞1: {&quot;scenario&quot;:&quot;pidfile-指向已死进程&quot;,&quot;naive_is_running&quot;:false,
+      &quot;correct_reason&quot;:&quot;stale-pidfile(pid-dead)&quot;}
+</code></pre>
+<p>还有一个更隐蔽的：<strong>僵尸进程的 <code>/proc/&lt;pid&gt;</code> 依然存在</strong>。<br>
+用"目录存在"判断存活，会让停机脚本永远等一个已经死掉的进程（本日真机踩到：<br>
+优雅停机其实成功了，脚本却判定超时并去 SIGKILL 一具尸体）。<br>
+正确判据是读 <code>/proc/&lt;pid&gt;/stat</code> 的 state 字符。</p>
+<h3 id="3-bind-time_wait">3. 端口冲突要用"身份"判定，<code>bind()</code> 要认 <code>TIME_WAIT</code></h3>
+<p>两个都是真机撞出来的：<br>
+- 演练脚本自己 <code>bind()</code> 失败：<code>OSError: [Errno 98] Address already in use</code> ——<br>
+  上一轮演练在同一端口留下 TIME_WAIT 连接对，监听 socket 必须设 <code>SO_REUSEADDR</code>。<br>
+- 部署脚本"端口被占 → 失败"导致<strong>第二次部署永远做不成</strong>（上一版就在监听这个端口）。<br>
+  修成"按身份判定"后：自己的服务 → 允许继续（先优雅停它）；别人的 → 快速失败且不杀。</p>
+<hr>
+<h2 id="api">定义与使用方法（API 速查）</h2>
+<h3 id="00">00 服务本体</h3>
+<table>
+<thead>
+<tr>
+<th>接口</th>
+<th>语义</th>
+<th>状态码</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/healthz</code></td>
+<td>存活</td>
+<td>200（进程活着）/ 连不上</td>
+</tr>
+<tr>
+<td><code>/readyz</code></td>
+<td>就绪</td>
+<td>200 就绪 / <strong>503 未就绪</strong></td>
+</tr>
+<tr>
+<td><code>/api/v1/hosts</code></td>
+<td>业务</td>
+<td>200 带数据 / 503 未就绪</td>
+</tr>
+<tr>
+<td><code>/metrics</code></td>
+<td>指标</td>
+<td>200（requests_total / uptime_s / ready）</td>
+</tr>
+<tr>
+<td><code>/slow?ms=N</code></td>
+<td>测试用慢接口</td>
+<td>200（用于验证排空）</td>
+</tr>
+</tbody>
+</table>
+<p>参数：<code>--port</code> / <code>--version</code> / <code>--data hosts.json</code> / <code>--ready-delay</code> /<br>
+<code>--fail-ready</code>（模拟坏版本）/ <code>--grace</code>（排空宽限期秒数）</p>
+<h3 id="01">01 进程管理三件套</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>作用</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>validate_pid(pidfile, marker)</code></td>
+<td>判定"这个 PID 是不是我们的"</td>
+<td><code>cmdline</code> 含 marker；僵尸算已死</td>
+</tr>
+<tr>
+<td><code>start_service(...)</code></td>
+<td>起进程 + 等就绪</td>
+<td><code>wait=False</code> 可只起不等（观察未就绪阶段）</td>
+</tr>
+<tr>
+<td><code>stop_service(pidfile)</code></td>
+<td>SIGTERM → 等 → 超时才 SIGKILL</td>
+<td>强杀会标记 <code>graceful:false</code>（应告警）</td>
+</tr>
+<tr>
+<td><code>wait_ready(url, timeout)</code></td>
+<td>轮询就绪探针</td>
+<td>返回 (ok, 耗时, 最后状态码)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="02">02 一键部署</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-deploy-oneclick.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8400</span><span class="w"> </span>--version<span class="w"> </span>v1.2.0<span class="w"> </span>--state-dir<span class="w"> </span>/tmp/d185
+python3<span class="w"> </span><span class="m">02</span>-deploy-oneclick.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8400</span><span class="w"> </span>--version<span class="w"> </span>v1.2.1<span class="w"> </span>--state-dir<span class="w"> </span>/tmp/d185<span class="w"> </span>--simulate-bad-release
+python3<span class="w"> </span><span class="m">02</span>-deploy-oneclick.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8400</span><span class="w"> </span>--version<span class="w"> </span>v1.2.2<span class="w"> </span>--state-dir<span class="w"> </span>/tmp/d185<span class="w"> </span>--dry-run
+</code></pre></div>
+<p>退出码：<code>0</code> 成功 / <code>3</code> 预检失败 / <code>4</code> 已自动回滚 / <code>5</code> 回滚也失败。</p>
+<h3 id="03-05">03 验收 / 05 演练</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-smoke-acceptance.py<span class="w"> </span>--self-test<span class="w">            </span><span class="c1"># 9 项断言</span>
+python3<span class="w"> </span><span class="m">03</span>-smoke-acceptance.py<span class="w"> </span>--compare-kill<span class="w">         </span><span class="c1"># 额外对比 SIGKILL 的破坏力</span>
+python3<span class="w"> </span><span class="m">05</span>-drill-chaos.py<span class="w"> </span>--json<span class="w"> </span>/tmp/drill.json<span class="w">      </span><span class="c1"># D1/D2/D3 时间线</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">图解</h2>
+<p>完整 5 张在 <code>diagrams/README.md</code>。最该先看的是停机时间线：</p>
+<pre class="plain"><code>SIGTERM（正确实现）                          SIGKILL / 没排空（第一版实现）
+t0.00 收到 SIGTERM，停止 accept              t0.00 信号到达
+t0.25 在途请求还在处理                        t0.30 进程消失（实测 0.297s）
+t1.20 请求完成 → 客户端 200 ✅                t0.55 客户端 RemoteDisconnected ❌
+t1.34 进程退出（exit_took 0.051s）            用户看到连接重置
+</code></pre>
+<hr>
+<h2 id="_4">实战代码案例</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">0</span>*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;== </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span>timeout<span class="w"> </span><span class="m">120</span><span class="w"> </span>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;❌ </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">done</span>
+</code></pre></div>
+<p>每个脚本都带 <code>--self-test</code>：离线、零依赖、自己起服务自己收尾。<br>
+这一课的自证尤其重要 —— 因为<strong>部署代码的 bug 只有"跑完一遍"才现形</strong>（本日踩了 4 个）。</p>
+<hr>
+<h2 id="_5">实战实验手册</h2>
+<blockquote>
+<p>三个实验独立复现：各自用随机空闲端口 + 临时目录，跑完自己清理。</p>
+</blockquote>
+<h3 id="_6">实验一：就绪语义 + 在途请求排空（真实链路）</h3>
+<p><strong>目的</strong>：证明"端口在听"和"能接流量"是两回事；证明 SIGTERM 会把在途请求做完。</p>
+<p><strong>环境</strong>：Python 3.12.3 / 标准库 / 本机回环</p>
+<p><strong>准备 + 执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+python3<span class="w"> </span><span class="m">03</span>-smoke-acceptance.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>实际结果</strong>（真机捕获，原样粘贴）：</p>
+<pre class="plain"><code>验收目标: http://127.0.0.1:40257  版本 v-smoke  数据文件 .../hosts.json (3 台主机)
+  ✅ 0. 端口已开始监听  — 等待 0.137s
+  ✅ 1. /healthz == 200  — code=200 version=v-smoke
+  ✅ 2a. 未就绪时 /readyz == 503  — code=503
+  ✅ 2b. 就绪后 /readyz == 200  — 就绪等待=2.037s last=200
+  ✅ 3. /api/v1/hosts 条数 == 数据文件条数  — code=200 count=3 expect=3
+  ✅ 4. /metrics requests_total 增量 == 6  — before=26 after=32 delta=6
+  ✅ 5. 未知路径 404 且 body 是 JSON  — code=404
+  ✅ 6. SIGTERM 时在途请求被做完（200）  — {&#x27;code&#x27;: 200, &#x27;slept_ms&#x27;: 1200, &#x27;elapsed&#x27;: 1.201}
+  ✅ 7. SIGTERM 后进程及时退出（&lt;3s）  — 退出耗时=0.051s（完成在途请求后）
+
+结果: 9/9 项通过
+</code></pre>
+<p><strong>结论</strong>：<code>/readyz</code> 在 warmup 期间确实 503（第 2a 项），业务接口也拒绝服务；<br>
+SIGTERM 后在途请求拿到 200（1.201s 跑完），进程随后 51ms 退出。</p>
+<p><strong>清理</strong>：脚本自带（临时目录 + 进程回收）。</p>
+<hr>
+<h3 id="_7">实验二：一键部署的三个场景（成功 / 坏版本自动回滚 / 端口冲突）</h3>
+<p><strong>目的</strong>：证明"部署成功"是被<strong>判定</strong>出来的，而不是"脚本没报错"。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+<span class="nv">STATE</span><span class="o">=</span>/tmp/d185-exp<span class="p">;</span><span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span><span class="nv">$STATE</span><span class="p">;</span><span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span><span class="nv">$STATE</span>
+<span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s1">&#39;[{&quot;host&quot;:&quot;web-01&quot;},{&quot;host&quot;:&quot;web-02&quot;}]&#39;</span><span class="w"> </span>&gt;<span class="w"> </span><span class="nv">$STATE</span>/hosts.json
+
+python3<span class="w"> </span><span class="m">02</span>-deploy-oneclick.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8400</span><span class="w"> </span>--version<span class="w"> </span>v1.0.0<span class="w"> </span>--state-dir<span class="w"> </span><span class="nv">$STATE</span><span class="w"> </span>--data<span class="w"> </span><span class="nv">$STATE</span>/hosts.json
+python3<span class="w"> </span><span class="m">02</span>-deploy-oneclick.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8400</span><span class="w"> </span>--version<span class="w"> </span>v1.0.1-bad<span class="w"> </span>--state-dir<span class="w"> </span><span class="nv">$STATE</span><span class="w"> </span>--simulate-bad-release
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;退出码=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+cat<span class="w"> </span><span class="nv">$STATE</span>/current.json
+python3<span class="w"> </span><span class="m">02</span>-deploy-oneclick.py<span class="w"> </span>--self-test<span class="w">        </span><span class="c1"># 三个场景的自动断言版</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（真机捕获，节选）：</p>
+<pre class="plain"><code>[2] 启动结果: {&quot;started&quot;: true, &quot;pid&quot;: 2167601, &quot;ready&quot;: false, &quot;ready_wait_s&quot;: 3.001,
+              &quot;last_ready_code&quot;: 503, &quot;business_ok&quot;: false}          ← 坏版本：永远不就绪
+[!] 新版未通过验收 → 触发自动回滚
+[5] 回滚到 v1.0.0: {&quot;ready&quot;: true, &quot;ready_wait_s&quot;: 0.408,
+                    &quot;business_check&quot;: {&quot;code&quot;: 200, &quot;count&quot;: 0}, &quot;business_ok&quot;: true}
+✅ 已回滚到上一个可用版本（线上没坏）
+✅ self-test 通过：部署成功 → 坏版本自动回滚 → 端口占用被预检拦截；事件: [&#x27;deploy-ok&#x27;, &#x27;rollback-ok&#x27;]
+</code></pre>
+<p><strong>关键点</strong>：坏版本是"进程活着、端口在听、业务接口 503"——<strong>这正是只做 liveness 探针会漏掉的情况</strong>。<br>
+如果验收只检查"端口通不通"，这个坏版本会被判为部署成功。</p>
+<p><strong>清理</strong>：<code>rm -rf /tmp/d185-exp</code>（脚本自证用临时目录，自动清理）。</p>
+<hr>
+<h3 id="mttr">实验三：故障演练 —— MTTR / 端口冲突 / 停机对比</h3>
+<p><strong>目的</strong>：把"能不能恢复"量成数字，用来推导告警阈值。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+python3<span class="w"> </span><span class="m">05</span>-drill-chaos.py<span class="w"> </span>--json<span class="w"> </span>/tmp/d185-drill.json
+</code></pre></div>
+<p><strong>实际结果</strong>（真机捕获，完整时间线）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;host&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;ace&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;port&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">52237</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;D1&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;drill&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;D1-kill9&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;probe_interval_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.2</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;detect_latency_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.001</span><span class="p">,</span>
+<span class="w">          </span><span class="nt">&quot;restart_to_ready_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.002</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;mttr_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.416</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;business_after_recovery_code&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;D2&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;drill&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;D2-port-conflict&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;preflight_ok&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w">          </span><span class="nt">&quot;preflight_reason&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;端口 52237 被**非本服务**占用，拒绝部署（不杀无名进程；pidfile 判定=no-pidfile）&quot;</span><span class="p">,</span>
+<span class="w">          </span><span class="nt">&quot;fail_fast_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0002</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;occupier_still_alive&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">},</span>
+<span class="w">  </span><span class="nt">&quot;D3&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;SIGTERM&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;in_flight_code&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;in_flight_elapsed_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">1.202</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;exit_took_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.05</span><span class="w"> </span><span class="p">},</span>
+<span class="w">          </span><span class="nt">&quot;SIGKILL&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;in_flight_code&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w">   </span><span class="nt">&quot;in_flight_elapsed_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.252</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;exit_took_s&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>关键数字（本机实测）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>数值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D1 发现延迟</td>
+<td>0.001s</td>
+<td>0.2s 轮询；kill -9 后端口立即关闭，首次轮询即失败</td>
+</tr>
+<tr>
+<td>D1 重启到就绪</td>
+<td>0.416s（MTTR）</td>
+<td>同机本地进程，无调度器（K8s 拉 Pod 会明显更久）</td>
+</tr>
+<tr>
+<td>D2 预检失败耗时</td>
+<td>0.0002s</td>
+<td>快速失败，且占用者进程存活（无二次事故）</td>
+</tr>
+<tr>
+<td>D3 SIGTERM 在途请求</td>
+<td>200（1.202s 完成）</td>
+<td>排空生效</td>
+</tr>
+<tr>
+<td>D3 SIGKILL 在途请求</td>
+<td>连接失败（0.252s 被切断）</td>
+<td>强杀的代价</td>
+</tr>
+</tbody>
+</table>
+<p><strong>结论</strong>：本机 MTTR ≈ 0.4s，所以"不可用 1 秒"当 P1 会全是噪音；<br>
+真正该告警的是<strong>探针连续失败超过 MTTR 的若干倍</strong>，以及 <code>drain_timeout</code> 这类"排空没做完"的事件。</p>
+<p><strong>清理</strong>：脚本自带（随机端口 + 临时目录 + 进程回收）。</p>
+<hr>
+<h2 id="_8">翻车实验（本日真机踩的坑，全部保留证据）</h2>
+<h3 id="1">翻车 1：优雅停机是假的（最重要）</h3>
+<p><strong>现象</strong>：SIGTERM 之后 0.297s 进程就退出，在途 <code>/slow?ms=1500</code> 请求被切断，<br>
+客户端 <code>RemoteDisconnected</code>。<br>
+<strong>假设</strong>：handler 注册了，shutdown 调了，应该没问题。<br>
+<strong>验证手段</strong>：在请求进行中发 SIGTERM，同时比对 API 自己写的日志时间戳<br>
+（<code>sigterm_received</code> 45.800 → <code>stopped</code> 46.085，只差 285ms，而请求需要 1500ms）。<br>
+<strong>真实根因</strong>：处理线程是 daemon 线程，<code>socketserver</code> 的 <code>server_close()</code> 不会为它阻塞；<br>
+主线程返回后解释器直接把 daemon 线程带走。<br>
+<strong>修复</strong>：<code>TrackingServer</code> 自己维护在途计数 + Condition，停机顺序<br>
+stop-accept → wait_idle(grace) → server_close。<br>
+<strong>复测</strong>：在途请求 200（1.502s 完整跑完），进程随后 0.051s 退出，日志出现 <code>drained waited_s=0.839</code>。</p>
+<h3 id="2">翻车 2：僵尸进程让"停机"永远等不到</h3>
+<p><strong>现象</strong>：<code>01-process-runner.py --self-test</code> 报<br>
+<code>{'stopped': True, 'graceful': False, 'took_s': 5.026, 'note': 'graceful 超时，已 SIGKILL'}</code><br>
+—— 而 API 日志明明写着 <code>stopped</code>（它其实优雅退出了）。<br>
+<strong>假设</strong>：进程没退出。<br>
+<strong>验证手段</strong>：直接 <code>kill -TERM</code> 后轮询 <code>/proc/&lt;pid&gt;</code> 是否存在。<br>
+<strong>真实根因</strong>：子进程退出后没人 <code>wait()</code>，成了<strong>僵尸</strong>；<br>
+僵尸的 <code>/proc/&lt;pid&gt;</code> 目录依然存在，于是"进程还在"永远为真。<br>
+<strong>修复</strong>：<code>pid_alive()</code> 改读 <code>/proc/&lt;pid&gt;/stat</code> 的 state（<code>Z/X</code> 视为已死），<br>
+并对自己启动的子进程做回收。<br>
+<strong>复测</strong>：<code>✅ 陈旧 PID 被识破、就绪等待生效、重复启动被拒、优雅停机成功</code>。</p>
+<h3 id="3">翻车 3：自证脚本自己泄漏端口，第二次就跑不动</h3>
+<p><strong>现象</strong>：第二次运行 <code>02</code> 自证时，第 3 个场景期望"预检拦截"却先被自己的残留进程拦住了<br>
+（<code>AssertionError: 3</code>）。<br>
+<strong>真实根因</strong>：上一次运行崩溃在临时目录删除之后，pidfile 随临时目录一起没了，<br>
+服务进程成了孤儿继续监听端口 → 下一次运行"端口被占"。<br>
+<strong>修复</strong>：自证里用 <code>try/finally</code> 显式 <code>stop_service(pidfile)</code>，<br>
+端口改为 <code>free_port()</code>（内核分配空闲端口）。<br>
+<strong>教训</strong>：<strong>测试的收尾和业务逻辑一样重要</strong>；写死端口的自证脚本天生不可重入。</p>
+<h3 id="4-bind-time_wait">翻车 4：演练脚本 <code>bind()</code> 被 TIME_WAIT 挡住</h3>
+<p><strong>现象</strong>：<code>05-drill-chaos.py</code> 在 D2 崩了：<code>OSError: [Errno 98] Address already in use</code><br>
+—— 明明上一轮的服务已经停了。<br>
+<strong>真实根因</strong>：上一轮演练在该端口留下 TIME_WAIT 连接对，不带 <code>SO_REUSEADDR</code> 的 <code>bind()</code> 会被拒。<br>
+<strong>修复</strong>：监听 socket 设 <code>SO_REUSEADDR</code>（只复用 TIME_WAIT，不会抢占真正在 listen 的端口）。<br>
+<strong>附带收获</strong>：这条正好解释了生产里"重启服务报端口占用"的一大类报障。</p>
+<hr>
+<h2 id="_9">思考题</h2>
+<ol>
+<li>
+<p>本课 MTTR 0.416s 是"同机、本地进程"的数字。换成 K8s（拉 Pod + 镜像拉取 + 调度），<br>
+   MTTR 会由哪几段组成？请指出其中<strong>最容易被你误判为"应用慢"</strong>的一段。</p>
+</li>
+<li>
+<p><code>/readyz</code> 里做依赖检查会让"依赖抖动"变成"服务被摘流量"。<br>
+   在什么业务下这是对的，什么业务下这是灾难？请给出两种业务的判断标准。</p>
+</li>
+<li>
+<p>回滚到旧版本时，数据库 schema 可能已经被新版本改过（"向前兼容"问题）。<br>
+   在<strong>回滚</strong>这个动作上，你会加什么约束或检查？（提示：迁移脚本的双向可用性 / expand-contract 模式。）</p>
+</li>
+<li>
+<p>如果 <code>preflight</code> 里"端口被占"判定为"是本服务"，但 pidfile 恰好是过期的<br>
+   （进程活着但其实是别的实例），会发生什么？怎么用启动时间（<code>starttime</code>）再收一道口子？</p>
+</li>
+<li>
+<p>把 <code>stop_service</code> 的超时从 5s 改成 0.5s "为了发布更快"，会发生什么？<br>
+   请从"在途请求 / 长连接 / 后台任务"三个角度说明代价。</p>
+</li>
+</ol>
+<hr>
+<h2 id="_10">收尾卫生（本课自己遵守的）</h2>
+<ul>
+<li>所有实验都在 <code>/tmp</code> 下的独立目录、<strong>内核分配的空闲端口</strong>上做，结束即 <code>rm -rf</code>。</li>
+<li>每个 <code>--self-test</code> 都在 <code>finally</code> 里停服务（否则端口泄漏会让下一次运行失败 —— 本日真机踩到）。</li>
+<li>演练结束确认：无残留 <code>platform-api</code> 进程、端口释放。</li>
+<li>本目录零第三方依赖，也无外部服务（无 Docker/Redis/ES），换一台有 Python 3.10+ 的机器即可复现。</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-184/index.html">← Day 184 阶段项目 · 自动化运维平台（三）：日志收集 + 可视化</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

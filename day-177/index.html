@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 177 — Prometheus + Grafana</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 177 — Prometheus + Grafana</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">625 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-177-prometheus-grafana" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概念解释</a>
+<a class="toc-l3" href="#day-176">先分清：Day 176 的「日志」和今天的「指标」</a>
+<a class="toc-l3" href="#prometheus">Prometheus 是什么</a>
+<a class="toc-l3" href="#pull-vs-push">拉（pull）模型 vs 推（push）</a>
+<a class="toc-l3" href="#_2">数据模型：一切都是一条「时间线」</a>
+<a class="toc-l3" href="#_3">四种指标类型</a>
+<a class="toc-l3" href="#exposition-format">暴露格式（exposition format）</a>
+<a class="toc-l3" href="#promql-sql">PromQL：指标世界的 SQL</a>
+<a class="toc-l3" href="#grafana">Grafana：只负责画</a>
+<a class="toc-l2" href="#_4">原理深入</a>
+<a class="toc-l3" href="#scrape">一次 scrape 的完整链路</a>
+<a class="toc-l3" href="#tsdb">TSDB 内部：为什么它写得快、查得也快</a>
+<a class="toc-l3" href="#counter-rate">为什么 counter 必须配 rate()</a>
+<a class="toc-l3" href="#histogram">histogram 的桶是「累计」的</a>
+<a class="toc-l3" href="#histogram_quantile">histogram_quantile() 的插值本质</a>
+<a class="toc-l3" href="#_5">拉模型的边界</a>
+<a class="toc-l2" href="#_6">定义与方法（速查）</a>
+<a class="toc-l3" href="#python-prometheus_client">Python 暴露指标（prometheus_client）</a>
+<a class="toc-l3" href="#promql">PromQL 速查</a>
+<a class="toc-l3" href="#http-api">HTTP API 速查</a>
+<a class="toc-l3" href="#grafana-provisioning">Grafana provisioning 目录约定</a>
+<a class="toc-l2" href="#_7">实战环境</a>
+<a class="toc-l2" href="#_8">图解</a>
+<a class="toc-l2" href="#1-metrics">实验 1：让应用暴露 /metrics</a>
+<a class="toc-l2" href="#2prometheus-up">实验 2：Prometheus 真的来拉（up 从哪来）</a>
+<a class="toc-l2" href="#3promql-0">实验 3：PromQL —— 一个「看起来该有数、结果是 0」的坑</a>
+<a class="toc-l2" href="#4grafana">实验 4：Grafana 看板，用文件而不是鼠标</a>
+<a class="toc-l2" href="#bug">翻车复盘（三个真 bug，全部在本日实测中出现）</a>
+<a class="toc-l3" href="#1-duplicatetimeseries">1. DuplicateTimeseries：指标注册了两次</a>
+<a class="toc-l3" href="#2-summary-quantiles">2. Summary 的 quantiles= 参数已经被移除</a>
+<a class="toc-l3" href="#3-rate-0-3">3. rate() 返回 0（见实验 3）</a>
+<a class="toc-l2" href="#_9">清理（每次实验后都做）</a>
+<a class="toc-l2" href="#_10">思考题</a>
+<a class="toc-l2" href="#_11">交付清单</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-177-prometheus-grafana">Day 177 — Prometheus + Grafana</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 11 — 自动化运维与 DevOps（Day 166–185）<br>
+<strong>子主题</strong>：监控指标暴露 · Prometheus 采集 · Grafana 看板 · <strong>实战</strong>：应用监控看板</p>
+</blockquote>
+<hr>
+<h2 id="_1">概念解释</h2>
+<h3 id="day-176">先分清：Day 176 的「日志」和今天的「指标」</h3>
+<p>昨天 ELK 处理的是<strong>日志（log）</strong>，今天 Prometheus 处理的是<strong>指标（metric）</strong>。<br>
+它们不是替代关系，回答的是不同的问题：</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>日志（ELK）</th>
+<th>指标（Prometheus）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数据形态</td>
+<td>离散事件，一行一条，可长可短</td>
+<td>数值 + 时间戳，固定结构</td>
+</tr>
+<tr>
+<td>典型问题</td>
+<td>「<strong>为什么</strong>这次请求失败了？」</td>
+<td>「<strong>现在</strong>慢了多少？从几点开始？」</td>
+</tr>
+<tr>
+<td>查询方式</td>
+<td>全文检索 + 聚合</td>
+<td>PromQL 数值运算</td>
+</tr>
+<tr>
+<td>单条体积</td>
+<td>大（KB 级）</td>
+<td>小（几十字节）</td>
+</tr>
+<tr>
+<td>保留期</td>
+<td>通常 7–30 天</td>
+<td>通常 15 天–1 年（可下采样）</td>
+</tr>
+<tr>
+<td>成本</td>
+<td>高（存储全文）</td>
+<td>低（只存数字）</td>
+</tr>
+</tbody>
+</table>
+<p>一句话：<strong>日志用来查因，指标用来看势。</strong></p>
+<h3 id="prometheus">Prometheus 是什么</h3>
+<p>Prometheus 是一个<strong>时间序列数据库 + 拉取式采集器 + 查询语言（PromQL）+ 告警引擎</strong>。<br>
+2012 年从 SoundCloud 出来，2016 年加入 CNCF，现在是云原生监控的事实标准<br>
+（Kubernetes 的内置监控就走它）。</p>
+<p>四个组件，各管一段：</p>
+<pre class="plain"><code>应用/主机/exporter ──(HTTP GET /metrics)──▶ Prometheus ──▶ PromQL ──▶ Grafana / Alertmanager
+      「被采集」                「拉」           「存储+查询」         「展示/告警」
+</code></pre>
+<h3 id="pull-vs-push">拉（pull）模型 vs 推（push）</h3>
+<p>这是 Prometheus 最反直觉、也最关键的一个设计决定：</p>
+<pre class="plain"><code>pull（Prometheus 主动来拉）           push（Agent 主动推上去）
+                                    
+Prometheus ──GET /metrics──▶ 应用     应用 ──POST──▶ 收集端
+   ▲                                          │
+   └── 我知道你活没活（GET 失败=挂了）          └── 你不推我就永远不知道你挂了
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>pull（Prometheus）</th>
+<th>push（StatsD / 大多数 SaaS）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>谁发起</td>
+<td>采集端</td>
+<td>被采集端</td>
+</tr>
+<tr>
+<td>存活探测</td>
+<td><strong>白送</strong>：拉不到就是挂了 → <code>up=0</code></td>
+<td>需要额外心跳机制</td>
+</tr>
+<tr>
+<td>目标管理</td>
+<td>集中配置/服务发现，一处改全局生效</td>
+<td>每个实例各自配置</td>
+</tr>
+<tr>
+<td>短命任务（批处理）</td>
+<td>❌ 可能还没被拉就结束了</td>
+<td>✅ 天然支持</td>
+</tr>
+<tr>
+<td>防火墙方向</td>
+<td>采集端 → 被采集端</td>
+<td>被采集端 → 采集端</td>
+</tr>
+<tr>
+<td>传输是否可控</td>
+<td>✅ 天然限流（一次拉一遍）</td>
+<td>❌ 推送风暴可能压垮收集端</td>
+</tr>
+</tbody>
+</table>
+<p><strong>三条从「拉」直接推出来的结论</strong>（后面实战会一一验证）：</p>
+<ol>
+<li><code>up</code> 这个指标不需要你写一行代码，Prometheus 自动为每个目标生成；</li>
+<li>修改采集范围只需改 <strong>采集端</strong> 的配置，被采集的应用完全不知情；</li>
+<li>秒级就结束的批处理任务采不到——那类要用 <strong>Pushgateway</strong> 兜底。</li>
+</ol>
+<h3 id="_2">数据模型：一切都是一条「时间线」</h3>
+<p>Prometheus 里没有「表」也没有「行」，只有：</p>
+<pre class="plain"><code>指标名 + 一组标签  =  一条时间线（series）
+   ↓
+时间线 + 时间戳 + 浮点值  =  一个样本（sample）
+
+app_http_requests_total{method=&quot;GET&quot;,path=&quot;/&quot;,status=&quot;200&quot;}   ← 这是一条时间线的身份证
+   08:57:12 → 30
+   08:57:17 → 30
+   08:57:22 → 30
+</code></pre>
+<p>几个必须记住的规矩：</p>
+<ul>
+<li><strong>标签值的每一种组合都是一条独立的时间线</strong>。<code>path="/"</code> 和 <code>path="/api/items"</code><br>
+  是两条线，各自计数。标签组合数量爆炸叫做<strong>高基数（high cardinality）</strong>，<br>
+  是 Prometheus 最常见的事故原因（比如把 <code>user_id</code>、<code>request_id</code> 当标签）。</li>
+<li><strong>指标名和标签名都不能随便改</strong>：改了就是新的时间线，历史数据接不上。</li>
+<li>值是 <code>float64</code>，文本格式里连整数都写成 <code>30.0</code>（后面的坑之一）。</li>
+</ul>
+<h3 id="_3">四种指标类型</h3>
+<p>Prometheus 客户端只有四种类型，选错类型是新手第一大坑：</p>
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>语义</th>
+<th>能不能减</th>
+<th>典型用途</th>
+<th>查询时怎么用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Counter</strong></td>
+<td>只增不减的累计值</td>
+<td>❌</td>
+<td>请求数、错误数、字节数</td>
+<td><strong>必须</strong>配 <code>rate()</code> / <code>increase()</code></td>
+</tr>
+<tr>
+<td><strong>Gauge</strong></td>
+<td>当前值，可增可减可设值</td>
+<td>✅</td>
+<td>在线人数、队列长度、内存占用</td>
+<td>直接查，或 <code>avg_over_time()</code></td>
+</tr>
+<tr>
+<td><strong>Histogram</strong></td>
+<td>分桶累计 + 总和 + 计数</td>
+<td>❌（桶累计）</td>
+<td>延迟、请求体大小</td>
+<td><code>histogram_quantile()</code> 算分位</td>
+</tr>
+<tr>
+<td><strong>Summary</strong></td>
+<td>客户端算好的分位 + 总和 + 计数</td>
+<td>❌</td>
+<td>同上，但想要客户端分位</td>
+<td>直接读 <code>quantile</code> 标签</td>
+</tr>
+</tbody>
+</table>
+<p>选型口诀：<strong>「数次数」用 counter，「量当前」用 gauge，「看分布」用 histogram。</strong></p>
+<blockquote>
+<p>⚠️ 反面教材：用 counter 存「当前在线人数」—— 用户下线时你只能 <code>dec()</code>，<br>
+而 counter 的 <code>dec()</code> 会让 <code>rate()</code> 算出负数，看板直接崩。</p>
+</blockquote>
+<h3 id="exposition-format">暴露格式（exposition format）</h3>
+<p>被采集端要吐出来的东西是<strong>纯文本</strong>，不是 JSON。每一族指标三行起：</p>
+<pre class="plain"><code># HELP app_http_requests_total HTTP 请求总数
+# TYPE app_http_requests_total counter
+app_http_requests_total{method=&quot;GET&quot;,path=&quot;/&quot;,status=&quot;200&quot;} 30.0
+</code></pre>
+<ul>
+<li><code># HELP</code> —— 人类可读说明（会出现在 Grafana 的 tooltip 里）</li>
+<li><code># TYPE</code> —— 四种类型之一，Prometheus 靠它决定怎么算</li>
+<li>样本行 —— <code>指标名{标签}</code> 空格 <code>值</code>；<strong>没有时间戳</strong>，时间戳由采集端在收到时打上<br>
+  （这正是「拉」模型的又一个体现：谁收到谁打时间，避免了客户端时钟不准的污染）</li>
+</ul>
+<h3 id="promql-sql">PromQL：指标世界的 SQL</h3>
+<p>一条 PromQL 表达式，输入是一批时间线，输出也是一批时间线：</p>
+<pre class="plain"><code>app_http_requests_total                        # 原始（几乎没人直接看）
+sum by (status) (rate(app_http_requests_total[1m]))   # 每秒请求数，按状态码分组
+histogram_quantile(0.95, rate(app_http_request_duration_seconds_bucket[5m]))  # P95
+</code></pre>
+<p><code>[1m]</code> 叫<strong>区间选择器</strong>：它把「最近 1 分钟内的所有样本」取出来交给函数。<br>
+<strong>这是 PromQL 最容易出错的地方</strong>——什么时候选多长的窗口，是有讲究的。</p>
+<h3 id="grafana">Grafana：只负责画</h3>
+<p>Grafana 自己<strong>不存数据</strong>，它连数据源（这里就是 Prometheus），拿查询结果画图。<br>
+所以架构上它是可替换的：换成 VictoriaMetrics、Thanos 照样能用。</p>
+<p>关键认知：<strong>Grafana 的看板是 JSON，不是「点出来」的</strong>。<br>
+它可以导出、进版本库、被 review、被 provisioning 自动加载——下面实战会验证这一点。</p>
+<hr>
+<h2 id="_4">原理深入</h2>
+<h3 id="scrape">一次 scrape 的完整链路</h3>
+<pre class="plain"><code>        每 5s 一轮
+┌──────────────────────────────────────────────────────────┐
+│ 1. 读 scrape_configs → 得到目标列表 [{job=app, 9101}]      │
+│ 2. 对每个目标 GET http://host:9101/metrics                │
+│ 3. 解析文本 → (指标名, 标签集合, 值)                        │
+│ 4. ★ 用「采集端的当前时间」给每个样本打时间戳（客户端说不了算）│
+│ 5. 写进内存 + WAL 预写日志 → 每 2h 落成一个持久块            │
+│ 6. 无论成功失败，都写入一个系统指标 up{job=...} = 1 / 0      │
+└──────────────────────────────────────────────────────────┘
+</code></pre>
+<p>第 6 步值得展开：<strong><code>up</code> 是 Prometheus 唯一「替你做」的指标</strong>。<br>
+只要配置里写了目标，不管它活不活、返回什么，都会有一条 <code>up</code> 时间线。<br>
+所以「服务是不是挂了」这个最常用的问题，答案永远是：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">promql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nv">up</span><span class="p">{</span><span class="nl">job</span><span class="o">=</span><span class="p">&quot;</span><span class="s">app</span><span class="p">&quot;}</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">0</span>
+</code></pre></div>
+<h3 id="tsdb">TSDB 内部：为什么它写得快、查得也快</h3>
+<ul>
+<li><strong>WAL（预写日志）</strong>：新样本先追加到 WAL（顺序写，快），再进内存块。<br>
+  进程崩了不至于丢最近两小时的样本。</li>
+<li><strong>块（block）</strong>：内存里的数据每 2 小时压成一块不可变文件，后台压缩合并。<br>
+<strong>不可变</strong>是关键——查询不需要加锁，随便并发。</li>
+<li><strong>倒排索引</strong>：<code>指标名{标签}</code> → 时间线 ID，所以「按标签筛时间线」很快。</li>
+<li><strong>保留期（retention）</strong>：默认 15 天，按时间整块删除（删除 = 删目录，不是扫全表）。</li>
+</ul>
+<p>理解了「块不可变」，就理解了为什么 Prometheus 重写历史数据这么别扭，<br>
+以及为什么长时间存储要交给 Thanos / VictoriaMetrics 这类旁路系统。</p>
+<h3 id="counter-rate">为什么 counter 必须配 <code>rate()</code></h3>
+<p>counter 的值本身没有意义（一个进程跑了 3 天可能累计 100 万次请求），<br>
+有意义的是<strong>变化率</strong>：</p>
+<pre class="plain"><code>原始 counter:      1000 ── 1050 ── 1100 ── 1150     （只能看出在涨）
+rate(counter[1m]):      0.83 ── 0.83 ── 0.83       （每秒 0.83 次）
+</code></pre>
+<p><code>rate()</code> 还做了两件聪明事：</p>
+<ol>
+<li><strong>自动处理 counter 归零</strong>（进程重启后 counter 从 0 重来）——<br>
+   它把归零识别为「重置」，跳过那一段，而不是算出一个巨大的负数。</li>
+<li><strong>外推（extrapolation）</strong>：窗口边界上的样本不一定正好落在边界，<br>
+<code>rate()</code> 会按比例外推，所以 <code>rate()</code> 的结果是<strong>估算值</strong>，不是精确除法。</li>
+</ol>
+<p>第 2 点导致一个反直觉结论：<code>increase()</code> 的结果可能不是整数。</p>
+<h3 id="histogram">histogram 的桶是「累计」的</h3>
+<p>这是 histogram 最容易看错的地方：</p>
+<pre class="plain"><code>demo_latency_seconds_bucket{le=&quot;0.05&quot;} 2.0     ← 耗时 ≤ 0.05s 的有 2 个
+demo_latency_seconds_bucket{le=&quot;0.1&quot;}  4.0     ← 耗时 ≤ 0.1s 的累计有 4 个（含前面那 2 个）
+demo_latency_seconds_bucket{le=&quot;+Inf&quot;} 6.0     ← 所有观测，等于 _count
+</code></pre>
+<p><code>le</code> = less than or equal。<strong>每个桶都包含前面所有桶</strong>，所以：</p>
+<ul>
+<li>桶计数必须单调不减；</li>
+<li>想要「落在 0.05–0.1 之间」的个数，得自己 <code>le="0.1"</code> 减 <code>le="0.05"</code>；</li>
+<li>精度由桶边界决定——<strong>边界划多了才准，少了就只能插值</strong>。</li>
+</ul>
+<h3 id="histogram_quantile"><code>histogram_quantile()</code> 的插值本质</h3>
+<p>它<strong>不是</strong>从原始耗时里数出来的 P95，而是从累计桶里<strong>线性插值</strong>算出来的：</p>
+<pre class="plain"><code>假设 le=&quot;0.1&quot; 累计 90 个，le=&quot;0.25&quot; 累计 100 个，总数 100：
+P95 落在 (0.1, 0.25] 这个桶里，桶内线性插值：
+ 0.1 + (0.25-0.1) × (95-90)/(100-90) = 0.175s
+</code></pre>
+<p>两条推论：</p>
+<ol>
+<li>桶边界如果刚好卡在你关心的分位上（比如 0.2s 是 SLA 线），结果会很准；<br>
+   否则只能给你一个「在这两个边界之间」的粗糙值。</li>
+<li><code>histogram_quantile()</code> <strong>必须</strong>作用在 <code>rate()</code> 之后的 <code>_bucket</code> 上，<br>
+   直接对原始 <code>_bucket</code> 用会得到错误结果（下面翻车复盘里会踩）。</li>
+</ol>
+<h3 id="_5">拉模型的边界</h3>
+<ul>
+<li><strong>采不到短命任务</strong>：跑 200ms 就退出的脚本，5s 一轮的采集永远碰不上。<br>
+  解法是让它把结果推给 <strong>Pushgateway</strong>，Prometheus 改去拉 Pushgateway。</li>
+<li><strong>目标多了要服务发现</strong>：写死 IP 列表在 K8s 里没法用，所以有<br>
+<code>kubernetes_sd_configs</code>、<code>file_sd_configs</code>、<code>consul_sd_configs</code> 等。</li>
+<li><strong>时钟以采集端为准</strong>：这对监控是好事（客户端时间乱也不影响存储），<br>
+  但排查「指标时间戳对不上业务日志时间」时要知道这一点。</li>
+</ul>
+<hr>
+<h2 id="_6">定义与方法（速查）</h2>
+<h3 id="python-prometheus_client">Python 暴露指标（prometheus_client）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span> <span class="nn">prometheus_client</span> <span class="kn">import</span> <span class="n">Counter</span><span class="p">,</span> <span class="n">Gauge</span><span class="p">,</span> <span class="n">Histogram</span><span class="p">,</span> <span class="n">start_http_server</span>
+
+<span class="n">c</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="s2">&quot;app_http_requests_total&quot;</span><span class="p">,</span> <span class="s2">&quot;HTTP 请求总数&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;path&quot;</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">])</span>
+<span class="n">c</span><span class="o">.</span><span class="n">labels</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="s2">&quot;/&quot;</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="s2">&quot;200&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">inc</span><span class="p">()</span>          <span class="c1"># 打标签 + 计数</span>
+
+<span class="n">g</span> <span class="o">=</span> <span class="n">Gauge</span><span class="p">(</span><span class="s2">&quot;app_inflight&quot;</span><span class="p">,</span> <span class="s2">&quot;处理中的请求数&quot;</span><span class="p">)</span>
+<span class="n">g</span><span class="o">.</span><span class="n">inc</span><span class="p">();</span> <span class="n">g</span><span class="o">.</span><span class="n">dec</span><span class="p">();</span> <span class="n">g</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span>                       <span class="c1"># 可增可减可设</span>
+
+<span class="n">h</span> <span class="o">=</span> <span class="n">Histogram</span><span class="p">(</span><span class="s2">&quot;app_latency_seconds&quot;</span><span class="p">,</span> <span class="s2">&quot;耗时&quot;</span><span class="p">,</span> <span class="n">buckets</span><span class="o">=</span><span class="p">(</span><span class="mf">.01</span><span class="p">,</span> <span class="mf">.05</span><span class="p">,</span> <span class="mf">.1</span><span class="p">,</span> <span class="mf">.5</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+<span class="n">h</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span><span class="mf">0.037</span><span class="p">)</span>                                 <span class="c1"># 落进对应桶</span>
+
+<span class="n">start_http_server</span><span class="p">(</span><span class="mi">9101</span><span class="p">)</span>                          <span class="c1"># 起一个 /metrics 端点</span>
+</code></pre></div>
+<blockquote>
+<p>反面清单：<code>path</code>、<code>status</code>、<code>method</code> 这类<strong>有限取值</strong>的可以当标签；<br>
+<code>user_id</code>、<code>request_id</code>、完整 URL 这类<strong>无限取值</strong>的绝对不能（高基数）。</p>
+</blockquote>
+<h3 id="promql">PromQL 速查</h3>
+<table>
+<thead>
+<tr>
+<th>表达式</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>up{job="app"} == 0</code></td>
+<td>目标挂了</td>
+</tr>
+<tr>
+<td><code>rate(counter[1m])</code></td>
+<td>每秒速率（Grafana 里最常用）</td>
+</tr>
+<tr>
+<td><code>increase(counter[5m])</code></td>
+<td>5 分钟增量</td>
+</tr>
+<tr>
+<td><code>sum by (status) (rate(counter[1m]))</code></td>
+<td>按标签聚合</td>
+</tr>
+<tr>
+<td><code>topk(3, rate(counter[1m]))</code></td>
+<td>最热的前 3 条</td>
+</tr>
+<tr>
+<td><code>histogram_quantile(0.95, rate(bucket[5m]))</code></td>
+<td>P95</td>
+</tr>
+<tr>
+<td><code>avg_over_time(gauge[10m])</code></td>
+<td>gauge 的平滑</td>
+</tr>
+<tr>
+<td><code>time() - process_start_time_seconds</code></td>
+<td>进程已运行秒数</td>
+</tr>
+<tr>
+<td><code>rate(counter[5m]) &gt; 0.1</code></td>
+<td>阈值过滤</td>
+</tr>
+</tbody>
+</table>
+<h3 id="http-api">HTTP API 速查</h3>
+<pre class="plain"><code>GET /api/v1/query?query=&lt;expr&gt;&amp;time=&lt;unix&gt;                 瞬时查询
+GET /api/v1/query_range?query=&amp;start=&amp;end=&amp;step=5          区间查询（画图用）
+GET /api/v1/targets                                        采集目标与健康状态
+GET /api/v1/rules                                          告警/记录规则
+GET /-/ready                                               就绪探针
+</code></pre>
+<p>响应永远是 <code>{"status":"success"|"error", "data": {...}}</code>，<br>
+<code>resultType</code> 是 <code>vector</code>（瞬时）或 <code>matrix</code>（区间）。</p>
+<h3 id="grafana-provisioning">Grafana provisioning 目录约定</h3>
+<pre class="plain"><code>grafana/provisioning/datasources/*.yml     数据源（落盘即生效，不用点 UI）
+grafana/provisioning/dashboards/*.yml      看板提供者（告诉 Grafana 去哪读 JSON）
+grafana/dashboards/*.json                  看板本体
+</code></pre>
+<hr>
+<h2 id="_7">实战环境</h2>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>版本 / 说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主机</td>
+<td>Linux 7.0.0-34-generic (x64)</td>
+</tr>
+<tr>
+<td>Docker</td>
+<td>29.1.3</td>
+</tr>
+<tr>
+<td>Prometheus</td>
+<td><code>prom/prometheus:v3.0.1</code>（实测 <code>--version</code> 见实验 2）</td>
+</tr>
+<tr>
+<td>Python</td>
+<td>3.12，<code>prometheus_client</code> <strong>0.26.0</strong>（<code>pip install --target</code> 隔离安装）</td>
+</tr>
+</tbody>
+</table>
+<p>本日代码在 <code>code/</code>，四个脚本都能脱离 Prometheus 自检（<code>--self-test</code>）；<br>
+只有真正采集/画图的那两步需要 Docker。</p>
+<hr>
+<h2 id="_8">图解</h2>
+<p>见 <a href="diagrams/README.md"><code>diagrams/README.md</code></a>：拉模型时序、scrape 链路、<br>
+TSDB 落盘、PromQL 数据流、看板数据流。</p>
+<hr>
+<h2 id="1-metrics">实验 1：让应用暴露 <code>/metrics</code></h2>
+<p><strong>目的</strong>：看清「被采集端」到底要吐什么。</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-m<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--target<span class="w"> </span>./.deps<span class="w"> </span>prometheus_client
+</code></pre></div>
+<p><strong>执行</strong>（逐条可复制）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nv">PYTHONPATH</span><span class="o">=</span>./.deps<span class="w"> </span>python3<span class="w"> </span>code/01-expose-metrics.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/01-expose-metrics.py<span class="w"> </span>--self-test<span class="w">          </span><span class="c1"># 无依赖，走 stdlib 回退</span>
+<span class="nv">PYTHONPATH</span><span class="o">=</span>./.deps<span class="w"> </span>python3<span class="w"> </span>code/01-expose-metrics.py<span class="w"> </span>--once
+</code></pre></div>
+<p><strong>预期结果</strong>：<code>--self-test</code> 退出码 0；<code>--once</code> 打印文本暴露格式。</p>
+<p><strong>实际结果</strong>（本机真实 stdout，2026-10-09）：</p>
+<pre class="plain"><code>✅ self-test 通过 | backend=prometheus_client | 端口=33095 | Content-Type=text/plain | 抓取 3557 字节
+✅ self-test 通过 | backend=stdlib-fallback | 端口=36011 | Content-Type=text/plain | 抓取 367 字节
+</code></pre>
+<p><code>--once</code> 的关键几行：</p>
+<pre class="plain"><code># HELP app_http_requests_total HTTP 请求总数
+# TYPE app_http_requests_total counter
+app_http_requests_total{method=&quot;GET&quot;,path=&quot;/&quot;,status=&quot;200&quot;} 2.0
+app_http_requests_total{method=&quot;GET&quot;,path=&quot;/api/items&quot;,status=&quot;200&quot;} 1.0
+app_http_requests_total{method=&quot;GET&quot;,path=&quot;/missing&quot;,status=&quot;404&quot;} 1.0
+# TYPE app_http_inflight gauge
+app_http_inflight 0.0
+# TYPE app_http_request_duration_seconds histogram
+app_http_request_duration_seconds_bucket{le=&quot;0.025&quot;} 4.0
+app_http_request_duration_seconds_bucket{le=&quot;+Inf&quot;} 4.0
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 暴露格式就是「<code># HELP</code> + <code># TYPE</code> + 样本行」，<strong>没有时间戳</strong>——时间由采集端打；<br>
+- 同一个指标名加了不同标签，就是<strong>不同的时间线</strong>（三条 <code>app_http_requests_total</code>）；<br>
+- 整数也写成 <code>2.0</code>，因为 Prometheus 的值是 float64；<br>
+- 没装 <code>prometheus_client</code> 也能跑（stdlib 回退），这证明了格式本身没什么魔法。</p>
+<p><strong>清理</strong>：<code>--self-test</code> 自己绑 0 号端口并立即关闭，不留进程；<code>Ctrl-C</code> 停手动起的服务。</p>
+<hr>
+<h2 id="2prometheus-up">实验 2：Prometheus 真的来拉（<code>up</code> 从哪来）</h2>
+<p><strong>目的</strong>：验证 pull 模型，以及 <code>up</code> 是采集端自动生成的。</p>
+<p><strong>准备</strong>（生成配置并起栈）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/04-scrape-and-dashboard.py<span class="w"> </span>--out<span class="w"> </span>/tmp/day177/stack
+<span class="c1"># 应用（被采集端）</span>
+setsid<span class="w"> </span>nohup<span class="w"> </span>env<span class="w"> </span><span class="nv">PYTHONPATH</span><span class="o">=</span>./.deps<span class="w"> </span>python3<span class="w"> </span>code/01-expose-metrics.py<span class="w"> </span>--port<span class="w"> </span><span class="m">9101</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="c1"># Prometheus（采集端，--network host 才能拉到本机 9101）</span>
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>d177-prom<span class="w"> </span>--network<span class="w"> </span>host<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-v<span class="w"> </span>/tmp/day177/stack/prometheus.yml:/etc/prometheus/prometheus.yml:ro<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>prom/prometheus:v3.0.1<span class="w"> </span>--config.file<span class="o">=</span>/etc/prometheus/prometheus.yml
+</code></pre></div>
+<p><strong>预期结果</strong>：<code>/api/v1/targets</code> 里两个目标 <code>health=up</code>。</p>
+<p><strong>实际结果</strong>（2026-10-09T00:58Z）：</p>
+<pre class="plain"><code>job=app          url=http://localhost:9101/metrics      health=up    lastScrape=2026-10-09T00:58:09.546320971Z
+job=prometheus   url=http://localhost:9090/metrics      health=up    lastScrape=2026-10-09T00:58:08.885230241Z
+</code></pre>
+<blockquote>
+<p>注意第二个目标是 <strong>Prometheus 自己</strong>——配置里那一段没有删，<br>
+因为元监控（Prometheus 自己挂了谁知道）是这个体系的标配。</p>
+</blockquote>
+<p>真实 PromQL：</p>
+<pre class="plain"><code>$ python3 code/03-promql-query.py --query &#x27;up&#x27;
+up{instance=localhost:9090,job=prometheus}  1   @00:56:58Z
+up{instance=localhost:9101,job=app}  1   @00:56:58Z
+
+$ python3 code/03-promql-query.py --query &#x27;app_http_requests_total&#x27;
+app_http_requests_total{instance=localhost:9101,job=app,method=GET,path=/,status=200}  30   @00:57:17Z
+app_http_requests_total{instance=localhost:9101,job=app,method=GET,path=/api/items,status=200}  30   @00:57:17Z
+app_http_requests_total{instance=localhost:9101,job=app,method=GET,path=/missing,status=404}  30   @00:57:17Z
+</code></pre>
+<p><strong>结论</strong>：<br>
+- <strong>我们没写任何「上报」代码</strong>，Prometheus 主动拉，<code>up</code> 自动就有——这是 pull 的红利；<br>
+- <code>up</code> 的标签里自动带了 <code>job</code> 和 <code>instance</code>，这也是采集端加的；<br>
+- 应用完全不知道 Prometheus 的存在（第 2 条推论）。</p>
+<p><strong>清理</strong>：<code>docker rm -f d177-prom</code>（实验 4 会一起收）。</p>
+<hr>
+<h2 id="3promql-0">实验 3：PromQL —— 一个「看起来该有数、结果是 0」的坑</h2>
+<p><strong>目的</strong>：跑通查询接口，并亲手撞上 <code>rate()</code> 的窗口陷阱。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">for</span><span class="w"> </span>i<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="k">$(</span>seq<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">30</span><span class="k">)</span><span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>http://localhost:9101/
+<span class="w">  </span>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>http://localhost:9101/api/items
+<span class="w">  </span>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>http://localhost:9101/missing
+<span class="k">done</span>
+sleep<span class="w"> </span><span class="m">8</span>
+python3<span class="w"> </span>code/03-promql-query.py<span class="w"> </span>--query<span class="w"> </span><span class="s1">&#39;sum by (status) (rate(app_http_requests_total[1m]))&#39;</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（第一次，2026-10-09T00:57:17Z）：</p>
+<pre class="plain"><code># resultType=vector · 时间线 2 条
+{status=200}  0   @00:57:17Z
+{status=404}  0   @00:57:17Z
+</code></pre>
+<p><strong>这不对啊</strong>：counter 明明从 0 涨到了 30（上一个实验刚验证过）。</p>
+<p><strong>排查过程</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1. 拉原始样本看变化到底发生在什么时候</span>
+GET<span class="w"> </span>/api/v1/query_range?query<span class="o">=</span>app_http_requests_total<span class="o">{</span><span class="nv">path</span><span class="o">=</span><span class="s2">&quot;/&quot;</span>,status<span class="o">=</span><span class="s2">&quot;200&quot;</span><span class="o">}</span><span class="p">&amp;</span><span class="nv">step</span><span class="o">=</span><span class="m">5</span>
+<span class="w">  </span><span class="m">08</span>:57:12<span class="w"> </span><span class="m">30</span>
+<span class="w">  </span><span class="m">08</span>:57:17<span class="w"> </span><span class="m">30</span>
+<span class="w">  </span><span class="m">08</span>:57:22<span class="w"> </span><span class="m">30</span>
+<span class="w">  </span><span class="m">08</span>:57:27<span class="w"> </span><span class="m">30</span>
+<span class="w">  </span><span class="m">08</span>:57:32<span class="w"> </span><span class="m">30</span>
+</code></pre></div>
+<p><strong>根因</strong>：窗口 <code>[1m]</code> 内的<strong>每一个样本都已经是终值 30</strong>。<br>
+那 30 次自增全部发生在窗口起点之前，窗口里根本没有「增量」——<br>
+<code>rate()</code> 如实告诉你：这段时间没涨。<strong>表达式没错，窗口选错了。</strong></p>
+<p><strong>验证</strong>（重新打流量，立刻查）：</p>
+<pre class="plain"><code>$ ... --query &#x27;sum(rate(app_http_requests_total[1m]))&#x27;
+  0.393   @00:57:54Z
+</code></pre>
+<p>有增量落进窗口，<code>rate()</code> 立刻给出非零值。</p>
+<p><strong>结论</strong>：<br>
+- <code>rate()</code> 只对<strong>窗口内</strong>的样本做差。窗口不覆盖「变化发生的那一段」，结果就是 0；<br>
+- 所以排障时先问「我关心的变化发生在什么时间」，再定 <code>[1m]</code> / <code>[5m]</code> / <code>[1h]</code>；<br>
+- 这也解释了为什么 Grafana 上的图在「刚打完流量」时可能还是平的——<br>
+  不是没数据，是<strong>采集间隔（scrape_interval）还没过去，样本还没进来</strong>。</p>
+<p><strong>清理</strong>：无（只读查询）。</p>
+<hr>
+<h2 id="4grafana">实验 4：Grafana 看板，用文件而不是鼠标</h2>
+<p><strong>目的</strong>：把「看板」变成可进版本库的产物。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>code/04-scrape-and-dashboard.py<span class="w"> </span>--self-test
+python3<span class="w"> </span>code/04-scrape-and-dashboard.py<span class="w"> </span>--out<span class="w"> </span>/tmp/day177/stack
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>d177-grafana<span class="w"> </span>--network<span class="w"> </span>host<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">GF_AUTH_ANONYMOUS_ENABLED</span><span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-v<span class="w"> </span>/tmp/day177/stack/grafana/provisioning:/etc/grafana/provisioning:ro<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-v<span class="w"> </span>/tmp/day177/stack/grafana/dashboards:/etc/grafana/dashboards:ro<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>grafana/grafana:11.4.0
+</code></pre></div>
+<p><strong>实际结果</strong>（生成物 + 结构校验，2026-10-09）：</p>
+<pre class="plain"><code>✅ self-test 通过：生成 4 个文件；prometheus.yml 指向 :9101、看板 4 个面板，数据源 uid 全场一致
+    
+生成：
+  prometheus           /tmp/day177/stack/prometheus.yml
+  datasource           /tmp/day177/stack/grafana/provisioning/datasources/day177-datasource.yml
+  dashboard_provider   /tmp/day177/stack/grafana/provisioning/dashboards/day177.yml
+  dashboard            /tmp/day177/stack/grafana/dashboards/day177-app.json
+</code></pre>
+<p><strong>未实测</strong>：本机多个镜像源都拉不下 <code>grafana/grafana:11.4.0</code>（底层层已存在，<br>
+清单始终不落地），所以<strong>容器启动、数据源自动加载、看板渲染这三步没有在本机跑过</strong>。<br>
+按「宁可空着也不编」的规矩，这里不填假输出。预期与验证方法：</p>
+<ul>
+<li>预期：<code>curl -s localhost:3000/api/health</code> 返回 <code>{"database":"ok",...}</code>；<br>
+<code>curl -s 'localhost:3000/api/search?query='</code> 能列出 <code>Day 177 · 应用监控看板</code>。</li>
+<li>验证方法：镜像可用后执行上面的 <code>docker run</code>，再跑 <code>04 --up</code>，<br>
+  它会依次探测 <code>/-/ready</code>、<code>/api/health</code>、拉 <code>/api/v1/targets</code> 和 <code>/api/search</code> 并打印结果。</li>
+</ul>
+<p><strong>结论（已实测部分）</strong>：<br>
+- 看板的本质是 <strong>JSON</strong>（4 个面板、每条曲线就是一句 PromQL）；<br>
+- 数据源 uid 必须与面板里引用的 uid 一致，<strong>否则图全空</strong>——这是 provisioning<br>
+  最常踩的坑，脚本的自检专门断言了这一点；<br>
+- 因为都是文件，看板可以 code review、可以回滚，而不是「谁在 UI 上点过」。</p>
+<p><strong>清理</strong>：<code>docker rm -f d177-grafana d177-prom</code>。</p>
+<hr>
+<h2 id="bug">翻车复盘（三个真 bug，全部在本日实测中出现）</h2>
+<h3 id="1-duplicatetimeseries">1. <code>DuplicateTimeseries</code>：指标注册了两次</h3>
+<p><strong>症状</strong>：<code>--self-test</code> 直接抛异常：</p>
+<pre class="plain"><code>prometheus_client.registry.DuplicateTimeseries: Duplicated timeseries in
+CollectorRegistry: {&#x27;app_http_requests&#x27;, &#x27;app_http_requests_created&#x27;, &#x27;app_http_requests_total&#x27;}
+</code></pre>
+<p><strong>假设</strong>：<code>build_app()</code> 被调用了两次。<br>
+<strong>验证</strong>：<code>main()</code> 里先无条件 <code>app = build_app()</code>，随后 <code>self_test()</code> 里又建了一次。<br>
+<strong>根因</strong>：Prometheus 客户端默认注册到一个<strong>进程级全局 registry</strong>，<br>
+同名指标第二次注册会被拒绝（这是<strong>保护</strong>，不是 bug——否则两条线会互相覆盖）。<br>
+<strong>修复</strong>：把 <code>build_app()</code> 移到 <code>--self-test</code> 分支之后，只建一次。<br>
+<strong>复测</strong>：<code>✅ self-test 通过 | backend=prometheus_client</code>。</p>
+<blockquote>
+<p>教训：写这种脚本时，任何「模块级/进程级只允许一次」的注册，<br>
+都要保证<strong>只有一条创建路径</strong>。用 <code>--self-test</code> 而不是肉眼看，一下就抓到。</p>
+</blockquote>
+<h3 id="2-summary-quantiles">2. <code>Summary</code> 的 <code>quantiles=</code> 参数已经被移除</h3>
+<p><strong>症状</strong>：</p>
+<pre class="plain"><code>TypeError: MetricWrapperBase.__init__() got an unexpected keyword argument &#x27;quantiles&#x27;
+</code></pre>
+<p><strong>假设</strong>：我记的 API 是不是过时了？<br>
+<strong>验证</strong>：<code>inspect.signature(Summary.__init__)</code> —— 确认签名里只有<br>
+<code>name, documentation, labelnames, namespace, subsystem, unit, registry, _labelvalues</code>。<br>
+装的库文档里当场写着：</p>
+<blockquote>
+<p>"You can use Histograms for aggregatable calculation of quantiles."</p>
+</blockquote>
+<p><strong>根因</strong>：<code>prometheus_client</code> 在较新版本里<strong>移除了客户端侧的自定义分位</strong>，<br>
+官方直接把分位这件事推给 Histogram + <code>histogram_quantile()</code>。<br>
+<strong>修复</strong>：<code>02-metric-types.py</code> 改成只演示 summary 的 <code>_sum/_count</code>，<br>
+并在自检里断言「传 <code>quantiles=</code> 会 <code>TypeError</code>」——把 API 现状钉进测试。<br>
+<strong>复测</strong>：</p>
+<pre class="plain"><code>✅ self-test 通过：counter 单调 / gauge 可增减 / histogram 桶累计 /
+   summary 仅 _sum+_count（quantiles= 已移除），四项语义均成立
+</code></pre>
+<blockquote>
+<p>教训：<strong>别凭记忆写 API</strong>。一个 <code>TypeError</code> + 一次 <code>inspect.signature()</code><br>
+十秒钟定案，比在网上找三篇互相抄的博客快得多。</p>
+</blockquote>
+<h3 id="3-rate-0-3">3. <code>rate()</code> 返回 0（见实验 3）</h3>
+<p><strong>症状</strong>：counter 涨了 30，<code>rate(...[1m])</code> 却是 0。<br>
+<strong>根因</strong>：增量全部发生在窗口起点之前，<strong>窗口内没有变化</strong>。<br>
+<strong>修复</strong>：不是改代码，是改<strong>窗口长度</strong>（或改查询时机）。<br>
+<strong>复测</strong>：重新打流量后同一表达式给出 <code>0.393</code>。</p>
+<blockquote>
+<p>教训：PromQL 的「没数据」和「没变化」是两件事：<br>
+前者返回空结果，后者返回 <code>0</code>。看板上的平线，两者长得一模一样。</p>
+</blockquote>
+<hr>
+<h2 id="_9">清理（每次实验后都做）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>d177-prom<span class="w"> </span>d177-grafana<span class="w">          </span><span class="c1"># 收容器</span>
+pkill<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;01-expose-metrics.py --port 9101&quot;</span><span class="w">  </span><span class="c1"># 收应用（别用 pkill -f python3，会误伤）</span>
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/day177<span class="w">                            </span><span class="c1"># 收临时目录</span>
+</code></pre></div>
+<p>自检项：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">ss<span class="w"> </span>-ltnp<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;:9101|:9090|:3000&#39;</span><span class="w">   </span><span class="c1"># 三个端口都应无输出</span>
+docker<span class="w"> </span>ps<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Names}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>d177<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;无残留容器&quot;</span>
+</code></pre></div>
+<hr>
+<h2 id="_10">思考题</h2>
+<ol>
+<li>为什么 Prometheus 的样本里<strong>没有时间戳</strong>？如果让客户端自己打时间戳，<br>
+   引入的问题是什么？（提示：时钟偏移、以及「拉」这个动作发生在谁身上）</li>
+<li>用 counter 记录「当前在线用户数」会出什么问题？如果你只有一个<br>
+<code>user_login_total</code> / <code>user_logout_total</code> 两个 counter，怎么算出在线数？</li>
+<li><code>histogram_quantile(0.95, app_latency_seconds_bucket)</code>（<strong>不带 <code>rate()</code></strong>）<br>
+   会算出什么？为什么必须先 <code>rate()</code> 再 <code>histogram_quantile()</code>？</li>
+<li>一个每 300ms 跑完的批处理脚本，怎么才能被 Prometheus 监控到？<br>
+   为什么它自己加个 <code>/metrics</code> 端点不行？</li>
+<li><code>up{job="app"}</code> 和 <code>app_http_requests_total</code> 停止更新，在 PromQL 里<br>
+   分别表现成什么？这两个信号在排障时分别说明什么？</li>
+</ol>
+<hr>
+<h2 id="_11">交付清单</h2>
+<ul>
+<li><code>code/01-expose-metrics.py</code> —— 应用暴露 <code>/metrics</code>（prometheus_client + stdlib 回退）</li>
+<li><code>code/02-metric-types.py</code> —— 四种指标类型的语义与坑</li>
+<li><code>code/03-promql-query.py</code> —— PromQL 瞬时/区间查询 + 离线桩自检</li>
+<li><code>code/04-scrape-and-dashboard.py</code> —— 采集配置 + Grafana provisioning 生成</li>
+<li><code>diagrams/README.md</code> —— 五张原理图</li>
+<li><code>exercises/checklist.md</code> —— 练习与检查表</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-176/index.html">← Day 176 ELK 日志系统</a><a class="nav-next" href="../day-178/index.html">Day 178 容器编排（K8s 入门） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

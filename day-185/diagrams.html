@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 185 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 185 正文</a>
+  <h1>Day 185 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-185">Day 185 图解 —— 部署流水线、探针状态机与停机时间线</h1>
+<blockquote>
+<p>全部 Mermaid / ASCII，不生成图片文件，跟代码一起 review。</p>
+</blockquote>
+<hr>
+<h2 id="1">图 1：一键部署流水线与失败出口</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;[0] 预检&lt;br/&gt;端口身份 / 目录可写 / 目标存在&quot;] --&gt;|&quot;失败&quot;| A1[&quot;exit 3&lt;br/&gt;什么都没改&quot;]
+    A --&gt;|&quot;通过&quot;| B[&quot;[1] 记录现状&lt;br/&gt;读 current.json&quot;]
+    B --&gt; C[&quot;[2] 启动新版&lt;br/&gt;写 pidfile + 等 /readyz=200&quot;]
+    C --&gt;|&quot;就绪超时&quot;| R{&quot;有旧版本?&quot;}
+    C --&gt;|&quot;就绪&quot;| D[&quot;[3] 业务验收&lt;br/&gt;/api/v1/hosts 条数必须对&quot;]
+    D --&gt;|&quot;失败&quot;| R
+    D --&gt;|&quot;通过&quot;| E[&quot;[4] 落状态&lt;br/&gt;current.json + history.jsonl&quot;]
+    R --&gt;|&quot;有&quot;| F[&quot;[5] 停新版 → 起旧版 → 再验收&quot;]
+    F --&gt;|&quot;旧版 OK&quot;| F1[&quot;exit 4&lt;br/&gt;已回滚，线上是好的&quot;]
+    F --&gt;|&quot;旧版也坏&quot;| F2[&quot;exit 5&lt;br/&gt;必须叫人的事故&quot;]
+    R --&gt;|&quot;没有&quot;| R1[&quot;exit 4&lt;br/&gt;无法回滚，需要人工&quot;]
+    E --&gt; G[&quot;exit 0&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;[0] 预检&lt;br/&gt;端口身份 / 目录可写 / 目标存在&quot;] --&gt;|&quot;失败&quot;| A1[&quot;exit 3&lt;br/&gt;什么都没改&quot;]
+    A --&gt;|&quot;通过&quot;| B[&quot;[1] 记录现状&lt;br/&gt;读 current.json&quot;]
+    B --&gt; C[&quot;[2] 启动新版&lt;br/&gt;写 pidfile + 等 /readyz=200&quot;]
+    C --&gt;|&quot;就绪超时&quot;| R{&quot;有旧版本?&quot;}
+    C --&gt;|&quot;就绪&quot;| D[&quot;[3] 业务验收&lt;br/&gt;/api/v1/hosts 条数必须对&quot;]
+    D --&gt;|&quot;失败&quot;| R
+    D --&gt;|&quot;通过&quot;| E[&quot;[4] 落状态&lt;br/&gt;current.json + history.jsonl&quot;]
+    R --&gt;|&quot;有&quot;| F[&quot;[5] 停新版 → 起旧版 → 再验收&quot;]
+    F --&gt;|&quot;旧版 OK&quot;| F1[&quot;exit 4&lt;br/&gt;已回滚，线上是好的&quot;]
+    F --&gt;|&quot;旧版也坏&quot;| F2[&quot;exit 5&lt;br/&gt;必须叫人的事故&quot;]
+    R --&gt;|&quot;没有&quot;| R1[&quot;exit 4&lt;br/&gt;无法回滚，需要人工&quot;]
+    E --&gt; G[&quot;exit 0&quot;]
+</code></pre></div>
+<hr>
+<h2 id="2">图 2：存活 / 就绪 状态机（本课服务真实行为）</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant DP as 部署脚本
+    participant P as 进程
+    participant K as 内核(端口)
+    Note over P: 启动（进程存在，还没 bind）
+    P-&gt;&gt;K: bind + listen
+    K--&gt;&gt;DP: 端口可连（但业务未必能用！）
+    DP-&gt;&gt;P: GET /healthz
+    P--&gt;&gt;DP: 200 {&quot;status&quot;:&quot;ok&quot;}   ← liveness：活着
+    DP-&gt;&gt;P: GET /readyz
+    P--&gt;&gt;DP: 503 {&quot;ready&quot;:false}    ← readiness：还不能接流量
+    Note over P: warmup：加载数据/建连接池(~0.3–2s)
+    P-&gt;&gt;P: ready = True
+    DP-&gt;&gt;P: GET /readyz（轮询）
+    P--&gt;&gt;DP: 200 {&quot;ready&quot;:true,&quot;warmup_s&quot;:0.303}
+    DP-&gt;&gt;P: GET /api/v1/hosts → 条数比对
+    Note over DP: 到这里才算&quot;部署成功&quot;
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant DP as 部署脚本
+    participant P as 进程
+    participant K as 内核(端口)
+    Note over P: 启动（进程存在，还没 bind）
+    P-&gt;&gt;K: bind + listen
+    K--&gt;&gt;DP: 端口可连（但业务未必能用！）
+    DP-&gt;&gt;P: GET /healthz
+    P--&gt;&gt;DP: 200 {&quot;status&quot;:&quot;ok&quot;}   ← liveness：活着
+    DP-&gt;&gt;P: GET /readyz
+    P--&gt;&gt;DP: 503 {&quot;ready&quot;:false}    ← readiness：还不能接流量
+    Note over P: warmup：加载数据/建连接池(~0.3–2s)
+    P-&gt;&gt;P: ready = True
+    DP-&gt;&gt;P: GET /readyz（轮询）
+    P--&gt;&gt;DP: 200 {&quot;ready&quot;:true,&quot;warmup_s&quot;:0.303}
+    DP-&gt;&gt;P: GET /api/v1/hosts → 条数比对
+    Note over DP: 到这里才算&quot;部署成功&quot;
+</code></pre></div>
+<hr>
+<h2 id="3sigterm-vs-sigkill">图 3：优雅停机时间线（SIGTERM vs SIGKILL，实测）</h2>
+<pre class="plain"><code>SIGTERM（正确实现：shutdown → wait_idle → server_close）
+t=0.00s  ├─ 收到 SIGTERM，日志 sigterm_received
+         ├─ 停止 accept：新连接被拒（连接被内核拒绝，而不是被应用重置）
+t=0.25s  ├─ 在途请求 /slow?ms=1500 还在 sleep
+t=1.20s  ├─ 请求处理完 → 客户端拿到 200  ✅（实测 elapsed=1.202s）
+t=1.29s  ├─ wait_idle 返回：{&quot;msg&quot;:&quot;drained&quot;,&quot;waited_s&quot;:0.839,&quot;max_concurrent&quot;:1}
+t=1.34s  └─ 进程退出（实测 exit_took=0.051s）      → 用户零感知
+
+SIGKILL / 没有排空的实现（第一版真机结果）
+t=0.00s  ├─ kill -9（或：handler 只 shutdown 不排空）
+t=0.30s  ├─ 进程消失（实测 0.297s）
+t=0.55s  └─ 客户端：RemoteDisconnected ❌（在途请求被切断，用户看到连接重置）
+</code></pre>
+<p><strong>这张图就是"滚动发布为什么不能随便用 kill -9"的全部理由。</strong></p>
+<hr>
+<h2 id="4pid">图 4：PID 身份判定（哪一条判据在防哪种事故）</h2>
+<pre class="plain"><code>                  pidfile 里有 12345
+                          │
+        ┌─────────────────┴──────────────────┐
+        │ /proc/12345 存在吗？                │  ← 只看这个 → 僵尸也算&quot;活着&quot;
+        └─────────────────┬──────────────────┘
+                  否 ─────┘───── 是
+                  │                │
+          认为&quot;没在跑&quot;        /proc/12345/stat 的 state 是 Z？
+          → 启动它              │            │
+                          是 ──┘            └── 否
+                          │                     │
+                    僵尸=已死              cmdline 里有我们的标记吗？
+                    → 启动它                  │              │
+                                        没有 ─┘              └─ 有
+                                        │                       │
+                                  PID 被复用！               这才是我们的服务
+                                  拒绝操作（别杀）           → 可以停/可以跳过启动
+</code></pre>
+<hr>
+<h2 id="5-d1kill-9-0416s">图 5：故障演练 D1（kill -9）的时间线，实测 0.416s 恢复</h2>
+<pre class="plain"><code>t=0.000s  ● kill -9（故障注入，不给任何收尾机会）
+          │  服务端口立刻关闭
+t=0.001s  ● 探针轮询发现不可用（healthz 连接失败）   ← detect_latency
+          │
+t=0.002s  ● 判定需要重启，拉起新进程
+          │  warmup ~0.3s（本地）
+t=0.416s  ● MTTR：业务接口 /api/v1/hosts 重新返回 200，条数正确
+</code></pre>
+<p>配套的 D2/D3 数字（同一轮演练）：
+ - D2 端口冲突：预检 <strong>0.0002s</strong> 内失败，占用者（一个无关的 sleep 进程）<strong>未被杀</strong>
+ - D3 停机对比：SIGTERM 在途请求 <strong>200</strong>（1.202s 完成） / SIGKILL 在途请求 <strong>连接失败</strong>（0.252s 被切断）</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 176 — ELK 日志系统</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 176 — ELK 日志系统</h1>
+  <div class="lmeta">
+    <span class="badge">自动化运维与DevOps</span>
+    <span class="badge">593 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-176-elk-日志系统" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">概念解释</a>
+<a class="toc-l3" href="#elk">ELK 是什么</a>
+<a class="toc-l3" href="#elasticsearch">Elasticsearch：分布式搜索引擎</a>
+<a class="toc-l3" href="#logstash">Logstash：日志处理管道</a>
+<a class="toc-l3" href="#kibana">Kibana：可视化仪表板</a>
+<a class="toc-l2" href="#_2">原理深入</a>
+<a class="toc-l3" href="#elasticsearch_1">Elasticsearch 一次写入的完整链路</a>
+<a class="toc-l3" href="#elasticsearch_2">Elasticsearch 一次查询的完整链路</a>
+<a class="toc-l3" href="#logstash_1">Logstash 的内存与性能模型</a>
+<a class="toc-l3" href="#beats">Beats：轻量采集器</a>
+<a class="toc-l2" href="#_3">定义与使用方法</a>
+<a class="toc-l3" href="#dsl">基础查询 DSL</a>
+<a class="toc-l3" href="#_4">聚合查询</a>
+<a class="toc-l3" href="#kibana-kql">Kibana 查询语言（KQL）</a>
+<a class="toc-l3" href="#rest-api">常用 REST API</a>
+<a class="toc-l2" href="#_5">图解</a>
+<a class="toc-l3" href="#elk-ascii">ELK 整体架构图（ASCII）</a>
+<a class="toc-l3" href="#_6">倒排索引原理图</a>
+<a class="toc-l3" href="#logstash-pipeline">Logstash pipeline 数据流</a>
+<a class="toc-l2" href="#_7">实战代码案例</a>
+<a class="toc-l2" href="#_8">实战实验手册</a>
+<a class="toc-l3" href="#1-elk10">实验 1：部署单节点 ELK（10 分钟）</a>
+<a class="toc-l3" href="#2-nginx-15">实验 2：采集 Nginx 日志（15 分钟）</a>
+<a class="toc-l3" href="#35">实验 3：状态码统计聚合（5 分钟）</a>
+<a class="toc-l3" href="#4-5xx-10">实验 4：排查 5xx 错误（10 分钟）</a>
+<a class="toc-l3" href="#5">实验 5：删除旧索引（维护）</a>
+<a class="toc-l2" href="#_9">思考题</a>
+<a class="toc-l2" href="#_10">参考资料</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-176-elk">Day 176 — ELK 日志系统</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 11 — 自动化运维与 DevOps（Day 166–185）<br>
+<strong>子主题</strong>：实战 · 日志采集、存储、检索与可视化</p>
+</blockquote>
+<hr>
+<h2 id="_1">概念解释</h2>
+<h3 id="elk">ELK 是什么</h3>
+<p><strong>ELK</strong> 是三件套的合称：</p>
+<ul>
+<li><strong>Elasticsearch</strong>（E）— 分布式搜索和分析引擎，把日志存成「可搜索的索引」</li>
+<li><strong>Logstash</strong>（L）— 服务器端数据处理管道，把日志采集、过滤、转换、转发</li>
+<li><strong>Kibana</strong>（K）— 数据和 Elasticsearch 的可视化仪表板，画图表、看板</li>
+</ul>
+<p>合称 <strong>ELK Stack</strong>（现在官方也叫 <strong>Elastic Stack</strong>）。</p>
+<p>一句话理解它的分工：</p>
+<pre class="plain"><code>日志源 ── Logstash  ── Elasticsearch ── Kibana
+（收集）    （加工）      （存储/搜索）     （展示）
+</code></pre>
+<p><strong>为什么不用 <code>grep</code> 查日志了？</strong> 因为：</p>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>grep / tail</th>
+<th>ELK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单台服务器一个文件</td>
+<td>✅ 够用</td>
+<td>⚠️ 杀鸡用牛刀</td>
+</tr>
+<tr>
+<td>100 台服务器 1000 个日志文件</td>
+<td>❌ 逐个登录、逐个 grep</td>
+<td>✅ 一键全文检索</td>
+</tr>
+<tr>
+<td>按时间、状态码、用户维度聚合</td>
+<td>❌ 写脚本拼凑</td>
+<td>✅ 一次聚合查询</td>
+</tr>
+<tr>
+<td>实时告警</td>
+<td>❌ 轮询脚本</td>
+<td>✅ 内置监控告警</td>
+</tr>
+<tr>
+<td>历史趋势图</td>
+<td>❌ 自己画</td>
+<td>✅ 拖拽生成</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h3 id="elasticsearch">Elasticsearch：分布式搜索引擎</h3>
+<p>Elasticsearch 的<strong>核心模型</strong>：</p>
+<pre class="plain"><code>索引 (index)            → 一个日志类型，如 &quot;nginx-access&quot;
+  ├─ 分片 (shard)        → 索引分成的碎片，分布在不同节点
+  │   └─ 文档 (document) → 一条日志，JSON 格式
+  └─ 副本 (replica)      → 分片的备份，防单点故障
+</code></pre>
+<p><strong>倒排索引</strong> 是它快的原因：</p>
+<pre class="plain"><code>正排索引（传统数据库）: 文档 ID → 关键词
+  1001 → &quot;error&quot;
+  1002 → &quot;warning&quot;
+  1003 → &quot;error&quot;
+
+倒排索引（Elasticsearch）: 关键词 → 文档 ID 列表
+  &quot;error&quot;  → [1001, 1003]
+  &quot;warning&quot; → [1002]
+</code></pre>
+<p>查「所有 error」→ 直接拿倒排列表，<strong>不用扫描全表</strong>。</p>
+<p><strong>核心 API</strong>：</p>
+<pre class="plain"><code>GET /_search           # 搜索
+PUT /logs-2026.10.06   # 建索引
+GET /logs-2026.10.06   # 查看索引
+DELETE /logs-2026.10.06 # 删索引
+</code></pre>
+<hr>
+<h3 id="logstash">Logstash：日志处理管道</h3>
+<p>Logstash 的工作方式：</p>
+<pre class="plain"><code>input  → 从哪读（文件/数据库/消息队列）
+filter → 怎么加工（解析/清洗/富化/过滤）
+output → 往哪写（Elasticsearch/文件/邮件）
+</code></pre>
+<p>一个典型 pipeline：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">ruby</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">input</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">file</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s2">&quot;/var/log/nginx/access.log&quot;</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="n">filter</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">grok</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">match</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s2">&quot;message&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s2">&quot;%{COMBINEDAPACHELOG}&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="n">date</span><span class="w">  </span><span class="p">{</span><span class="w"> </span><span class="n">match</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="o">[</span><span class="w"> </span><span class="s2">&quot;@timestamp&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;dd/MMM/yyyy:HH:mm:ss Z&quot;</span><span class="w"> </span><span class="o">]</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="n">mutate</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">rename</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="s2">&quot;message&quot;</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="s2">&quot;raw_log&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="n">output</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="n">elasticsearch</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">hosts</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="o">[</span><span class="s2">&quot;localhost:9200&quot;</span><span class="o">]</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="n">stdout</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">codec</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">rubydebug</span><span class="w"> </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>grok</strong> 是把非结构化日志转结构化 JSON 的关键：</p>
+<pre class="plain"><code>原始日志:
+127.0.0.1 - - [10/Oct/2026:13:55:36 +0000] &quot;GET /api/users HTTP/1.1&quot; 200 2326
+
+grok 模式 COMBINEDAPACHELOG 解析为:
+{
+  &quot;clientip&quot;: &quot;127.0.0.1&quot;,
+  &quot;timestamp&quot;: &quot;10/Oct/2026:13:55:36 +0000&quot;,
+  &quot;verb&quot;: &quot;GET&quot;,
+  &quot;request&quot;: &quot;/api/users&quot;,
+  &quot;response&quot;: 200,
+  &quot;bytes&quot;: 2326,
+  &quot;agent&quot;: &quot;Mozilla/5.0 ...&quot;
+}
+</code></pre>
+<hr>
+<h3 id="kibana">Kibana：可视化仪表板</h3>
+<p>Kibana 的四大功能：</p>
+<table>
+<thead>
+<tr>
+<th>功能</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Dashboard</strong></td>
+<td>把多个图表拼成一个看板</td>
+</tr>
+<tr>
+<td><strong>Visualize</strong></td>
+<td>画柱状图、折线图、饼图</td>
+</tr>
+<tr>
+<td><strong>Discover</strong></td>
+<td>单表全文检索，像搜索引擎一样查日志</td>
+</tr>
+<tr>
+<td><strong>Dev Tools</strong></td>
+<td>直接写 ES DSL 查询</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_2">原理深入</h2>
+<h3 id="elasticsearch_1">Elasticsearch 一次写入的完整链路</h3>
+<pre class="plain"><code>客户端 PUT 文档
+     │
+     ├─ 负载均衡 → 某个主节点（coordinator）
+     │
+     ├─ coordinator 计算分片（哈希路由）
+     │   hash(&quot;_logs-2026.10.06&quot;) % 5 = 3 → shard_03
+     │
+     ├─ 发写请求到 shard_03 所在节点
+     │   ├─ 写入内存 buffer（translog）
+     │   └─ 返回成功给 coordinator
+     │
+     └─ coordinator 汇总所有分片 → 返回 201 给客户端
+</code></pre>
+<p>关键点：</p>
+<ul>
+<li><strong>主分片写成功 ≠ 全局可见</strong>。副本还在刷盘，此时查询可能查不到（<strong>near real time</strong>，默认 1 秒刷新）。</li>
+<li>要立刻查到，发 <code>?refresh=true</code>。</li>
+<li><strong>写入不阻塞读</strong>：读走旧版本的分片副本，写走新分片。</li>
+</ul>
+<hr>
+<h3 id="elasticsearch_2">Elasticsearch 一次查询的完整链路</h3>
+<pre class="plain"><code>客户端 GET /logs/_search
+     │
+     ├─ coordinator 节点
+     │   ├─ 向所有相关分片发 query（phase: query）
+     │   │   └─ 每个分片返回 (docId, score) 局部结果
+     │   └─ 全局 top-N 合并 → 返回结果
+     │
+     └─ 客户端收到结果
+</code></pre>
+<p><strong>查询阶段</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;query&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;bool&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;must&quot;</span><span class="p">:</span><span class="w">    </span><span class="p">[</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;match&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;response&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">],</span>
+<span class="w">      </span><span class="nt">&quot;filter&quot;</span><span class="p">:</span><span class="w">  </span><span class="p">[</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;range&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;@timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;gte&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;now-1h&quot;</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">],</span>
+<span class="w">      </span><span class="nt">&quot;must_not&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;match&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">404</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>must</code>：命中才计分</li>
+<li><code>filter</code>：命中但不计分（可缓存，性能更好）</li>
+<li><code>must_not</code>：命中直接排除</li>
+</ul>
+<hr>
+<h3 id="logstash_1">Logstash 的内存与性能模型</h3>
+<p>Logstash 是<strong>单线程管道</strong>（一个 pipeline 一个 JVM 线程），所以：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># pipeline.workers = 1 时，管道串行处理</span>
+<span class="c1"># 要提高吞吐：增加 workers（但同一 event 会随机分到一个 worker）</span>
+<span class="nt">pipeline.workers</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+
+<span class="c1"># 批次大小：每个批次处理的事件数</span>
+<span class="nt">pipeline.batch.size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">125</span>
+
+<span class="c1"># 批次延迟：攒够 batch.size 才发，或等这么久才发</span>
+<span class="nt">pipeline.batch.delay</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
+</code></pre></div>
+<p><strong>常见坑</strong>：</p>
+<ul>
+<li><strong>背压（backpressure）</strong>：写入慢 → Logstash 内存涨 → OOM。要配 <code>queue.type: persisted</code> + <code>queue.max_bytes</code>。</li>
+<li><strong>file input 的 inode 轮转</strong>：日志轮转后 <code>tail -F</code> 跟丢。Logstash 用 <code>sincedb</code> 记录文件偏移，轮转后自动切到新文件（<strong>默认开，不要关</strong>）。</li>
+</ul>
+<hr>
+<h3 id="beats">Beats：轻量采集器</h3>
+<p><strong>Beats 家族</strong>（比 Logstash 轻，直接装到业务服务器上）：</p>
+<table>
+<thead>
+<tr>
+<th>Beats</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Filebeat</strong></td>
+<td>采集文件日志（最常用）</td>
+</tr>
+<tr>
+<td><strong>Metricbeat</strong></td>
+<td>采集系统/应用指标（CPU、内存、QPS）</td>
+</tr>
+<tr>
+<td><strong>Packetbeat</strong></td>
+<td>网络包分析</td>
+</tr>
+<tr>
+<td><strong>Heartbeat</strong></td>
+<td>监控服务存活</td>
+</tr>
+</tbody>
+</table>
+<p>典型架构：</p>
+<pre class="plain"><code>Filebeat（业务服务器） → Kafka/Logstash → Elasticsearch → Kibana
+</code></pre>
+<p>Filebeat 配置极简：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">filebeat.inputs</span><span class="p">:</span>
+<span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">log</span>
+<span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<span class="w">  </span><span class="nt">paths</span><span class="p">:</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/log/nginx/access.log</span>
+<span class="w">  </span><span class="nt">fields</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">service</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">nginx</span>
+<span class="w">    </span><span class="nt">env</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">prod</span>
+
+<span class="nt">output.elasticsearch</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">hosts</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;es-cluster:9200&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<hr>
+<h2 id="_3">定义与使用方法</h2>
+<h3 id="dsl">基础查询 DSL</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="err">GET</span><span class="w"> </span><span class="err">/logs</span><span class="mi">-</span><span class="err">*/_search</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;query&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;match&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">200</span><span class="w"> </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<h3 id="_4">聚合查询</h3>
+<p><strong>统计 HTTP 状态码分布</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="err">GET</span><span class="w"> </span><span class="err">/logs</span><span class="mi">-</span><span class="err">*/_search</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;aggs&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;status_codes&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;terms&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;field&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;response.keyword&quot;</span><span class="w"> </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p><strong>统计每分钟的请求数</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="err">GET</span><span class="w"> </span><span class="err">/logs</span><span class="mi">-</span><span class="err">*/_search</span>
+<span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;size&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">&quot;aggs&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;requests_per_minute&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;date_histogram&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="nt">&quot;field&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;@timestamp&quot;</span><span class="p">,</span>
+<span class="w">        </span><span class="nt">&quot;calendar_interval&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;minute&quot;</span>
+<span class="w">      </span><span class="p">}</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<hr>
+<h3 id="kibana-kql">Kibana 查询语言（KQL）</h3>
+<p>KQL 比 DSL 简单，Kibana Discover 用这个：</p>
+<pre class="plain"><code>response:200
+status:5xx
+@timestamp:&gt;now-1h
+service:nginx AND response:200
+</code></pre>
+<hr>
+<h3 id="rest-api">常用 REST API</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 健康检查</span>
+GET<span class="w"> </span>/_cluster/health
+
+<span class="c1"># 建索引</span>
+PUT<span class="w"> </span>/logs-2026.10.06
+
+<span class="c1"># 查索引信息</span>
+GET<span class="w"> </span>/logs-2026.10.06
+
+<span class="c1"># 删除索引</span>
+DELETE<span class="w"> </span>/logs-2026.10.06
+
+<span class="c1"># 删除所有旧索引（轮转策略）</span>
+DELETE<span class="w"> </span>/logs-2026.10.*
+
+<span class="c1"># 创建索引模板（自动按天建索引）</span>
+PUT<span class="w"> </span>/_index_template/logs
+<span class="o">{</span>
+<span class="w">  </span><span class="s2">&quot;index_patterns&quot;</span>:<span class="w"> </span><span class="o">[</span><span class="s2">&quot;logs-*&quot;</span><span class="o">]</span>,
+<span class="w">  </span><span class="s2">&quot;template&quot;</span>:<span class="w"> </span><span class="o">{</span>
+<span class="w">    </span><span class="s2">&quot;settings&quot;</span>:<span class="w"> </span><span class="o">{</span><span class="w"> </span><span class="s2">&quot;number_of_shards&quot;</span>:<span class="w"> </span><span class="m">1</span>,<span class="w"> </span><span class="s2">&quot;number_of_replicas&quot;</span>:<span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="o">}</span>,
+<span class="w">    </span><span class="s2">&quot;mappings&quot;</span>:<span class="w"> </span><span class="o">{</span>
+<span class="w">      </span><span class="s2">&quot;properties&quot;</span>:<span class="w"> </span><span class="o">{</span>
+<span class="w">        </span><span class="s2">&quot;@timestamp&quot;</span>:<span class="w"> </span><span class="o">{</span><span class="w"> </span><span class="s2">&quot;type&quot;</span>:<span class="w"> </span><span class="s2">&quot;date&quot;</span><span class="w"> </span><span class="o">}</span>,
+<span class="w">        </span><span class="s2">&quot;service&quot;</span>:<span class="w">   </span><span class="o">{</span><span class="w"> </span><span class="s2">&quot;type&quot;</span>:<span class="w"> </span><span class="s2">&quot;keyword&quot;</span><span class="w"> </span><span class="o">}</span>,
+<span class="w">        </span><span class="s2">&quot;message&quot;</span>:<span class="w">   </span><span class="o">{</span><span class="w"> </span><span class="s2">&quot;type&quot;</span>:<span class="w"> </span><span class="s2">&quot;text&quot;</span><span class="w"> </span><span class="o">}</span>
+<span class="w">      </span><span class="o">}</span>
+<span class="w">    </span><span class="o">}</span>
+<span class="w">  </span><span class="o">}</span>
+<span class="o">}</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">图解</h2>
+<h3 id="elk-ascii">ELK 整体架构图（ASCII）</h3>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────────────────────┐
+│                         业务服务器集群                                │
+│                                                                        │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                           │
+│  │  Web-01  │  │  Web-02  │  │  App-01  │  ...                        │
+│  │ nginx    │  │  nginx   │  │  flask   │                           │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘                           │
+│       │ logs        │ logs        │ logs                            │
+│  ┌────▼─────────────▼─────────────▼─────┐                          │
+│  │           Filebeat (每个节点)          │                          │
+│  └────────────────────┬─────────────────┘                          │
+└───────────────────────┼────────────────────────────────────────────┘
+                        │ syslog/HTTP
+                        ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         采集层                                         │
+│                                                                        │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐      │
+│  │   Logstash A    │  │   Logstash B    │  │   Kafka         │      │
+│  │  (管道加工)      │  │  (管道加工)      │  │  (缓冲队列)      │      │
+│  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘      │
+│           └─────────────────────┼───────────────────┘               │
+│                                 ▼                                    │
+└─────────────────────────────────┼────────────────────────────────────┘
+                                  │ 写入
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         存储层                                         │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    Elasticsearch 集群                          │   │
+│  │                                                               │   │
+│  │   Node-1         Node-2         Node-3                        │   │
+│  │   ┌──────┐      ┌──────┐      ┌──────┐                       │   │
+│  │   │shard │      │shard │      │shard │  ← 主分片              │   │
+│  │   │  03  │      │  01  │      │  02  │                       │   │
+│  │   └──┬───┘      └──┬───┘      └──┬───┘                       │   │
+│  │      │replica     │replica     │replica                      │   │
+│  │   ┌──▼───┐      ┌──▼───┐      ┌──▼───┐                       │   │
+│  │   │shard │      │shard │      │shard │  ← 副本分片            │   │
+│  │   │  03  │      │  01  │      │  02  │                       │   │
+│  │   └──────┘      └──────┘      └──────┘                       │   │
+│  │                                                               │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+└──────────────────────────────────────────────────────────────────────┘
+                                  │ 查询
+                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         展示层                                         │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                         Kibana                                │   │
+│  │   Dashboard  │  Discover  │  Visualize  │  Dev Tools          │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+└──────────────────────────────────────────────────────────────────────┘
+</code></pre>
+<h3 id="_6">倒排索引原理图</h3>
+<pre class="plain"><code>传统索引（正排）:
+┌────────┬───────────────────┐
+│ doc_id │ content           │
+├────────┼───────────────────┤
+│   1    │ &quot;error occurred&quot;  │
+│   2    │ &quot;warning issued&quot;  │
+│   3    │ &quot;error fixed&quot;     │
+└────────┴───────────────────┘
+         查 &quot;error&quot; → 扫 3 行
+
+倒排索引:
+&quot;error&quot;   → [1, 3]
+&quot;occurred&quot;→ [1]
+&quot;warning&quot; → [2]
+&quot;issued&quot;  → [2]
+&quot;fixed&quot;   → [3]
+         查 &quot;error&quot; → 直接 [1,3]，O(1)
+</code></pre>
+<h3 id="logstash-pipeline">Logstash pipeline 数据流</h3>
+<pre class="plain"><code>  ┌─────────┐     ┌─────────┐     ┌─────────┐     ┌─────────────┐
+  │  input  │ ──► │ filter  │ ──► │ mutate  │ ──► │   output    │
+  │  (文件) │     │ (grok)  │     │ (重命名)│     │(ES + stdout)│
+  └─────────┘     └─────────┘     └─────────┘     └─────────────┘
+       │               │
+  raw text        {clientip, request, response, ...}
+  {message}
+</code></pre>
+<hr>
+<h2 id="_7">实战代码案例</h2>
+<p>完整工程在 <code>code/</code> 目录：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01-elk-install-setup.py</code></td>
+<td>一键部署单节点 ELK（docker-compose）</td>
+</tr>
+<tr>
+<td><code>02-log-collection.py</code></td>
+<td>用 Logstash/Filebeat 采集 Nginx 日志</td>
+</tr>
+<tr>
+<td><code>03-log-analysis-query.py</code></td>
+<td>日志查询与聚合分析脚本</td>
+</tr>
+<tr>
+<td><code>04-dashboard-export.py</code></td>
+<td>导出 Kibana 仪表板为 JSON</td>
+</tr>
+<tr>
+<td><code>elk-stack.yml</code></td>
+<td>Docker Compose 编排</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_8">实战实验手册</h2>
+<h3 id="1-elk10">实验 1：部署单节点 ELK（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">git<span class="w"> </span>clone<span class="w"> </span>git@github.com:Geek0ne/Python-200-days.git
+<span class="nb">cd</span><span class="w"> </span>Python-200-days/days/day-176-elk-日志系统/code
+
+docker-compose<span class="w"> </span>-f<span class="w"> </span>elk-stack.yml<span class="w"> </span>up<span class="w"> </span>-d
+
+<span class="c1"># 检查健康</span>
+curl<span class="w"> </span>-s<span class="w"> </span>http://localhost:9200/_cluster/health<span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool
+</code></pre></div>
+<p>预期输出：<code>"status": "green"</code></p>
+<hr>
+<h3 id="2-nginx-15">实验 2：采集 Nginx 日志（15 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 模拟流量</span>
+<span class="k">for</span><span class="w"> </span>i<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="k">$(</span>seq<span class="w"> </span><span class="m">1</span><span class="w"> </span><span class="m">100</span><span class="k">)</span><span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span>curl<span class="w"> </span>-s<span class="w"> </span>-o<span class="w"> </span>/dev/null<span class="w"> </span>-w<span class="w"> </span><span class="s2">&quot;%{http_code}\n&quot;</span><span class="w"> </span>http://localhost/
+<span class="k">done</span>
+
+<span class="c1"># 用脚本写入测试日志</span>
+python3<span class="w"> </span><span class="m">02</span>-log-collection.py<span class="w"> </span>--count<span class="w"> </span><span class="m">100</span><span class="w"> </span>--output<span class="w"> </span>/tmp/access.log
+
+<span class="c1"># 重启 Logstash 让它读到新文件</span>
+docker-compose<span class="w"> </span>-f<span class="w"> </span>elk-stack.yml<span class="w"> </span>restart<span class="w"> </span>logstash
+
+<span class="c1"># 查询</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://localhost:9200/logs-*/_search?size=5&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool
+</code></pre></div>
+<hr>
+<h3 id="35">实验 3：状态码统计聚合（5 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://localhost:9200/logs-*/_search?size=0&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;aggs&quot;: {</span>
+<span class="s1">      &quot;status&quot;: { &quot;terms&quot;: { &quot;field&quot;: &quot;response.keyword&quot; } }</span>
+<span class="s1">    }</span>
+<span class="s1">  }&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool
+</code></pre></div>
+<p>预期输出类似：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">json</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="p">{</span>
+<span class="w">  </span><span class="nt">&quot;aggregations&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">&quot;buckets&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;key&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;200&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;doc_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">87</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;key&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;404&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;doc_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="p">},</span>
+<span class="w">        </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;key&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;500&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;doc_count&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="p">}</span>
+<span class="w">      </span><span class="p">]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<hr>
+<h3 id="4-5xx-10">实验 4：排查 5xx 错误（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://localhost:9200/logs-*/_search&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<span class="s1">    &quot;query&quot;: { &quot;range&quot;: { &quot;response&quot;: { &quot;gte&quot;: 500, &quot;lte&quot;: 599 } } },</span>
+<span class="s1">    &quot;sort&quot;: [ { &quot;@timestamp&quot;: &quot;desc&quot; } ],</span>
+<span class="s1">    &quot;size&quot;: 20</span>
+<span class="s1">  }&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool
+</code></pre></div>
+<hr>
+<h3 id="5">实验 5：删除旧索引（维护）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 删除 7 天前的索引</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span><span class="s2">&quot;http://localhost:9200/logs-2026.09.*&quot;</span>
+
+<span class="c1"># 删除今天之前的（按天轮转后清理）</span>
+curl<span class="w"> </span>-s<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span><span class="s2">&quot;http://localhost:9200/logs-2026.09.*/&quot;</span>
+</code></pre></div>
+<hr>
+<h2 id="_9">思考题</h2>
+<ol>
+<li>
+<p><strong>为什么 Elasticsearch 默认 1 秒后才能查到刚写入的日志？</strong> 如果要立刻查到该怎么做？</p>
+</li>
+<li>
+<p><strong>主分片和副本分片有什么区别？</strong> 为什么生产环境建议至少 3 个节点？</p>
+</li>
+<li>
+<p><strong>Logstash 的 <code>grok</code> 模式匹配失败会怎样？</strong> 怎么调试 grok 表达式？（提示：Logstash 自带 grok debugger）</p>
+</li>
+<li>
+<p><strong><code>filter</code> 和 <code>must</code> 有什么区别？</strong> 什么时候用哪个更快？</p>
+</li>
+<li>
+<p><strong>Filebeat 和 Logstash 应该装在哪里？</strong> 什么场景下需要两层（Filebeat → Logstash → ES）？</p>
+</li>
+<li>
+<p><strong>索引模板的作用是什么？</strong> 为什么不建议每次写入前手动建索引？</p>
+</li>
+<li>
+<p><strong>Kibana 的 <code>size: 0</code> 是什么意思？</strong> 它返回什么？</p>
+</li>
+</ol>
+<hr>
+<h2 id="_10">参考资料</h2>
+<ul>
+<li><a href="https://www.elastic.co/guide/en/elasticsearch/reference/current/index.html">Elasticsearch 官方文档</a></li>
+<li><a href="https://www.elastic.co/guide/en/logstash/current/index.html">Logstash 官方文档</a></li>
+<li><a href="https://www.elastic.co/guide/en/kibana/current/index.html">Kibana 官方文档</a></li>
+<li><a href="https://www.elastic.co/guide/en/beats/filebeat/current/index.html">Filebeat 官方文档</a></li>
+<li><a href="https://www.elastic.co/what-is/elk-stack">ELK 架构最佳实践</a></li>
+</ul>
+<hr>
+<div align="center">
+  <sub>Day 176 · Phase 11 · 自动化运维与 DevOps</sub>
+</div>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-175/index.html">← Day 175 Ansible 批量部署</a><a class="nav-next" href="../day-177/index.html">Day 177 Prometheus + Grafana →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 185 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 185 正文</a>
+  <h1>Day 185 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-185">Day 185 练习与验收清单 —— 一键部署与端到端验收</h1>
+<blockquote>
+<p>所有命令可直接复制执行；每个脚本都带 <code>--self-test</code>（离线、零第三方依赖）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">✅ 今日完成清单</h2>
+<ul>
+<li>[ ] 读完 <code>concepts.md</code>，能说清"存活"和"就绪"为什么不能合并</li>
+<li>[ ] 跑通 00：看到 <code>/healthz=200</code> 而 <code>/readyz=503</code> 的那段时间窗</li>
+<li>[ ] 跑通 01：亲眼看到"陈旧 PID 被识破"和"优雅停机成功"</li>
+<li>[ ] 跑通 02：正常部署 → 坏版本自动回滚 → 端口冲突被预检拦截（三个场景都跑）</li>
+<li>[ ] 跑通 03：9 项验收断言全绿（含在途请求被做完）</li>
+<li>[ ] 跑通 04：看 naive 逻辑<strong>真的</strong>杀掉了一个无关进程</li>
+<li>[ ] 跑通 05：拿到自己机器上的 MTTR / 发现延迟 / 停机对比数字</li>
+<li>[ ] 收尾：无残留进程、端口释放、临时目录已删</li>
+</ul>
+<h3 id="_2">一键离线自证（不起任何外部依赖）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">0</span>*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;== </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span>timeout<span class="w"> </span><span class="m">120</span><span class="w"> </span>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;❌ </span><span class="nv">$f</span><span class="s2"> 失败&quot;</span><span class="p">;</span><span class="w"> </span><span class="k">done</span>
+</code></pre></div>
+<h3 id="_3">真机端到端（本课实验手册的精简版）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+<span class="nv">STATE</span><span class="o">=</span>/tmp/d185-demo<span class="p">;</span><span class="w"> </span><span class="nv">PORT</span><span class="o">=</span><span class="m">8400</span>
+rm<span class="w"> </span>-rf<span class="w"> </span><span class="nv">$STATE</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>mkdir<span class="w"> </span>-p<span class="w"> </span><span class="nv">$STATE</span>
+<span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s1">&#39;[{&quot;host&quot;:&quot;web-01&quot;},{&quot;host&quot;:&quot;web-02&quot;}]&#39;</span><span class="w"> </span>&gt;<span class="w"> </span><span class="nv">$STATE</span>/hosts.json
+
+<span class="c1"># 1) 正常部署</span>
+python3<span class="w"> </span><span class="m">02</span>-deploy-oneclick.py<span class="w"> </span>--port<span class="w"> </span><span class="nv">$PORT</span><span class="w"> </span>--version<span class="w"> </span>v1.0.0<span class="w"> </span>--state-dir<span class="w"> </span><span class="nv">$STATE</span><span class="w"> </span>--data<span class="w"> </span><span class="nv">$STATE</span>/hosts.json
+curl<span class="w"> </span>-s<span class="w"> </span><span class="m">127</span>.0.0.1:<span class="nv">$PORT</span>/readyz<span class="p">;</span><span class="w"> </span>curl<span class="w"> </span>-s<span class="w"> </span><span class="m">127</span>.0.0.1:<span class="nv">$PORT</span>/api/v1/hosts
+
+<span class="c1"># 2) 坏版本 → 自动回滚</span>
+python3<span class="w"> </span><span class="m">02</span>-deploy-oneclick.py<span class="w"> </span>--port<span class="w"> </span><span class="nv">$PORT</span><span class="w"> </span>--version<span class="w"> </span>v1.1.0-bad<span class="w"> </span>--state-dir<span class="w"> </span><span class="nv">$STATE</span><span class="w"> </span>--simulate-bad-release
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;退出码=</span><span class="nv">$?</span><span class="s2">（4=已自动回滚）&quot;</span><span class="p">;</span><span class="w"> </span>cat<span class="w"> </span><span class="nv">$STATE</span>/current.json
+
+<span class="c1"># 3) 验收</span>
+python3<span class="w"> </span><span class="m">03</span>-smoke-acceptance.py<span class="w"> </span>--port<span class="w"> </span><span class="nv">$PORT</span>
+
+<span class="c1"># 4) 故障演练（D1 kill -9 / D2 端口冲突 / D3 停机对比）</span>
+python3<span class="w"> </span><span class="m">05</span>-drill-chaos.py<span class="w"> </span>--json<span class="w"> </span><span class="nv">$STATE</span>/drill.json
+
+<span class="c1"># 5) 清理</span>
+python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import importlib.util, pathlib</span>
+<span class="s">spec = importlib.util.spec_from_file_location(&quot;r&quot;, &quot;01-process-runner.py&quot;)</span>
+<span class="s">m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)</span>
+<span class="s">print(m.stop_service(&quot;/tmp/d185-demo/api.pid&quot;))</span>
+<span class="s">PY</span>
+ss<span class="w"> </span>-ltn<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="nv">$PORT</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;端口已释放&quot;</span>
+rm<span class="w"> </span>-rf<span class="w"> </span><span class="nv">$STATE</span>
+</code></pre></div>
+<hr>
+<h2 id="_4">📝 基础练习</h2>
+<h3 id="1">练习 1：给就绪探针加一个"依赖检查"</h3>
+<p>现在的 <code>/readyz</code> 只看进程自己的 warmup 状态。请让它额外检查一个"外部依赖"
+（本地可以用"某个文件是否存在 / 某个端口是否可连"来模拟）。
+要求：依赖挂了 → <code>503</code> 且 body 里说明是哪个依赖；依赖恢复 → 自动变回 <code>200</code>。
+思考：为什么这个检查<strong>不能</strong>放进 liveness 探针？（提示：liveness 失败会触发重启，
+依赖抖动时你会把健康的应用反复重启 —— 这就是"抖动放大成雪崩"的经典机制。）</p>
+<h3 id="2-validate_pid">练习 2：给 <code>validate_pid</code> 加一条"启动时间"判据</h3>
+<p>现在身份靠 <code>cmdline</code>。再加一条：把启动时间（<code>/proc/&lt;pid&gt;/stat</code> 的第 22 个字段
+<code>starttime</code>，单位 jiffies）写进 pidfile，校验时比对。
+说明：这条能解决 <code>cmdline</code> 解决不了的哪种情况？（提示：同一份代码被起了两次 ——
+比如运维平台自己重启时旧实例没死干净，两个进程 cmdline 一模一样。）</p>
+<h3 id="3-rollback-only">练习 3：让部署脚本支持 <code>--rollback-only</code></h3>
+<p>实现"我只想回滚到 <code>current.json</code> 里的上一个版本"这个动作（不部署新版）。
+要求：能从上一次 <code>history.jsonl</code> 里找出上一个可用版本号，并且回滚后要跑一遍
+业务验收（不能只重启就算完）。</p>
+<h3 id="4-ci">练习 4：把验收断言搬到 CI</h3>
+<p>把 <code>03-smoke-acceptance.py</code> 包成"退出码即结论"的形式（已经是了），
+然后写一个 GitHub Actions 步骤：构建 → 起服务 → 跑验收 → 失败则 red。
+思考：为什么"验收脚本在 CI 里跑"比"人在发布后点两下"更可靠？</p>
+<hr>
+<h2 id="_5">🚀 进阶挑战</h2>
+<h3 id="1_1">挑战 1：实现真正的"零停机"（蓝绿切换）</h3>
+<p>本课是原地替换（有秒级空窗）。改造为蓝绿：
+- 同时起 v1（端口 A）与 v2（端口 B）；
+- 用一个小反向代理（标准库即可：<code>http.server</code> 转发）把流量切到 B；
+- 切换失败（B 的验收不过）→ 切回 A。
+验收标准：切换过程中持续压测（每秒 10 次请求），<strong>不允许出现任何非 200</strong>。</p>
+<h3 id="2-mttr">挑战 2：把 MTTR 拆成分项指标并导出</h3>
+<p>现在 <code>05-drill-chaos.py</code> 只打印一次时间线。请改成：
+- 重复 20 轮 D1，输出 <code>detect_latency_s</code> / <code>restart_to_ready_s</code> / <code>mttr_s</code> 的
+  P50/P95/最大值（真数字，不是感觉）；
+- 解释为什么这里的 P95 比平均值更该被用来定告警阈值。</p>
+<h3 id="3">挑战 3：加"部署前置检查"的清单化</h3>
+<p>把 <code>preflight()</code> 改成一个可扩展的检查清单（每项是一个函数，返回 (ok, msg)）：
+磁盘空间、Python 版本、目标端口身份、state 目录可写、上一版本二进制存在、
+必要环境变量齐全。要求：任何一项失败都打印<strong>全部</strong>失败项（不是只报第一个），
+因为发布时要一次看全所有问题。</p>
+<h3 id="4">挑战 4：给回滚加上"熔断"</h3>
+<p>如果同一个版本连续回滚 3 次，脚本应该<strong>拒绝再部署它</strong>（把它标记为 bad release），
+并把这件事写进 <code>history.jsonl</code>。
+思考：这和 K8s <code>progressDeadlineSeconds</code> 的语义有什么异同？</p>
+<h3 id="5">挑战 5：演练"磁盘写满"时的日志降级</h3>
+<p>用 <code>fallocate</code> 造一个 1MB 的小分区（或 <code>tmpfs</code>），把日志目录放进去并写满，
+验证：日志写失败时服务<strong>不能崩</strong>，而要以明确的方式降级（丢日志 + 记一条"我在丢日志"的告警）。
+这是"日志系统自身也需要可观测"的练习（呼应 Day 184 的 spill 降级）。</p>
+<hr>
+<h2 id="_6">🧪 验收标准（能不能算"今天过关"）</h2>
+<table>
+<thead>
+<tr>
+<th>项</th>
+<th>达标线</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>离线自证</td>
+<td>6 个脚本 <code>--self-test</code> 全绿</td>
+</tr>
+<tr>
+<td>就绪语义</td>
+<td>能亲眼看到 <code>/healthz=200</code> 而 <code>/readyz=503</code> 的时间窗</td>
+</tr>
+<tr>
+<td>自动回滚</td>
+<td>坏版本退出码为 4，且 <code>current.json</code> 仍是上一个好版本</td>
+</tr>
+<tr>
+<td>停机质量</td>
+<td>SIGTERM 时在途请求返回 200，进程随后 &lt;3s 退出</td>
+</tr>
+<tr>
+<td>演练数字</td>
+<td>至少报出 3 个实测数字（发现延迟 / MTTR / 停机对比）</td>
+</tr>
+<tr>
+<td>安全边界</td>
+<td>端口被非本服务占用时，预检失败且占用者存活</td>
+</tr>
+<tr>
+<td>卫生</td>
+<td>无残留进程、端口释放、临时目录已删</td>
+</tr>
+</tbody>
+</table></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

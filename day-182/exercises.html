@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 182 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 182 正文</a>
+  <h1>Day 182 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-182">Day 182 · 练习与检查表</h1>
+<blockquote>
+<p>目标：亲手把 <code>采集 → 判定 → 去重 → 路由</code> 四段跑通，并<strong>亲眼看见</strong>抖动被过滤、
+恢复通知被发出、通道挂了会降级。
+<strong>前置</strong>：Python 3.12+（本日脚本只用标准库，psutil 可选）；实验 4 需要 Docker。
+<strong>全部命令都在 <code>days/day-182-运维平台-监控与告警/</code> 目录下执行。</strong></p>
+</blockquote>
+<hr>
+<h2 id="_1">一、动手题（必做）</h2>
+<h3 id="1-5">练习 1 — 看清一份指标快照（5 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>code
+python3<span class="w"> </span><span class="m">01</span>-collect-metrics.py<span class="w"> </span>--once
+python3<span class="w"> </span><span class="m">01</span>-collect-metrics.py<span class="w"> </span>--once<span class="w"> </span>--json<span class="w"> </span><span class="p">|</span><span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>json.tool<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w"> </span>-20
+python3<span class="w"> </span><span class="m">01</span>-collect-metrics.py<span class="w"> </span>--backend<span class="w"> </span>proc<span class="w"> </span>--once
+</code></pre></div>
+<ul>
+<li>[ ] 抄下 psutil 和 <code>/proc</code> 两个后端的 <code>cpu_percent / mem_percent / disk_percent</code>，四个数两两对比</li>
+<li>[ ] 快照 JSON 里有几个顶层字段？<code>app_metrics</code> 为什么是个数组？</li>
+<li>[ ] 不带 <code>--probe</code> 时快照有多少字节？（实测参考：257 字节）</li>
+</ul>
+<details><summary>参考答案</summary>
+
+1. 两个后端字段**完全一致**（只有 `backend` 值不同）。但数值会有差异，本机实测
+   `disk` 是 38.3%（psutil）vs 36.3%（`shutil.disk_usage`）——口径不同，数就不一样。
+2. 顶层 4 个：`ts / host / host_metrics / app_metrics`。
+   `app_metrics` 是数组，因为「应用」天然可能有多个（多端口、多副本、多依赖）。
+3. 257 字节（无 probe 时）。监控数据便宜就便宜在这——只有数字，没有文本。
+
+</details>
+
+<h3 id="2-pending-dropped-10">练习 2 — 让 <code>pending</code> 与 <code>dropped</code> 现形（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-threshold-engine.py<span class="w"> </span>--demo<span class="w"> </span>--scenario<span class="w"> </span>spike
+python3<span class="w"> </span><span class="m">02</span>-threshold-engine.py<span class="w"> </span>--demo<span class="w"> </span>--scenario<span class="w"> </span>sustained
+</code></pre></div>
+<ul>
+<li>[ ] 在 spike 场景里，第 3 个 tick 值 = 41.0，状态是什么？事件是什么？</li>
+<li>[ ] 在 sustained 场景里，第 5、6 个 tick 值 = 94.0 / 95.0，为什么<strong>没有</strong>新事件？</li>
+<li>[ ] 把规则改成 <code>consecutive=1</code>（自己改 <code>default_rules()</code> 里的 <code>consecutive</code>），
+      spike 场景的输出会变成什么？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+1. 状态 `ok`，事件 `dropped`——「毛刺被过滤（未达连续次数）」。
+   注意它**不是 firing**，而且连 pending 都没留住。
+2. 94 和 95 都在 firing 状态里，状态没变 → 引擎不吐事件。这正是「60 次采样 1 条通知」的机制来源。
+3. `consecutive=1` 时，spike 第 2 个 tick（95.0）就会直接 firing，
+   `dropped` 那条消失——**毛刺过滤能力完全取决于这个参数**。
+
+</details>
+
+<h3 id="3-10">练习 3 — 亲手复现「迟滞」（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-threshold-engine.py<span class="w"> </span>--demo<span class="w"> </span>--scenario<span class="w"> </span>hysteresis
+</code></pre></div>
+<ul>
+<li>[ ] 从第 4 行到第 8 行，值分别是 88/86/84/82/81，<strong>全都低于阈值 90</strong>，为什么还是 firing？</li>
+<li>[ ] 把 <code>release</code> 从 80 改成 85，输出会怎么变？（先猜，再改）</li>
+<li>[ ] 如果把 <code>release</code> 写成 95（比 threshold 90 还大）会怎样？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+1. 因为**恢复的条件不是「低于 threshold」，而是「低于 release」**。81 > 80，所以还在告警。
+   这就是迟滞：设两道线，进去难，出来也难。
+2. 第 6 个 tick（84.0）就会 `resolved`——迟滞带从 (80,90] 缩窄成 (85,90]，
+   更容易恢复，但也更容易被抖动重新触发。
+3. 程序**当场报错**：`op='>' 时 release 必须 <= threshold（否则永远恢复不了）`。
+   这是自检里的一条断言——这种参数写反了必须炸，不能静默。
+   证据：改完运行会看到 `ValueError`，而不是「跑起来但永远不恢复」。
+
+</details>
+
+<h3 id="4-15">练习 4 — 复现抖动判定，并撞一次「窗口陷阱」（15 分钟，重点）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-threshold-engine.py<span class="w"> </span>--demo<span class="w"> </span>--scenario<span class="w"> </span>flap
+python3<span class="w"> </span><span class="m">02</span>-threshold-engine.py<span class="w"> </span>--self-test<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;抖动|时间窗口&#39;</span>
+</code></pre></div>
+<ul>
+<li>[ ] flap 场景里，从第几个 tick 开始事件带上「抖动中」的标注？</li>
+<li>[ ] 第 13 行的 pending <strong>没有</strong>抖动标注，为什么？</li>
+<li>[ ] 为什么自检里要专门有一条「窗口 2s、采样间隔 10s 时不会误判抖动」？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+1. 第 8 个 tick——此时 `flap_window=300s` 内已经累积了 4 次 firing/resolved 翻转。
+2. 因为窗口滑过去了：第 13 行距离上一次翻转已经超过窗口，`_transitions` 被清空，
+   `flapping` 被自动摘掉。**抖动标签是会自己消失的**，这是滑动窗口的特性。
+3. 因为「抖动」的定义是**短时间内的反复翻转**，不是「历史上翻转过很多次」。
+   同样的 7 次翻转，间隔 10 秒就是「偶尔出事」，不是「反复横跳」。
+   用总次数判定会把长期稳定的系统误判成抖动。
+
+</details>
+
+<h3 id="5-10-1-10">练习 5 — 去重：让 10 条变成 1 条（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-alert-dedup-recovery.py<span class="w"> </span>--demo
+python3<span class="w"> </span><span class="m">04</span>-alert-dedup-recovery.py<span class="w"> </span>--self-test<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-E<span class="w"> </span><span class="s1">&#39;指纹|去重|恢复&#39;</span>
+</code></pre></div>
+<ul>
+<li>[ ] demo 里 t=0/10/20 三条同 instance 的告警，动作分别是什么？</li>
+<li>[ ] t=330 那条为什么变成 <code>renotify</code>？</li>
+<li>[ ] 自己改一行：把 <code>make_alert(instance="ace")</code> 的 instance 改成 @"node-b"@，重跑，
+      第 2 条的动作变成什么？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+1. `notify / suppress / suppress`——只有第一条真正打扰人，后两条只把 count 加到 3。
+2. 因为故障从 t=0 一直没恢复，超过了 `resend_interval=300s`。
+   「再提醒」是必要的：不然一个挂了一整晚的服务，中间只有开头响过一次。
+3. 变成 `notify`。指纹里含 `instance`，换个实例就是**另一条告警**——
+   这正是我们要的：A 机器和 B 机器同时 CPU 高，应该收到两条。
+
+</details>
+
+<h3 id="6-10">练习 6 — 亲手制造「恢复通知丢失」事故（10 分钟，本日最值钱的一题）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;EOF&#39;</span>
+<span class="s">import importlib.util, json</span>
+<span class="s">spec = importlib.util.spec_from_file_location(&quot;d&quot;, &quot;04-alert-dedup-recovery.py&quot;)</span>
+<span class="s">m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)</span>
+
+<span class="s">a = m.make_alert(status=&quot;firing&quot;, value=95.0)</span>
+<span class="s">b = m.make_alert(status=&quot;resolved&quot;, value=40.0)</span>
+<span class="s">print(&quot;正常指纹 :&quot;, m.fingerprint(a), m.fingerprint(b), &quot;-&gt;&quot;, m.fingerprint(a) == m.fingerprint(b))</span>
+<span class="s">print(&quot;含 status:&quot;, m.fingerprint(a, (&quot;status&quot;,)), m.fingerprint(b, (&quot;status&quot;,)),</span>
+<span class="s">      &quot;-&gt;&quot;, m.fingerprint(a, (&quot;status&quot;,)) == m.fingerprint(b, (&quot;status&quot;,)))</span>
+
+<span class="s">s = m.AlertStore(extra_keys=(&quot;status&quot;,))</span>
+<span class="s">print(&quot;firing  -&gt;&quot;, s.process(a, 0.0)[&quot;action&quot;])</span>
+<span class="s">print(&quot;resolved-&gt;&quot;, s.process(b, 60.0)[&quot;action&quot;])</span>
+<span class="s">EOF</span>
+</code></pre></div>
+<ul>
+<li>[ ] 正常指纹下，firing / resolved 的指纹相同吗？</li>
+<li>[ ] 加了 <code>status</code> 之后呢？resolved 的动作变成了什么？</li>
+<li>[ ] 用一句话解释：为什么「恢复通知」比「告警通知」更容易被写坏？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+1. 相同（`f05360f106d8 == f05360f106d8`）——所以恢复通知能匹配到活动告警。
+2. 不同（`8570a82c242d != c6ab7a8c93fd`），于是 `resolved` 的动作是 `drop`：
+   「收到恢复通知但没有对应的活动告警」。**告警发得出去，恢复通知永远发不出去。**
+3. 因为恢复通知要和**之前那条告警**配对，所以它对「指纹必须稳定」的要求更高。
+   告警通知写错了马上能发现（用户收到重复/漏掉的告警）；
+   恢复通知写错了**没有症状**——系统里只有一堆永远不结束的故障，没人知道是漏了通知。
+
+</details>
+
+<h3 id="7-20-docker">练习 7 — 端到端：造一个真故障，再看它恢复（20 分钟，需要 Docker）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 终端 A：起接收端</span>
+python3<span class="w"> </span><span class="m">06</span>-webhook-receiver.py<span class="w"> </span>--port<span class="w"> </span><span class="m">19090</span><span class="w"> </span>--log<span class="w"> </span>/tmp/day182/live/hook.jsonl
+
+<span class="c1"># 终端 B：起容器 + 跑平台</span>
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>d182-web<span class="w"> </span>-p<span class="w"> </span><span class="m">18082</span>:80<span class="w"> </span>nginx:alpine
+python3<span class="w"> </span><span class="m">05</span>-platform-demo.py<span class="w"> </span>--serve<span class="w"> </span>--live<span class="w"> </span>--count<span class="w"> </span><span class="m">10</span><span class="w"> </span>--interval<span class="w"> </span><span class="m">2</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--probe<span class="w"> </span>http://127.0.0.1:18082/<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--webhook<span class="w"> </span>http://127.0.0.1:19090/hook<span class="w"> </span>--file<span class="w"> </span>/tmp/day182/live/platform.jsonl<span class="w"> </span><span class="p">&amp;</span>
+sleep<span class="w"> </span><span class="m">6</span><span class="w"> </span><span class="p">;</span><span class="w"> </span>docker<span class="w"> </span>stop<span class="w"> </span>d182-web
+sleep<span class="w"> </span><span class="m">7</span><span class="w"> </span><span class="p">;</span><span class="w"> </span>docker<span class="w"> </span>start<span class="w"> </span>d182-web
+<span class="nb">wait</span>
+</code></pre></div>
+<p>（注：上面为了可读性用了行尾反斜杠换行，实际执行时可写成一行。）</p>
+<ul>
+<li>[ ] 终端 A 一共收到几条？分别是什么 <code>status</code>？</li>
+<li>[ ] 从 <code>docker stop</code> 到收到告警，隔了几个采样点？（本日实测：1~2 个）</li>
+<li>[ ] <code>/tmp/day182/live/platform.jsonl</code> 有没有被创建？为什么？</li>
+<li>[ ] 有没有看到 <code>host_cpu_high</code> 的告警？为什么？（提示：看那几个 <code>pending / dropped</code>）</li>
+</ul>
+<details><summary>参考答案</summary>
+
+1. 2 条：一条 `firing`（app_down 越界），一条 `resolved`（app_down 恢复）。
+2. `docker stop` 在 14:25:59，第一条 down 采样在 14:26:00（差 1s），
+   告警（`consecutive=2`）在 14:26:02 升级 → 约 3 秒。
+   **告警延迟 = 采样间隔 + 连续次数窗口**，这个数要写进 SLA。
+3. **不存在**。webhook 成功了，file 只是 fallback，不该被写。
+   这是「顺序链」而非「广播」的直接证据。
+4. 没有。本机 load 8+、CPU 在 87%~100% 之间反复穿越 90，
+   但每次都在第 2 次越界之后掉回去 → 一直 pending / dropped。
+   **这是「连续 N 次」在真实机器上救了你一次**（如果阈值判定是单次越界就报，这几分钟会响 6 次）。
+
+</details>
+
+<h3 id="8-10">练习 8 — 把主通道弄挂，看降级（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-alert-routing.py<span class="w"> </span>--demo<span class="w"> </span>--webhook<span class="w"> </span>http://127.0.0.1:19999/hook<span class="w"> </span>--file<span class="w"> </span>/tmp/day182/live/fb.jsonl
+tail<span class="w"> </span>-3<span class="w"> </span>/tmp/day182/live/fb.jsonl
+python3<span class="w"> </span><span class="m">03</span>-alert-routing.py<span class="w"> </span>--dry-run<span class="w"> </span>--demo
+</code></pre></div>
+<ul>
+<li>[ ] critical 告警的链路显示成 <code>webhook+file+console-&gt;file</code>，怎么读这个记号？</li>
+<li>[ ] warning 告警的链路是 <code>file-&gt;console</code>，说明什么？</li>
+<li>[ ] <code>--dry-run</code> 和真发的输出差在哪里？它到底证明了什么？</li>
+</ul>
+<details><summary>参考答案</summary>
+
+1. 左边 `webhook+file+console` 是**候选链**，右边 `file` 是**最终成功的通道**。
+   `->` 后面那个才是结果。
+2. warning 的路由表里压根没有 webhook——**分级路由**，不是「所有通道都试一遍」。
+3. dry-run 只打印「本应发往哪里」，不碰网络不写盘。
+   它证明的是**路由决策**正确（选对了链、选对了级别），
+   但不证明投递成功——投递要用 `--live` 加真接收端验证（练习 7）。
+
+</details>
+
+<hr>
+<h2 id="_2">二、改造题（选做，动手改代码）</h2>
+<h3 id="1">改造 1 — 给规则加一条「趋势预警」</h3>
+<p>磁盘满了才发现太晚。实现一个「剩余可用天数」规则：
+用最近 3 个样本的斜率外推，剩余天数 &lt; 7 天就告警。</p>
+<ul>
+<li>提示：<code>02</code> 的 <code>ThresholdRule</code> 是纯函数状态机，可以新写一个 <code>TrendRule</code>
+       （同样实现 <code>update(value, now)</code> 接口），塞进 <code>RuleSet</code> 的 <code>rules</code> 里</li>
+<li>验收：写一个 <code>--self-test</code> 断言「线性增长序列在预计第 N 天触发」</li>
+</ul>
+<h3 id="2-redis">改造 2 — 把去重表搬到 Redis（跨进程去重）</h3>
+<p>本日 <code>AlertStore.table</code> 是进程内存里的 dict，重启就丢。
+- 提示：换成一个 <code>RedisStore</code>，用 <code>HSET fp count first last_notify</code>，并给 key 加 TTL
+- 验收：起两个进程同时 <code>process()</code> 同一条告警，断言只有一条 <code>notify</code></p>
+<h3 id="3">改造 3 — 给路由加指数退避</h3>
+<p>本日 <code>attempts=2</code> 是无脑重试。改成「同一个通道失败后，<code>next_retry_at = now + 2^n</code>」。</p>
+<ul>
+<li>验收：模拟一个连挂 3 轮的通道，断言第 2/3/4 轮的重试时机间隔在变长</li>
+</ul>
+<hr>
+<h2 id="_3">三、检查表（做完打勾）</h2>
+<h3 id="_4">环境与运行</h3>
+<ul>
+<li>[ ] <code>python3 --version</code> ≥ 3.12（本日脚本只用标准库）</li>
+<li>[ ] <code>python3 code/01-collect-metrics.py --self-test</code> 退出码 0（本机实测 14 PASS / 1.34 s）</li>
+<li>[ ] <code>python3 code/01-collect-metrics.py --backend proc --self-test</code> 也退出码 0（回退路径可用）</li>
+<li>[ ] <code>python3 code/02-threshold-engine.py --self-test</code> 退出码 0（14 PASS）</li>
+<li>[ ] <code>python3 code/03-alert-routing.py --self-test</code> 退出码 0（16 PASS）</li>
+<li>[ ] <code>python3 code/04-alert-dedup-recovery.py --self-test</code> 退出码 0（16 PASS）</li>
+<li>[ ] <code>python3 code/05-platform-demo.py --self-test</code> 退出码 0（19 PASS）</li>
+<li>[ ] <code>python3 code/06-webhook-receiver.py --self-test</code> 退出码 0（4 PASS）</li>
+<li>[ ] 六个脚本<strong>不装任何第三方库</strong>也能跑（psutil 只是加速/加字段）</li>
+</ul>
+<h3 id="_5">概念掌握（能口头解释才算过）</h3>
+<ul>
+<li>[ ] 能说出 <code>pending</code> / <code>dropped</code> / <code>firing</code> / <code>resolved</code> 四者的区别</li>
+<li>[ ] 能解释为什么「超阈值」不等于「该告警」，并举出三种要解决的问题</li>
+<li>[ ] 能画出迟滞带，并说出 <code>release</code> 写反会导致什么</li>
+<li>[ ] 能解释抖动判定为什么必须用<strong>时间窗口</strong>而不是总次数</li>
+<li>[ ] 能说出指纹<strong>必须排除</strong>的三个字段（value / status / ts）以及各自的后果</li>
+<li>[ ] 能说出「重试」和「降级」的区别（同一通道 vs 换通道）</li>
+<li>[ ] 能解释为什么 <code>delivered_by=None</code> 必须被上层看见，而不是 <code>except: pass</code></li>
+<li>[ ] 能说出本日的告警延迟由哪几段构成（采样间隔 + 连续次数）</li>
+</ul>
+<h3 id="_6">实测证据（都要亲眼看到）</h3>
+<ul>
+<li>[ ] 看到过 <code>dropped</code>（毛刺被过滤）的真实输出</li>
+<li>[ ] 看到过迟滞保持（88/86/84/82/81 全都不恢复）</li>
+<li>[ ] 看到过 flapping 标注出现，以及它<strong>自己消失</strong></li>
+<li>[ ] 看到过 10 条同指纹告警压成 1 条通知（或 32 个采样 → 13 条通知）</li>
+<li>[ ] 看到过 webhook 真的收到 HTTP POST（<code>06</code> 的 stdout 或落盘文件）</li>
+<li>[ ] 看到过 webhook 挂掉 → 降级到 file，且报告里 <code>投递=file</code></li>
+<li>[ ] 看到过<strong>恢复通知</strong>真的发出来了（<code>status=resolved</code> 那一条）</li>
+</ul>
+<h3 id="_7">清理（做完必查，别留垃圾）</h3>
+<ul>
+<li>[ ] <code>docker rm -f d182-web</code> 已执行</li>
+<li>[ ] <code>pkill -f "06-webhook-receiver.py --port 19090"</code> 已执行</li>
+<li>[ ] <code>rm -rf /tmp/day182</code> 已执行</li>
+<li>[ ] <code>ss -ltnp | grep -E ':18081|:18082|:19090'</code> → 无输出</li>
+<li>[ ] <code>docker ps -a --format '{{.Names}}' | grep d182</code> → 无输出</li>
+<li>[ ] 没有误伤别人的容器（本机有 <code>dk-*</code> 等其它容器在跑）</li>
+</ul>
+<h3 id="_8">自我验收（能回答这三个问题就毕业了）</h3>
+<ul>
+<li>[ ] 为什么这台 4 核机器 CPU 长时间 90%+，本日的平台<strong>一次报警都没发</strong>？这是对还是错？</li>
+<li>[ ] 如果我把这一天的平台部署到 100 台机器上，第一个会爆的地方在哪？（提示：状态表在内存里）</li>
+<li>[ ] 本日的「抖动判定」和「去重」分别在解决什么问题？它们会不会互相覆盖？</li>
+</ul></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
