@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-183%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1276-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-185%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1302-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -42,22 +42,22 @@
 | **Phase 8** | 数据分析与 AI/ML | Day 101–125 | ✅ 已完成 |
 | **Phase 9** | 爬虫与反爬对抗 | Day 126–145 | ✅ 已完成 |
 | **Phase 10** | 网络安全开发 | Day 146–165 | ✅ 已完成 |
-| **Phase 11** | 自动化运维与 DevOps | Day 166–185 | **进行中** |
+| **Phase 11** | 自动化运维与 DevOps | Day 166–185 | ✅ 已完成 |
 | **Phase 12** | 综合实战 | Day 186–200 | ⏳ |
 
 ---
 
 ## 📊 当前进度
 
-> **Day 183 / 200** · 进度的 91.5% · 当前：Phase 11 自动化运维与 DevOps（进行中，Day 183 容器化部署与回滚 已完成）
+> **Day 185 / 200** · 进度的 92.5% · 当前：Phase 11 自动化运维与 DevOps（✅ 已完成，收官于 Day 185 一键部署与端到端验收）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **183 天** |
-| 📝 总提交次数 | **1,276 commits** |
-| 📄 总代码行数 | **185,048 行** |
-| 📂 总文件数 | **1,268 个** |
-| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 183/185） |
+| 📅 已完成天数 | **185 天** |
+| 📝 总提交次数 | **1,302 commits** |
+| 📄 总代码行数 | **187,960 行** |
+| 📂 总文件数 | **1,298 个** |
+| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（✅ 已完成，Day 185/185） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -184,7 +184,7 @@
 </details>
 
 <details open>
-<summary><b>Phase 11：自动化运维与 DevOps（Day 166–185）— 🔥 进行中</b></summary>
+<summary><b>Phase 11：自动化运维与 DevOps（Day 166–185）— ✅ 已完成</b></summary>
 
 - ✅ 系统监控（psutil）：三类指标（counter/gauge/state）+ 采样差分原理 + 进程排行与 pid 复用防御 + 十条陷阱实测 + 采集性能基准 + 完整监控工具（滞回去抖告警 + JSON/Markdown 报告 + 退出码契约）（Day 166）
 - ✅ 文件监控（watchdog）：轮询 vs 事件驱动（inotify 原理）+ 五类事件与组合关系 + 原子写事件流水 + 防抖/节流 + 六大陷阱实测 + 文件自动分类工具（规则过滤 + 审计 jsonl + dry-run + 跨设备搬运）（Day 167）
@@ -215,6 +215,14 @@
   - 真机验证：Prometheus v3.0.1 拉起 `app` / `prometheus` 两个 target 均为 `up`；
     Grafana 镜像本机多个源都拉不下来，**容器启动与看板渲染未实测**（正文已写明）
   - 翻车复盘 ×3：指标重复注册 `DuplicateTimeseries`、`Summary` 的 `quantiles=` 已被移除、`rate()` 返回 0
+- ✅ Day 178 — 容器编排（K8s 入门）
+- ✅ Day 179 — Terraform 基础设施
+- ✅ Day 180 — 自动化测试
+- ✅ Day 181 — 发布管理
+- ✅ Day 182 — 阶段项目（一）：服务器监控 + 告警
+- ✅ Day 183 — 阶段项目（二）：容器化 + CI/CD + 一键部署
+- ✅ Day 184 — 阶段项目（三）：日志收集 + 可视化（结构化日志 JSON Lines / HTTP 接收端 / 抗轮转采集器 / SQLite WAL / ASCII 看板与单文件 HTML；真机实验：rename 轮转下正确 vs naive 采集器丢 60% 日志、`database is locked` 复现与修复、写入吞吐实测 113 → 1,196,901 条/秒）
+- ✅ Day 185 — 阶段项目（四）：一键部署 + 端到端验收（预检按身份判定 / 存活与就绪双探针 / 失败自动回滚 / 9 项验收断言 / 故障演练 MTTR 0.416s；真机翻车：假装优雅停机、僵尸进程、自证脚本端口泄漏、TIME_WAIT 导致的 bind 失败）
 </details>
 
 <details>
@@ -302,7 +310,7 @@
 </details>
 
 <details open>
-<summary><b>Phase 11：自动化运维与 DevOps（Day 166–185）— 🔥 进行中</b></summary>
+<summary><b>Phase 11：自动化运维与 DevOps（Day 166–185）— ✅ 已完成</b></summary>
 
 - ✅ 系统监控（psutil）：三类指标（counter/gauge/state）+ 采样差分原理 + 进程排行与 pid 复用防御 + 十条陷阱实测 + 采集性能基准 + 完整监控工具（滞回去抖告警 + JSON/Markdown 报告 + 退出码契约）（Day 166）
 - ✅ 文件监控（watchdog）：轮询 vs 事件驱动（inotify 原理）+ 五类事件与组合关系 + 原子写事件流水 + 防抖/节流 + 六大陷阱实测 + 文件自动分类工具（规则过滤 + 审计 jsonl + dry-run + 跨设备搬运）（Day 167）
@@ -333,6 +341,14 @@
   - 真机验证：Prometheus v3.0.1 拉起 `app` / `prometheus` 两个 target 均为 `up`；
     Grafana 镜像本机多个源都拉不下来，**容器启动与看板渲染未实测**（正文已写明）
   - 翻车复盘 ×3：指标重复注册 `DuplicateTimeseries`、`Summary` 的 `quantiles=` 已被移除、`rate()` 返回 0
+- ✅ Day 178 — 容器编排（K8s 入门）
+- ✅ Day 179 — Terraform 基础设施
+- ✅ Day 180 — 自动化测试
+- ✅ Day 181 — 发布管理
+- ✅ Day 182 — 阶段项目（一）：服务器监控 + 告警
+- ✅ Day 183 — 阶段项目（二）：容器化 + CI/CD + 一键部署
+- ✅ Day 184 — 阶段项目（三）：日志收集 + 可视化（结构化日志 JSON Lines / HTTP 接收端 / 抗轮转采集器 / SQLite WAL / ASCII 看板与单文件 HTML；真机实验：rename 轮转下正确 vs naive 采集器丢 60% 日志、`database is locked` 复现与修复、写入吞吐实测 113 → 1,196,901 条/秒）
+- ✅ Day 185 — 阶段项目（四）：一键部署 + 端到端验收（预检按身份判定 / 存活与就绪双探针 / 失败自动回滚 / 9 项验收断言 / 故障演练 MTTR 0.416s；真机翻车：假装优雅停机、僵尸进程、自证脚本端口泄漏、TIME_WAIT 导致的 bind 失败）
 </details>
 
 ---
