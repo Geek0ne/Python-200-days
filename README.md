@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-180%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1257-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-183%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1276-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 180 / 200** · 进度的 90.0% · 当前：Phase 11 自动化运维与 DevOps（进行中，Day 180 自动化测试 已完成）
+> **Day 183 / 200** · 进度的 91.5% · 当前：Phase 11 自动化运维与 DevOps（进行中，Day 183 容器化部署与回滚 已完成）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **180 天** |
-| 📝 总提交次数 | **1,257 commits** |
-| 📄 总代码行数 | **180,508 行** |
-| 📂 总文件数 | **可计算** |
-| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 180/185） |
+| 📅 已完成天数 | **183 天** |
+| 📝 总提交次数 | **1,276 commits** |
+| 📄 总代码行数 | **185,048 行** |
+| 📂 总文件数 | **1,268 个** |
+| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（进行中，Day 183/185） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
