@@ -221,3 +221,53 @@ assets(snapshot_id, host, ips, source)
 3. 为什么 `getaddrinfo` 的结果要去重并排序？不排序会在差分时造成什么问题？
 4. 如果枚举器在 10 分钟内对同一域名发了 5 万次查询，可能触发哪些防护？你会怎么限速？
 5. 设计一个"资产变更告警"规则：哪些 added 应该立即告警，哪些可以每天汇总？
+
+---
+
+## 10. 深入：getaddrinfo 背后的真实行为
+
+`socket.getaddrinfo` 不是一个"纯 DNS 函数"，它是 **NSS（Name Service Switch）** 的统一入口：
+
+```text
+getaddrinfo(host, port, hints)
+   ├─ /etc/nsswitch.conf: hosts: files dns
+   ├─ files  → /etc/hosts（本地覆盖，测试环境常用）
+   ├─ dns    → 读取 /etc/resolv.conf 的 nameserver
+   └─ 返回 addrinfo 链表（可能同时含 IPv4/IPv6/多条 A 记录）
+```
+
+**三个容易踩的点：**
+
+1. **超时不是参数**。`getaddrinfo` 没有 `timeout` 参数，只能靠
+   `socket.setdefaulttimeout()` 或信号/子进程兜底。生产级枚举器通常自己实现
+   DNS 报文（`dnspython`）以便精确控制重试与超时。
+2. **返回值可能重复**。同一 IP 因 `AI_ADDRCONFIG`、多网卡、CNAME 链出现多次，
+   必须 `set()` 去重再排序，否则差分时顺序变化会被误判成"IP 变化"。
+3. **错误类型不统一**。`gaierror`（名字不存在）、`timeout`、`OSError` 都可能出现；
+   把异常一律当成"不存在"会掩盖解析器故障，必须单独计数。
+
+**为什么不直接 `gethostbyname`：** 它只返回 IPv4 且是线程不安全的历史接口
+（CPython 内部有锁），在高并发下会变成串行瓶颈。
+
+---
+
+## 11. 证书透明日志的数据结构
+
+crt.sh 返回的是一个 JSON 数组，每条记录大致包含：
+
+| 字段 | 含义 | 清洗要点 |
+|---|---|---|
+| `name_value` | 证书覆盖的名字，多行 | 按换行拆开，逐条归一化 |
+| `common_name` | 主 CN | 可能为空，作为兜底 |
+| `issuer_name` | 签发 CA | 可用来识别自签/测试证书 |
+| `not_before/not_after` | 有效期 | 过期证书的主机可能已下线 |
+| `entry_timestamp` | 入日志时间 | 判断"新出现"的时间线 |
+
+**为什么 4,013 条记录只剩 74 个名字：**
+- 同一主机每年续签多次 → 大量重复；
+- 一张证书含多个 SAN → `name_value` 一行多个名字；
+- 通配符 `*.example.com` 与具体名字重复；
+- 还存在 `example.com` 根域、邮箱条目、大小写差异。
+
+所以"记录数"≠"资产数"，报告里必须区分这两个指标，否则会虚报规模。
+
