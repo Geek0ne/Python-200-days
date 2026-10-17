@@ -136,3 +136,248 @@ for f in 0*.py; do python3 "$f" --self-test || exit 1; done
 3. CT 日志里 4,013 条记录只得到 74 个名字，剩下的信息对安全分析还有价值吗？
 4. 设计一个限速策略：既能在 10 分钟内覆盖 5 万词，又不触发解析器/目标限速。
 5. "新增资产"里，哪些应该立即告警？哪些应该每天汇总？给出你的判定规则。
+
+---
+
+## 实战实验手册
+
+> 所有命令都在 `~/code/Learn-Python/days/day-186-项目架构与子域名收集/code` 下执行。
+> 实测环境：Linux 7.0.0-34-generic (x64) / Python 3.12.3 / 2026-10-18。
+> 实验对象 `python.org` 是公开域名，仅做 DNS/CT 查询，不做端口与漏洞探测。
+
+### 实验 1：真实子域名枚举（20 词字典）
+
+**目的**：验证并发枚举、IPv6 收集、泛解析检测在真实 DNS 上的行为。
+
+**准备**：无需外部服务，标准库即可。
+
+**执行**：
+
+```bash
+python3 01-dns-enum-basic.py \
+  --domain python.org \
+  --words www,docs,api,mail,dev,blog,status,pypi,download,test,staging,git,cdn,static,m,app,wiki,monitor,grafana,admin \
+  --workers 16 --json /tmp/day186-subs.json
+```
+
+**实际结果**（2026-10-18 真机 stdout，节选）：
+
+```text
+[*] 目标 python.org，候选 20 个，并发 16
+  [+] www.python.org                           151.101.128.223, 151.101.192.223, 151.101.64.223, 2a04:4e42:200::223, 2a04:4e42:400::223, 2a04:4e42::223
+  [+] docs.python.org                          151.101.128.223, 151.101.192.223, 151.101.64.223, 2a04:4e42:200::223, 2a04:4e42:400::223, 2a04:4e42:600::223
+  [+] mail.python.org                          188.166.95.178, 2a03:b0c0:2:d0::71:1
+  [+] pypi.python.org                          151.101.128.223, 151.101.192.223, 151.101.64.223, 2a04:4e42:200::223, 2a04:4e42:400::223, 2a04:4e42:600::223, 2a04:4e42::223
+  [+] test.python.org                          151.101.0.223, 151.101.128.223, 151.101.192.223, 2a04:4e42:200::223, 2a04:4e42:400::223, 2a04:4e42:600::223
+  [+] blog.python.org                          185.199.108.153, 185.199.109.153, 185.199.110.153, 185.199.111.153, 2606:50c0:8000::153, 2606:50c0:8001::153, 2606:50c0:8002::153, 2606:50c0:8003::153
+  [+] wiki.python.org                          159.89.245.108, 167.99.21.118, 2604:a880:800:10::92a:1001, 2604:a880:800:10::f7d:7001
+  [+] status.python.org                        3.165.102.30, 3.165.102.41, 3.165.102.53, 3.165.102.80
+{
+  "domain": "python.org",
+  "candidates": 20,
+  "found": 8,
+  "errors": 0,
+  "workers": 16,
+  "wildcard_ips": [],
+  "elapsed_sec": 2.17,
+  "rate_per_sec": 9.2
+}
+```
+
+**结论**：
+- 20 个候选命中 8 个，命中率 40%；
+- 0 个错误，说明解析器没有限速；
+- `python.org` 没有泛解析（`wildcard_ips` 为空），所以 8 个结果都是真资产；
+- `test.python.org` 能解析但不在后续 CT 结果里（见实验 2），说明**单一来源必漏**。
+
+**清理**：`rm -f /tmp/day186-subs.json`
+
+---
+
+### 实验 2：crt.sh 证书透明日志（含 502 重试）
+
+**目的**：验证被动收集、重试退避、名字清洗。
+
+**准备**：可访问 `https://crt.sh`。首次用 `curl` 探测时返回 **502**，
+说明接口确实不稳定，脚本的重试不是摆设。
+
+**执行**：
+
+```bash
+python3 02-crt-sh-advanced.py --domain python.org --retries 2 --timeout 15 --out /tmp/day186-crt.json
+```
+
+**实际结果**（2026-10-18，节选前 12 行）：
+
+```text
+[*] 查询 crt.sh: python.org（可能较慢，最多重试 2 次）
+[*] 收到 4013 条证书记录
+[+] 去重后得到 74 个主机名
+  - africa.python.org
+  - analytics.python.org
+  - api.wiki.python.org
+  - blog-stage.python.org
+  - blog.python.org
+  - bugs.python.org
+  - buildbot.python.org
+  - calendario.es.python.org
+  - chat.uk.python.org
+  - cheeseshop.python.org
+  - cla.python.org
+  - clabot.python.org
+```
+
+**结论**：
+- **4,013 条记录 → 74 个唯一主机名**，压缩比 54:1；
+- 发现字典里没有的名字：`blog-stage`、`pycon-archives`、`devguide`、`speed` 等；
+- 第一次外部探测 502，重试后成功 —— 生产环境必须把 CT 查询做成"可失败、可重跑"的步骤。
+
+**清理**：`rm -f /tmp/day186-crt.json`
+
+---
+
+### 实验 3：资产快照与差分（本日翻车实验）
+
+**目的**：验证 SQLite 快照模型，并暴露"跨来源直接差分"的错误。
+
+**准备**：先生成两份输入（实验 1、2 的输出），再合并成同口径输入。
+
+**执行**：
+
+```bash
+rm -f /tmp/day186-assets.db
+
+# 快照 1：CT 结果（74 个名字，无 IP）
+python3 03-asset-inventory.py --db /tmp/day186-assets.db \
+  --input /tmp/day186-crt.json --label ct-pass
+
+# 快照 2：DNS 结果（8 个有 IP）
+python3 03-asset-inventory.py --db /tmp/day186-assets.db \
+  --input /tmp/day186-subs.json --label dns-pass
+```
+
+**第一次实际结果**（错误示范）：
+
+```text
+[*] 已写入快照 #1 (ct-pass)，资产 74 条
+[*] 还没有两次快照，无法差分（再跑一次就有了）
+[*] 已写入快照 #2 (dns-pass)，资产 8 条
+[*] 对比快照 #1 -> #2
+新增 1 个：
+  + test.python.org
+消失 67 个：
+  - africa.python.org
+  - analytics.python.org
+  ...（共 67 行）
+IP 变化 7 个：
+  ~ blog.python.org: [] -> ['185.199.108.153', ...]
+  ...
+```
+
+**现象**：报告"67 个资产消失、7 个 IP 变化"。
+
+**假设**：
+1. python.org 真的下线了 67 个子域？—— 不可能，`docs.python.org` 刚刚还能访问。
+2. 差分逻辑写错了？—— 自测覆盖了 added/removed/changed，逻辑正确。
+3. 两次快照的**采集口径不同**？—— 这是最可疑的。
+
+**验证**：看两份输入的大小与字段：
+- `day186-crt.json`：74 个名字，`ips` 全为空（CT 只证明签过证书）；
+- `day186-subs.json`：8 个主机，有 IP，但字典只有 20 个词。
+
+**真实根因**：把"CT 发现的名字集合"和"DNS 字典枚举的解析结果"当成同一口径比较。
+前者是**历史签名记录**，后者是**当前可解析子集**，两者本来就不该相等。
+这不是程序 bug，是**指标口径 bug**。
+
+**修复**：先把多来源合并成同一口径（名字 ∪ IP），再和历史同口径快照比：
+
+```bash
+python3 - <<'PY'
+import json
+ct = json.load(open('/tmp/day186-crt.json'))
+dns = json.load(open('/tmp/day186-subs.json'))
+merged = {n: [] for n in ct['names']}
+for h, ips in dns['assets'].items():
+    merged.setdefault(h, []).extend(ips)
+json.dump({'assets': merged}, open('/tmp/day186-merged.json','w'), indent=2)
+print('merged assets:', len(merged))
+PY
+
+python3 03-asset-inventory.py --db /tmp/day186-assets.db \
+  --input /tmp/day186-merged.json --label merged-pass
+```
+
+**复测实际结果**：
+
+```text
+merged assets: 75
+[*] 已写入快照 #3 (merged-pass)，资产 75 条
+[*] 对比快照 #2 -> #3
+新增 67 个：
+  + africa.python.org
+  ...
+消失 0 个：
+IP 变化 0 个：
+[*] 数据库共有 3 个快照: /tmp/day186-assets.db
+```
+
+**结论**：
+- 合并后 75 条 = 74 CT 名字 + 1 个仅 DNS 可见的 `test.python.org`；
+- 74 + 8 = 82，去重后 75，说明 7 个 DNS 主机已在 CT 中出现；
+- **差分必须先统一口径**，否则"消失 67 个"会触发一场不存在的应急。
+
+**清理**：`rm -f /tmp/day186-assets.db /tmp/day186-merged.json`
+
+---
+
+### 实验 4：并发性能（含 DNS 缓存陷阱）
+
+**目的**：量化线程池收益，并验证真实 DNS 测试会被缓存污染。
+
+**执行**：
+
+```bash
+python3 04-benchmark-concurrency.py
+```
+
+**实际结果**（2026-10-18 真机）：
+
+```text
+=== A. 受控实验：200 个候选，单次解析固定 20ms ===
+  workers=1   用时  4.065s  加速比  1.00x  命中 177
+  workers=4   用时  1.024s  加速比  3.97x  命中 177
+  workers=16  用时  0.268s  加速比 15.17x  命中 177
+  workers=64  用时  0.098s  加速比 41.62x  命中 177
+
+=== B. 真实 DNS：8 个域名 × 3 次 ===
+  round 1: 串行 0.146s  并发(8) 0.007s
+  round 2: 串行 0.002s  并发(8) 0.003s
+  round 3: 串行 0.005s  并发(8) 0.006s
+  中位数: 串行 0.005s  并发 0.006s  加速 0.90x
+```
+
+**结论**：
+- 受控实验里，16 线程加速 **15.17x**，接近线性；64 线程 **41.62x**，
+  说明等待型任务可以显著超采样。
+- 真实 DNS 实验第一轮串行 0.146s vs 并发 0.007s（约 21x），
+  但第二、三轮串行掉到 2~5ms —— **本地解析器缓存命中**，加速比变成 0.90x。
+- **教训**：性能测试必须使用冷缓存（新随机域名）或直接对权威 DNS 发查询，
+  否则测的是内存缓存，不是网络。这个坑在教材里很常见，本日实测复现。
+
+**清理**：无残留（纯计算 + DNS 查询）。
+
+---
+
+## 收尾卫生
+
+本日实验只产生 4 个临时文件，均已删除：
+
+```bash
+rm -f /tmp/day186-subs.json /tmp/day186-crt.json \
+      /tmp/day186-merged.json /tmp/day186-assets.db
+```
+
+- 没有启动任何服务、容器或端口；
+- 没有修改 `/etc/hosts`、DNS 配置；
+- 没有对 `python.org` 做端口扫描或漏洞探测，只做了 DNS 与 CT 查询。
+
