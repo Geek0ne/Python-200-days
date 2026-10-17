@@ -114,11 +114,47 @@ def serve(host: str = "127.0.0.1", port: int = 0):
     return server, thread, base_url
 
 
+def self_test() -> int:
+    """离线自测：启动临时靶场，验证正常/注入/转义三条路径。"""
+    import urllib.request
+
+    server, _, base_url = serve(port=0)
+    try:
+        def get(path: str) -> tuple[int, str]:
+            with urllib.request.urlopen(base_url + path, timeout=3) as resp:
+                return resp.status, resp.read().decode("utf-8", "replace")
+
+        status, body = get("/health")
+        assert status == 200 and "ok" in body, (status, body)
+
+        status, body = get("/product?id=1")
+        assert status == 200 and "Mechanical Keyboard" in body, (status, body)
+
+        status, body = get("/product?id=1%27")
+        assert status == 500 and "SQL error" in body, (status, body)
+
+        status, body = get("/search?q=%3Cb%3Ex%3C/b%3E")
+        assert status == 200 and "<b>x</b>" in body, (status, body)
+
+        status, body = get("/safe-search?q=%3Cb%3Ex%3C/b%3E")
+        assert status == 200 and "&lt;b&gt;" in body, (status, body)
+
+        print("✅ self-test passed: health / 正常商品 / SQL 报错 / XSS 原样回显 / 转义 全部符合预期")
+        return 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        Path(server.db_path).unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="本地漏洞靶场（仅 127.0.0.1）")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=18081)
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+    if args.self_test:
+        return self_test()
     if args.host not in ("127.0.0.1", "localhost"):
         parser.error("实验靶场只允许监听 127.0.0.1")
 
