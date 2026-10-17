@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-185%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1302-brightgreen) ![Phase](https://img.shields.io/badge/Phase-11_%E8%87%AA%E5%8A%A8%E5%8C%96%E8%BF%90%E7%BB%B4%E4%B8%8EDevOps-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-188%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1333-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -43,21 +43,21 @@
 | **Phase 9** | 爬虫与反爬对抗 | Day 126–145 | ✅ 已完成 |
 | **Phase 10** | 网络安全开发 | Day 146–165 | ✅ 已完成 |
 | **Phase 11** | 自动化运维与 DevOps | Day 166–185 | ✅ 已完成 |
-| **Phase 12** | 综合实战 | Day 186–200 | ⏳ |
+| **Phase 12** | 综合实战 | Day 186–200 | **进行中** |
 
 ---
 
 ## 📊 当前进度
 
-> **Day 185 / 200** · 进度的 92.5% · 当前：Phase 11 自动化运维与 DevOps（✅ 已完成，收官于 Day 185 一键部署与端到端验收）
+> **Day 188 / 200** · 进度的 94.0% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–188：资产测绘 / 端口指纹 / 漏洞检测）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **185 天** |
-| 📝 总提交次数 | **1,302 commits** |
-| 📄 总代码行数 | **187,960 行** |
-| 📂 总文件数 | **1,298 个** |
-| 🏗️ 当前阶段 | **Phase 11 — 自动化运维与 DevOps**（✅ 已完成，Day 185/185） |
+| 📅 已完成天数 | **188 天** |
+| 📝 总提交次数 | **1,333 commits** |
+| 📄 总代码行数 | **190,180 行** |
+| 📂 总文件数 | **1,323 个** |
+| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 188/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -349,6 +349,17 @@
 - ✅ Day 183 — 阶段项目（二）：容器化 + CI/CD + 一键部署
 - ✅ Day 184 — 阶段项目（三）：日志收集 + 可视化（结构化日志 JSON Lines / HTTP 接收端 / 抗轮转采集器 / SQLite WAL / ASCII 看板与单文件 HTML；真机实验：rename 轮转下正确 vs naive 采集器丢 60% 日志、`database is locked` 复现与修复、写入吞吐实测 113 → 1,196,901 条/秒）
 - ✅ Day 185 — 阶段项目（四）：一键部署 + 端到端验收（预检按身份判定 / 存活与就绪双探针 / 失败自动回滚 / 9 项验收断言 / 故障演练 MTTR 0.416s；真机翻车：假装优雅停机、僵尸进程、自证脚本端口泄漏、TIME_WAIT 导致的 bind 失败）
+</details>
+
+<details open>
+<summary><b>Phase 12：综合实战（Day 186–200）— 🚧 进行中</b></summary>
+
+- ✅ Day 186 — 项目架构与子域名收集（五层资产模型 / 并发 DNS 枚举 / crt.sh 4,013 条记录→74 主机 / 泛解析过滤 / SQLite 快照差分；真机翻车：跨来源差分误报"67 个消失" / DNS 缓存污染并发基准）
+- ✅ Day 187 — 端口扫描与指纹识别（TCP connect + errno 分类 / 超时基准 / banner 与 HTTP 指纹置信度 / nmap 对账；真机翻车：只读到响应头丢 body、errno 11 误判为 error）
+- ✅ Day 188 — Web 漏洞检测（SQLi 报错型+布尔型 / 反射型 XSS 上下文判定 / baseline→payload→oracle / 误报演练 1→0；真机：本地靶场 6 条 finding、severity critical、去重后 2 个漏洞）
+- ⏳ Day 189 — 资产入库与趋势可视化（待生成）
+- ⏳ Day 190 — 定时巡检、变更告警与一键部署（待生成）
+
 </details>
 
 ---
