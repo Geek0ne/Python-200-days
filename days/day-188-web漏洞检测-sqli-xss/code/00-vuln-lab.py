@@ -121,8 +121,12 @@ def self_test() -> int:
     server, _, base_url = serve(port=0)
     try:
         def get(path: str) -> tuple[int, str]:
-            with urllib.request.urlopen(base_url + path, timeout=3) as resp:
-                return resp.status, resp.read().decode("utf-8", "replace")
+            # 500 会抛 HTTPError；必须读 e.read() 才能拿到 SQL 错误正文
+            try:
+                with urllib.request.urlopen(base_url + path, timeout=3) as resp:
+                    return resp.status, resp.read().decode("utf-8", "replace")
+            except urllib.error.HTTPError as exc:
+                return exc.code, exc.read().decode("utf-8", "replace")
 
         status, body = get("/health")
         assert status == 200 and "ok" in body, (status, body)
