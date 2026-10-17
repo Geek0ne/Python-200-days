@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 188 — 综合项目 I（三）：Web 漏洞检测（SQLi / XSS）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 188 — 综合项目 I（三）：Web 漏洞检测（SQLi / XSS）</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">357 行</span>
+    <span class="badge">5 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（5 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-188-web漏洞检测-sqli-xss" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2">概念速览</a>
+<a class="toc-l2" href="#_3">原理解释</a>
+<a class="toc-l3" href="#1-baseline">1. baseline 不是可选项</a>
+<a class="toc-l3" href="#2">2. 报错型与布尔型的分工</a>
+<a class="toc-l3" href="#3-alert">3. 为什么 alert 关键字会误报</a>
+<a class="toc-l3" href="#4-6-finding-6">4. &quot;6 个 finding&quot; ≠ &quot;6 个漏洞&quot;</a>
+<a class="toc-l2" href="#api">API 速查</a>
+<a class="toc-l2" href="#_4">代码导览</a>
+<a class="toc-l2" href="#_5">实战实验手册</a>
+<a class="toc-l3" href="#1">实验 1：启动靶场并确认漏洞可复现</a>
+<a class="toc-l3" href="#2sqli">实验 2：SQLi 检测器自测与真实扫描</a>
+<a class="toc-l3" href="#3xss">实验 3：XSS 检测器（唯一标记 + 对照组）</a>
+<a class="toc-l3" href="#4">实验 4：组合扫描报告（端到端）</a>
+<a class="toc-l3" href="#5">实验 5：误报演练（本日核心翻车）</a>
+<a class="toc-l3" href="#6">实验 6：收尾与清理</a>
+<a class="toc-l2" href="#_6">本日关键数字</a>
+<a class="toc-l2" href="#_7">思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-188-iweb-sqli-xss">Day 188 — 综合项目 I（三）：Web 漏洞检测（SQLi / XSS）</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战<br>
+<strong>项目</strong>：企业资产监控系统 · 第 3/5 天<br>
+<strong>子主题</strong>：SQLi 报错型/布尔型 · 反射型 XSS · baseline→payload→oracle · 误报治理<br>
+<strong>代码</strong>：1 个本地靶场 + 4 个扫描/报告脚本，全部带 <code>--self-test</code><br>
+<strong>实测环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / 2026-10-18</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<pre class="plain"><code>Day 186  资产发现        → 域名 / IP
+Day 187  端口 + 指纹     → 127.0.0.1:18080 是 HTTP 服务
+Day 188  Web 漏洞检测    → 这个 HTTP 服务有 SQLi / XSS
+Day 189  入库 + 可视化   → 漏洞如何长期跟踪
+Day 190  调度 + 告警     → 如何自动跑、自动通知
+</code></pre>
+<p>今天不追求"扫描器多强"，而是把<strong>判定逻辑</strong>讲透：<br>
+为什么同一个响应，朴素检测器会误报，而上下文检测器不会。</p>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整定义、四类 SQLi、三类 XSS、误报来源见 <strong><code>concepts.md</code></strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SQLi</td>
+<td>用户输入被当成 SQL 代码</td>
+<td>可读库、改数据</td>
+</tr>
+<tr>
+<td>参数化查询</td>
+<td>SQL 模板与数据分离</td>
+<td>根本修复方式</td>
+</tr>
+<tr>
+<td>报错型注入</td>
+<td>数据库错误回显</td>
+<td>最明确的检测信号</td>
+</tr>
+<tr>
+<td>布尔型注入</td>
+<td>真假条件响应不同</td>
+<td>无错误回显时仍可检测</td>
+</tr>
+<tr>
+<td>反射型 XSS</td>
+<td>payload 在本次响应中原样回显</td>
+<td>可执行脚本</td>
+</tr>
+<tr>
+<td>转义</td>
+<td>把 <code>&lt;</code> 变成 <code>&amp;lt;</code></td>
+<td>文本仍在，但不可执行</td>
+</tr>
+<tr>
+<td>oracle</td>
+<td>判定器：把响应映射成结论</td>
+<td>扫描器的核心</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">原理解释</h2>
+<h3 id="1-baseline">1. baseline 不是可选项</h3>
+<p>扫描器先请求 <code>/product?id=1</code>，确认：<br>
+- 状态码 200；<br>
+- 页面包含已知产品名 <code>Mechanical Keyboard</code>。</p>
+<p>如果 baseline 失败，后续 payload 的"500"就无法区分是注入导致，还是目标本来就坏了。<br>
+<strong>没有 baseline 的扫描器只会制造噪音。</strong></p>
+<h3 id="2">2. 报错型与布尔型的分工</h3>
+<ul>
+<li>报错型：<code>1'</code> → 500 + <code>SQL error: unrecognized token</code>。信号强，但依赖错误回显。</li>
+<li>布尔型：<code>1 AND 1=1</code> 有产品，<code>1 AND 1=2</code> 无产品。信号弱，但不依赖错误页。</li>
+</ul>
+<p>本日两者都命中，因此置信度都是 high。</p>
+<h3 id="3-alert">3. 为什么 <code>alert</code> 关键字会误报</h3>
+<p><code>/safe-search</code> 输出 <code>&amp;lt;svg/onload=alert('LPX...')&amp;gt;</code>：<br>
+- 文本里确实有 <code>alert</code>；<br>
+- 但 <code>&lt;</code> 已转义，浏览器不会执行。</p>
+<p>朴素判定 <code>"alert" in body</code> → 假阳性。<br>
+正确判定要求：<strong>完整 payload 原样出现，且不存在转义形式</strong>。</p>
+<h3 id="4-6-finding-6">4. "6 个 finding" ≠ "6 个漏洞"</h3>
+<p>本日报告 6 条 finding：<br>
+- 4 条 error-based（<code>1'</code>、<code>1"</code>、<code>1)</code>、<code>1'--</code>）其实是同一个根因；<br>
+- 1 条 boolean-based 是对同一根因的二次确认；<br>
+- 1 条 XSS 是独立问题。</p>
+<p>真实报告应合并为 <strong>2 个漏洞</strong>（SQLi ×1、XSS ×1），并保留多条证据。<br>
+否则管理层会以为"有 6 个洞"，修复优先级被稀释。</p>
+<hr>
+<h2 id="api">API 速查</h2>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>写法</th>
+<th>注意</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>URL 编码</td>
+<td><code>urllib.parse.quote(payload)</code></td>
+<td><code>'</code> → <code>%27</code></td>
+</tr>
+<tr>
+<td>GET + 读错误页</td>
+<td><code>urlopen</code> / <code>except HTTPError</code></td>
+<td>4xx/5xx 必须读 <code>e.read()</code></td>
+</tr>
+<tr>
+<td>HTML 转义</td>
+<td><code>html.escape(q, quote=True)</code></td>
+<td>修复 XSS 的最小改动</td>
+</tr>
+<tr>
+<td>参数化 SQL</td>
+<td><code>conn.execute(sql, (v,))</code></td>
+<td>不要 f-string 拼接</td>
+</tr>
+<tr>
+<td>临时 HTTP 服务</td>
+<td><code>ThreadingHTTPServer(("127.0.0.1", 0), H)</code></td>
+<td>端口 0 自动分配</td>
+</tr>
+<tr>
+<td>报告序列化</td>
+<td><code>json.dumps(..., ensure_ascii=False)</code></td>
+<td>中文可读</td>
+</tr>
+<tr>
+<td>时间戳</td>
+<td><code>datetime.now().isoformat(timespec="seconds")</code></td>
+<td>报告可追溯</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">代码导览</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>00-vuln-lab.py</code></td>
+<td>本地靶场：<code>/product</code> SQLi、<code>/search</code> XSS、<code>/safe-search</code> 对照</td>
+</tr>
+<tr>
+<td><code>01-sqli-detect.py</code></td>
+<td>报错型 + 布尔型检测，7 个 payload</td>
+</tr>
+<tr>
+<td><code>02-xss-detect.py</code></td>
+<td>唯一标记 + 原始/转义判定，带对照组</td>
+</tr>
+<tr>
+<td><code>03-security-scan-report.py</code></td>
+<td>组合扫描、严重级别、JSON + Markdown</td>
+</tr>
+<tr>
+<td><code>04-false-positive-drill.py</code></td>
+<td>naive vs precise 的误报实测</td>
+</tr>
+</tbody>
+</table>
+<p>所有脚本都只监听/访问 <code>127.0.0.1</code>。</p>
+<hr>
+<h2 id="_5">实战实验手册</h2>
+<blockquote>
+<p>环境：Linux 7.0.0-34-generic / Python 3.12.3 / 2026-10-18。<br>
+靶场只绑定 <code>127.0.0.1:18081</code>，实验结束立即 kill。</p>
+</blockquote>
+<h3 id="1">实验 1：启动靶场并确认漏洞可复现</h3>
+<p><strong>目的</strong>：先手工确认"漏洞真的存在"，再让扫描器去判定。</p>
+<p><strong>准备</strong>：无需第三方依赖。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-188-web漏洞检测-sqli-xss/code
+setsid<span class="w"> </span>python3<span class="w"> </span><span class="m">00</span>-vuln-lab.py<span class="w"> </span>--port<span class="w"> </span><span class="m">18081</span><span class="w"> </span>&lt;/dev/null<span class="w"> </span>&gt;/tmp/day188-lab.log<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="nb">echo</span><span class="w"> </span><span class="nv">$!</span><span class="w"> </span>&gt;/tmp/day188-lab.pid
+sleep<span class="w"> </span><span class="m">1</span>
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18081/health<span class="p">;</span><span class="w"> </span><span class="nb">echo</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:18081/product?id=1&#39;</span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">&quot;http://127.0.0.1:18081/product?id=1&#39;&quot;</span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:18081/search?q=%3Cb%3Ehi%3C/b%3E&#39;</span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span>
+curl<span class="w"> </span>-s<span class="w"> </span><span class="s1">&#39;http://127.0.0.1:18081/safe-search?q=%3Cb%3Ehi%3C/b%3E&#39;</span><span class="p">;</span><span class="w"> </span><span class="nb">echo</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（真机 stdout）：</p>
+<pre class="plain"><code>{&quot;ok&quot;: true}
+&lt;html&gt;&lt;title&gt;Product&lt;/title&gt;&lt;h1&gt;Mechanical Keyboard&lt;/h1&gt;&lt;p&gt;Price: 89.0&lt;/p&gt;&lt;/html&gt;
+SQL error: unrecognized token: &quot;&#x27;&quot;
+&lt;html&gt;&lt;title&gt;Search&lt;/title&gt;&lt;h1&gt;Search&lt;/h1&gt;&lt;p&gt;Results for: &lt;b&gt;hi&lt;/b&gt;&lt;/p&gt;&lt;/html&gt;
+&lt;html&gt;&lt;title&gt;Search&lt;/title&gt;&lt;h1&gt;Search&lt;/h1&gt;&lt;p&gt;Results for: &amp;lt;b&amp;gt;hi&amp;lt;/b&amp;gt;&lt;/p&gt;&lt;/html&gt;
+</code></pre>
+<p><strong>结论</strong>：<br>
+- <code>/product?id=1</code> 正常返回产品；<br>
+- 加一个单引号直接触发 SQLite 报错，且错误被回显 → 报错型注入成立；<br>
+- <code>/search</code> 原样回显 HTML，<code>/safe-search</code> 转义 → 一组完美的实验/对照。</p>
+<hr>
+<h3 id="2sqli">实验 2：SQLi 检测器自测与真实扫描</h3>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-sqli-detect.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">01</span>-sqli-detect.py<span class="w"> </span>--base-url<span class="w"> </span>http://127.0.0.1:18081
+</code></pre></div>
+<p><strong>实际结果</strong>（自测节选）：</p>
+<pre class="plain"><code>[lab] &quot;GET /product?id=1&quot; 200 -
+[lab] &quot;GET /product?id=1%27&quot; 500 -
+[lab] &quot;GET /product?id=1%22&quot; 500 -
+[lab] &quot;GET /product?id=1%29&quot; 500 -
+[lab] &quot;GET /product?id=1%27--&quot; 500 -
+[lab] &quot;GET /product?id=1%20AND%201%3D1&quot; 200 -
+[lab] &quot;GET /product?id=1%20AND%201%3D2&quot; 404 -
+✅ self-test passed: 报错型 + 布尔型 SQLi 均检出
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 7 个 payload（5 个报错型 + 2 个布尔对照）全部按预期返回；<br>
+- 4 个单引号/双引号/括号/payload 触发 500；<br>
+- <code>AND 1=1</code> 返回 200，<code>AND 1=2</code> 返回 404 → 布尔条件确实进入 SQL。</p>
+<hr>
+<h3 id="3xss">实验 3：XSS 检测器（唯一标记 + 对照组）</h3>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-xss-detect.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">02</span>-xss-detect.py<span class="w"> </span>--base-url<span class="w"> </span>http://127.0.0.1:18081
+</code></pre></div>
+<p><strong>实际结果</strong>（自测节选）：</p>
+<pre class="plain"><code>[lab] &quot;GET /search?q=%3Csvg/onload%3Dalert%28%27LPXedsovpsn%27%29%3E&quot; 200 -
+[lab] &quot;GET /safe-search?q=%3Csvg/onload%3Dalert%28%27LPXedsovpsn%27%29%3E&quot; 200 -
+✅ self-test passed: /search 检出反射型 XSS，/safe-search 正确判 safe
+</code></pre>
+<p>判定细节：</p>
+<pre class="plain"><code>/search:      raw_reflection=True,  escaped_reflection=False → vulnerable
+/safe-search: raw_reflection=False, escaped_reflection=True  → safe
+</code></pre>
+<p><strong>结论</strong>：唯一标记（<code>LPX...</code>）避免把页面模板里已有的 <code>&lt;svg&gt;</code> 当成回显；<br>
+对照组确保检测器不是"见谁都报警"。</p>
+<hr>
+<h3 id="4">实验 4：组合扫描报告（端到端）</h3>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-security-scan-report.py<span class="w"> </span>--base-url<span class="w"> </span>http://127.0.0.1:18081<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--json<span class="w"> </span>/tmp/day188-report.json<span class="w"> </span>--markdown<span class="w"> </span>/tmp/day188-report.md
+cat<span class="w"> </span>/tmp/day188-report.md
+</code></pre></div>
+<p><strong>实际结果</strong>（真机，节选）：</p>
+<pre class="plain"><code>{
+  &quot;target&quot;: &quot;http://127.0.0.1:18081&quot;,
+  &quot;severity&quot;: &quot;critical&quot;,
+  &quot;finding_count&quot;: 6,
+  &quot;findings&quot;: [
+    {&quot;category&quot;: &quot;SQLi&quot;, &quot;severity&quot;: &quot;high&quot;, &quot;type&quot;: &quot;error-based&quot;, &quot;payload&quot;: &quot;1&#x27;&quot;, &quot;evidence&quot;: &quot;sql error&quot;, &quot;status&quot;: 500, &quot;confidence&quot;: &quot;high&quot;},
+    {&quot;category&quot;: &quot;SQLi&quot;, &quot;severity&quot;: &quot;high&quot;, &quot;type&quot;: &quot;error-based&quot;, &quot;payload&quot;: &quot;1\&quot;&quot;, &quot;evidence&quot;: &quot;sql error&quot;, &quot;status&quot;: 500, &quot;confidence&quot;: &quot;high&quot;},
+    {&quot;category&quot;: &quot;SQLi&quot;, &quot;severity&quot;: &quot;high&quot;, &quot;type&quot;: &quot;error-based&quot;, &quot;payload&quot;: &quot;1)&quot;, &quot;evidence&quot;: &quot;sql error&quot;, &quot;status&quot;: 500, &quot;confidence&quot;: &quot;high&quot;},
+    {&quot;category&quot;: &quot;SQLi&quot;, &quot;severity&quot;: &quot;high&quot;, &quot;type&quot;: &quot;error-based&quot;, &quot;payload&quot;: &quot;1&#x27;--&quot;, &quot;evidence&quot;: &quot;sql error&quot;, &quot;status&quot;: 500, &quot;confidence&quot;: &quot;high&quot;},
+    {&quot;category&quot;: &quot;SQLi&quot;, &quot;severity&quot;: &quot;high&quot;, &quot;type&quot;: &quot;boolean-based&quot;, &quot;payload&quot;: &quot;1 AND 1=1 vs 1 AND 1=2&quot;, &quot;evidence&quot;: &quot;true 条件返回产品，false 条件返回空&quot;, &quot;status&quot;: 200, &quot;confidence&quot;: &quot;high&quot;},
+    {&quot;category&quot;: &quot;XSS&quot;, &quot;severity&quot;: &quot;high&quot;, &quot;type&quot;: &quot;reflected-xss&quot;, &quot;endpoint&quot;: &quot;/search&quot;, &quot;payload&quot;: &quot;&lt;svg/onload=alert(&#x27;LPXdwahw97n&#x27;)&gt;&quot;, &quot;evidence&quot;: &quot;原始 payload 未转义回显（标记 LPXdwahw97n）&quot;, &quot;confidence&quot;: &quot;high&quot;}
+  ]
+}
+</code></pre>
+<p>Markdown 报告：</p>
+<pre class="plain"><code># 漏洞扫描报告
+
+- 目标：http://127.0.0.1:18081
+- 时间：2026-10-18T06:07:30
+- 严重级别：**critical**
+- 发现数：6
+
+## Findings
+
+| # | 类别 | 类型 | 证据 | 置信度 |
+|---:|---|---|---|---|
+| 1 | SQLi | error-based | sql error | high |
+| 2 | SQLi | error-based | sql error | high |
+| 3 | SQLi | error-based | sql error | high |
+| 4 | SQLi | error-based | sql error | high |
+| 5 | SQLi | boolean-based | true 条件返回产品，false 条件返回空 | high |
+| 6 | XSS | reflected-xss | 原始 payload 未转义回显（标记 LPXdwahw97n） | high |
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 端到端链路（靶场 → 两个检测器 → 聚合 → 报告）全部打通；<br>
+- 严重级别 critical：SQLi + XSS 同时存在；<br>
+- <strong>但"发现数 6"会误导</strong>：其中 5 条是同一个 SQLi 根因的不同证据。报告应增加"去重后的漏洞数 = 2"。</p>
+<hr>
+<h3 id="5">实验 5：误报演练（本日核心翻车）</h3>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-false-positive-drill.py
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>payload: &lt;svg/onload=alert(&#x27;LPXfylllr&#x27;)&gt;
+endpoint           naive  precise  has_alert   raw  escaped
+/search             True     True       True  True    False
+/safe-search        True    False       True  False    True
+{
+  &quot;naive_flagged&quot;: 2,
+  &quot;precise_flagged&quot;: 1,
+  &quot;false_positives_naive&quot;: 1,
+  &quot;false_positives_precise&quot;: 0
+}
+</code></pre>
+<p><strong>现象</strong>：朴素检测器对"已修复"的 <code>/safe-search</code> 也报警。</p>
+<p><strong>假设</strong>：<br>
+1. <code>/safe-search</code> 其实没修好？—— 手工看响应，<code>&lt;</code> 已变成 <code>&amp;lt;</code>。<br>
+2. 检测器把模板里的 <code>alert</code> 当成了回显？—— 页面只有这一处 <code>alert</code>。<br>
+3. 判定条件太宽？—— 只检查了关键字。</p>
+<p><strong>验证</strong>：打印 <code>contains_alert / contains_raw_payload / contains_escaped</code> 三个布尔值：<br>
+<code>/safe-search</code> 是 <code>True / False / True</code>。</p>
+<p><strong>真实根因</strong>：<strong>转义只改变字符表示，不删除文本</strong>。<br>
+<code>html.escape</code> 后 <code>alert</code> 仍是 <code>alert</code>，只是 <code>&lt;</code> 变成了 <code>&amp;lt;</code>。<br>
+"搜关键字"本质上无法区分"可执行"与"仅显示"。</p>
+<p><strong>修复</strong>：判定改为 <code>payload in body and "&amp;lt;svg" not in body.lower()</code>。</p>
+<p><strong>复测</strong>：naive 2 命中（1 假阳性）→ precise 1 命中（0 假阳性）。</p>
+<p><strong>结论</strong>：<br>
+- 这是扫描器最典型的假阳性来源；<br>
+- 所有"关键字命中"型规则都应升级为"上下文判定"；<br>
+- 对照组（已知安全的端点）是发现假阳性的最有效手段。</p>
+<hr>
+<h3 id="6">实验 6：收尾与清理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">kill</span><span class="w"> </span><span class="k">$(</span>cat<span class="w"> </span>/tmp/day188-lab.pid<span class="k">)</span><span class="w"> </span><span class="m">2</span>&gt;/dev/null
+sleep<span class="w"> </span><span class="m">0</span>.3
+<span class="o">(</span>curl<span class="w"> </span>-s<span class="w"> </span>--max-time<span class="w"> </span><span class="m">1</span><span class="w"> </span>http://127.0.0.1:18081/health<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39; STILL UP&#39;</span><span class="o">)</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;lab stopped&#39;</span>
+rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day188-lab.pid<span class="w"> </span>/tmp/day188-lab.log<span class="w"> </span><span class="se">\</span>
+<span class="w">      </span>/tmp/day188-report.json<span class="w"> </span>/tmp/day188-report.md
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>lab stopped
+</code></pre>
+<p>已确认：靶场进程退出、18081 无监听、临时报告与日志删除。<br>
+<strong>没有对任何公网目标发起请求。</strong></p>
+<hr>
+<h2 id="_6">本日关键数字</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>数值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SQLi payload 数</td>
+<td>7（5 报错 + 2 布尔）</td>
+</tr>
+<tr>
+<td>报错型命中</td>
+<td>4</td>
+</tr>
+<tr>
+<td>布尔型命中</td>
+<td>1</td>
+</tr>
+<tr>
+<td>XSS 命中</td>
+<td>1（<code>/search</code>）</td>
+</tr>
+<tr>
+<td>对照组误报</td>
+<td>0（precise）</td>
+</tr>
+<tr>
+<td>naive 假阳性</td>
+<td>1</td>
+</tr>
+<tr>
+<td>报告 severity</td>
+<td>critical</td>
+</tr>
+<tr>
+<td>去重后真实漏洞</td>
+<td>2（SQLi、XSS）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_7">思考题</h2>
+<ol>
+<li>如果目标关闭了错误回显，报错型全部失效，布尔型还能怎么加强？</li>
+<li>为什么"6 条 finding"不能直接写成"6 个漏洞"？报告应该怎么组织？</li>
+<li>转义（escaping）和过滤（sanitization）分别防的是哪类 XSS？</li>
+<li>如何设计一个"已知安全"的对照组来量化扫描器假阳性率？</li>
+<li>如果扫描器要接入 CI，哪些指标应设为失败阈值？</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-187/index.html">← Day 187 综合项目 I（二）：端口扫描与指纹识别</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

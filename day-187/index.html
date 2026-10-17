@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 187 — 综合项目 I（二）：端口扫描与指纹识别</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 187 — 综合项目 I（二）：端口扫描与指纹识别</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">241 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-187-端口扫描与指纹识别" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2">概念速览</a>
+<a class="toc-l2" href="#bug">原理解释：本日三个真实 bug</a>
+<a class="toc-l3" href="#1-rnrn-title">1. 只读到 \r\n\r\n，永远拿不到 &amp;lt;title&amp;gt;</a>
+<a class="toc-l3" href="#2-head-get">2. HEAD 与 GET 的指纹证据不同</a>
+<a class="toc-l3" href="#3-errno-11-error">3. errno 11 被误判成 error</a>
+<a class="toc-l2" href="#api">API 速查</a>
+<a class="toc-l2" href="#_3">代码导览</a>
+<a class="toc-l2" href="#_4">实战实验手册</a>
+<a class="toc-l3" href="#1-http-nmap">实验 1：本地 HTTP 服务扫描 + 指纹 + nmap 对账</a>
+<a class="toc-l3" href="#2open-closed-filtered">实验 2：open / closed / filtered 的真实耗时</a>
+<a class="toc-l3" href="#3-bug">实验 3：翻车复盘 —— 自测抓出的两个 bug</a>
+<a class="toc-l2" href="#_5">收尾卫生</a>
+<a class="toc-l2" href="#_6">思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-187-i">Day 187 — 综合项目 I（二）：端口扫描与指纹识别</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战<br>
+<strong>项目</strong>：企业资产监控系统 · 第 2/5 天<br>
+<strong>子主题</strong>：TCP connect 扫描 · errno 判定 · 超时设计 · banner/HTTP 指纹 · nmap 对账<br>
+<strong>代码</strong>：4 个标准库脚本，全部带 <code>--self-test</code><br>
+<strong>实测环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / nmap 7.94SVN / 2026-10-18</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<p>Day 186 得到了"名字 → IP"。今天回答第二个问题：<strong>这些 IP 上开了什么服务？</strong></p>
+<pre class="plain"><code>Day 186  资产发现        →  python.org / 8 个可解析主机
+Day 187  端口 + 指纹     →  127.0.0.1:18080 open, Python http.server
+Day 188  Web 漏洞检测    →  这个 HTTP 服务有没有 SQLi/XSS
+</code></pre>
+<p>只有确认了"这是 HTTP 服务"，Day 188 的 Web 扫描才有意义。<br>
+对 SSH 端口发 <code>?id=1'</code> 只会浪费时间，还会制造噪音。</p>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整原理（errno 表、三种扫描方式、指纹置信度）见 <strong><code>concepts.md</code></strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TCP connect 扫描</td>
+<td>完整握手判断端口</td>
+<td>无需 root，日志可审计</td>
+</tr>
+<tr>
+<td>errno 判定</td>
+<td>0/111/11/110 决定状态</td>
+<td>判错会把 filtered 当 error</td>
+</tr>
+<tr>
+<td>filtered</td>
+<td>防火墙 DROP，等到超时</td>
+<td>决定扫描总耗时</td>
+</tr>
+<tr>
+<td>banner</td>
+<td>服务主动吐出的版本串</td>
+<td>SSH/FTP/SMTP 最有效</td>
+</tr>
+<tr>
+<td>指纹置信度</td>
+<td>high/medium/low</td>
+<td>避免把猜测当事实</td>
+</tr>
+<tr>
+<td>nmap 对账</td>
+<td>用成熟工具验证自研结果</td>
+<td>发现实现差异</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="bug">原理解释：本日三个真实 bug</h2>
+<h3 id="1-rnrn-title">1. 只读到 <code>\r\n\r\n</code>，永远拿不到 <code>&lt;title&gt;</code></h3>
+<p>第一版 <code>read_some()</code> 一看到响应头结束就 <code>break</code>。HEAD 请求没问题，<br>
+但 GET 的 HTML body 在头后面，于是 <code>title</code> 永远是空字符串。</p>
+<p>自测直接抓到了：</p>
+<pre class="plain"><code>AssertionError: {&#x27;status_line&#x27;: &#x27;HTTP/1.0 200 OK&#x27;, &#x27;title&#x27;: &#x27;&#x27;, ...}
+</code></pre>
+<p>修复：解析 <code>Content-Length</code>，继续读到 body 满足长度为止。<br>
+<strong>教训</strong>：HTTP 不是"读到空行就结束"，头和 body 是两个阶段。</p>
+<h3 id="2-head-get">2. HEAD 与 GET 的指纹证据不同</h3>
+<p><code>02-banner-fingerprint.py</code> 默认发 HEAD，实测本地服务输出：</p>
+<pre class="plain"><code>状态行: HTTP/1.0 200 OK
+Server: SimpleHTTP/0.6 Python/3.12.3
+Title : (无)
+指纹  : Python http.server (置信度 high)
+</code></pre>
+<p>而 <code>03-asset-scan-case.py</code> 显式发 GET，同一服务得到：</p>
+<pre class="plain"><code>Title=Directory listing for /
+</code></pre>
+<p><strong>结论</strong>：HEAD 省流量，但没有 body；需要页面内容做指纹时必须 GET。</p>
+<h3 id="3-errno-11-error">3. errno 11 被误判成 error</h3>
+<p>对黑洞地址 <code>198.51.100.1:81</code> 扫描，Linux 返回 <code>errno 11 (EAGAIN)</code>，<br>
+耗时正好等于 timeout。第一版只把 <code>110</code> 当 filtered，输出变成：</p>
+<pre class="plain"><code>198.51.100.1:81   0.2   error(11)   200.36ms
+</code></pre>
+<p>修复：把 <code>11/115</code> 也归入 filtered。复测：</p>
+<pre class="plain"><code>198.51.100.1:81   0.2   filtered   200.37ms
+198.51.100.1:81   1.0   filtered  1001.18ms
+</code></pre>
+<p><strong>教训</strong>：errno 归类必须用真实环境验证；"耗时 ≈ timeout"是强辅助信号。</p>
+<hr>
+<h2 id="api">API 速查</h2>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>写法</th>
+<th>注意</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>解析端口段</td>
+<td><code>parse_ports("80,8000-8010")</code></td>
+<td>去重、排序、边界检查</td>
+</tr>
+<tr>
+<td>连接并取错误码</td>
+<td><code>sock.connect_ex((host, port))</code></td>
+<td>0 成功，其余是 errno</td>
+</tr>
+<tr>
+<td>超时</td>
+<td><code>sock.settimeout(0.5)</code></td>
+<td>单 socket 生效</td>
+</tr>
+<tr>
+<td>并发</td>
+<td><code>ThreadPoolExecutor(max_workers=100)</code></td>
+<td>I/O 密集</td>
+</tr>
+<tr>
+<td>读 HTTP</td>
+<td>头 + 按 Content-Length 读 body</td>
+<td>别在空行处停</td>
+</tr>
+<tr>
+<td>取 header</td>
+<td>按 <code>:</code> 切分，key 小写</td>
+<td>重复 header 保留最后一个</td>
+</tr>
+<tr>
+<td>取 title</td>
+<td>正则 <code>&lt;title&gt;(.*?)&lt;/title&gt;</code></td>
+<td>加 <code>re.S</code></td>
+</tr>
+<tr>
+<td>SQLite upsert</td>
+<td><code>ON CONFLICT(host,port) DO UPDATE</code></td>
+<td>重复扫描不膨胀</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">代码导览</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01-port-scan-basic.py</code></td>
+<td>connect 扫描、端口段解析、状态统计、自测绑定真实端口</td>
+</tr>
+<tr>
+<td><code>02-banner-fingerprint.py</code></td>
+<td>banner/HTTP 头/title 指纹、置信度、自测本地 HTTP 服务</td>
+</tr>
+<tr>
+<td><code>03-asset-scan-case.py</code></td>
+<td>扫描→指纹→JSON/SQLite 全链路</td>
+</tr>
+<tr>
+<td><code>04-timeout-benchmark.py</code></td>
+<td>open/closed/filtered 真实耗时中位数</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">实战实验手册</h2>
+<blockquote>
+<p>命令均在 <code>days/day-187-端口扫描与指纹识别/code</code> 下执行。<br>
+实验只针对 <code>127.0.0.1</code> 和自己启动的临时 HTTP 服务。</p>
+</blockquote>
+<h3 id="1-http-nmap">实验 1：本地 HTTP 服务扫描 + 指纹 + nmap 对账</h3>
+<p><strong>目的</strong>：验证 open/closed 判定、HTTP 指纹、SQLite 落库，并与 nmap 对账。</p>
+<p><strong>准备</strong>：Python 标准库即可；nmap 已安装（7.94SVN）。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-m<span class="w"> </span>http.server<span class="w"> </span><span class="m">18080</span><span class="w"> </span>--bind<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>&gt;/tmp/day187-http.log<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="nv">HTTP_PID</span><span class="o">=</span><span class="nv">$!</span>
+sleep<span class="w"> </span><span class="m">1</span>
+python3<span class="w"> </span><span class="m">03</span>-asset-scan-case.py<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--ports<span class="w"> </span><span class="m">18080</span>,18022<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--timeout<span class="w"> </span><span class="m">0</span>.5<span class="w"> </span>--json<span class="w"> </span>/tmp/day187-assets.json<span class="w"> </span>--db<span class="w"> </span>/tmp/day187-assets.db
+python3<span class="w"> </span><span class="m">02</span>-banner-fingerprint.py<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">18080</span>
+nmap<span class="w"> </span>-sT<span class="w"> </span>-Pn<span class="w"> </span>-p<span class="w"> </span><span class="m">18080</span>,18022<span class="w"> </span><span class="m">127</span>.0.0.1
+<span class="nb">kill</span><span class="w"> </span><span class="nv">$HTTP_PID</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-18 真机）：</p>
+<pre class="plain"><code>[*] 目标 127.0.0.1，2 个端口
+  [+] 127.0.0.1:18080  Python http.server (high)  Server=SimpleHTTP/0.6 Python/3.12.3  Title=Directory listing for /
+[*] JSON 已写入 /tmp/day187-assets.json
+[*] SQLite 已写入 /tmp/day187-assets.db（表 service_assets）
+
+[*] 127.0.0.1:18080
+    状态行: HTTP/1.0 200 OK
+    Server: SimpleHTTP/0.6 Python/3.12.3
+    Title : (无)
+    指纹  : Python http.server (置信度 high, 证据 simplehttp)
+
+PORT      STATE  SERVICE
+18022/tcp closed unknown
+18080/tcp open   unknown
+Nmap done: 1 IP address (1 host up) scanned in 0.07 seconds
+
+[(&#x27;127.0.0.1&#x27;, 18080, &#x27;Python http.server&#x27;, &#x27;Directory listing for /&#x27;)]
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 自研扫描器与 nmap 对 18080/18022 的判定<strong>完全一致</strong>；<br>
+- 自研脚本多给出产品与 title，nmap 只给 open/closed；<br>
+- 02 的 HEAD 探测拿不到 title（<code>Title : (无)</code>），03 的 GET 能拿到 —— 方法选择会影响证据；<br>
+- SQLite 里 <code>host/port</code> 主键保证重复扫描只更新，不产生重复行。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">kill</span><span class="w"> </span><span class="nv">$HTTP_PID</span><span class="w"> </span><span class="m">2</span>&gt;/dev/null
+rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day187-http.log<span class="w"> </span>/tmp/day187-assets.json<span class="w"> </span>/tmp/day187-assets.db
+</code></pre></div>
+<hr>
+<h3 id="2open-closed-filtered">实验 2：open / closed / filtered 的真实耗时</h3>
+<p><strong>目的</strong>：用数据说明 timeout 对扫描总耗时的影响。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-timeout-benchmark.py
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-18，每类 5 次取中位数）：</p>
+<pre class="plain"><code>目标                        timeout          状态     中位数ms            范围ms
+127.0.0.1:34015               0.5        open       0.22    0.05~0.68
+127.0.0.1:33097               0.5      closed       0.02    0.02~0.03
+198.51.100.1:81               0.2    filtered    200.37   200.3~200.39
+198.51.100.1:81               1.0    filtered   1001.18  1000.96~1002.97
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 本机 open 约 0.22ms，closed 约 0.02ms，<strong>filtered 严格等于 timeout</strong>；<br>
+- timeout 从 0.2s 提到 1.0s，单个 filtered 端口耗时增加 5 倍；<br>
+- 扫 1000 个端口时，哪怕只有 10% filtered，串行也要多等 100 秒（0.2s 超时）。<br>
+- 并发能重叠等待，但不能低于"单端口 timeout"这个下限。</p>
+<p><strong>清理</strong>：无残留（只连接，不监听）。</p>
+<hr>
+<h3 id="3-bug">实验 3：翻车复盘 —— 自测抓出的两个 bug</h3>
+<table>
+<thead>
+<tr>
+<th>现象</th>
+<th>假设</th>
+<th>验证</th>
+<th>根因</th>
+<th>修复</th>
+<th>复测</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>title 永远为空</td>
+<td>正则写错</td>
+<td>打印完整响应</td>
+<td>只读到 <code>\r\n\r\n</code>，body 没读</td>
+<td>按 Content-Length 续读</td>
+<td>title 正确</td>
+</tr>
+<tr>
+<td>filtered 显示 error(11)</td>
+<td>errno 表漏项</td>
+<td>真机打印 connect_ex 返回值</td>
+<td>黑洞地址返回 EAGAIN</td>
+<td>把 11/115 归入 filtered</td>
+<td>状态 filtered</td>
+</tr>
+</tbody>
+</table>
+<p>这两个 bug 都不是"想"出来的，是 <code>--self-test</code> 和真机实验暴露的。<br>
+教材里只写"正确代码"会掩盖这部分，而它恰恰是最值得学的。</p>
+<hr>
+<h2 id="_5">收尾卫生</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day187-http.log<span class="w"> </span>/tmp/day187-assets.json<span class="w"> </span>/tmp/day187-assets.db
+pgrep<span class="w"> </span>-f<span class="w"> </span><span class="s2">&quot;http.server 18080&quot;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;no leftover server&quot;</span>
+</code></pre></div>
+<p>已确认：临时 HTTP 服务已 kill，端口 18080 无残留监听，临时文件已删除。</p>
+<hr>
+<h2 id="_6">思考题</h2>
+<ol>
+<li>为什么 <code>connect_ex</code> 对黑洞地址返回 11 而不是 110？归类时如何避免类似漏项？</li>
+<li>HEAD 和 GET 对指纹各有什么利弊？什么时候必须用 GET？</li>
+<li>如果目标把 <code>Server</code> 头改成随机值，你还能用哪些证据识别服务？</li>
+<li>500 个端口、100 并发、timeout=0.5s，最坏耗时多少？要压到 3 秒内怎么调？</li>
+<li>为什么"端口 open"不等于"服务可用"？举两个真实例子。</li>
+</ol>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-186/index.html">← Day 186 综合项目 I（一）：项目架构与子域名收集</a><a class="nav-next" href="../day-188/index.html">Day 188 综合项目 I（三）：Web 漏洞检测（SQLi / XSS） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

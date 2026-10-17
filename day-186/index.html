@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 186 — 综合项目 I（一）：项目架构与子域名收集</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 186 — 综合项目 I（一）：项目架构与子域名收集</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">383 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-186-项目架构与子域名收集" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2">概念速览</a>
+<a class="toc-l2" href="#_3">原理解释</a>
+<a class="toc-l3" href="#1">1. 为什么&quot;记录数&quot;和&quot;资产数&quot;必须分开报</a>
+<a class="toc-l3" href="#2">2. 为什么字典枚举必须并发</a>
+<a class="toc-l3" href="#3">3. 为什么快照要&quot;只增不改&quot;</a>
+<a class="toc-l3" href="#4">4. 泛解析过滤的边界</a>
+<a class="toc-l2" href="#api">API 速查</a>
+<a class="toc-l2" href="#_4">代码导览</a>
+<a class="toc-l2" href="#_5">思考题</a>
+<a class="toc-l2" href="#_6">实战实验手册</a>
+<a class="toc-l3" href="#120">实验 1：真实子域名枚举（20 词字典）</a>
+<a class="toc-l3" href="#2crtsh-502">实验 2：crt.sh 证书透明日志（含 502 重试）</a>
+<a class="toc-l3" href="#3_1">实验 3：资产快照与差分（本日翻车实验）</a>
+<a class="toc-l3" href="#4-dns">实验 4：并发性能（含 DNS 缓存陷阱）</a>
+<a class="toc-l2" href="#_7">收尾卫生</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-186-i">Day 186 — 综合项目 I（一）：项目架构与子域名收集</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战（Day 186–200）<br>
+<strong>项目</strong>：企业资产监控系统 · 第 1/5 天<br>
+<strong>子主题</strong>：资产测绘五层模型 · DNS 枚举 · 证书透明日志 · 泛解析过滤 · 快照差分<br>
+<strong>代码</strong>：4 个标准库脚本，全部带 <code>--self-test</code>，离线可自证<br>
+<strong>环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / 零第三方依赖</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<p>前 185 天我们学了爬虫、安全、运维各自的工具。从今天起把它们<strong>串成一个系统</strong>：</p>
+<pre class="plain"><code>Day 186  资产发现（今天）      —— 我有哪些域名/IP？
+Day 187  端口与服务指纹        —— 它们开了什么？
+Day 188  Web 漏洞检测          —— 有什么问题？
+Day 189  入库与趋势可视化      —— 怎么长期跟踪？
+Day 190  调度、告警、部署      —— 怎么自动跑起来？
+</code></pre>
+<p>今天只做一件事，但要做扎实：<strong>把一个根域名展开成一份可信的资产清单，并且能回答"比上次多了什么"。</strong></p>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[根域名] --&gt; B[字典枚举]
+    A --&gt; C[crt.sh]
+    B --&gt; D[泛解析过滤]
+    C --&gt; E[清洗归一化]
+    D --&gt; F[资产清单]
+    E --&gt; F
+    F --&gt; G[(SQLite 快照)]
+    G --&gt; H[与上次差分]
+    H --&gt; I[新增/消失/变化]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[根域名] --&gt; B[字典枚举]
+    A --&gt; C[crt.sh]
+    B --&gt; D[泛解析过滤]
+    C --&gt; E[清洗归一化]
+    D --&gt; F[资产清单]
+    E --&gt; F
+    F --&gt; G[(SQLite 快照)]
+    G --&gt; H[与上次差分]
+    H --&gt; I[新增/消失/变化]
+</code></pre></div>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整定义、DNS 记录表、三条路线对比、合规边界见 <strong><code>concepts.md</code></strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话解释</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>资产测绘</td>
+<td>把组织在互联网上的名字/地址整理成清单</td>
+<td>不知道有什么，就谈不上保护</td>
+</tr>
+<tr>
+<td>子域名枚举</td>
+<td>用字典/CT/被动 DNS 找子域</td>
+<td>暴露面最大的盲区</td>
+</tr>
+<tr>
+<td>证书透明日志</td>
+<td>CA 必须公开签发的证书</td>
+<td>不碰目标就能拿到历史主机名</td>
+</tr>
+<tr>
+<td>泛解析</td>
+<td><code>*.example.com</code> 让任何名字都能解析</td>
+<td>不做过滤会得到成吨假资产</td>
+</tr>
+<tr>
+<td>快照差分</td>
+<td>两次扫描结果对比</td>
+<td>安全价值在"变化"而非"清单"</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">原理解释</h2>
+<h3 id="1">1. 为什么"记录数"和"资产数"必须分开报</h3>
+<p>crt.sh 对 <code>python.org</code> 返回 <strong>4,013 条证书记录</strong>，清洗去重后只有 <strong>74 个主机名</strong>。<br>
+差额来自：同一主机多次续签、一张证书多个 SAN、通配符、根域、邮箱条目、大小写差异。</p>
+<p>如果报告写"发现 4,013 个资产"，后果是：<br>
+- 管理层高估暴露面；<br>
+- 后续端口扫描把同一 IP 扫几千遍；<br>
+- 差分时噪音淹没真正的变化。</p>
+<p><strong>结论</strong>：采集量（records）与资产量（unique hosts）是两个指标，必须同时展示。</p>
+<h3 id="2">2. 为什么字典枚举必须并发</h3>
+<p>DNS 解析是 I/O 等待，不是 CPU 计算。串行 200 个候选 × 20ms ≈ 4 秒；<br>
+线程池 16 路可以压到 0.27 秒。线程在 <code>getaddrinfo</code> 等待时释放 GIL，<br>
+所以线程池有效，且比进程池轻量。</p>
+<p><strong>但并发不是越大越好</strong>：还要考虑本地 DNS 解析器限速、目标权威 DNS 限速、<br>
+文件描述符上限。生产环境应加令牌桶。</p>
+<h3 id="3">3. 为什么快照要"只增不改"</h3>
+<p>如果每次扫描覆盖 <code>assets</code> 表：<br>
+- 无法回答"这个 dev 域名是哪天出现的"；<br>
+- 无法回溯"上周的扫描结果"；<br>
+- 差分只能和"当前"比，历史丢失。</p>
+<p>所以用 <code>snapshots + assets(snapshot_id, ...)</code> 的追加模型。<br>
+代价是存储增长，用定期归档解决，而不是覆盖。</p>
+<h3 id="4">4. 泛解析过滤的边界</h3>
+<p>本日实现用"IP 集合完全等于随机探测集合"判定假阳性。<br>
+它能干掉绝大多数噪音，但会误杀"真实子域恰好解析到泛解析 IP"的情况。<br>
+更稳妥的二次确认：<br>
+- HTTP 响应是否与随机域名一致；<br>
+- TLS 证书 SAN 是否包含该名字；<br>
+- 响应体是否包含统一错误页。</p>
+<hr>
+<h2 id="api">API 速查</h2>
+<table>
+<thead>
+<tr>
+<th>需求</th>
+<th>写法</th>
+<th>注意</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>解析主机（IPv4+IPv6）</td>
+<td><code>socket.getaddrinfo(host, None)</code></td>
+<td>返回 <code>(family, type, proto, canonname, sockaddr)</code></td>
+</tr>
+<tr>
+<td>取 IP</td>
+<td><code>info[4][0]</code></td>
+<td>IPv6 也在这里</td>
+</tr>
+<tr>
+<td>全局超时</td>
+<td><code>socket.setdefaulttimeout(3)</code></td>
+<td>记得 finally 恢复</td>
+</tr>
+<tr>
+<td>并发映射</td>
+<td><code>ThreadPoolExecutor(max_workers=n).map(fn, items)</code></td>
+<td>异常会在迭代时抛出</td>
+</tr>
+<tr>
+<td>提交任务</td>
+<td><code>pool.submit(fn, arg)</code> + <code>as_completed</code></td>
+<td>可逐条处理结果</td>
+</tr>
+<tr>
+<td>HTTP 请求</td>
+<td><code>urllib.request.Request(url, headers={...})</code></td>
+<td>必须设 UA，否则易被拒</td>
+</tr>
+<tr>
+<td>JSON 读写</td>
+<td><code>json.dump(..., ensure_ascii=False, indent=2)</code></td>
+<td>中文可读</td>
+</tr>
+<tr>
+<td>SQLite 事务</td>
+<td><code>with conn: conn.executemany(...)</code></td>
+<td>批量插入快 10 倍以上</td>
+</tr>
+<tr>
+<td>临时目录</td>
+<td><code>tempfile.TemporaryDirectory()</code></td>
+<td>自测不污染工作区</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_4">代码导览</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>类型</th>
+<th>核心内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code/01-dns-enum-basic.py</code></td>
+<td>基础</td>
+<td>并发解析、IPv6、泛解析检测、<code>--self-test</code></td>
+</tr>
+<tr>
+<td><code>code/02-crt-sh-advanced.py</code></td>
+<td>进阶/避坑</td>
+<td>crt.sh 重试退避、名字清洗、后缀伪装过滤</td>
+</tr>
+<tr>
+<td><code>code/03-asset-inventory.py</code></td>
+<td>实战</td>
+<td>SQLite 快照、added/removed/changed 差分</td>
+</tr>
+<tr>
+<td><code>code/04-benchmark-concurrency.py</code></td>
+<td>性能</td>
+<td>受控延迟实验 + 真实 DNS 实验（含缓存陷阱）</td>
+</tr>
+</tbody>
+</table>
+<p>每个脚本都可以先离线自证：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-186-项目架构与子域名收集/code
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">0</span>*.py<span class="p">;</span><span class="w"> </span><span class="k">do</span><span class="w"> </span>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="k">done</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">思考题</h2>
+<ol>
+<li>如果目标同时有泛解析和真实子域，怎样在不误杀的前提下过滤？</li>
+<li>为什么 <code>getaddrinfo</code> 的结果必须去重排序？不排序会让差分出现什么假变化？</li>
+<li>CT 日志里 4,013 条记录只得到 74 个名字，剩下的信息对安全分析还有价值吗？</li>
+<li>设计一个限速策略：既能在 10 分钟内覆盖 5 万词，又不触发解析器/目标限速。</li>
+<li>"新增资产"里，哪些应该立即告警？哪些应该每天汇总？给出你的判定规则。</li>
+</ol>
+<hr>
+<h2 id="_6">实战实验手册</h2>
+<blockquote>
+<p>所有命令都在 <code>~/code/Learn-Python/days/day-186-项目架构与子域名收集/code</code> 下执行。<br>
+实测环境：Linux 7.0.0-34-generic (x64) / Python 3.12.3 / 2026-10-18。<br>
+实验对象 <code>python.org</code> 是公开域名，仅做 DNS/CT 查询，不做端口与漏洞探测。</p>
+</blockquote>
+<h3 id="120">实验 1：真实子域名枚举（20 词字典）</h3>
+<p><strong>目的</strong>：验证并发枚举、IPv6 收集、泛解析检测在真实 DNS 上的行为。</p>
+<p><strong>准备</strong>：无需外部服务，标准库即可。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-dns-enum-basic.py<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--domain<span class="w"> </span>python.org<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--words<span class="w"> </span>www,docs,api,mail,dev,blog,status,pypi,download,test,staging,git,cdn,static,m,app,wiki,monitor,grafana,admin<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--workers<span class="w"> </span><span class="m">16</span><span class="w"> </span>--json<span class="w"> </span>/tmp/day186-subs.json
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-18 真机 stdout，节选）：</p>
+<pre class="plain"><code>[*] 目标 python.org，候选 20 个，并发 16
+  [+] www.python.org                           151.101.128.223, 151.101.192.223, 151.101.64.223, 2a04:4e42:200::223, 2a04:4e42:400::223, 2a04:4e42::223
+  [+] docs.python.org                          151.101.128.223, 151.101.192.223, 151.101.64.223, 2a04:4e42:200::223, 2a04:4e42:400::223, 2a04:4e42:600::223
+  [+] mail.python.org                          188.166.95.178, 2a03:b0c0:2:d0::71:1
+  [+] pypi.python.org                          151.101.128.223, 151.101.192.223, 151.101.64.223, 2a04:4e42:200::223, 2a04:4e42:400::223, 2a04:4e42:600::223, 2a04:4e42::223
+  [+] test.python.org                          151.101.0.223, 151.101.128.223, 151.101.192.223, 2a04:4e42:200::223, 2a04:4e42:400::223, 2a04:4e42:600::223
+  [+] blog.python.org                          185.199.108.153, 185.199.109.153, 185.199.110.153, 185.199.111.153, 2606:50c0:8000::153, 2606:50c0:8001::153, 2606:50c0:8002::153, 2606:50c0:8003::153
+  [+] wiki.python.org                          159.89.245.108, 167.99.21.118, 2604:a880:800:10::92a:1001, 2604:a880:800:10::f7d:7001
+  [+] status.python.org                        3.165.102.30, 3.165.102.41, 3.165.102.53, 3.165.102.80
+{
+  &quot;domain&quot;: &quot;python.org&quot;,
+  &quot;candidates&quot;: 20,
+  &quot;found&quot;: 8,
+  &quot;errors&quot;: 0,
+  &quot;workers&quot;: 16,
+  &quot;wildcard_ips&quot;: [],
+  &quot;elapsed_sec&quot;: 2.17,
+  &quot;rate_per_sec&quot;: 9.2
+}
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 20 个候选命中 8 个，命中率 40%；<br>
+- 0 个错误，说明解析器没有限速；<br>
+- <code>python.org</code> 没有泛解析（<code>wildcard_ips</code> 为空），所以 8 个结果都是真资产；<br>
+- <code>test.python.org</code> 能解析但不在后续 CT 结果里（见实验 2），说明<strong>单一来源必漏</strong>。</p>
+<p><strong>清理</strong>：<code>rm -f /tmp/day186-subs.json</code></p>
+<hr>
+<h3 id="2crtsh-502">实验 2：crt.sh 证书透明日志（含 502 重试）</h3>
+<p><strong>目的</strong>：验证被动收集、重试退避、名字清洗。</p>
+<p><strong>准备</strong>：可访问 <code>https://crt.sh</code>。首次用 <code>curl</code> 探测时返回 <strong>502</strong>，<br>
+说明接口确实不稳定，脚本的重试不是摆设。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-crt-sh-advanced.py<span class="w"> </span>--domain<span class="w"> </span>python.org<span class="w"> </span>--retries<span class="w"> </span><span class="m">2</span><span class="w"> </span>--timeout<span class="w"> </span><span class="m">15</span><span class="w"> </span>--out<span class="w"> </span>/tmp/day186-crt.json
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-18，节选前 12 行）：</p>
+<pre class="plain"><code>[*] 查询 crt.sh: python.org（可能较慢，最多重试 2 次）
+[*] 收到 4013 条证书记录
+[+] 去重后得到 74 个主机名
+  - africa.python.org
+  - analytics.python.org
+  - api.wiki.python.org
+  - blog-stage.python.org
+  - blog.python.org
+  - bugs.python.org
+  - buildbot.python.org
+  - calendario.es.python.org
+  - chat.uk.python.org
+  - cheeseshop.python.org
+  - cla.python.org
+  - clabot.python.org
+</code></pre>
+<p><strong>结论</strong>：<br>
+- <strong>4,013 条记录 → 74 个唯一主机名</strong>，压缩比 54:1；<br>
+- 发现字典里没有的名字：<code>blog-stage</code>、<code>pycon-archives</code>、<code>devguide</code>、<code>speed</code> 等；<br>
+- 第一次外部探测 502，重试后成功 —— 生产环境必须把 CT 查询做成"可失败、可重跑"的步骤。</p>
+<p><strong>清理</strong>：<code>rm -f /tmp/day186-crt.json</code></p>
+<hr>
+<h3 id="3_1">实验 3：资产快照与差分（本日翻车实验）</h3>
+<p><strong>目的</strong>：验证 SQLite 快照模型，并暴露"跨来源直接差分"的错误。</p>
+<p><strong>准备</strong>：先生成两份输入（实验 1、2 的输出），再合并成同口径输入。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day186-assets.db
+
+<span class="c1"># 快照 1：CT 结果（74 个名字，无 IP）</span>
+python3<span class="w"> </span><span class="m">03</span>-asset-inventory.py<span class="w"> </span>--db<span class="w"> </span>/tmp/day186-assets.db<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--input<span class="w"> </span>/tmp/day186-crt.json<span class="w"> </span>--label<span class="w"> </span>ct-pass
+
+<span class="c1"># 快照 2：DNS 结果（8 个有 IP）</span>
+python3<span class="w"> </span><span class="m">03</span>-asset-inventory.py<span class="w"> </span>--db<span class="w"> </span>/tmp/day186-assets.db<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--input<span class="w"> </span>/tmp/day186-subs.json<span class="w"> </span>--label<span class="w"> </span>dns-pass
+</code></pre></div>
+<p><strong>第一次实际结果</strong>（错误示范）：</p>
+<pre class="plain"><code>[*] 已写入快照 #1 (ct-pass)，资产 74 条
+[*] 还没有两次快照，无法差分（再跑一次就有了）
+[*] 已写入快照 #2 (dns-pass)，资产 8 条
+[*] 对比快照 #1 -&gt; #2
+新增 1 个：
+  + test.python.org
+消失 67 个：
+  - africa.python.org
+  - analytics.python.org
+  ...（共 67 行）
+IP 变化 7 个：
+  ~ blog.python.org: [] -&gt; [&#x27;185.199.108.153&#x27;, ...]
+  ...
+</code></pre>
+<p><strong>现象</strong>：报告"67 个资产消失、7 个 IP 变化"。</p>
+<p><strong>假设</strong>：<br>
+1. python.org 真的下线了 67 个子域？—— 不可能，<code>docs.python.org</code> 刚刚还能访问。<br>
+2. 差分逻辑写错了？—— 自测覆盖了 added/removed/changed，逻辑正确。<br>
+3. 两次快照的<strong>采集口径不同</strong>？—— 这是最可疑的。</p>
+<p><strong>验证</strong>：看两份输入的大小与字段：<br>
+- <code>day186-crt.json</code>：74 个名字，<code>ips</code> 全为空（CT 只证明签过证书）；<br>
+- <code>day186-subs.json</code>：8 个主机，有 IP，但字典只有 20 个词。</p>
+<p><strong>真实根因</strong>：把"CT 发现的名字集合"和"DNS 字典枚举的解析结果"当成同一口径比较。<br>
+前者是<strong>历史签名记录</strong>，后者是<strong>当前可解析子集</strong>，两者本来就不该相等。<br>
+这不是程序 bug，是<strong>指标口径 bug</strong>。</p>
+<p><strong>修复</strong>：先把多来源合并成同一口径（名字 ∪ IP），再和历史同口径快照比：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
+<span class="s">import json</span>
+<span class="s">ct = json.load(open(&#39;/tmp/day186-crt.json&#39;))</span>
+<span class="s">dns = json.load(open(&#39;/tmp/day186-subs.json&#39;))</span>
+<span class="s">merged = {n: [] for n in ct[&#39;names&#39;]}</span>
+<span class="s">for h, ips in dns[&#39;assets&#39;].items():</span>
+<span class="s">    merged.setdefault(h, []).extend(ips)</span>
+<span class="s">json.dump({&#39;assets&#39;: merged}, open(&#39;/tmp/day186-merged.json&#39;,&#39;w&#39;), indent=2)</span>
+<span class="s">print(&#39;merged assets:&#39;, len(merged))</span>
+<span class="s">PY</span>
+
+python3<span class="w"> </span><span class="m">03</span>-asset-inventory.py<span class="w"> </span>--db<span class="w"> </span>/tmp/day186-assets.db<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--input<span class="w"> </span>/tmp/day186-merged.json<span class="w"> </span>--label<span class="w"> </span>merged-pass
+</code></pre></div>
+<p><strong>复测实际结果</strong>：</p>
+<pre class="plain"><code>merged assets: 75
+[*] 已写入快照 #3 (merged-pass)，资产 75 条
+[*] 对比快照 #2 -&gt; #3
+新增 67 个：
+  + africa.python.org
+  ...
+消失 0 个：
+IP 变化 0 个：
+[*] 数据库共有 3 个快照: /tmp/day186-assets.db
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 合并后 75 条 = 74 CT 名字 + 1 个仅 DNS 可见的 <code>test.python.org</code>；<br>
+- 74 + 8 = 82，去重后 75，说明 7 个 DNS 主机已在 CT 中出现；<br>
+- <strong>差分必须先统一口径</strong>，否则"消失 67 个"会触发一场不存在的应急。</p>
+<p><strong>清理</strong>：<code>rm -f /tmp/day186-assets.db /tmp/day186-merged.json</code></p>
+<hr>
+<h3 id="4-dns">实验 4：并发性能（含 DNS 缓存陷阱）</h3>
+<p><strong>目的</strong>：量化线程池收益，并验证真实 DNS 测试会被缓存污染。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-benchmark-concurrency.py
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-18 真机）：</p>
+<pre class="plain"><code>=== A. 受控实验：200 个候选，单次解析固定 20ms ===
+  workers=1   用时  4.065s  加速比  1.00x  命中 177
+  workers=4   用时  1.024s  加速比  3.97x  命中 177
+  workers=16  用时  0.268s  加速比 15.17x  命中 177
+  workers=64  用时  0.098s  加速比 41.62x  命中 177
+
+=== B. 真实 DNS：8 个域名 × 3 次 ===
+  round 1: 串行 0.146s  并发(8) 0.007s
+  round 2: 串行 0.002s  并发(8) 0.003s
+  round 3: 串行 0.005s  并发(8) 0.006s
+  中位数: 串行 0.005s  并发 0.006s  加速 0.90x
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 受控实验里，16 线程加速 <strong>15.17x</strong>，接近线性；64 线程 <strong>41.62x</strong>，<br>
+  说明等待型任务可以显著超采样。<br>
+- 真实 DNS 实验第一轮串行 0.146s vs 并发 0.007s（约 21x），<br>
+  但第二、三轮串行掉到 2~5ms —— <strong>本地解析器缓存命中</strong>，加速比变成 0.90x。<br>
+- <strong>教训</strong>：性能测试必须使用冷缓存（新随机域名）或直接对权威 DNS 发查询，<br>
+  否则测的是内存缓存，不是网络。这个坑在教材里很常见，本日实测复现。</p>
+<p><strong>清理</strong>：无残留（纯计算 + DNS 查询）。</p>
+<hr>
+<h2 id="_7">收尾卫生</h2>
+<p>本日实验只产生 4 个临时文件，均已删除：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day186-subs.json<span class="w"> </span>/tmp/day186-crt.json<span class="w"> </span><span class="se">\</span>
+<span class="w">      </span>/tmp/day186-merged.json<span class="w"> </span>/tmp/day186-assets.db
+</code></pre></div>
+<ul>
+<li>没有启动任何服务、容器或端口；</li>
+<li>没有修改 <code>/etc/hosts</code>、DNS 配置；</li>
+<li>没有对 <code>python.org</code> 做端口扫描或漏洞探测，只做了 DNS 与 CT 查询。</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-185/index.html">← Day 185 阶段项目 · 自动化运维平台（四）：一键部署 + 端到端验收</a><a class="nav-next" href="../day-187/index.html">Day 187 综合项目 I（二）：端口扫描与指纹识别 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

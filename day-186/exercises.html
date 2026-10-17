@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 186 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 186 正文</a>
+  <h1>Day 186 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-186">Day 186 · 练习与验收清单</h1>
+<h2 id="_1">✅ 今日完成清单</h2>
+<ul>
+<li>[ ] 能画出资产模型五层：域名 → 子域名 → IP → 端口/服务 → 漏洞</li>
+<li>[ ] 能说出 A / AAAA / CNAME / MX / TXT 各自在测绘中的用途</li>
+<li>[ ] 能解释 <code>getaddrinfo</code> 的解析路径，以及为什么缓存会影响性能测试</li>
+<li>[ ] 能实现"域名 + 字典 → 并发解析 → 去重排序"的最小枚举器</li>
+<li>[ ] 能检测并过滤泛解析造成的假阳性</li>
+<li>[ ] 能调用 crt.sh，并清洗换行、通配符、大小写、末尾点、后缀伪装</li>
+<li>[ ] 能用 SQLite 存快照，并算出 added / removed / changed</li>
+<li>[ ] 能解释为什么"记录数"和"资产数"必须分开报告</li>
+<li>[ ] 跑通 4 个脚本的 <code>--self-test</code></li>
+<li>[ ] 完成下方至少 3 道练习题</li>
+</ul>
+<hr>
+<h2 id="_2">🧪 基础练习</h2>
+<h3 id="1">练习 1：把字典换成文件</h3>
+<p>用 <code>--words-file</code> 加载一份 50 行的字典（可自己写），对 <code>example.com</code> 做枚举，
+记录：候选数、命中数、耗时、错误数。</p>
+<p><strong>验收</strong>：输出里能区分"解析失败"和"没有这个子域"。</p>
+<h3 id="2">练习 2：给泛解析加单元测试</h3>
+<p>构造一个假 resolver：任意名字都返回 <code>192.0.2.99</code>，但 <code>www.example.test</code> 返回 <code>192.0.2.10</code>。
+验证枚举器只保留 <code>www</code>，不保留其他随机名字。</p>
+<p><strong>提示</strong>：仿照 <code>01-dns-enum-basic.py</code> 的 <code>self_test()</code>，用注入的 resolver，不碰网络。</p>
+<h3 id="3-ct">练习 3：手工验证 CT 清洗</h3>
+<p>用 <code>day186-crt.json</code>（或自己查一个域名）统计：
+- 原始记录数
+- <code>name_value</code> 拆分后的名字数
+- 去重后的名字数
+- 含 <code>*</code> 的名字数</p>
+<p>写一段 10 行以内的脚本输出这四个数字。</p>
+<h3 id="4">练习 4：快照差分补一个场景</h3>
+<p>给 <code>03-asset-inventory.py</code> 增加一个测试：
+"同一主机 IP 从 <code>[A, B]</code> 变成 <code>[B, A]</code> 时，不应判定为 changed"。</p>
+<p><strong>验收</strong>：现有实现已经排序，测试应通过；如果失败，说明排序逻辑被改坏了。</p>
+<hr>
+<h2 id="_3">🚀 进阶挑战</h2>
+<h3 id="1_1">挑战 1：加限速器</h3>
+<p>给枚举器加令牌桶：每秒最多 N 次解析（N 可配置）。
+要求：
+- 不改变原有结果；
+- 记录实际 QPS；
+- 当 <code>workers</code> 很大时，QPS 仍不超过 N。</p>
+<p><strong>提示</strong>：<code>threading.Lock</code> + 上次补充时间，或 <code>queue.Queue</code> 预填令牌。</p>
+<h3 id="2_1">挑战 2：多来源合并策略</h3>
+<p>实现 <code>merge_sources(ct_names, dns_assets)</code>：
+- 名字取并集；
+- IP 取并集；
+- 记录每个名字的来源（<code>ct</code> / <code>dns</code> / <code>both</code>）。</p>
+<p>用实验 1、2 的真实数据验证：应得到 75 条，其中 7 条 <code>both</code>、67 条 <code>ct</code>、1 条 <code>dns</code>。</p>
+<h3 id="3">挑战 3：差分告警分级</h3>
+<p>设计规则并实现：
+- <code>added</code> 且名字包含 <code>dev/test/staging</code> → 高优先级
+- <code>added</code> 且是根域或 <code>www</code> → 中优先级
+- <code>removed</code> → 低优先级（可能是正常下线）
+- <code>changed</code> 且 IP 从公网变内网 → 高优先级</p>
+<p>输出一个按优先级排序的告警列表。</p>
+<h3 id="4_1">挑战 4：缓存感知的性能测试</h3>
+<p>修改 <code>04-benchmark-concurrency.py</code>，让真实 DNS 实验使用<strong>每次新生成的随机子域</strong>
+（必然 NXDOMAIN，但仍是真实查询），比较：
+- 冷缓存串行
+- 冷缓存 16 线程
+- 热缓存串行</p>
+<p><strong>目标</strong>：用数据说明"缓存让串行看起来很快"这个假象。</p>
+<hr>
+<h2 id="_4">🧹 实验验收命令</h2>
+<p>在 <code>days/day-186-项目架构与子域名收集/code</code> 下逐条执行，全部应返回 0：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-dns-enum-basic.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">02</span>-crt-sh-advanced.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">03</span>-asset-inventory.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">04</span>-benchmark-concurrency.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p>真实网络实验（可选，需联网）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-dns-enum-basic.py<span class="w"> </span>--domain<span class="w"> </span>python.org<span class="w"> </span>--workers<span class="w"> </span><span class="m">16</span>
+python3<span class="w"> </span><span class="m">02</span>-crt-sh-advanced.py<span class="w"> </span>--domain<span class="w"> </span>python.org<span class="w"> </span>--retries<span class="w"> </span><span class="m">3</span>
+</code></pre></div>
+<h2 id="_5">📌 提交前自检</h2>
+<ul>
+<li>[ ] 没有把 <code>/tmp</code> 下的实验产物提交进仓库</li>
+<li>[ ] 没有把真实扫描结果（含内网 IP/域名）提交进公开仓库</li>
+<li>[ ] 所有脚本在无网络时也能 <code>--self-test</code> 通过</li>
+<li>[ ] README 中的数字与本次实际运行一致</li>
+</ul></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

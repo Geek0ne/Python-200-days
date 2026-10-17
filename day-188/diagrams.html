@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 188 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 188 正文</a>
+  <h1>Day 188 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-188-sqli-xss">Day 188 · 图解：SQLi 与 XSS 检测流程</h1>
+<h2 id="1">1. 扫描器三段式</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[baseline 正常请求] --&gt; B[payload 列表]
+    B --&gt; C[逐条发送]
+    C --&gt; D{oracle 判定}
+    D --&gt;|数据库错误特征| E[SQLi error-based]
+    D --&gt;|真假条件差异| F[SQLi boolean-based]
+    D --&gt;|原始 payload 未转义| G[XSS reflected]
+    E --&gt; H[findings + 置信度]
+    F --&gt; H
+    G --&gt; H
+    H --&gt; I[Markdown / JSON 报告]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[baseline 正常请求] --&gt; B[payload 列表]
+    B --&gt; C[逐条发送]
+    C --&gt; D{oracle 判定}
+    D --&gt;|数据库错误特征| E[SQLi error-based]
+    D --&gt;|真假条件差异| F[SQLi boolean-based]
+    D --&gt;|原始 payload 未转义| G[XSS reflected]
+    E --&gt; H[findings + 置信度]
+    F --&gt; H
+    G --&gt; H
+    H --&gt; I[Markdown / JSON 报告]
+</code></pre></div>
+<h2 id="2-sqli">2. SQLi：数据变成代码</h2>
+<pre class="plain"><code>正常:
+  SELECT id,name,price FROM products WHERE id = 1
+                                              ↑ 数据
+
+注入 1&#x27;:
+  SELECT id,name,price FROM products WHERE id = 1&#x27;
+                                                 ↑ 引号提前闭合
+  → unrecognized token: &quot;&#x27;&quot;
+  → 500 + &quot;SQL error: ...&quot;        ← 检测信号
+</code></pre>
+<p>参数化:</p>
+<pre class="plain"><code>  SQL 模板: SELECT ... WHERE id = ?
+  参数:     [&quot;1&#x27;&quot;]
+  数据库把 &quot;1&#x27;&quot; 当纯数据 → 不会报错
+</code></pre>
+<h2 id="3-xss">3. XSS：转义只改变表示</h2>
+<pre class="plain"><code>输入 payload:
+  &lt;svg/onload=alert(&#x27;LPX123&#x27;)&gt;
+
+/search（漏洞）响应:
+  &lt;p&gt;Results for: &lt;svg/onload=alert(&#x27;LPX123&#x27;)&gt;&lt;/p&gt;
+                   └──────── 原始 payload 存在 ────────┘
+  → 浏览器执行 → 真阳性
+
+/safe-search（修复）响应:
+  &lt;p&gt;Results for: &amp;lt;svg/onload=alert(&#x27;LPX123&#x27;)&amp;gt;&lt;/p&gt;
+                   └─ 文本仍是 alert，但 &lt; 已转义 ─┘
+  → 不执行 → 若按关键字判定就是假阳性
+</code></pre>
+<h2 id="4">4. 误报演练结果</h2>
+<pre class="plain"><code>endpoint           naive  precise  has_alert   raw  escaped
+/search             True     True       True  True    False
+/safe-search        True    False       True  False    True
+                    ↑        ↑
+                 误报      正确
+
+naive:   2 命中 / 1 假阳性
+precise: 1 命中 / 0 假阳性
+</code></pre>
+<h2 id="5">5. 本日真实扫描结果</h2>
+<pre class="plain"><code>severity: critical
+findings: 6
+  ├─ SQLi error-based    × 4   (payload: 1&#x27; / 1&quot; / 1) / 1&#x27;--)
+  ├─ SQLi boolean-based  × 1   (1 AND 1=1 vs 1 AND 1=2)
+  └─ XSS reflected       × 1   (/search, LPX 标记)
+</code></pre>
+<p>6 条 finding 里 5 条来自同一个 SQLi 根因（4 个 payload + 1 个布尔验证）。
+报告要能合并同类项，否则"发现 6 个漏洞"会夸大风险。</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
