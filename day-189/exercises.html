@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 189 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 189 正文</a>
+  <h1>Day 189 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-189">Day 189 练习与验收清单</h1>
+<h2 id="_1">一、完成清单</h2>
+<ul>
+<li>[ ] 能说清 <code>assets</code> 与 <code>scan_assets</code> 各自回答什么问题</li>
+<li>[ ] 能手写 <code>(ip, port, proto)</code> 的 UPSERT，并保留 <code>first_seen</code></li>
+<li>[ ] 能解释为什么不能用自增 id 或行数做集合差</li>
+<li>[ ] 能画出 <code>active → missing → gone → revived</code> 状态机</li>
+<li>[ ] 能说明 <code>grace</code> 的语义以及它为什么依赖扫描频率</li>
+<li>[ ] 能写出"每天最后一次快照"的聚合 SQL</li>
+<li>[ ] 能解释 autocommit 为什么比单事务慢两个数量级</li>
+<li>[ ] 能生成并打开单文件 HTML 看板</li>
+<li>[ ] 知道 <code>CREATE TABLE IF NOT EXISTS</code> 带来的静默失败风险</li>
+</ul>
+<h2 id="_2">二、真机验收（按顺序执行）</h2>
+<pre><code class="language-bash">cd days/day-189-asset-store-trends/code
+
+# 1. 全部自检
+for f in 0*.py; do echo &quot;== $f&quot;; python3 &quot;$f&quot; --self-test || exit 1; done
+
+# 2. 5 天端到端
+rm -rf /tmp/d189-scans /tmp/d189.db* /tmp/d189.html
+python3 00-fixture.py --out /tmp/d189-scans --days 5
+python3 05-ingest-pipeline.py --scan-dir /tmp/d189-scans \
+    --db /tmp/d189.db --out /tmp/d189.html
+
+# 3. 核对事件
+sqlite3 /tmp/d189.db \
+  &quot;SELECT event, COUNT(*) FROM events GROUP BY event ORDER BY event;&quot;
+
+# 4. 看板可打开
+test -s /tmp/d189.html &amp;&amp; grep -q '&lt;svg' /tmp/d189.html &amp;&amp; echo OK
+</code></pre>
+<p><strong>验收标准</strong>：</p>
+<ul>
+<li>5 个 <code>--self-test</code> 全部输出 ✅；</li>
+<li>事件统计中 <code>appeared=5, changed=1, missing=1, gone=1</code>；</li>
+<li>看板端口序列为 <code>5,5,6,5,5</code>；</li>
+<li>HTML 体积 &gt; 3KB 且包含 <code>&lt;svg</code>。</li>
+</ul>
+<p><strong>清理</strong>：</p>
+<pre><code class="language-bash">rm -rf /tmp/d189-scans /tmp/d189.db /tmp/d189.db-wal /tmp/d189.db-shm /tmp/d189.html
+</code></pre>
+<h2 id="_3">三、基础练习</h2>
+<h3 id="1">练习 1：当前暴露面报表</h3>
+<p>写一个 SQL，输出 <code>state='active'</code> 的资产，按 <code>service</code> 分组统计数量，
+并按数量降序。要求排除 <code>service IS NULL</code> 的行，并解释为什么 NULL 会被 <code>GROUP BY</code> 单独成组。</p>
+<p>参考：</p>
+<pre><code class="language-sql">SELECT service, COUNT(*) AS n
+  FROM assets
+ WHERE state='active' AND service IS NOT NULL
+ GROUP BY service
+ ORDER BY n DESC, service;
+</code></pre>
+<h3 id="2-ip">练习 2：某 IP 的端口时间线</h3>
+<p>给定 <code>ip='10.20.0.11'</code>，列出该 IP 每个端口在哪些天被观测到，
+输出 <code>(port, day, seen)</code>。思考：为什么必须 <code>JOIN scans</code> 才能拿到日期？</p>
+<h3 id="3">练习 3：区分"流量"与"存量"</h3>
+<p>分别写出：</p>
+<ol>
+<li>昨天新增的资产数（流量）；</li>
+<li>当前仍活跃、且首次出现于昨天的资产数（存量）。</li>
+</ol>
+<p>解释两者为什么可能不同，以及日报应该用哪个。</p>
+<h2 id="_4">四、进阶练习</h2>
+<h3 id="4-grace">练习 4：把 grace 改成时间口径</h3>
+<p>当前 <code>grace</code> 是"连续次数"。实现 <code>--max-silence-hours N</code>：
+只要 <code>last_seen</code> 距今超过 N 小时且本次未观测，就直接 <code>gone</code>。</p>
+<p>要求：</p>
+<ul>
+<li>保留旧的次数口径作为 <code>--grace</code>，两者互斥；</li>
+<li>自检覆盖"扫描间隔不均匀"的场景（例如 1 小时后又隔 30 小时）；</li>
+<li>说明时间口径在时钟回拨时会出什么问题。</li>
+</ul>
+<h3 id="5">练习 5：事件去抖与归一化</h3>
+<p>某些 banner 含随机 token（如 <code>SSH-2.0-OpenSSH_8.9 session=ab12cd</code>）。
+直接比较会让每天都产生 <code>changed</code>。</p>
+<p>要求：</p>
+<ol>
+<li>写一个 <code>normalize_banner()</code>，去掉 <code>session=...</code>、时间戳、随机十六进制串；</li>
+<li>用归一化后的值参与比较；</li>
+<li>保留原始 banner 到 <code>banner_raw</code> 列，便于取证；</li>
+<li>自检：同一服务两次不同 token 的 banner，归一化后应相等。</li>
+</ol>
+<h3 id="6">练习 6（挑战）：历史归档与趋势保留</h3>
+<p><code>scan_assets</code> 每天 10 万行，保留 3 年会到 1 亿行。设计归档方案：</p>
+<ul>
+<li>近 90 天保留逐次观测；</li>
+<li>90 天以前按天聚合到 <code>daily_stats(day, open_ports, new_assets, gone_assets)</code>；</li>
+<li>趋势看板优先读 <code>daily_stats</code>，缺失的日期回退查明细；</li>
+<li>写一个 <code>--archive-before YYYY-MM-DD</code> 命令，自检验证归档后
+  "总端口趋势"与归档前一致（允许 ±0）；</li>
+<li>说明归档为什么不可逆，以及备份策略。</li>
+</ul>
+<h2 id="_5">五、提交前自检</h2>
+<pre><code class="language-bash">python3 -m py_compile code/*.py
+git status --porcelain
+</code></pre>
+<ul>
+<li>不提交任何 <code>*.db</code>、<code>*.html</code>、<code>out/</code>、<code>__pycache__/</code>；</li>
+<li>每个脚本都能在空目录下 <code>--self-test</code> 通过；</li>
+<li>README 中粘贴的输出与本次真实运行一致。</li>
+</ul></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
