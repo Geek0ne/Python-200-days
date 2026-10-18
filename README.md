@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-188%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1333-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-189%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1345-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 188 / 200** · 进度的 94.0% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–188：资产测绘 / 端口指纹 / 漏洞检测）
+> **Day 189 / 200** · 进度的 94.5% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–189：资产测绘 / 端口指纹 / 漏洞检测 / 资产入库）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **188 天** |
-| 📝 总提交次数 | **1,333 commits** |
-| 📄 总代码行数 | **190,180 行** |
-| 📂 总文件数 | **1,323 个** |
-| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 188/200） |
+| 📅 已完成天数 | **189 天** |
+| 📝 总提交次数 | **1,345 commits** |
+| 📄 总代码行数 | **191,523 行** |
+| 📂 总文件数 | **1,334 个** |
+| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 189/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -357,7 +357,7 @@
 - ✅ Day 186 — 项目架构与子域名收集（五层资产模型 / 并发 DNS 枚举 / crt.sh 4,013 条记录→74 主机 / 泛解析过滤 / SQLite 快照差分；真机翻车：跨来源差分误报"67 个消失" / DNS 缓存污染并发基准）
 - ✅ Day 187 — 端口扫描与指纹识别（TCP connect + errno 分类 / 超时基准 / banner 与 HTTP 指纹置信度 / nmap 对账；真机翻车：只读到响应头丢 body、errno 11 误判为 error）
 - ✅ Day 188 — Web 漏洞检测（SQLi 报错型+布尔型 / 反射型 XSS 上下文判定 / baseline→payload→oracle / 误报演练 1→0；真机：本地靶场 6 条 finding、severity critical、去重后 2 个漏洞）
-- ⏳ Day 189 — 资产入库与趋势可视化（待生成）
+- ✅ Day 189 — 资产入库与趋势可视化（SQLite 双层资产模型 / 增量快照与 grace 去抖 / 变更事件审计 / 30 天趋势 + 单文件 HTML 看板；真机翻车：scan_assets 漏写导致看板全 0、20000 行 autocommit 基准跑不完；实测 12.99ms/行 → 7µs/行、索引查询 4.2x）
 - ⏳ Day 190 — 定时巡检、变更告警与一键部署（待生成）
 
 </details>
