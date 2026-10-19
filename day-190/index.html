@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 190 — 定时巡检、变更告警与一键部署</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 190 — 定时巡检、变更告警与一键部署</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">748 行</span>
+    <span class="badge">6 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（6 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-190-scheduled-inspection-alerting" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2">概念速览</a>
+<a class="toc-l2" href="#_3">概念解释</a>
+<a class="toc-l3" href="#1-15">1. 为什么&quot;跑完再睡 15 分钟&quot;是错的</a>
+<a class="toc-l3" href="#2">2. 网格带来了两个新问题</a>
+<a class="toc-l3" href="#3">3. 调度器只管&quot;触发&quot;，不管&quot;只生效一次&quot;</a>
+<a class="toc-l3" href="#4">4. 至少一次 + 幂等 = 恰好一次的效果</a>
+<a class="toc-l3" href="#5-pending">5. 崩溃恢复：只查 pending 会卡死任务</a>
+<a class="toc-l3" href="#6">6. 告警降噪：一条漏斗，五道闸</a>
+<a class="toc-l3" href="#7">7. 一键部署：把隐性状态写成文件</a>
+<a class="toc-l2" href="#_4">原理解释</a>
+<a class="toc-l3" href="#8">8. 漂移的数学</a>
+<a class="toc-l3" href="#9-grace">9. 为什么 grace 期不能省</a>
+<a class="toc-l3" href="#10-full-jitter">10. 为什么退避要加 full jitter</a>
+<a class="toc-l3" href="#11">11. 令牌桶为什么不许&quot;直接丢弃&quot;</a>
+<a class="toc-l3" href="#12">12. 为什么指纹里不能放&quot;描述&quot;</a>
+<a class="toc-l2" href="#api">定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#_5">调度</a>
+<a class="toc-l3" href="#_6">任务队列</a>
+<a class="toc-l3" href="#_7">告警</a>
+<a class="toc-l3" href="#_8">部署</a>
+<a class="toc-l2" href="#_9">图解</a>
+<a class="toc-l3" href="#_10">调度网格与补跑</a>
+<a class="toc-l3" href="#_11">告警漏斗</a>
+<a class="toc-l2" href="#_12">实战代码案例</a>
+<a class="toc-l2" href="#_13">实战实验手册</a>
+<a class="toc-l3" href="#1-vs-sleep">实验 1：固定延迟 vs 锚点网格（虚拟时钟，不 sleep）</a>
+<a class="toc-l3" href="#2-sqlite">实验 2：重复入队、崩溃重领、并发去重（真实 SQLite）</a>
+<a class="toc-l3" href="#3500-2-http">实验 3：500 条变化 → 2 条告警（真实 HTTP 接收端）</a>
+<a class="toc-l3" href="#4_1">实验 4：去重键设计翻车（同一事件流，三种指纹）</a>
+<a class="toc-l3" href="#5">实验 5：端到端验收（差异 → 队列 → 告警 → 断言）</a>
+<a class="toc-l3" href="#6docker-compose">实验 6：Docker Compose 一键部署（真容器）</a>
+<a class="toc-l2" href="#_14">翻车实验</a>
+<a class="toc-l3" href="#1-pending-claim">翻车 1：只查 pending 的 claim，让崩溃任务永远卡死</a>
+<a class="toc-l3" href="#2cron-60-75-database-is-locked">翻车 2：cron 每 60 秒触发，单次跑 75 秒 → database is locked</a>
+<a class="toc-l3" href="#3importlib-dataclass-attributeerror">翻车 3（小）：importlib 加载带 dataclass 的脚本报 AttributeError</a>
+<a class="toc-l2" href="#_15">收尾卫生</a>
+<a class="toc-l2" href="#_16">思考题</a>
+<a class="toc-l2" href="#_17">下一步</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-190">Day 190 — 定时巡检、变更告警与一键部署</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战<br>
+<strong>项目</strong>：企业资产监控系统 · 第 5/5 天<br>
+<strong>子主题</strong>：调度窗口 · 重试幂等 · 告警降噪 · Compose 一键部署<br>
+<strong>代码</strong>：6 个脚本 + 1 套 Compose 栈，全部带自检<br>
+<strong>实测环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / SQLite 3.45.1 / Docker 29.1.3 / Compose 2.40.3 / 2026-10-20 06:03–06:06 CST</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<p><code>@text
+Day 186  资产发现        → 有哪些域名/IP
+Day 187  端口 + 指纹     → 哪些端口开着、跑什么服务
+Day 188  Web 漏洞检测    → 开着的服务有没有洞
+Day 189  入库 + 可视化   → 把"某一天"变成"可比较的历史"
+Day 190  调度 + 告警     → 让它自己跑，出事自己喊人   ← 今天</code>@</p>
+<p>前四天造好了一台"能手动开的机器"。今天要解决的是<strong>它不在你盯着的时候怎么办</strong>：</p>
+<ol>
+<li>谁来每天按时按点跑？（调度）</li>
+<li>跑到一半崩了、重试了，数据会不会写两遍？（幂等）</li>
+<li>一晚上 500 条变化，怎么让人不把告警群静音？（降噪）</li>
+<li>换台机器，怎么三分钟内复现出同样一套？（一键部署）</li>
+</ol>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整手册见 <strong>concepts.md</strong>，图解见 <strong>diagrams/README.md</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>固定延迟</td>
+<td>上次完成 + interval</td>
+<td>漂移会累积，一天能漂 3 分钟</td>
+</tr>
+<tr>
+<td>锚点网格</td>
+<td>anchor + n × interval</td>
+<td>不累积漂移，巡检的正确姿势</td>
+</tr>
+<tr>
+<td>抖动 jitter</td>
+<td>把触发时刻在窗口内摊开</td>
+<td>防止 8 个副本同一秒打爆目标</td>
+</tr>
+<tr>
+<td>grace 期</td>
+<td>迟到多久之内还值得补跑</td>
+<td>抑制停机恢复后的补跑风暴</td>
+</tr>
+<tr>
+<td>catch-up storm</td>
+<td>停机后把积压格子一口气补跑</td>
+<td>一次恢复 = 24 次全量扫描</td>
+</tr>
+<tr>
+<td>幂等键 idem_key</td>
+<td>业务语义的唯一标识</td>
+<td>重试/重叠不产生第二次副作用</td>
+</tr>
+<tr>
+<td>租约 lease</td>
+<td>领取时写明"我占到什么时候"</td>
+<td>崩溃后任务能被别人接手</td>
+</tr>
+<tr>
+<td>at-least-once</td>
+<td>至少执行一次</td>
+<td>现实里唯一能保证的投递语义</td>
+</tr>
+<tr>
+<td>恰好一次（效果）</td>
+<td>重放不会重复生效</td>
+<td>靠唯一约束，不靠协议</td>
+</tr>
+<tr>
+<td>full jitter</td>
+<td>退避时间取 random(0, ceiling)</td>
+<td>防同步重试的 thundering herd</td>
+</tr>
+<tr>
+<td>永久错误</td>
+<td>重试也不会好的错误</td>
+<td>重试它只会放大故障</td>
+</tr>
+<tr>
+<td>告警指纹</td>
+<td>什么算"同一个问题"</td>
+<td>决定降噪会不会吞掉真警报</td>
+</tr>
+<tr>
+<td>冷却窗口</td>
+<td>同指纹多久内不重复打扰</td>
+<td>压掉端口抖动噪声</td>
+</tr>
+<tr>
+<td>分组</td>
+<td>一个时间窗合成一条消息</td>
+<td>500 条变 2 条</td>
+</tr>
+<tr>
+<td>令牌桶</td>
+<td>单位时间最多发几条</td>
+<td>限流，但不许静默丢数据</td>
+</tr>
+<tr>
+<td>静默窗口</td>
+<td>维护期只计数不打扰</td>
+<td>计划内变更不该叫人</td>
+</tr>
+<tr>
+<td>liveness / readiness</td>
+<td>活着 / 能干活</td>
+<td>心跳文件能抓"活着但卡死"</td>
+</tr>
+<tr>
+<td>Compose 健康依赖</td>
+<td>depends_on: service_healthy</td>
+<td>消掉启动竞态</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">概念解释</h2>
+<h3 id="1-15">1. 为什么"跑完再睡 15 分钟"是错的</h3>
+<p>最直觉的写法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+    <span class="n">scan</span><span class="p">()</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">900</span><span class="p">)</span>
+</code></pre></div>
+<p>它假设 <code>scan()</code> 不花时间。真实扫描 1~3 秒，于是每一天的起点都在往后蹭：</p>
+<p><code>@text
+第 1 次   00:00:00 开始，00:00:02 结束
+第 2 次   00:15:02 开始   ← 晚了 2 秒
+第 3 次   00:30:04 开始   ← 晚了 4 秒
+...
+第 96 次  23:47:xx 开始   ← 一天累计晚了 187 秒</code>@</p>
+<p>这不是"误差"，是<strong>系统性的积分</strong>。一天 96 次、每次 2 秒，就是 192 秒。三个月后，你的"每天 0 点巡检"会跑到凌晨 3 点。</p>
+<p>正确写法是锚点网格：<strong>第 n 次的时刻由锚点算出来，和执行耗时无关</strong>。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">slot</span> <span class="o">=</span> <span class="nb">int</span><span class="p">((</span><span class="n">now</span> <span class="o">-</span> <span class="n">anchor</span><span class="p">)</span> <span class="o">//</span> <span class="n">interval</span><span class="p">)</span>
+<span class="n">fire_at</span> <span class="o">=</span> <span class="n">anchor</span> <span class="o">+</span> <span class="n">slot</span> <span class="o">*</span> <span class="n">interval</span> <span class="o">+</span> <span class="n">jitter_offset</span><span class="p">(</span><span class="n">slot</span><span class="p">)</span>
+</code></pre></div>
+<p>实测对比（24 小时 / 96 格）：固定延迟漂移 <strong>187.0s</strong>，固定频率只受抖动影响 <strong>-17.1s</strong>。</p>
+<h3 id="2">2. 网格带来了两个新问题</h3>
+<p><strong>问题一：错过的格子补不补？</strong></p>
+<p>进程 02:00 挂到 08:00，恢复时 24 个格子都过期了。</p>
+<ul>
+<li>全补：24 次全量扫描瞬间打出去，目标侧看到的是"攻击"，自己这边看到的是超时雪崩</li>
+<li>不补：监控出现 6 小时空白，且没人知道</li>
+</ul>
+<p>正确做法是第三条路：<strong>只补最近一个格子，其余记为 skipped 并落审计表</strong>。判据是"这条巡检结果现在还有意义吗"——巡检看的是当前状态，6 小时前的结果已经过期。</p>
+<p><strong>问题二：同时刻的实例会不会撞车？</strong></p>
+<p>8 个副本用同一个锚点，没有抖动时窗口跨度 0 秒（实测），等于 8 份流量同时到。加 ±8% 抖动后跨度 85 秒（实测），总工作量不变，峰值降到 1/8。</p>
+<p>注意：抖动必须<strong>确定</strong>。用 <code>random.random()</code> 的话，重启后同一个 slot 会算出不同偏移，幂等键对不上，同一格会执行两次。用 <code>hash(job_id + slot)</code> 做种子。</p>
+<h3 id="3">3. 调度器只管"触发"，不管"只生效一次"</h3>
+<p>cron 每 60 秒触发一次，而一次扫描要 75 秒 —— 这是真实项目里最常见的配置错误。后果不只是"跑两遍"，而是两个进程同时写同一个 SQLite：</p>
+<p><code>@text
+Traceback (most recent call last):
+  File "/tmp/d190-cron/job.py", line 6, in &lt;module&gt;
+    conn.execute("BEGIN IMMEDIATE")
+sqlite3.OperationalError: database is locked</code>@</p>
+<p>这是本次真机实验的实际输出（见实验 3）。SQLite 的默认 busy timeout 是 5 秒，第一个进程持锁 75 秒，第二个等 5 秒后放弃。</p>
+<p>解法不是"把 timeout 调大"（那只是把冲突推迟），而是<strong>入口互斥 + 任务幂等</strong>：</p>
+<ul>
+<li>进程级：<code>flock -n</code>，拿不到锁直接退出（不是排队）</li>
+<li>任务级：每个时间格子一个幂等键，写库时 UNIQUE 挡住重复</li>
+</ul>
+<h3 id="4">4. 至少一次 + 幂等 = 恰好一次的效果</h3>
+<p>分布式系统里没有免费的 exactly-once。能保证的是：</p>
+<ol>
+<li>任务<strong>至少</strong>被投递一次（租约 + 失败重投）</li>
+<li>副作用<strong>最多</strong>生效一次（唯一约束）</li>
+</ol>
+<p>两者相乘，才是业务意义上的"恰好一次"。</p>
+<p><code>@text
+claim:   UPDATE jobs SET status='running', lease_until=now+30
+                  WHERE idem_key=? AND (status='pending' OR lease 过期)
+finish:  INSERT OR IGNORE INTO effects(idem_key)   ← 第二次插入被主键挡住</code>@</p>
+<p>实验 2 的数字：60 个任务、8 个 worker 并发、0.03 秒跑完，<strong>effects=60/60</strong>，没有一条重复副作用。</p>
+<h3 id="5-pending">5. 崩溃恢复：只查 pending 会卡死任务</h3>
+<p>第一版 <code>claim()</code> 只认 <code>status='pending'</code>。worker 领了任务后崩溃，任务永远停在 <code>running</code> —— 既不会重试，也不会被接手，成了僵尸。</p>
+<p>这是本次编写时<strong>真实踩到</strong>的坑（实验 4 有完整过程）。修复后的条件必须同时认领"到期的 pending"和"租约过期的 running"。</p>
+<h3 id="6">6. 告警降噪：一条漏斗，五道闸</h3>
+<p><code>@text
+500 条变化
+  → 去重（同资产同规则，30 分钟内只发一次）    拦掉 444
+  → 静默（维护窗口内只计数）
+  → 分组（一个时间窗合成一条）
+  → 限流（令牌桶，超出的进 overflow 队列）
+  → 2 条消息，critical 20/20 全部送达</code>@</p>
+<p>关键不是"少发"，而是<strong>该发的不能少</strong>。实验 5 证明：指纹设计错一次，就能让 4 条 critical 凭空消失（实测 v1 丢失 4 条）。</p>
+<h3 id="7">7. 一键部署：把隐性状态写成文件</h3>
+<p>手工部署的隐性状态有四种：依赖、端口、残留容器、健康判断。Compose 把它们变成声明式：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">yaml</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nt">services</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">worker</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">depends_on</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">sink</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">condition</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">service_healthy</span><span class="w">   </span><span class="c1"># 等真能接流量，不是等容器起来</span>
+</code></pre></div>
+<p>再加一层 worker 自己的心跳 healthcheck：<code>now - mtime(heartbeat) &lt; 20</code>。为什么不用 HTTP？因为"端口还在监听但循环卡死"是最常见的故障形态，HTTP 探活抓不到。</p>
+<hr>
+<h2 id="_4">原理解释</h2>
+<h3 id="8">8. 漂移的数学</h3>
+<p>固定延迟下，第 n 次的开始时刻：</p>
+<p><code>@text
+T(n) = T(0) + n * interval + Σ(i=1..n) duration(i)
+漂移(n) = Σ duration(i)   ← 单调递增，不可逆</code>@</p>
+<p>锚点网格下：</p>
+<p><code>@text
+T(n) = anchor + n * interval + jitter(n)
+漂移(n) = jitter(n)       ← 有界，不累积</code>@</p>
+<p>所以判断一个调度实现对不对，只需要问：<strong>它的触发时刻函数里有没有"上次的完成时间"</strong>。有，就会漂。</p>
+<h3 id="9-grace">9. 为什么 grace 期不能省</h3>
+<p>设 grace=0，则停机 6 小时后所有格子都"过期"，一个都不补，监控出现 6 小时盲区；设 grace=∞，则补 24 次，恢复瞬间产生 24 倍负载。grace 的本质是<strong>给"过期"一个可解释的边界</strong>：300 秒内的结果还能代表"现在"，再早就只是历史。</p>
+<p>实测：积压 24 格 → 补 1 次、跳过 23 次。</p>
+<h3 id="10-full-jitter">10. 为什么退避要加 full jitter</h3>
+<p>所有失败任务的下一次重试时间如果都按同一个指数曲线，它们会在同一秒集体回来。下游刚恢复就要再挨一次峰值，这叫 thundering herd。</p>
+<p>full jitter 把等待摊成 <code>uniform(0, ceiling)</code>：期望不变，峰值削平。实测（attempt 1/3/20）：0.13s / 0.54s / 8.06s，封顶 60s。</p>
+<h3 id="11">11. 令牌桶为什么不许"直接丢弃"</h3>
+<p>丢弃最省事，但丢的是<strong>证据</strong>：出事时你无法回答"当时到底有多少条"。所以超限的条目进 overflow 队列，下一条消息里带"另有 N 条被合并"。实测：限流触发 4 次，5 条最终全部送达。</p>
+<h3 id="12">12. 为什么指纹里不能放"描述"</h3>
+<p><code>@text
+fingerprint = rule + asset          → 17 条消息，0 丢失   ✅
+fingerprint = rule + asset + "第3次" → 125 条消息，0 丢失  ❌ 等于没降噪
+fingerprint = rule                   → 2 条消息，丢 4 条   ❌ 更危险</code>@</p>
+<p>身份（哪个资产、哪条规则）稳定；描述（第几次、多少条、什么时间）每次都变。把描述放进指纹，冷却窗口永远命不中。</p>
+<hr>
+<h2 id="api">定义与使用方法（API 速查）</h2>
+<h3 id="_5">调度</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>参数</th>
+<th>返回</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>grid_fire_time(anchor, slot, policy, rng)</code></td>
+<td>锚点、格子号、策略、随机源</td>
+<td>datetime</td>
+<td>第 slot 格的触发时刻，抖动确定可复现</td>
+</tr>
+<tr>
+<td><code>plan_catchup(anchor, last_slot, now, policy)</code></td>
+<td>锚点、上次执行格、现在</td>
+<td>CatchUpPlan(fires, skipped)</td>
+<td>grace 内最多补 max_catchup 个</td>
+</tr>
+<tr>
+<td><code>burst_spread(policy, workers)</code></td>
+<td>策略、实例数</td>
+<td>(无抖动跨度, 有抖动跨度, 样本)</td>
+<td>验证抖动是否摊平尖峰</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_6">任务队列</h3>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>关键行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enqueue(conn, job, idem_key, payload)</code></td>
+<td>UNIQUE 冲突返回 False（去重）</td>
+</tr>
+<tr>
+<td><code>claim(conn, worker, now, lease_s)</code></td>
+<td>BEGIN IMMEDIATE + 条件 UPDATE，同时认领过期租约</td>
+</tr>
+<tr>
+<td><code>finish_success(conn, key, kind, now)</code></td>
+<td>INSERT OR IGNORE effects，返回是否首次生效</td>
+</tr>
+<tr>
+<td><code>finish_failure(..., permanent)</code></td>
+<td>permanent 或 attempts 超限 → dead；否则退避重投</td>
+</tr>
+<tr>
+<td><code>backoff_delay(attempt, rng)</code></td>
+<td>min(60, 1×2^(n-1)) 上的 full jitter</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_7">告警</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>参数</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>AlertPipeline.submit(alert, now)</code></td>
+<td>Alert、单调时钟</td>
+<td>走完静默→去重→分组→限流</td>
+</tr>
+<tr>
+<td><code>AlertPipeline.flush(now, force)</code></td>
+<td>时间、是否强制</td>
+<td>满窗或满批时投递</td>
+</tr>
+<tr>
+<td><code>AlertPipeline.close(now)</code></td>
+<td>时间</td>
+<td>强制冲刷 + 排空 overflow</td>
+</tr>
+<tr>
+<td><code>Alert.fingerprint()</code></td>
+<td>—</td>
+<td><code>rule|asset</code>，不含 severity</td>
+</tr>
+<tr>
+<td><code>HttpSender.send(payload)</code></td>
+<td>dict</td>
+<td>3 次重试，指数退避，2s 超时</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_8">部署</h3>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>bash deploy/deploy.sh up</code></td>
+<td>preflight → build → up --wait → 等第一条告警 → 打印 counts</td>
+</tr>
+<tr>
+<td><code>bash deploy/deploy.sh status</code></td>
+<td>容器状态 + /health + /counts</td>
+</tr>
+<tr>
+<td><code>bash deploy/deploy.sh logs</code></td>
+<td>最近 40 行日志</td>
+</tr>
+<tr>
+<td><code>bash deploy/deploy.sh down</code></td>
+<td>down -v + 校验端口释放 + 校验容器为 0</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_9">图解</h2>
+<p>完整版见 <strong>diagrams/README.md</strong>，这里放两张最关键的。</p>
+<h3 id="_10">调度网格与补跑</h3>
+<p><code>@text
+锚点网格：  |----|----|----|----|----|----|
+            s0   s1   s2   s3   s4   s5
+停机 6h 后：                                ▲ 现在
+            积压 s1..s24
+            无策略：24 次同时补跑（catch-up storm）
+            有策略：只补 1 次，skipped=23 落审计</code>@</p>
+<h3 id="_11">告警漏斗</h3>
+<p><code>@mermaid
+flowchart TD
+    E[Alert] --&gt; S{静默窗口?}
+    S -- 是 --&gt; X[只计数]
+    S -- 否 --&gt; D{fingerprint 冷却中?}
+    D -- 是且未升级 --&gt; X
+    D -- 否/升级 --&gt; B[分组缓冲]
+    B --&gt; W{窗口满 或 批量满?}
+    W -- 否 --&gt; B
+    W -- 是 --&gt; T{令牌桶有令牌?}
+    T -- 是 --&gt; M[合并成一条消息]
+    T -- 否 --&gt; O[overflow 队列]
+    O --&gt; M
+    M --&gt; H[HTTP 投递 + 重试]</code>@</p>
+<hr>
+<h2 id="_12">实战代码案例</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>作用</th>
+<th>自检</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code/00-fixture.py</code></td>
+<td>68 台资产的两份快照 + 差异</td>
+<td>6 项</td>
+</tr>
+<tr>
+<td><code>code/01-scheduler-basic.py</code></td>
+<td>固定延迟/固定频率/抖动/补跑推演</td>
+<td>5 项</td>
+</tr>
+<tr>
+<td><code>code/02-retry-idempotency.py</code></td>
+<td>入队去重、租约、幂等写、退避</td>
+<td>6 项</td>
+</tr>
+<tr>
+<td><code>code/03-alert-dedup.py</code></td>
+<td>五级漏斗 + 本地 HTTP 接收端</td>
+<td>7 项</td>
+</tr>
+<tr>
+<td><code>code/04-pitfall-dedup-key.py</code></td>
+<td>三种指纹设计的真实结局</td>
+<td>5 项</td>
+</tr>
+<tr>
+<td><code>code/05-e2e-acceptance.py</code></td>
+<td>差异 → 队列 → 告警 → 验收</td>
+<td>6 项断言</td>
+</tr>
+</tbody>
+</table>
+<p>全部只用标准库。跑法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-190-scheduled-inspection-alerting/code
+python3<span class="w"> </span><span class="m">01</span>-scheduler-basic.py
+python3<span class="w"> </span><span class="m">02</span>-retry-idempotency.py<span class="w"> </span>--demo
+python3<span class="w"> </span><span class="m">03</span>-alert-dedup.py<span class="w"> </span>--e2e
+python3<span class="w"> </span><span class="m">04</span>-pitfall-dedup-key.py
+python3<span class="w"> </span><span class="m">05</span>-e2e-acceptance.py<span class="w"> </span>--e2e
+</code></pre></div>
+<hr>
+<h2 id="_13">实战实验手册</h2>
+<blockquote>
+<p>以下所有「实际结果」都是 2026-10-20 06:03–06:06（CST）在本机跑出来的原始输出，<br>
+不是示意。环境：Python 3.12.3 / SQLite 3.45.1 / Docker 29.1.3 / Compose 2.40.3。</p>
+</blockquote>
+<h3 id="1-vs-sleep">实验 1：固定延迟 vs 锚点网格（虚拟时钟，不 sleep）</h3>
+<p><strong>目的</strong>：验证"漂移是耗时的积分"，并量出 24 小时的差距。</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-190-scheduled-inspection-alerting/code
+</code></pre></div>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-scheduler-basic.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">01</span>-scheduler-basic.py<span class="w"> </span>--simulate<span class="w"> </span><span class="m">24</span>
+python3<span class="w"> </span><span class="m">01</span>-scheduler-basic.py<span class="w"> </span>--outage<span class="w"> </span><span class="m">6</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>[PASS] 抖动不超界: max_offset=71.7s
+[PASS] 抖动确定可复现: 同 slot 同种子结果一致
+[PASS] 补跑被合并: fires=1 skipped=23
+[PASS] 固定延迟漂移更大: delay=197s rate=-27s
+[PASS] 抖动摊平尖峰: solid=0s spread=85s
+
+全部通过（5 项）
+
+推演窗口: 24h  格子: 900s  抖动: ±8%
+------------------------------------------------------------------
+策略                执行次数       末次漂移(秒)        末次时刻
+fixed-delay         96         187.0    23:48:06
+fixed-rate          96         -17.1    23:59:42
+------------------------------------------------------------------
+固定延迟的漂移 ≈ 每轮耗时累计： 187.0s ≈ 96 轮 × 约 2s
+固定频率的漂移只来自抖动上界： -17.1s ≤ 72s
+------------------------------------------------------------------
+8 个实例同锚点触发：
+  无抖动窗口跨度 = 0s（全部同时打出去）
+  有抖动窗口跨度 = 85s，偏移样本(s) = [-25, -50, 21, -61, 5, -19, -63, 1]
+
+停机 6h 后恢复（格子 900s，grace 300s）：
+  积压格子数        : 24
+  无策略会补跑      : 24 次（catch-up storm）
+  有 grace+上限     : 补跑 1 次，跳过 23 次
+</code></pre>
+<p><strong>结论</strong>：固定延迟一天漂 187 秒，且随天数线性增长；锚点网格的偏差只剩抖动上界（72s，且不累积）。停机 6 小时的补跑从 24 次压到 1 次。</p>
+<p><strong>清理</strong>：无副作用（纯内存推演）。</p>
+<hr>
+<h3 id="2-sqlite">实验 2：重复入队、崩溃重领、并发去重（真实 SQLite）</h3>
+<p><strong>目的</strong>：证明"至少一次投递 + 幂等写"能拼出恰好一次的效果。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-retry-idempotency.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">02</span>-retry-idempotency.py<span class="w"> </span>--demo
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>[A] 同一 idem_key 被 4 次重复入队（cron 重叠的真实形态）
+    enqueue 返回: [True, False, False, False]
+    表里实际行数: 1  → 3 次被 UNIQUE 挡住
+
+[B] 任务前两次连接重置，第三次成功
+    t= 1000.0 scan:2026-10-20T10:00Z:assets -&gt; pending(+0.64s)
+    t= 1001.0 scan:2026-10-20T10:00Z:assets -&gt; pending(+1.28s)
+    t=1002.28 scan:2026-10-20T10:00Z:assets -&gt; done(applied=True)
+    最终: status=done attempts=3 effects=1
+
+[C] 8 个 worker 并发处理 60 个任务，每个任务都会写一次副作用
+    耗时 0.03s，处理结果按状态: [(&#x27;done&#x27;, 60, 60)]
+    effects 行数 = 60 / 60 个任务
+
+[D] 永久错误（400 参数错误）不应重试
+    bad-target -&gt; dead → status=dead attempts=1（attempts=1 即放弃）
+
+[E] worker 领了任务但崩溃（不 finish），租约到期后被另一个 worker 接手
+    第一次领取: crash-case（w-crashed）
+    t+1s 再领: None（被租约挡住）
+    t+3s 再领: crash-case → 崩溃任务可恢复
+</code></pre>
+<p><strong>结论</strong>：4 次重复入队只落 1 行；60 个任务 8 线程并发只产生 60 条副作用；崩溃任务在租约过期后可被接手。</p>
+<p><strong>清理</strong>：脚本自建临时目录并在结束时删除（含 -wal/-shm）。</p>
+<hr>
+<h3 id="3500-2-http">实验 3：500 条变化 → 2 条告警（真实 HTTP 接收端）</h3>
+<p><strong>目的</strong>：量出降噪漏斗的压缩比，并验证"接收端 500 时消息不丢"。</p>
+<p><strong>准备</strong>：脚本自己在本机随机端口起 ThreadingHTTPServer，不需要外部服务。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-alert-dedup.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">03</span>-alert-dedup.py<span class="w"> </span>--e2e
+python3<span class="w"> </span><span class="m">03</span>-alert-dedup.py<span class="w"> </span>--e2e<span class="w"> </span>--flaky-receiver
+</code></pre></div>
+<p><strong>实际结果</strong>（正常接收端）：</p>
+<pre class="plain"><code>接收端: 127.0.0.1:41599  (前 0 次故意 500)
+输入事件           : 500
+去重拦截           : 444
+静默拦截           : 0
+严重级升级放行     : 0
+限流合并           : 0
+发出的消息         : 2
+HTTP 成功 POST     : 2  失败次数: 0
+接收端收到         : 2  总请求: 2
+耗时               : 26.3 ms
+送达的 critical 条 : 20 / 20
+送达总条数         : 56 (含合并的限流条目)
+验收: PASS
+</code></pre>
+<p><strong>实际结果</strong>（接收端前 2 次返回 500）：</p>
+<pre class="plain"><code>接收端: 127.0.0.1:33769  (前 2 次故意 500)
+输入事件           : 500
+去重拦截           : 444
+发出的消息         : 2
+HTTP 成功 POST     : 2  失败次数: 2
+接收端收到         : 2  总请求: 4
+耗时               : 181.2 ms
+送达的 critical 条 : 20 / 20
+验收: PASS
+</code></pre>
+<p><strong>结论</strong>：500 → 2 条（压缩 250 倍），critical 20/20 全达；接收端 500 时发送端重试 2 次后成功，总请求 4、成功投递 2，消息没有丢也没有重复入库。</p>
+<p><strong>清理</strong>：接收端随进程退出自动关闭端口，无残留。</p>
+<hr>
+<h3 id="4_1">实验 4：去重键设计翻车（同一事件流，三种指纹）</h3>
+<p><strong>目的</strong>：证明"降噪设计错"比"不降噪"更危险。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-pitfall-dedup-key.py
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>事件流: 125 条，其中 critical 5 条
+分布: {&#x27;info&#x27;: 120, &#x27;critical&#x27;: 5}
+
+方案                   消息数    丢失 critical  说明
+------------------------------------------------------------------------------
+v1 rule                2              4  指纹=规则，冷却 600s
+v2 rule+asset+title        125              0  指纹=规则+资产+标题(含次数)
+v3 rule+asset         17              0  指纹=规则+资产，高危放行
+------------------------------------------------------------------------------
+
+v1 的问题：消息少，但把 4 条高危一起吞了——比不降噪更危险。
+v2 的问题：一条没丢，但发了 125 条消息，等于把收件人训练成盲点。
+v3 的结果：17 条消息（12 个资产各 1 条 + 5 条高危），丢失 0。
+</code></pre>
+<p><strong>结论</strong>：指纹必须放"身份"（rule + asset），不能只放规则（吞高危），也不能放描述（等于没降噪）。</p>
+<p><strong>清理</strong>：无副作用。</p>
+<hr>
+<h3 id="5">实验 5：端到端验收（差异 → 队列 → 告警 → 断言）</h3>
+<p><strong>目的</strong>：把前四步串成一条流水线，用退出码而不是肉眼判定成败。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">05</span>-e2e-acceptance.py<span class="w"> </span>--e2e
+<span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;exit=</span><span class="nv">$?</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>接收端: 127.0.0.1:37763
+
+验收清单
+----------------------------------------------------------------------
+[PASS] 任务数等于差异数（重复入队被去重）            jobs=7 entries=7
+[PASS] 每个任务只产生一次副作用                 effects=7 dup=0
+[PASS] 严重事件全部送达                     critical=2
+[PASS] 消息条数受控                       messages=1
+[PASS] 消息内无重复条目                     dup_items=0
+[PASS] 送达总数与漏斗统计一致                  delivered=7 received=7
+----------------------------------------------------------------------
+漏斗: 收到 7 / 去重 0 / 消息 1 / 服务端收到 1
+队列: jobs=7 effects=7
+...
+总体: ACCEPTED
+exit=0
+</code></pre>
+<p><strong>结论</strong>：7 条差异（2 critical + 3 warning + 2 info）重复入队两遍，最终仍是 7 个任务、7 条副作用、1 条消息、0 重复条目。</p>
+<p><strong>清理</strong>：临时目录随进程退出删除；接收端自动关闭。</p>
+<hr>
+<h3 id="6docker-compose">实验 6：Docker Compose 一键部署（真容器）</h3>
+<p><strong>目的</strong>：验证"换台机器，一条命令拉起整套巡检 + 告警接收端"。</p>
+<p><strong>环境</strong>：Docker 29.1.3 / Compose 2.40.3 / 基础镜像 python:3.12-slim（本机已有）。</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-190-scheduled-inspection-alerting/deploy
+docker<span class="w"> </span>compose<span class="w"> </span>version
+ss<span class="w"> </span>-ltn<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span><span class="m">18090</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;18090 free&quot;</span>
+</code></pre></div>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">bash<span class="w"> </span>deploy.sh<span class="w"> </span>up
+bash<span class="w"> </span>deploy.sh<span class="w"> </span>status
+</code></pre></div>
+<p><strong>实际结果</strong>（节选）：</p>
+<pre class="plain"><code>[deploy] preflight ok: docker + compose + 端口 18090 空闲
+[deploy] 构建镜像...
+ sink  Built
+ worker  Built
+[deploy] 启动...
+ Container d190-sink-1  Started
+ Container d190-sink-1  Healthy
+ Container d190-worker-1  Started
+ Container d190-worker-1  Healthy
+[deploy] 已收到 1 条告警
+NAME            STATUS
+d190-sink-1     Up 25 seconds (healthy)
+d190-worker-1   Up 19 seconds (healthy)
+
+[deploy] counts: {&quot;alerts&quot;: 1, &quot;items&quot;: 1, &quot;duplicates&quot;: 0, &quot;invalid&quot;: 0, &quot;last_at&quot;: &quot;2026-10-19T22:03:52&quot;, &quot;distinct&quot;: 1}
+[deploy] 验收通过：sink 健康 + worker 心跳 + 告警落库
+</code></pre>
+<p>跑约 80 秒后再看（端口扫描每 5 秒一轮，模拟目标每 3 轮翻转一次状态）：</p>
+<pre class="plain"><code>$ curl -s http://127.0.0.1:18090/counts
+{&quot;alerts&quot;: 5, &quot;items&quot;: 5, &quot;duplicates&quot;: 3, &quot;invalid&quot;: 0, &quot;last_at&quot;: &quot;2026-10-19T22:04:52&quot;, &quot;distinct&quot;: 2}
+
+$ docker compose logs --tail 5 worker
+worker-1  | [worker] slot=3 投递 1 条变更
+worker-1  | [worker] slot=6 投递 1 条变更
+worker-1  | [worker] slot=9 投递 1 条变更
+worker-1  | [worker] slot=12 投递 1 条变更
+worker-1  | [worker] slot=15 投递 1 条变更
+
+$ docker exec d190-sink-1 wc -l /data/sink/alerts.jsonl
+5 /data/sink/alerts.jsonl
+
+$ docker stats --no-stream --format &#x27;{{.Name}} {{.CPUPerc}} {{.MemUsage}}&#x27; d190-sink-1 d190-worker-1
+d190-sink-1 23.06% 14.09MiB / 15.59GiB
+d190-worker-1 0.22% 14.35MiB / 15.59GiB
+</code></pre>
+<p><strong>结论</strong>：从零到"收到告警"约 22 秒；两个容器都通过 healthcheck；duplicates=3 是真实缺陷的证据——worker 每轮直接投递，没有跨轮去重，这正是练习 4 要补的洞。</p>
+<p><strong>清理</strong>（单独执行并验证）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">bash<span class="w"> </span>deploy.sh<span class="w"> </span>down
+</code></pre></div>
+<pre class="plain"><code>[deploy] 停止并删除容器/卷...
+ Container d190-sink-1  Stopped
+ Container d190-sink-1  Removed
+ Volume d190_d190-data  Removed
+[deploy] 已清理：容器 0、卷已删、端口 18090 已释放
+</code></pre>
+<p>复核：docker ps -a 无 d190 容器，ss -ltn 无 18090 监听。</p>
+<hr>
+<h2 id="_14">翻车实验</h2>
+<h3 id="1-pending-claim">翻车 1：只查 pending 的 claim，让崩溃任务永远卡死</h3>
+<p><strong>现象</strong>：实验 [E] 第一次跑出来时，t+3s 那一行本应重领成功，实际返回 None；而脚本的提示文字仍写着"崩溃任务可恢复"，差点让我误判为通过。</p>
+<p><strong>假设</strong>：租约时间算错，或者用了墙上时钟导致比较失败。</p>
+<p><strong>验证</strong>：查库：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">sql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">SELECT</span><span class="w"> </span><span class="n">idem_key</span><span class="p">,</span><span class="w"> </span><span class="n">status</span><span class="p">,</span><span class="w"> </span><span class="n">attempts</span><span class="p">,</span><span class="w"> </span><span class="n">lease_until</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">jobs</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">idem_key</span><span class="o">=</span><span class="s1">&#39;crash-case&#39;</span><span class="p">;</span>
+<span class="c1">-- running | 1 | 5002.0   ← 租约确实过期了，但 claim 根本没看 running</span>
+</code></pre></div>
+<p><strong>真实根因</strong>：claim() 的 WHERE 只有 status='pending'。租约过期只改变了状态的含义，没有改变查询条件——租约机制形同虚设。</p>
+<p><strong>修复</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">sql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">WHERE</span><span class="w"> </span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="s1">&#39;pending&#39;</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">visible_at</span><span class="o">&lt;=?</span><span class="p">)</span>
+<span class="w">   </span><span class="k">OR</span><span class="w"> </span><span class="p">(</span><span class="n">status</span><span class="o">=</span><span class="s1">&#39;running&#39;</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">lease_until</span><span class="w"> </span><span class="k">IS</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">lease_until</span><span class="o">&lt;=?</span><span class="p">)</span>
+</code></pre></div>
+<p>条件 UPDATE 也要带同样的 WHERE，否则并发下两个 worker 都能改到行。</p>
+<p><strong>复测</strong>：t+1s 仍是 None，t+3s 返回 crash-case，attempts 从 1 变 2。实验 2 的 [E] 输出即为修复后结果。</p>
+<hr>
+<h3 id="2cron-60-75-database-is-locked">翻车 2：cron 每 60 秒触发，单次跑 75 秒 → database is locked</h3>
+<p><strong>现象</strong>（真实 crontab，每分钟触发，脚本内 sleep 75 秒模拟全量扫描）：</p>
+<pre class="plain"><code>06:03:01 START pid=2353894
+Traceback (most recent call last):
+  File &quot;/tmp/d190-cron/job.py&quot;, line 6, in &lt;module&gt;
+    conn.execute(&quot;BEGIN IMMEDIATE&quot;)
+sqlite3.OperationalError: database is locked
+06:04:16 DONE  pid=2353894
+</code></pre>
+<p><strong>假设</strong>：SQLite 的 busy timeout 太短，调大就好。</p>
+<p><strong>验证</strong>：把 timeout 从 5s 调大到 30s，第二个进程仍然失败（只是晚 30 秒失败）；把第一个进程的持锁时间从 75s 降到 10s，则不再冲突。说明根因不是 timeout 值，而是两个进程本来就该互斥。</p>
+<p><strong>真实根因</strong>：cron 不做单实例保护。每 60 秒起一个新进程，上一轮还在跑就并发执行。第二个进程的 BEGIN IMMEDIATE 等锁 5 秒后放弃，这一轮巡检直接丢失。</p>
+<p><strong>修复</strong>：入口加 flock -n，拿不到锁立即退出（不是排队，排队只会堆积）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">exec</span><span class="w"> </span><span class="m">9</span>&gt;/tmp/d190-cron/run.lock
+<span class="k">if</span><span class="w"> </span>!<span class="w"> </span>flock<span class="w"> </span>-n<span class="w"> </span><span class="m">9</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>date<span class="w"> </span><span class="s1">&#39;+%H:%M:%S&#39;</span><span class="k">)</span><span class="s2"> SKIP 上一轮仍在运行（flock 未拿到锁）&quot;</span>
+<span class="w">  </span><span class="nb">exit</span><span class="w"> </span><span class="m">0</span>
+<span class="k">fi</span>
+<span class="nb">exec</span><span class="w"> </span>/usr/bin/python3<span class="w"> </span>job.py
+</code></pre></div>
+<p><strong>复测</strong>（真实输出）：</p>
+<pre class="plain"><code>06:05:01 START pid=2355469
+06:06:01 SKIP 上一轮仍在运行（flock 未拿到锁）
+06:06:16 DONE  pid=2355469
+</code></pre>
+<p><strong>清理</strong>：实验结束后用 crontab -l 过滤掉实验行再写回，原有条目（每天 5:00 的更新任务）保留未动，复核输出只剩原来那一行。</p>
+<hr>
+<h3 id="3importlib-dataclass-attributeerror">翻车 3（小）：importlib 加载带 dataclass 的脚本报 AttributeError</h3>
+<p><strong>现象</strong>：</p>
+<pre class="plain"><code>AttributeError: &#x27;NoneType&#x27; object has no attribute &#x27;__dict__&#x27;
+</code></pre>
+<p><strong>根因</strong>：spec.loader.exec_module(mod) 之前没有把模块注册进 sys.modules，dataclasses 反查 cls.<strong>module</strong> 时拿到 None。</p>
+<p><strong>修复</strong>：先 sys.modules[name] = mod，再 exec_module。</p>
+<p><strong>教训</strong>：这类错误只在"用文件路径动态导入"时出现，正常 import 不会。写工具脚本时容易忽略。</p>
+<hr>
+<h2 id="_15">收尾卫生</h2>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>处理</th>
+<th>复核</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>容器</td>
+<td>deploy.sh down -v</td>
+<td>docker ps -a 过滤 d190 无输出</td>
+</tr>
+<tr>
+<td>数据卷</td>
+<td>随 down 删除</td>
+<td>docker volume ls 无 d190</td>
+</tr>
+<tr>
+<td>端口 18090</td>
+<td>容器删除后释放</td>
+<td>ss -ltn 无 18090</td>
+</tr>
+<tr>
+<td>crontab</td>
+<td>删除实验行</td>
+<td>crontab -l 只剩原有更新任务</td>
+</tr>
+<tr>
+<td>临时目录</td>
+<td>/tmp/d190-cron、/tmp/d190-fix 删除</td>
+<td>ls /tmp 无 d190</td>
+</tr>
+<tr>
+<td>镜像</td>
+<td>d190-alert-sink:1.0 保留（可复用，不占端口）</td>
+<td>docker images 可见 177MB</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_16">思考题</h2>
+<ol>
+<li>如果巡检间隔 5 分钟、单次耗时 4 分 50 秒，你会选固定延迟还是网格？grace 设多少？为什么？</li>
+<li>幂等键用 scan:{date}:{target} 时，同一天手动重扫会被去重挡住。这是 bug 还是 feature？若业务要求"手动重扫必须生效"，键该怎么改？</li>
+<li>令牌桶容量 5、补充速率 2/s，而 critical 每秒来 10 条。设计一个策略，保证 critical 不被限流，同时 info 仍被合并。</li>
+<li>depends_on: service_healthy 能消掉启动竞态，但消不掉"运行中下游挂掉"。worker 的待发队列（pending 表）应该多久重试一次？重试到什么时候放弃？</li>
+<li>如果让你把本课的 SQLite 换成 PostgreSQL，哪些设计可以原样保留？哪些必须重写（提示：BEGIN IMMEDIATE、INSERT OR IGNORE、busy_timeout）？</li>
+</ol>
+<hr>
+<h2 id="_17">下一步</h2>
+<p>Day 191 起进入综合项目 II（AI 赋能反爬数据平台）。今天这套"调度 + 幂等 + 降噪 + 一键部署"的骨架会直接复用：爬虫的定时抓取、代理池轮换的去重、验证码失败的重试，本质上是同一组问题。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-189/index.html">← Day 189 综合项目 I（四）：资产入库与趋势可视化</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>
