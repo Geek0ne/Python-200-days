@@ -1,0 +1,49 @@
+name: d190
+
+services:
+  sink:
+    build: .
+    image: d190-alert-sink:1.0
+    command: ["python", "sink.py"]
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data/sink
+    ports:
+      - "18090:8080"
+    volumes:
+      - d190-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).status==200 else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: d190-alert-sink:1.0
+    command: ["python", "worker.py"]
+    environment:
+      TARGETS: "sink:8080,sink:8081,127.0.0.1:1"
+      INTERVAL: "5"
+      JITTER: "0.15"
+      SINK_URL: "http://sink:8080/alert"
+      DB_PATH: "/data/worker/state.db"
+      HEARTBEAT: "/tmp/heartbeat"
+      SIMULATE_FLAP: "1"
+    volumes:
+      - d190-data:/data
+    depends_on:
+      sink:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,time,sys; p='/tmp/heartbeat'; sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 20 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  d190-data:
