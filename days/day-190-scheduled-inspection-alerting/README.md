@@ -319,3 +319,430 @@ python3 03-alert-dedup.py --e2e
 python3 04-pitfall-dedup-key.py
 python3 05-e2e-acceptance.py --e2e
 ```
+
+
+---
+
+## 实战实验手册
+
+> 以下所有「实际结果」都是 2026-10-20 06:03–06:06（CST）在本机跑出来的原始输出，
+> 不是示意。环境：Python 3.12.3 / SQLite 3.45.1 / Docker 29.1.3 / Compose 2.40.3。
+
+### 实验 1：固定延迟 vs 锚点网格（虚拟时钟，不 sleep）
+
+**目的**：验证"漂移是耗时的积分"，并量出 24 小时的差距。
+
+**准备**：
+
+```bash
+cd days/day-190-scheduled-inspection-alerting/code
+```
+
+**执行**：
+
+```bash
+python3 01-scheduler-basic.py --self-test
+python3 01-scheduler-basic.py --simulate 24
+python3 01-scheduler-basic.py --outage 6
+```
+
+**实际结果**：
+
+```text
+[PASS] 抖动不超界: max_offset=71.7s
+[PASS] 抖动确定可复现: 同 slot 同种子结果一致
+[PASS] 补跑被合并: fires=1 skipped=23
+[PASS] 固定延迟漂移更大: delay=197s rate=-27s
+[PASS] 抖动摊平尖峰: solid=0s spread=85s
+
+全部通过（5 项）
+
+推演窗口: 24h  格子: 900s  抖动: ±8%
+------------------------------------------------------------------
+策略                执行次数       末次漂移(秒)        末次时刻
+fixed-delay         96         187.0    23:48:06
+fixed-rate          96         -17.1    23:59:42
+------------------------------------------------------------------
+固定延迟的漂移 ≈ 每轮耗时累计： 187.0s ≈ 96 轮 × 约 2s
+固定频率的漂移只来自抖动上界： -17.1s ≤ 72s
+------------------------------------------------------------------
+8 个实例同锚点触发：
+  无抖动窗口跨度 = 0s（全部同时打出去）
+  有抖动窗口跨度 = 85s，偏移样本(s) = [-25, -50, 21, -61, 5, -19, -63, 1]
+
+停机 6h 后恢复（格子 900s，grace 300s）：
+  积压格子数        : 24
+  无策略会补跑      : 24 次（catch-up storm）
+  有 grace+上限     : 补跑 1 次，跳过 23 次
+```
+
+**结论**：固定延迟一天漂 187 秒，且随天数线性增长；锚点网格的偏差只剩抖动上界（72s，且不累积）。停机 6 小时的补跑从 24 次压到 1 次。
+
+**清理**：无副作用（纯内存推演）。
+
+---
+
+### 实验 2：重复入队、崩溃重领、并发去重（真实 SQLite）
+
+**目的**：证明"至少一次投递 + 幂等写"能拼出恰好一次的效果。
+
+**执行**：
+
+```bash
+python3 02-retry-idempotency.py --self-test
+python3 02-retry-idempotency.py --demo
+```
+
+**实际结果**：
+
+```text
+[A] 同一 idem_key 被 4 次重复入队（cron 重叠的真实形态）
+    enqueue 返回: [True, False, False, False]
+    表里实际行数: 1  → 3 次被 UNIQUE 挡住
+
+[B] 任务前两次连接重置，第三次成功
+    t= 1000.0 scan:2026-10-20T10:00Z:assets -> pending(+0.64s)
+    t= 1001.0 scan:2026-10-20T10:00Z:assets -> pending(+1.28s)
+    t=1002.28 scan:2026-10-20T10:00Z:assets -> done(applied=True)
+    最终: status=done attempts=3 effects=1
+
+[C] 8 个 worker 并发处理 60 个任务，每个任务都会写一次副作用
+    耗时 0.03s，处理结果按状态: [('done', 60, 60)]
+    effects 行数 = 60 / 60 个任务
+
+[D] 永久错误（400 参数错误）不应重试
+    bad-target -> dead → status=dead attempts=1（attempts=1 即放弃）
+
+[E] worker 领了任务但崩溃（不 finish），租约到期后被另一个 worker 接手
+    第一次领取: crash-case（w-crashed）
+    t+1s 再领: None（被租约挡住）
+    t+3s 再领: crash-case → 崩溃任务可恢复
+```
+
+**结论**：4 次重复入队只落 1 行；60 个任务 8 线程并发只产生 60 条副作用；崩溃任务在租约过期后可被接手。
+
+**清理**：脚本自建临时目录并在结束时删除（含 -wal/-shm）。
+
+---
+
+### 实验 3：500 条变化 → 2 条告警（真实 HTTP 接收端）
+
+**目的**：量出降噪漏斗的压缩比，并验证"接收端 500 时消息不丢"。
+
+**准备**：脚本自己在本机随机端口起 ThreadingHTTPServer，不需要外部服务。
+
+**执行**：
+
+```bash
+python3 03-alert-dedup.py --self-test
+python3 03-alert-dedup.py --e2e
+python3 03-alert-dedup.py --e2e --flaky-receiver
+```
+
+**实际结果**（正常接收端）：
+
+```text
+接收端: 127.0.0.1:41599  (前 0 次故意 500)
+输入事件           : 500
+去重拦截           : 444
+静默拦截           : 0
+严重级升级放行     : 0
+限流合并           : 0
+发出的消息         : 2
+HTTP 成功 POST     : 2  失败次数: 0
+接收端收到         : 2  总请求: 2
+耗时               : 26.3 ms
+送达的 critical 条 : 20 / 20
+送达总条数         : 56 (含合并的限流条目)
+验收: PASS
+```
+
+**实际结果**（接收端前 2 次返回 500）：
+
+```text
+接收端: 127.0.0.1:33769  (前 2 次故意 500)
+输入事件           : 500
+去重拦截           : 444
+发出的消息         : 2
+HTTP 成功 POST     : 2  失败次数: 2
+接收端收到         : 2  总请求: 4
+耗时               : 181.2 ms
+送达的 critical 条 : 20 / 20
+验收: PASS
+```
+
+**结论**：500 → 2 条（压缩 250 倍），critical 20/20 全达；接收端 500 时发送端重试 2 次后成功，总请求 4、成功投递 2，消息没有丢也没有重复入库。
+
+**清理**：接收端随进程退出自动关闭端口，无残留。
+
+---
+
+### 实验 4：去重键设计翻车（同一事件流，三种指纹）
+
+**目的**：证明"降噪设计错"比"不降噪"更危险。
+
+**执行**：
+
+```bash
+python3 04-pitfall-dedup-key.py
+```
+
+**实际结果**：
+
+```text
+事件流: 125 条，其中 critical 5 条
+分布: {'info': 120, 'critical': 5}
+
+方案                   消息数    丢失 critical  说明
+------------------------------------------------------------------------------
+v1 rule                2              4  指纹=规则，冷却 600s
+v2 rule+asset+title        125              0  指纹=规则+资产+标题(含次数)
+v3 rule+asset         17              0  指纹=规则+资产，高危放行
+------------------------------------------------------------------------------
+
+v1 的问题：消息少，但把 4 条高危一起吞了——比不降噪更危险。
+v2 的问题：一条没丢，但发了 125 条消息，等于把收件人训练成盲点。
+v3 的结果：17 条消息（12 个资产各 1 条 + 5 条高危），丢失 0。
+```
+
+**结论**：指纹必须放"身份"（rule + asset），不能只放规则（吞高危），也不能放描述（等于没降噪）。
+
+**清理**：无副作用。
+
+---
+
+### 实验 5：端到端验收（差异 → 队列 → 告警 → 断言）
+
+**目的**：把前四步串成一条流水线，用退出码而不是肉眼判定成败。
+
+**执行**：
+
+```bash
+python3 05-e2e-acceptance.py --e2e
+echo "exit=$?"
+```
+
+**实际结果**：
+
+```text
+接收端: 127.0.0.1:37763
+
+验收清单
+----------------------------------------------------------------------
+[PASS] 任务数等于差异数（重复入队被去重）            jobs=7 entries=7
+[PASS] 每个任务只产生一次副作用                 effects=7 dup=0
+[PASS] 严重事件全部送达                     critical=2
+[PASS] 消息条数受控                       messages=1
+[PASS] 消息内无重复条目                     dup_items=0
+[PASS] 送达总数与漏斗统计一致                  delivered=7 received=7
+----------------------------------------------------------------------
+漏斗: 收到 7 / 去重 0 / 消息 1 / 服务端收到 1
+队列: jobs=7 effects=7
+...
+总体: ACCEPTED
+exit=0
+```
+
+**结论**：7 条差异（2 critical + 3 warning + 2 info）重复入队两遍，最终仍是 7 个任务、7 条副作用、1 条消息、0 重复条目。
+
+**清理**：临时目录随进程退出删除；接收端自动关闭。
+
+---
+
+### 实验 6：Docker Compose 一键部署（真容器）
+
+**目的**：验证"换台机器，一条命令拉起整套巡检 + 告警接收端"。
+
+**环境**：Docker 29.1.3 / Compose 2.40.3 / 基础镜像 python:3.12-slim（本机已有）。
+
+**准备**：
+
+```bash
+cd days/day-190-scheduled-inspection-alerting/deploy
+docker compose version
+ss -ltn | grep 18090 || echo "18090 free"
+```
+
+**执行**：
+
+```bash
+bash deploy.sh up
+bash deploy.sh status
+```
+
+**实际结果**（节选）：
+
+```text
+[deploy] preflight ok: docker + compose + 端口 18090 空闲
+[deploy] 构建镜像...
+ sink  Built
+ worker  Built
+[deploy] 启动...
+ Container d190-sink-1  Started
+ Container d190-sink-1  Healthy
+ Container d190-worker-1  Started
+ Container d190-worker-1  Healthy
+[deploy] 已收到 1 条告警
+NAME            STATUS
+d190-sink-1     Up 25 seconds (healthy)
+d190-worker-1   Up 19 seconds (healthy)
+
+[deploy] counts: {"alerts": 1, "items": 1, "duplicates": 0, "invalid": 0, "last_at": "2026-10-19T22:03:52", "distinct": 1}
+[deploy] 验收通过：sink 健康 + worker 心跳 + 告警落库
+```
+
+跑约 80 秒后再看（端口扫描每 5 秒一轮，模拟目标每 3 轮翻转一次状态）：
+
+```text
+$ curl -s http://127.0.0.1:18090/counts
+{"alerts": 5, "items": 5, "duplicates": 3, "invalid": 0, "last_at": "2026-10-19T22:04:52", "distinct": 2}
+
+$ docker compose logs --tail 5 worker
+worker-1  | [worker] slot=3 投递 1 条变更
+worker-1  | [worker] slot=6 投递 1 条变更
+worker-1  | [worker] slot=9 投递 1 条变更
+worker-1  | [worker] slot=12 投递 1 条变更
+worker-1  | [worker] slot=15 投递 1 条变更
+
+$ docker exec d190-sink-1 wc -l /data/sink/alerts.jsonl
+5 /data/sink/alerts.jsonl
+
+$ docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}' d190-sink-1 d190-worker-1
+d190-sink-1 23.06% 14.09MiB / 15.59GiB
+d190-worker-1 0.22% 14.35MiB / 15.59GiB
+```
+
+**结论**：从零到"收到告警"约 22 秒；两个容器都通过 healthcheck；duplicates=3 是真实缺陷的证据——worker 每轮直接投递，没有跨轮去重，这正是练习 4 要补的洞。
+
+**清理**（单独执行并验证）：
+
+```bash
+bash deploy.sh down
+```
+
+```text
+[deploy] 停止并删除容器/卷...
+ Container d190-sink-1  Stopped
+ Container d190-sink-1  Removed
+ Volume d190_d190-data  Removed
+[deploy] 已清理：容器 0、卷已删、端口 18090 已释放
+```
+
+复核：docker ps -a 无 d190 容器，ss -ltn 无 18090 监听。
+
+---
+
+## 翻车实验
+
+### 翻车 1：只查 pending 的 claim，让崩溃任务永远卡死
+
+**现象**：实验 [E] 第一次跑出来时，t+3s 那一行本应重领成功，实际返回 None；而脚本的提示文字仍写着"崩溃任务可恢复"，差点让我误判为通过。
+
+**假设**：租约时间算错，或者用了墙上时钟导致比较失败。
+
+**验证**：查库：
+
+```sql
+SELECT idem_key, status, attempts, lease_until FROM jobs WHERE idem_key='crash-case';
+-- running | 1 | 5002.0   ← 租约确实过期了，但 claim 根本没看 running
+```
+
+**真实根因**：claim() 的 WHERE 只有 status='pending'。租约过期只改变了状态的含义，没有改变查询条件——租约机制形同虚设。
+
+**修复**：
+
+```sql
+WHERE (status='pending' AND visible_at<=?)
+   OR (status='running' AND lease_until IS NOT NULL AND lease_until<=?)
+```
+
+条件 UPDATE 也要带同样的 WHERE，否则并发下两个 worker 都能改到行。
+
+**复测**：t+1s 仍是 None，t+3s 返回 crash-case，attempts 从 1 变 2。实验 2 的 [E] 输出即为修复后结果。
+
+---
+
+### 翻车 2：cron 每 60 秒触发，单次跑 75 秒 → database is locked
+
+**现象**（真实 crontab，每分钟触发，脚本内 sleep 75 秒模拟全量扫描）：
+
+```text
+06:03:01 START pid=2353894
+Traceback (most recent call last):
+  File "/tmp/d190-cron/job.py", line 6, in <module>
+    conn.execute("BEGIN IMMEDIATE")
+sqlite3.OperationalError: database is locked
+06:04:16 DONE  pid=2353894
+```
+
+**假设**：SQLite 的 busy timeout 太短，调大就好。
+
+**验证**：把 timeout 从 5s 调大到 30s，第二个进程仍然失败（只是晚 30 秒失败）；把第一个进程的持锁时间从 75s 降到 10s，则不再冲突。说明根因不是 timeout 值，而是两个进程本来就该互斥。
+
+**真实根因**：cron 不做单实例保护。每 60 秒起一个新进程，上一轮还在跑就并发执行。第二个进程的 BEGIN IMMEDIATE 等锁 5 秒后放弃，这一轮巡检直接丢失。
+
+**修复**：入口加 flock -n，拿不到锁立即退出（不是排队，排队只会堆积）：
+
+```bash
+exec 9>/tmp/d190-cron/run.lock
+if ! flock -n 9; then
+  echo "$(date '+%H:%M:%S') SKIP 上一轮仍在运行（flock 未拿到锁）"
+  exit 0
+fi
+exec /usr/bin/python3 job.py
+```
+
+**复测**（真实输出）：
+
+```text
+06:05:01 START pid=2355469
+06:06:01 SKIP 上一轮仍在运行（flock 未拿到锁）
+06:06:16 DONE  pid=2355469
+```
+
+**清理**：实验结束后用 crontab -l 过滤掉实验行再写回，原有条目（每天 5:00 的更新任务）保留未动，复核输出只剩原来那一行。
+
+---
+
+### 翻车 3（小）：importlib 加载带 dataclass 的脚本报 AttributeError
+
+**现象**：
+
+```text
+AttributeError: 'NoneType' object has no attribute '__dict__'
+```
+
+**根因**：spec.loader.exec_module(mod) 之前没有把模块注册进 sys.modules，dataclasses 反查 cls.__module__ 时拿到 None。
+
+**修复**：先 sys.modules[name] = mod，再 exec_module。
+
+**教训**：这类错误只在"用文件路径动态导入"时出现，正常 import 不会。写工具脚本时容易忽略。
+
+---
+
+## 收尾卫生
+
+| 项目 | 处理 | 复核 |
+|---|---|---|
+| 容器 | deploy.sh down -v | docker ps -a 过滤 d190 无输出 |
+| 数据卷 | 随 down 删除 | docker volume ls 无 d190 |
+| 端口 18090 | 容器删除后释放 | ss -ltn 无 18090 |
+| crontab | 删除实验行 | crontab -l 只剩原有更新任务 |
+| 临时目录 | /tmp/d190-cron、/tmp/d190-fix 删除 | ls /tmp 无 d190 |
+| 镜像 | d190-alert-sink:1.0 保留（可复用，不占端口） | docker images 可见 177MB |
+
+---
+
+## 思考题
+
+1. 如果巡检间隔 5 分钟、单次耗时 4 分 50 秒，你会选固定延迟还是网格？grace 设多少？为什么？
+2. 幂等键用 scan:{date}:{target} 时，同一天手动重扫会被去重挡住。这是 bug 还是 feature？若业务要求"手动重扫必须生效"，键该怎么改？
+3. 令牌桶容量 5、补充速率 2/s，而 critical 每秒来 10 条。设计一个策略，保证 critical 不被限流，同时 info 仍被合并。
+4. depends_on: service_healthy 能消掉启动竞态，但消不掉"运行中下游挂掉"。worker 的待发队列（pending 表）应该多久重试一次？重试到什么时候放弃？
+5. 如果让你把本课的 SQLite 换成 PostgreSQL，哪些设计可以原样保留？哪些必须重写（提示：BEGIN IMMEDIATE、INSERT OR IGNORE、busy_timeout）？
+
+---
+
+## 下一步
+
+Day 191 起进入综合项目 II（AI 赋能反爬数据平台）。今天这套"调度 + 幂等 + 降噪 + 一键部署"的骨架会直接复用：爬虫的定时抓取、代理池轮换的去重、验证码失败的重试，本质上是同一组问题。
