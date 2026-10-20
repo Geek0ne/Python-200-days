@@ -542,7 +542,15 @@ sqlite3 /tmp/day191.sqlite 'select count(*), min(fetched_at), max(fetched_at) fr
 - **修复**：新增 `Frontier.release()`，robots 拒绝时归还 1 个额度并记 `blocked`。
 - **复测**：`fetched: 40`，`robots_blocked: 34`，预算不再泄漏。
 
-> 这三个坑的共同点：**都不是“反爬”问题，而是引擎自己的正确性问题**。
+### 翻车 4：pkill -f 把执行它的 shell 一起杀了
+
+- **现象**：收尾清理执行 pkill -f 匹配靶站脚本名，命令瞬间 SIGTERM 退出，无任何输出。
+- **假设**：模式匹配到了执行 pkill 的那个 shell —— 整条命令行里就含这个字符串。
+- **验证**：改用 pgrep -af 查看，靶站进程早就不在了；被杀的只有父 shell。
+- **根因**：pkill -f 匹配的是完整命令行，包括自己。
+- **修复**：用启动时记下的 $SRV 精确 kill；确需按名字匹配时，把模式写成 [0]0-local-server.py 破坏自匹配。
+- **复测**：ss -ltn 无 8099 监听，pgrep 无残留，git 工作树干净。
+> 这几个坑的共同点：**都不是“反爬”问题，而是引擎自己的正确性问题**。
 > 先让引擎诚实，再去谈对抗。
 
 ---
