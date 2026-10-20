@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-190%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1358-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-191%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1370-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 190 / 200** · 进度的 95.0% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190：资产测绘 / 端口指纹 / 漏洞检测 / 资产入库 / 定时巡检与告警）
+> **Day 191 / 200** · 进度的 95.5% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190 企业资产监控系统，Day 191 起进入 AI 赋能反爬数据平台）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **190 天** |
-| 📝 总提交次数 | **1,358 commits** |
-| 📄 总代码行数 | **193,212 行** |
-| 📂 总文件数 | **1,349 个** |
-| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 190/200） |
+| 📅 已完成天数 | **191 天** |
+| 📝 总提交次数 | **1,370 commits** |
+| 📄 总代码行数 | **194,285 行** |
+| 📂 总文件数 | **1,358 个** |
+| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 191/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -359,6 +359,7 @@
 - ✅ Day 188 — Web 漏洞检测（SQLi 报错型+布尔型 / 反射型 XSS 上下文判定 / baseline→payload→oracle / 误报演练 1→0；真机：本地靶场 6 条 finding、severity critical、去重后 2 个漏洞）
 - ✅ Day 189 — 资产入库与趋势可视化（SQLite 双层资产模型 / 增量快照与 grace 去抖 / 变更事件审计 / 30 天趋势 + 单文件 HTML 看板；真机翻车：scan_assets 漏写导致看板全 0、20000 行 autocommit 基准跑不完；实测 12.99ms/行 → 7µs/行、索引查询 4.2x）
 - ✅ Day 190 — 定时巡检、变更告警与一键部署（锚点网格 + 确定性抖动 / grace 补跑合并 / 幂等键 + 租约 + full jitter 退避 / 告警五级漏斗 / Compose 一键部署与撤收；真机实验：cron 重叠 75s 复现 `database is locked` 并用 flock 修复、租约只查 pending 导致僵尸任务、500 条变化压缩到 2 条告警、容器栈 22s 内 healthy）
+- ✅ Day 191 — 爬虫引擎架构与骨架（五层分层 / URL 规范化八条 / deque Frontier / 全局令牌桶 capacity=1 / robots 最长匹配与预算归还 / 4xx 不重试 + full jitter / SQLite UPSERT 与断点续爬；真机实验：靶站 6/6、五个脚本 42 项自检全绿，限速 20→20.16、60→60.19 req/s；翻车三例——.. 未出栈、capacity=rate 跑成 119.55、robots 吞掉 18 页预算）
 
 </details>
 
