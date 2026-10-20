@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 191 — 爬虫引擎架构与骨架</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 191 — 爬虫引擎架构与骨架</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">592 行</span>
+    <span class="badge">5 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（5 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-191-crawler-engine-skeleton" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2">概念速览</a>
+<a class="toc-l2" href="#_3">概念解释</a>
+<a class="toc-l3" href="#1">1. 为什么引擎要分五层</a>
+<a class="toc-l3" href="#2-url">2. URL 规范化：爬虫的第一道正确性关卡</a>
+<a class="toc-l3" href="#3-sleep">3. 限速：一个全局桶，不是每个线程一个 sleep</a>
+<a class="toc-l3" href="#4-robotstxt">4. robots.txt：最长匹配，不是“先到先得”</a>
+<a class="toc-l3" href="#5">5. 重试：先分类，再退避</a>
+<a class="toc-l3" href="#6">6. 幂等落库与断点续爬</a>
+<a class="toc-l2" href="#_4">图解</a>
+<a class="toc-l3" href="#_5">数据流与三层状态</a>
+<a class="toc-l3" href="#rate20-capacity1">令牌桶时间轴（rate=20, capacity=1）</a>
+<a class="toc-l3" href="#_6">重试状态机</a>
+<a class="toc-l2" href="#api">定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#normalizeurl-basenone-str-none">normalize(url, base=None) -&amp;gt; str | None</a>
+<a class="toc-l3" href="#frontiermax_pages1000">Frontier(max_pages=1000)</a>
+<a class="toc-l3" href="#tokenbucketrate-capacity10">TokenBucket(rate, capacity=1.0)</a>
+<a class="toc-l3" href="#retrypolicyattempts4-base01-cap20-jitterfull">RetryPolicy(attempts=4, base=0.1, cap=2.0, jitter=&quot;full&quot;)</a>
+<a class="toc-l3" href="#fetch_with_retryurl-policy-status-body-attempts">fetch_with_retry(url, policy) -&amp;gt; (status, body, attempts)</a>
+<a class="toc-l3" href="#save_pageconn-url-title-body_len-status-bool">save_page(conn, url, title, body_len, status) -&amp;gt; bool</a>
+<a class="toc-l2" href="#_7">实战代码案例</a>
+<a class="toc-l2" href="#_8">实战实验手册</a>
+<a class="toc-l3" href="#010">实验 0：靶站自检（离线，10 秒）</a>
+<a class="toc-l3" href="#1-1">实验 1：限速写成加速（翻车实验 1）</a>
+<a class="toc-l3" href="#220-60-reqs">实验 2：限速精度（20 / 60 req/s）</a>
+<a class="toc-l3" href="#3bfs-robots">实验 3：BFS + robots + 抓取预算</a>
+<a class="toc-l3" href="#4">实验 4：重试 + 幂等落库 + 断点续爬</a>
+<a class="toc-l2" href="#_9">翻车实验记录</a>
+<a class="toc-l3" href="#1_1">翻车 1：.. 被当成普通路径段丢掉</a>
+<a class="toc-l3" href="#2-rate">翻车 2：桶容量 = rate，短任务速率翻倍</a>
+<a class="toc-l3" href="#3robots-url">翻车 3：robots 拒绝的 URL 白吃抓取预算</a>
+<a class="toc-l2" href="#_10">实测数字汇总</a>
+<a class="toc-l2" href="#_11">思考题</a>
+<a class="toc-l2" href="#_12">今日交付</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-191">Day 191 — 爬虫引擎架构与骨架</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战<br>
+<strong>项目</strong>：AI 赋能反爬数据平台 · 第 1/5 天<br>
+<strong>子主题</strong>：引擎分层 · URL 规范化 · Frontier · 令牌桶限速 · 重试分类 · 幂等落库<br>
+<strong>代码</strong>：1 个实验靶站 + 4 个可独立运行脚本，全部带 <code>--self-test</code><br>
+<strong>实测环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / SQLite 3.45.1 / 2026-10-21 06:00–06:20 CST</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<pre class="plain"><code>Day 191  引擎骨架      → 队列、限速、重试、落库：先把“能稳定跑”做出来   ← 今天
+Day 192  代理池        → IP 轮换、健康检查、按目标分配出口
+Day 193  浏览器与验证码 → JS 渲染、指纹、识别
+Day 194  AI 增强       → 反爬策略预测、内容归类、数据管道
+Day 195  运维与交付    → 调度、加密、鉴权、Docker + CI/CD
+</code></pre>
+<p>反爬平台最容易犯的错，是一上来就研究“怎么绕过验证码”。<br>
+但真正跑过一天的人都知道：<strong>90% 的失败不是被封，是自己把引擎写坏了</strong>——<br>
+同一页抓八遍、限速写成了加速、重试把 404 重试了四次、断点续爬从头再来。</p>
+<p>所以第一天不碰代理、不碰浏览器，只造一台<strong>诚实、可测量、可恢复</strong>的抓取机器。</p>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整词典见 <strong>concepts.md</strong>，图解见 <strong>diagrams/README.md</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Frontier</td>
+<td>待抓 URL 的队列</td>
+<td>爬虫的心脏，决定“下一个抓谁”</td>
+</tr>
+<tr>
+<td>URL 规范化</td>
+<td>把同一个页面的多种写法折叠成一个键</td>
+<td>不做 = 重复抓取、配额白烧</td>
+</tr>
+<tr>
+<td>广度优先</td>
+<td>先抓完第 N 层再进第 N+1 层</td>
+<td>深度优先会掉进“无限日历”爬不出来</td>
+</tr>
+<tr>
+<td>令牌桶</td>
+<td>全局共享的速率阀门</td>
+<td>每 worker 各自 sleep 会让速率翻 N 倍</td>
+</tr>
+<tr>
+<td>桶容量 capacity</td>
+<td>允许的瞬时突发量</td>
+<td>设成 rate 会让短任务速率翻倍（实测 119.55 vs 60）</td>
+</tr>
+<tr>
+<td>robots.txt</td>
+<td>站点声明的禁爬区</td>
+<td>最长匹配语义，<code>Allow: /</code> 不能盖掉 <code>Disallow: /private</code></td>
+</tr>
+<tr>
+<td>抓取预算</td>
+<td>本次最多抓多少页</td>
+<td>被 robots 拒绝的 URL 必须归还预算</td>
+</tr>
+<tr>
+<td>错误分类</td>
+<td>可重试 vs 永久</td>
+<td>重试 404 只是把错误放大四倍</td>
+</tr>
+<tr>
+<td>full jitter</td>
+<td>退避取 <code>random(0, ceiling)</code></td>
+<td>防所有 worker 同一毫秒回撞</td>
+</tr>
+<tr>
+<td>Retry-After</td>
+<td>服务端指定的等待秒数</td>
+<td>尊重它比任何指数退避都礼貌</td>
+</tr>
+<tr>
+<td>幂等键</td>
+<td>规范 URL 即主键</td>
+<td>UPSERT 让重放不产生第二行</td>
+</tr>
+<tr>
+<td>断点续爬</td>
+<td>从库里反查未抓的 URL</td>
+<td>进程崩了不用从第 1 页重来</td>
+</tr>
+<tr>
+<td>p50 / p95</td>
+<td>延迟分位</td>
+<td>平均值会掩盖长尾，限速看 p95 才有意义</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">概念解释</h2>
+<h3 id="1">1. 为什么引擎要分五层</h3>
+<p>一个能跑过夜的爬虫，职责必须切开，否则任何一处改动都会牵动全身：</p>
+<pre class="plain"><code>  ┌────────────┐   URL    ┌────────────┐  HTML  ┌────────────┐
+  │  Frontier  │ ───────► │  Fetcher   │ ─────► │  Parser    │
+  │ 队列+去重   │          │ 限速+重试   │        │ 抽链接/字段 │
+  └────────────┘ ◄────────└────────────┘        └─────┬──────┘
+        ▲                  新链接                      │ 结构化记录
+        └──────────────────────────────────────────────┘
+                                                       ▼
+                              ┌────────────┐   ┌────────────┐
+                              │   Sink     │ ◄─ │  Pipeline  │
+                              │ 幂等落库    │    │ 清洗/校验   │
+                              └────────────┘    └────────────┘
+</code></pre>
+<p><strong>为什么要切</strong>：</p>
+<ul>
+<li><strong>Frontier 不知道网络</strong>：它只回答“下一个是谁”，所以可以用纯内存测试，</br><br>
+  也可以在 Day 192 换成 Redis 队列而不动抓取代码。</li>
+<li><strong>Fetcher 不知道业务</strong>：它只负责“把 URL 变成 HTML 或一个分类过的错误”，</br><br>
+  所以代理池、浏览器渲染都能在它内部替换，解析层无感。</li>
+<li><strong>Sink 不知道顺序</strong>：它只保证“同一 URL 落库只有一行”，</br><br>
+  于是重试、并发、断点续爬都不需要额外协调。</li>
+</ul>
+<p>这就是“骨架”的意义：今天写的每个类都很小，但它们是后面四天所有功能的插槽。</p>
+<h3 id="2-url">2. URL 规范化：爬虫的第一道正确性关卡</h3>
+<p>服务端眼里，下面四个是<strong>同一个页面</strong>：</p>
+<pre class="plain"><code>http://Example.COM:80/a/./b/../c?b=2&amp;a=1#top
+http://example.com/a/c?a=1&amp;b=2
+http://example.com/a/c?a=1&amp;b=2&amp;utm_source=weixin
+http://example.com//a//c/?a=1&amp;b=2
+</code></pre>
+<p>如果按原始字符串去重，你会抓四遍。规则按顺序执行：</p>
+<table>
+<thead>
+<tr>
+<th>步骤</th>
+<th>规则</th>
+<th>不做的后果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>相对路径按 base 补全</td>
+<td><code>/page/2</code> 与 <code>page/2</code> 变成两个键</td>
+</tr>
+<tr>
+<td>2</td>
+<td>scheme / host 小写</td>
+<td><code>Example.COM</code> 与 <code>example.com</code> 重复</td>
+</tr>
+<tr>
+<td>3</td>
+<td>去掉默认端口 :80 / :443</td>
+<td>同一站点两种键</td>
+</tr>
+<tr>
+<td>4</td>
+<td>折叠重复斜杠、解析 <code>.</code> 与 <code>..</code></td>
+<td><code>a/../c</code> 与 <code>c</code> 重复（<strong>自检抓到的真 bug</strong>）</td>
+</tr>
+<tr>
+<td>5</td>
+<td>query 按键排序</td>
+<td><code>?a=1&amp;b=2</code> 与 <code>?b=2&amp;a=1</code> 重复</td>
+</tr>
+<tr>
+<td>6</td>
+<td>丢掉 utm_/ref/fbclid 等跟踪参数</td>
+<td>分享链接每次都是“新页面”</td>
+</tr>
+<tr>
+<td>7</td>
+<td>丢掉 fragment</td>
+<td><code>#top</code> 永远不发给服务端</td>
+</tr>
+<tr>
+<td>8</td>
+<td>非 http/https 直接拒绝</td>
+<td><code>javascript:void(0)</code> 会毒化队列</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 顺序有讲究：必须先补全再解析 <code>..</code>。我第一版把 <code>..</code> 当普通段过滤掉，<br>
+结果 <code>/a/./b/../c</code> 被算成 <code>/a/b/../c</code>，自检直接 FAIL——这就是下面“翻车实验 1”。</p>
+</blockquote>
+<p><strong>为什么用 deque + set，而不是 list + set</strong>：</p>
+<ul>
+<li><code>list.pop(0)</code> 是 O(n)，10 万条队列每次出队都搬一遍内存；<code>deque.popleft()</code> 是 O(1)。</li>
+<li>只用 <code>set</code> 当队列则无序，等于随机爬——深度优先遇到“无限日历”类站点会永远爬不完一层。</li>
+<li><code>seen</code> 与 <code>queue</code> 分离，才能回答“已经发现过多少 URL”这个运维指标。</li>
+</ul>
+<h3 id="3-sleep">3. 限速：一个全局桶，不是每个线程一个 sleep</h3>
+<p>最直觉的写法：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">worker</span><span class="p">(</span><span class="n">url</span><span class="p">):</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="n">rate</span><span class="p">)</span>     <span class="c1"># ← 看起来每个请求间隔 1/rate 秒</span>
+    <span class="n">fetch</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+</code></pre></div>
+<p>8 个 worker 一起跑，全局速率就是 <code>8 × rate</code>。Day 191 实测：目标 20 req/s，<br>
+实际 <strong>117.77 req/s（5.9 倍）</strong>，120 个页面 1.02 秒打完。对目标站点来说，<br>
+这不是“限速”，这是小型 CC 攻击。</p>
+<p>正确姿势是<strong>所有 worker 从同一个桶取令牌</strong>：</p>
+<pre class="plain"><code>tokens
+t=0  ████████████████████  20 个（capacity=rate，错的默认值）
+     ↑ 一开跑就能连打 20 个，短任务速率翻倍
+
+t=0  █                     1 个（capacity=1，严格均匀）
+     ↑ 每个请求间隔严格 1/rate
+</code></pre>
+<p>令牌桶两个参数：</p>
+<ul>
+<li><strong>rate</strong>：长期平均速率，只由它决定稳态吞吐。</li>
+<li><strong>capacity</strong>：允许的瞬时突发。<strong>给爬虫用就设 1</strong>；<br>
+  设成 rate 等于开局白送 rate 个请求——详见“翻车实验 2”。</li>
+</ul>
+<p><strong>为什么取令牌要“预扣”</strong>：<code>tokens -= 1</code> 在锁内先记账，再出锁 sleep。<br>
+若只在锁内判断、锁外 sleep，8 个线程会同时看到 <code>tokens=0.2</code>，同时算出同一个等待时间，<br>
+醒来后又同时抢同一个令牌——限速会周期性失效（thundering herd 的迷你版）。</p>
+<p><strong>为什么不直接用漏桶</strong>：漏桶恒定速率输出、不允许突发；令牌桶允许“平时攒、关键时刻小爆一下”。<br>
+抓详情页时突发没有价值，但抓列表页后紧跟着抓 5 个详情页，1 秒的突发额度能省 5 次往返。<br>
+默认 1 是安全值，需要时显式调大。</p>
+<h3 id="4-robotstxt">4. robots.txt：最长匹配，不是“先到先得”</h3>
+<pre class="plain"><code>User-agent: *
+Disallow: /private
+Allow: /
+</code></pre>
+<p>如果按“从上往下第一条匹配”判，<code>/private/9</code> 会先命中 <code>Disallow</code> —— 这次是对的；<br>
+但把两行顺序换一下，就会被 <code>Allow: /</code> 放行。标准语义是<strong>最长匹配优先</strong>，<br>
+<code>/private</code>（8 字符）比 <code>/</code>（1 字符）更具体，所以永远禁。<br>
+Python 的 <code>urllib.robotparser</code> 已实现该语义，不要自己写正则。</p>
+<p>还有一个工程细节：<strong>被 robots 拒绝的 URL 必须归还抓取预算</strong>。<br>
+我第一版没还，<code>--limit 40</code> 只抓到 22 页，因为 18 个禁区链接把预算吃掉了（翻车实验 3）。</p>
+<h3 id="5">5. 重试：先分类，再退避</h3>
+<pre class="plain"><code>        请求失败
+           │
+   ┌───────┴────────┐
+   │ 4xx 客户端错误   │ 5xx / 429 / 超时 / 连接重置
+   │                │
+ 404 403 410      可重试
+   │                │
+   └─► 立即放弃      └─► 退避后重试（最多 N 次）
+       记 failures        第 N 次仍失败 → 落 failures 表
+</code></pre>
+<ul>
+<li><strong>404 重试四次</strong>不会让页面出现，只会让 4 次配额消失，还可能被 WAF 标记为扫描器。</li>
+<li><strong>429 必须看 <code>Retry-After</code></strong>：服务端说“30 秒后再来”，你 0.2 秒后就去，等于自证是机器人。</li>
+<li><strong>full jitter</strong>：退避上限 <code>base × 2^(n-1)</code>，实际睡 <code>random(0, ceiling)</code>。<br>
+  8 个 worker 同时 503，固定退避会让它们在 1.0 秒同一毫秒再次齐射；<br>
+  全抖动把 8 个请求摊到 1 秒内，目标站点看到的是平缓流量。</li>
+</ul>
+<h3 id="6">6. 幂等落库与断点续爬</h3>
+<p>为什么用 SQLite 唯一约束而不是“应用层判断有没有写过”：</p>
+<ul>
+<li>应用层判断是 <strong>check-then-act</strong>：两个线程同时查到“没有”，就都插入。</li>
+<li>数据库唯一约束是<strong>原子的</strong>：<code>INSERT ... ON CONFLICT(url) DO UPDATE</code> 由存储引擎保证。</li>
+</ul>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">sql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">CREATE</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">pages</span><span class="w"> </span><span class="p">(</span>
+<span class="w">    </span><span class="n">url</span><span class="w">        </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">PRIMARY</span><span class="w"> </span><span class="k">KEY</span><span class="p">,</span><span class="w">   </span><span class="c1">-- 规范 URL 就是幂等键</span>
+<span class="w">    </span><span class="n">title</span><span class="w">      </span><span class="nb">TEXT</span><span class="p">,</span>
+<span class="w">    </span><span class="n">body_len</span><span class="w">   </span><span class="nb">INTEGER</span><span class="p">,</span>
+<span class="w">    </span><span class="n">status</span><span class="w">     </span><span class="nb">INTEGER</span><span class="p">,</span>
+<span class="w">    </span><span class="n">fetched_at</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span>
+<span class="p">);</span>
+</code></pre></div>
+<p>断点续爬就变成一句话：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">done</span> <span class="o">=</span> <span class="p">{</span><span class="n">r</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">&quot;SELECT url FROM pages&quot;</span><span class="p">)}</span>
+<span class="n">todo</span> <span class="o">=</span> <span class="p">[</span><span class="n">u</span> <span class="k">for</span> <span class="n">u</span> <span class="ow">in</span> <span class="n">all_urls</span> <span class="k">if</span> <span class="n">u</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">done</span><span class="p">]</span>
+</code></pre></div>
+<p>如果不用规范 URL 当主键，续爬会把 <code>/page/5</code> 和 <code>/page/5?utm_source=x</code> 当成两页，<br>
+永远抓不完——去重和幂等必须共用同一个键。</p>
+<hr>
+<h2 id="_4">图解</h2>
+<h3 id="_5">数据流与三层状态</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[种子 URL] --&gt; B{normalize}
+    B --&gt;|不可抓| X[丢弃]
+    B --&gt;|规范 URL| C{seen?}
+    C --&gt;|是| X
+    C --&gt;|否| D[Frontier 队列]
+    D --&gt; E{robots 允许?}
+    E --&gt;|否| R[release 归还预算]
+    E --&gt;|是| F[TokenBucket.acquire]
+    F --&gt; G[HTTP 请求]
+    G --&gt;|2xx| H[解析 title/正文]
+    G --&gt;|5xx/429/超时| I{重试次数 &lt; N?}
+    I --&gt;|是| F
+    I --&gt;|否| J[failures 表]
+    G --&gt;|404/403| J
+    H --&gt; K[(pages UPSERT)]
+    H --&gt; L[抽链接] --&gt; B
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[种子 URL] --&gt; B{normalize}
+    B --&gt;|不可抓| X[丢弃]
+    B --&gt;|规范 URL| C{seen?}
+    C --&gt;|是| X
+    C --&gt;|否| D[Frontier 队列]
+    D --&gt; E{robots 允许?}
+    E --&gt;|否| R[release 归还预算]
+    E --&gt;|是| F[TokenBucket.acquire]
+    F --&gt; G[HTTP 请求]
+    G --&gt;|2xx| H[解析 title/正文]
+    G --&gt;|5xx/429/超时| I{重试次数 &lt; N?}
+    I --&gt;|是| F
+    I --&gt;|否| J[failures 表]
+    G --&gt;|404/403| J
+    H --&gt; K[(pages UPSERT)]
+    H --&gt; L[抽链接] --&gt; B
+</code></pre></div>
+<h3 id="rate20-capacity1">令牌桶时间轴（rate=20, capacity=1）</h3>
+<pre class="plain"><code>tokens
+ 1.0 ┤█
+     │ ╲   每 50ms 放行 1 个
+ 0.5 ┤  █╲
+     │   ╲ █╲
+ 0.0 ┤────╲─█╲────────────────────────► 时间
+     0   50 100 150 200 ms
+
+capacity=20 的错误版本：
+ 1.0 ┤████████████████████
+     │                   ╲
+ 0.0 ┤────────────────────█──────────►
+     0                    1000 ms   前 20 个请求 0 等待
+</code></pre>
+<h3 id="_6">重试状态机</h3>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; Request
+    Request --&gt; OK: 2xx
+    Request --&gt; Permanent: 4xx
+    Request --&gt; Retryable: 5xx/429/超时
+    Retryable --&gt; Backoff: attempt &lt; 4
+    Backoff --&gt; Request: sleep(random(0, ceiling))
+    Retryable --&gt; Failed: attempt = 4
+    Permanent --&gt; Failed
+    OK --&gt; [*]
+    Failed --&gt; [*]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; Request
+    Request --&gt; OK: 2xx
+    Request --&gt; Permanent: 4xx
+    Request --&gt; Retryable: 5xx/429/超时
+    Retryable --&gt; Backoff: attempt &lt; 4
+    Backoff --&gt; Request: sleep(random(0, ceiling))
+    Retryable --&gt; Failed: attempt = 4
+    Permanent --&gt; Failed
+    OK --&gt; [*]
+    Failed --&gt; [*]
+</code></pre></div>
+<hr>
+<h2 id="api">定义与使用方法（API 速查）</h2>
+<h3 id="normalizeurl-basenone-str-none"><code>normalize(url, base=None) -&gt; str | None</code></h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>url</code></td>
+<td>str</td>
+<td>原始 URL，可为相对路径</td>
+</tr>
+<tr>
+<td><code>base</code></td>
+<td>str | None</td>
+<td>当前页 URL，用于补全相对路径</td>
+</tr>
+<tr>
+<td>返回</td>
+<td>str | None</td>
+<td>规范 URL；非 http/https 或非法主机返回 <code>None</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="frontiermax_pages1000"><code>Frontier(max_pages=1000)</code></h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>作用</th>
+<th>返回</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>push(url, base=None)</code></td>
+<td>入队（自动规范化 + 去重 + 预算检查）</td>
+<td><code>True</code> 入队成功</td>
+</tr>
+<tr>
+<td><code>pop()</code></td>
+<td>出队一个 URL</td>
+<td><code>str</code> 或 <code>None</code></td>
+</tr>
+<tr>
+<td><code>release()</code></td>
+<td>归还预算（robots 拒绝时调用）</td>
+<td><code>None</code></td>
+</tr>
+<tr>
+<td><code>len(frontier)</code></td>
+<td>队列剩余</td>
+<td>int</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tokenbucketrate-capacity10"><code>TokenBucket(rate, capacity=1.0)</code></h3>
+<table>
+<thead>
+<tr>
+<th>成员</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rate</code></td>
+<td>每秒放行令牌数</td>
+</tr>
+<tr>
+<td><code>capacity</code></td>
+<td>最大突发量，爬虫建议 1</td>
+</tr>
+<tr>
+<td><code>acquire()</code></td>
+<td>阻塞直到拿到令牌，返回等待秒数</td>
+</tr>
+<tr>
+<td><code>waited</code></td>
+<td>累计等待秒数（运维指标）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="retrypolicyattempts4-base01-cap20-jitterfull"><code>RetryPolicy(attempts=4, base=0.1, cap=2.0, jitter="full")</code></h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>attempts</code></td>
+<td>4</td>
+<td>总尝试次数（含首次）</td>
+</tr>
+<tr>
+<td><code>base</code></td>
+<td>0.1</td>
+<td>首次退避基数（秒）</td>
+</tr>
+<tr>
+<td><code>cap</code></td>
+<td>2.0</td>
+<td>单次退避上限</td>
+</tr>
+<tr>
+<td><code>jitter</code></td>
+<td><code>full</code></td>
+<td><code>none</code> 为确定性退避</td>
+</tr>
+<tr>
+<td><code>delay(attempt, retry_after=None)</code></td>
+<td>—</td>
+<td>返回本次应睡秒数</td>
+</tr>
+</tbody>
+</table>
+<h3 id="fetch_with_retryurl-policy-status-body-attempts"><code>fetch_with_retry(url, policy) -&gt; (status, body, attempts)</code></h3>
+<table>
+<thead>
+<tr>
+<th>异常</th>
+<th>含义</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PermanentError</code></td>
+<td>4xx，重试无意义</td>
+<td>调用方记录并跳过</td>
+</tr>
+<tr>
+<td><code>RetryableError</code></td>
+<td>重试用尽</td>
+<td>落 failures 表</td>
+</tr>
+</tbody>
+</table>
+<h3 id="save_pageconn-url-title-body_len-status-bool"><code>save_page(conn, url, title, body_len, status) -&gt; bool</code></h3>
+<p>返回 <code>True</code> 表示新行，<code>False</code> 表示覆盖更新。幂等键是 <code>pages.url</code>。</p>
+<hr>
+<h2 id="_7">实战代码案例</h2>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>角色</th>
+<th>自检</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code/00-local-server.py</code></td>
+<td>实验靶站</td>
+<td>6/6</td>
+<td>500 页 + 慢响应 + 503 抖动 + 302 + robots</td>
+</tr>
+<tr>
+<td><code>code/01-url-frontier.py</code></td>
+<td>基础</td>
+<td>11/11</td>
+<td>规范化、deque 队列、robots、BFS 爬取</td>
+</tr>
+<tr>
+<td><code>code/02-rate-limited-engine.py</code></td>
+<td>进阶</td>
+<td>4/4</td>
+<td>令牌桶 + 线程池 + p50/p95 + 实测速率</td>
+</tr>
+<tr>
+<td><code>code/03-retry-and-sink.py</code></td>
+<td>进阶</td>
+<td>12/12</td>
+<td>错误分类、全抖动、SQLite UPSERT、断点续爬</td>
+</tr>
+<tr>
+<td><code>code/04-pitfall-per-worker-sleep.py</code></td>
+<td>避坑</td>
+<td>4/4</td>
+<td>复现“限速变加速”与“去重失效”</td>
+</tr>
+</tbody>
+</table>
+<p>每个脚本都能离线自检，不依赖靶站：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-191-crawler-engine-skeleton/code
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">00</span>-local-server.py<span class="w"> </span><span class="m">01</span>-url-frontier.py<span class="w"> </span><span class="m">02</span>-rate-limited-engine.py<span class="w"> </span><span class="m">03</span>-retry-and-sink.py<span class="w"> </span><span class="m">04</span>-pitfall-per-worker-sleep.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;== </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="k">break</span>
+<span class="k">done</span>
+</code></pre></div>
+<hr>
+<h2 id="_8">实战实验手册</h2>
+<blockquote>
+<p>以下所有输出均为 2026-10-21 06:00–06:20 CST 在本机真实执行捕获，<br>
+非示意。靶站只监听 <code>127.0.0.1</code>，不产生任何外网流量。</p>
+</blockquote>
+<h3 id="010">实验 0：靶站自检（离线，10 秒）</h3>
+<p><strong>目的</strong>：确认实验环境自带一个行为确定的 HTTP 服务端。<br>
+<strong>环境</strong>：Python 3.12.3，仅标准库。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-191-crawler-engine-skeleton/code
+python3<span class="w"> </span><span class="m">00</span>-local-server.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>  PASS  page 200 且含标题
+  PASS  flaky 首次 503
+  PASS  flaky 二次 200
+  PASS  robots 禁 /private
+  PASS  redirect 跟随到 200
+  PASS  status 有统计
+
+self-test: 6/6 passed
+</code></pre>
+<p><strong>结论</strong>：<code>--self-test</code> 内部自己起服务、自己关，不需要用户先开终端占端口。</p>
+<hr>
+<h3 id="1-1">实验 1：限速写成加速（翻车实验 1）</h3>
+<p><strong>目的</strong>：量化“每 worker 各自 sleep”与“全局令牌桶”的速率差异。<br>
+<strong>环境</strong>：靶站 <code>127.0.0.1:8099</code>，目标 20 req/s，8 worker，120 页。</p>
+<p><strong>准备 + 执行</strong>（一个终端跑完，自动清理）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-191-crawler-engine-skeleton/code
+python3<span class="w"> </span><span class="m">00</span>-local-server.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8099</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="nv">SRV</span><span class="o">=</span><span class="nv">$!</span><span class="p">;</span><span class="w"> </span>sleep<span class="w"> </span><span class="m">1</span>
+python3<span class="w"> </span><span class="m">04</span>-pitfall-per-worker-sleep.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span><span class="se">\</span>
+<span class="w">        </span>--rate<span class="w"> </span><span class="m">20</span><span class="w"> </span>--workers<span class="w"> </span><span class="m">8</span><span class="w"> </span>--pages<span class="w"> </span><span class="m">120</span>
+<span class="nb">kill</span><span class="w"> </span><span class="nv">$SRV</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>目标速率 20.0/s · workers 8 · pages 120
+理论耗时 6.00s
+  坑1 {&#x27;strategy&#x27;: &#x27;per-worker sleep&#x27;, &#x27;wall_s&#x27;: 1.019, &#x27;achieved_rps&#x27;: 117.77}  超速 5.9×
+  正解 {&#x27;strategy&#x27;: &#x27;global bucket&#x27;, &#x27;wall_s&#x27;: 5.952, &#x27;achieved_rps&#x27;: 20.16, &#x27;sleep_s&#x27;: 45.99}  偏差 0.8%
+
+坑2 去重：原始 6 条 vs 规范化 2 条
+同一批 6 个链接，规范化后省下 4 次请求
+</code></pre>
+<p><strong>结论</strong>：错误写法比目标快 <strong>5.9 倍</strong>；共享桶偏差 <strong>0.8%</strong>。<br>
+“每请求 sleep”在单线程下正确，在多线程下必然失效——限速器必须是共享状态。</p>
+<hr>
+<h3 id="220-60-reqs">实验 2：限速精度（20 / 60 req/s）</h3>
+<p><strong>目的</strong>：验证令牌桶在 closer-to-real 速率下的偏差，以及 p95 延迟。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">00</span>-local-server.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8099</span><span class="w"> </span><span class="p">&amp;</span><span class="w"> </span><span class="nv">SRV</span><span class="o">=</span><span class="nv">$!</span><span class="p">;</span><span class="w"> </span>sleep<span class="w"> </span><span class="m">1</span>
+python3<span class="w"> </span><span class="m">02</span>-rate-limited-engine.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--pages<span class="w"> </span><span class="m">120</span><span class="w"> </span>--rate<span class="w"> </span><span class="m">20</span><span class="w"> </span>--workers<span class="w"> </span><span class="m">8</span>
+python3<span class="w"> </span><span class="m">02</span>-rate-limited-engine.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--pages<span class="w"> </span><span class="m">240</span><span class="w"> </span>--rate<span class="w"> </span><span class="m">60</span><span class="w"> </span>--workers<span class="w"> </span><span class="m">8</span>
+<span class="nb">kill</span><span class="w"> </span><span class="nv">$SRV</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>--- rate 20 / 120 pages ---
+结果: {&#x27;pages&#x27;: 120, &#x27;wall_s&#x27;: 5.953, &#x27;req_per_s&#x27;: 20.16, &#x27;ok&#x27;: 120, &#x27;http_err&#x27;: 0,
+       &#x27;net_err&#x27;: 0, &#x27;p50_ms&#x27;: 1.3, &#x27;p95_ms&#x27;: 4.1, &#x27;bucket_wait_s&#x27;: 45.93}
+目标速率 20.0/s，理论耗时 6.00s，实际 5.953s，偏差 0.8%
+
+--- rate 60 / 240 pages ---
+结果: {&#x27;pages&#x27;: 240, &#x27;wall_s&#x27;: 3.988, &#x27;req_per_s&#x27;: 60.19, &#x27;ok&#x27;: 240, &#x27;http_err&#x27;: 0,
+       &#x27;net_err&#x27;: 0, &#x27;p50_ms&#x27;: 1.2, &#x27;p95_ms&#x27;: 3.4, &#x27;bucket_wait_s&#x27;: 30.721}
+目标速率 60.0/s，理论耗时 4.00s，实际 3.988s，偏差 0.3%
+</code></pre>
+<p><strong>结论</strong>：稳态偏差 0.3%–0.8%，属于调度抖动级别。<br>
+<code>bucket_wait_s</code> 是 8 个线程累计等待（45.93s ≈ 115 次 × 0.4s 的排队），<br>
+说明限速发生在请求之前、而不是请求之后。</p>
+<hr>
+<h3 id="3bfs-robots">实验 3：BFS + robots + 抓取预算</h3>
+<p><strong>目的</strong>：验证 robots 禁区被跳过，且不吞噬抓取预算。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">00</span>-local-server.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8099</span><span class="w"> </span><span class="p">&amp;</span><span class="w"> </span><span class="nv">SRV</span><span class="o">=</span><span class="nv">$!</span><span class="p">;</span><span class="w"> </span>sleep<span class="w"> </span><span class="m">1</span>
+python3<span class="w"> </span><span class="m">01</span>-url-frontier.py<span class="w"> </span>--crawl<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--limit<span class="w"> </span><span class="m">40</span>
+<span class="nb">kill</span><span class="w"> </span><span class="nv">$SRV</span>
+</code></pre></div>
+<p><strong>实际结果</strong>（修复预算泄漏后）：</p>
+<pre class="plain"><code>{&#x27;fetched&#x27;: 40, &#x27;queued_left&#x27;: 0, &#x27;unique_seen&#x27;: 74, &#x27;dedup_skipped&#x27;: 45, &#x27;robots_blocked&#x27;: 34}
+</code></pre>
+<p><strong>对比</strong>（修复前，同一命令）：</p>
+<pre class="plain"><code>{&#x27;fetched&#x27;: 22, &#x27;queued_left&#x27;: 0, &#x27;unique_seen&#x27;: 40, &#x27;dedup_skipped&#x27;: 25, &#x27;robots_blocked&#x27;: 18}
+</code></pre>
+<p><strong>结论</strong>：修复后 40 页预算真正抓到 40 页；34 个 <code>/private/*</code> 链接被 robots 拦下。<br>
+<code>dedup_skipped=45</code> 说明每个页面都有 1–2 个重复链接（n+1/n+2 交叉），<br>
+没有规范化与去重，这批会变成 45 次多余请求。</p>
+<hr>
+<h3 id="4">实验 4：重试 + 幂等落库 + 断点续爬</h3>
+<p><strong>目的</strong>：503 抖动被重试吃掉；重跑同一批 URL 不产生重复行；续爬只抓缺的。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day191.sqlite*
+python3<span class="w"> </span><span class="m">00</span>-local-server.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8099</span><span class="w"> </span><span class="p">&amp;</span><span class="w"> </span><span class="nv">SRV</span><span class="o">=</span><span class="nv">$!</span><span class="p">;</span><span class="w"> </span>sleep<span class="w"> </span><span class="m">1</span>
+python3<span class="w"> </span><span class="m">03</span>-retry-and-sink.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--pages<span class="w"> </span><span class="m">40</span><span class="w"> </span>--db<span class="w"> </span>/tmp/day191.sqlite
+python3<span class="w"> </span><span class="m">03</span>-retry-and-sink.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--pages<span class="w"> </span><span class="m">40</span><span class="w"> </span>--db<span class="w"> </span>/tmp/day191.sqlite<span class="w"> </span>--resume
+python3<span class="w"> </span><span class="m">03</span>-retry-and-sink.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--pages<span class="w"> </span><span class="m">40</span><span class="w"> </span>--db<span class="w"> </span>/tmp/day191.sqlite<span class="w"> </span>--resume
+<span class="nb">kill</span><span class="w"> </span><span class="nv">$SRV</span>
+sqlite3<span class="w"> </span>/tmp/day191.sqlite<span class="w"> </span><span class="s1">&#39;select count(*), min(fetched_at), max(fetched_at) from pages;&#39;</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>{&quot;todo&quot;: 45, &quot;ok&quot;: 45, &quot;fail&quot;: 0, &quot;new_rows&quot;: 45, &quot;rows_total&quot;: 45, &quot;wall_s&quot;: 0.35}
+{&quot;todo&quot;: 0, &quot;ok&quot;: 0, &quot;fail&quot;: 0, &quot;new_rows&quot;: 0, &quot;rows_total&quot;: 45, &quot;wall_s&quot;: 0.0}
+{&quot;todo&quot;: 0, &quot;ok&quot;: 0, &quot;fail&quot;: 0, &quot;new_rows&quot;: 0, &quot;rows_total&quot;: 45, &quot;wall_s&quot;: 0.0}
+</code></pre>
+<p><strong>结论</strong>：45 条（40 正常页 + 5 个 flaky）全部成功，5 个 flaky 各用了 2 次尝试；<br>
+两次续爬都是 0 待办、0 新行——幂等生效。</p>
+<hr>
+<h2 id="_9">翻车实验记录</h2>
+<h3 id="1_1">翻车 1：<code>..</code> 被当成普通路径段丢掉</h3>
+<ul>
+<li><strong>现象</strong>：<code>01-url-frontier.py --self-test</code> 10/11，唯一失败用例<br>
+<code>HTTP://Example.COM:80/a/./b/../c?b=2&amp;a=1#frag</code> 输出 <code>http://example.com/a/b/../c</code>。</li>
+<li><strong>假设</strong>：<code>up.urlsplit</code> 之后我手动过滤了空段与 <code>.</code>，但没处理 <code>..</code>。</li>
+<li><strong>验证</strong>：直接 <code>python3 -c</code> 调 normalize，打印中间值，确认 <code>..</code> 原样保留。</li>
+<li><strong>根因</strong>：手写路径归一化只做了一半；<code>..</code> 需要“弹出上一段”的栈语义，不是过滤。</li>
+<li><strong>修复</strong>：改用 <code>posixpath.normpath</code>（它处理 <code>.</code>/<code>..</code> 且不碰协议部分），<br>
+  先折叠重复斜杠再归一化，最后补回前导 <code>/</code>。</li>
+<li><strong>复测</strong>：<code>self-test: 11/11 passed</code>。</li>
+</ul>
+<h3 id="2-rate">翻车 2：桶容量 = rate，短任务速率翻倍</h3>
+<ul>
+<li><strong>现象</strong>：目标 60 req/s、240 页，<code>req_per_s</code> 报 <strong>119.55</strong>，耗时 1.004s（理论 4s）。</li>
+<li><strong>假设 1</strong>：线程池绕过了限速。</li>
+<li><strong>验证 1</strong>：把 workers 降到 1 重跑，速率仍是 ~120——排除并发因素。</li>
+<li><strong>假设 2</strong>：桶的初始令牌太多。</li>
+<li><strong>验证 2</strong>：打印 <code>bucket.tokens</code>，初始值是 60（= <code>max(1.0, rate)</code>）；<br>
+  前 60 个请求 0 等待，正好解释了“2 倍速”。</li>
+<li><strong>根因</strong>：把 capacity 当成“桶的大小 = 速率”，实际它是<strong>突发额度</strong>。<br>
+  任务越短，初始突发占比越大，测得速率越离谱。</li>
+<li><strong>修复</strong>：默认 <code>capacity=1.0</code>（严格均匀），需要突发时显式传参。</li>
+<li><strong>复测</strong>：60 req/s → 实测 60.19（偏差 0.3%）；20 req/s → 20.16（0.8%）。</li>
+</ul>
+<h3 id="3robots-url">翻车 3：robots 拒绝的 URL 白吃抓取预算</h3>
+<ul>
+<li><strong>现象</strong>：<code>--limit 40</code> 只 <code>fetched: 22</code>，<code>robots_blocked: 18</code>，22+18=40。</li>
+<li><strong>假设</strong>：预算计数把“已拒绝”也算成“已使用”。</li>
+<li><strong>验证</strong>：给 <code>push()</code> 加打印，确认 <code>budget_used</code> 在 robots 判定之前就已自增。</li>
+<li><strong>根因</strong>：预算在入队时扣、只在真正抓取时才有产出；拒绝路径没有归还。</li>
+<li><strong>修复</strong>：新增 <code>Frontier.release()</code>，robots 拒绝时归还 1 个额度并记 <code>blocked</code>。</li>
+<li><strong>复测</strong>：<code>fetched: 40</code>，<code>robots_blocked: 34</code>，预算不再泄漏。</li>
+</ul>
+<blockquote>
+<p>这三个坑的共同点：<strong>都不是“反爬”问题，而是引擎自己的正确性问题</strong>。<br>
+先让引擎诚实，再去谈对抗。</p>
+</blockquote>
+<hr>
+<h2 id="_10">实测数字汇总</h2>
+<table>
+<thead>
+<tr>
+<th>场景</th>
+<th>目标</th>
+<th>实测</th>
+<th>偏差</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>每 worker sleep（错）</td>
+<td>20 req/s</td>
+<td>117.77 req/s</td>
+<td><strong>+489%</strong></td>
+</tr>
+<tr>
+<td>共享令牌桶 capacity=1</td>
+<td>20 req/s</td>
+<td>20.16 req/s</td>
+<td>+0.8%</td>
+</tr>
+<tr>
+<td>共享令牌桶 capacity=1</td>
+<td>60 req/s</td>
+<td>60.19 req/s</td>
+<td>+0.3%</td>
+</tr>
+<tr>
+<td>共享令牌桶 capacity=rate（错）</td>
+<td>60 req/s</td>
+<td>119.55 req/s</td>
+<td>+99%</td>
+</tr>
+<tr>
+<td>BFS 抓取（预算 40）</td>
+<td>40 页</td>
+<td>40 页 / 34 次 robots 拦截</td>
+<td>0</td>
+</tr>
+<tr>
+<td>45 URL 落库（含 5 个 503）</td>
+<td>45 行</td>
+<td>45 行 / 0 失败</td>
+<td>0</td>
+</tr>
+<tr>
+<td>二次续爬</td>
+<td>0 待办</td>
+<td>0 待办 / 0 新行</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+<p>测试条件：本机 loopback，单进程靶站，Python 3.12.3，单次运行非均值；<br>
+延迟数字受本机调度影响，仅用于对比同一台机器上的策略差异。</p>
+<hr>
+<h2 id="_11">思考题</h2>
+<ol>
+<li>如果目标站点对同一 IP 的并发连接数限制是 4，你的 <code>workers=32</code> 会表现成什么现象？<br>
+   只看 <code>http_err</code> 能发现吗？应该加哪个指标？</li>
+<li><code>capacity=1</code> 让吞吐非常平滑，但每次请求都要等一个令牌。<br>
+   在“列表页 1 个 + 详情页 20 个”的场景里，怎样设计两级桶才既礼貌又不慢？</li>
+<li>规范化把 <code>%E4%B8%AD%E6%96%87</code> 还原成中文再拼回去，为什么可能在某些站点上<br>
+   反而造成 404？应该保留原始编码还是解码？（提示：看服务端如何解析 path）</li>
+<li>断点续爬用 <code>SELECT url FROM pages</code> 反查。当表里有 500 万行时，这个查询会慢在哪？<br>
+   怎样改成“记录水位线”的方式？两种方式各会漏抓什么？</li>
+<li>假设你要抓的站点 30% 的页面返回 200 但内容是“访问过于频繁，请稍后再试”，<br>
+   状态码完全正常。你的重试分类器该怎么扩展？这属于哪一层的问题？</li>
+</ol>
+<hr>
+<h2 id="_12">今日交付</h2>
+<ul>
+<li>[x] 靶站 <code>00-local-server.py</code>（6/6 自检）</li>
+<li>[x] URL 规范化 + Frontier + robots（11/11 自检）</li>
+<li>[x] 令牌桶 + 并发引擎 + 分位延迟（4/4 自检）</li>
+<li>[x] 重试分类 + 全抖动 + UPSERT + 续爬（12/12 自检）</li>
+<li>[x] 两个高频坑的复现脚本（4/4 自检）</li>
+<li>[x] 三组真实测量 + 三个翻车根因</li>
+<li>[x] 靶站已停止，无残留进程；实验库在 <code>/tmp</code>，未入库</li>
+</ul>
+<p>明天（Day 192）在这套骨架上接代理池：出口 IP 轮换、健康检查、按目标分配。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-190/index.html">← Day 190 定时巡检、变更告警与一键部署</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

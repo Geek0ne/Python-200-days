@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 191 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 191 正文</a>
+  <h1>Day 191 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-191">Day 191 · 图解</h1>
+<h2 id="1">1. 引擎数据流</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    S[种子 URL] --&gt; N[normalize]
+    N --&gt;|None| DROP[丢弃]
+    N --&gt;|规范 URL| S1{seen?}
+    S1 --&gt;|是| DROP
+    S1 --&gt;|否| Q[Frontier deque]
+    Q --&gt; R{robots?}
+    R --&gt;|Disallow| REL[release 预算] --&gt; Q
+    R --&gt;|Allow| T[TokenBucket.acquire]
+    T --&gt; H[HTTP GET]
+    H --&gt;|2xx| P[Parser]
+    H --&gt;|4xx| F[(failures)]
+    H --&gt;|5xx/429| RT{attempt &lt; 4}
+    RT --&gt;|是| BJ[full jitter] --&gt; T
+    RT --&gt;|否| F
+    P --&gt; DB[(pages UPSERT)]
+    P --&gt; Q
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    S[种子 URL] --&gt; N[normalize]
+    N --&gt;|None| DROP[丢弃]
+    N --&gt;|规范 URL| S1{seen?}
+    S1 --&gt;|是| DROP
+    S1 --&gt;|否| Q[Frontier deque]
+    Q --&gt; R{robots?}
+    R --&gt;|Disallow| REL[release 预算] --&gt; Q
+    R --&gt;|Allow| T[TokenBucket.acquire]
+    T --&gt; H[HTTP GET]
+    H --&gt;|2xx| P[Parser]
+    H --&gt;|4xx| F[(failures)]
+    H --&gt;|5xx/429| RT{attempt &lt; 4}
+    RT --&gt;|是| BJ[full jitter] --&gt; T
+    RT --&gt;|否| F
+    P --&gt; DB[(pages UPSERT)]
+    P --&gt; Q
+</code></pre></div>
+<h2 id="2-vs">2. 令牌桶：正确 vs 错误</h2>
+<pre class="plain"><code>正确：capacity=1，全局共享
+worker1 ─┐
+worker2 ─┼─► [tokens] ─► 放行间隔 1/rate
+workerN ─┘     ▲
+               └── 锁内预扣，锁外 sleep
+
+实测 rate=20：20.16 req/s（+0.8%）
+</code></pre>
+<pre class="plain"><code>错误：每 worker 一个 sleep
+worker1 ── sleep(1/rate) ──► fetch
+worker2 ── sleep(1/rate) ──► fetch   ← 并行，互不约束
+workerN ── sleep(1/rate) ──► fetch
+
+实测 rate=20, 8 worker：117.77 req/s（+489%）
+</code></pre>
+<h2 id="3">3. 桶容量对短任务的影响</h2>
+<pre class="plain"><code>capacity = rate (错)          capacity = 1 (对)
+
+ 60 ┤██████                    1 ┤█
+    │      ╲                      │ ╲
+  0 ┤       ██████             0 ┤  █ █ █ █ ──►
+    0s      1s   2s              0s  1s  2s
+
+120 页 @60/s：1.004s（119.55 rps）   120 页 @60/s：1.988s（60.4 rps）
+</code></pre>
+<h2 id="4">4. 重试状态机</h2>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; Pending
+    Pending --&gt; OK: 2xx
+    Pending --&gt; Permanent: 4xx
+    Pending --&gt; Retryable: 5xx / 429 / timeout
+    Retryable --&gt; Backoff: attempt &lt; 4
+    Backoff --&gt; Pending: sleep(random(0, ceiling))
+    Retryable --&gt; Failed: attempt = 4
+    Permanent --&gt; Failed
+    OK --&gt; [*]
+    Failed --&gt; [*]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; Pending
+    Pending --&gt; OK: 2xx
+    Pending --&gt; Permanent: 4xx
+    Pending --&gt; Retryable: 5xx / 429 / timeout
+    Retryable --&gt; Backoff: attempt &lt; 4
+    Backoff --&gt; Pending: sleep(random(0, ceiling))
+    Retryable --&gt; Failed: attempt = 4
+    Permanent --&gt; Failed
+    OK --&gt; [*]
+    Failed --&gt; [*]
+</code></pre></div>
+<h2 id="5">5. 断点续爬</h2>
+<pre class="plain"><code>全量 URL 集合 A = {1,2,3,...,45}
+已落库集合 B = SELECT url FROM pages
+待抓 = A - B
+
+第一次运行：|A|=45, |B|=0  → todo=45, new_rows=45
+第二次运行：|A|=45, |B|=45 → todo=0
+</code></pre>
+<h2 id="6">6. 分层与后续插槽</h2>
+<pre class="plain"><code>            Day 191（今天）        Day 192–195
+Frontier    deque + seen      →  Redis 队列 / 优先级
+Fetcher     urllib + 桶       →  代理池 / 浏览器渲染
+Parser      href + title      →  JS 解析 / NLP 归类
+Pipeline    title/len         →  清洗 / 结构化
+Sink        SQLite UPSERT     →  Postgres / ES
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

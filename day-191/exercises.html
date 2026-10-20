@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 191 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 191 正文</a>
+  <h1>Day 191 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-191">Day 191 · 完成清单与练习</h1>
+<h2 id="2">一、本机验收（按顺序执行，约 2 分钟）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-191-crawler-engine-skeleton/code
+
+<span class="c1"># 1. 五个脚本全部离线自检，必须全 PASS</span>
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">00</span>-local-server.py<span class="w"> </span><span class="m">01</span>-url-frontier.py<span class="w"> </span><span class="m">02</span>-rate-limited-engine.py<span class="w"> </span><span class="m">03</span>-retry-and-sink.py<span class="w"> </span><span class="m">04</span>-pitfall-per-worker-sleep.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;== </span><span class="nv">$f</span><span class="s2">&quot;</span><span class="p">;</span><span class="w"> </span>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="k">break</span>
+<span class="k">done</span>
+
+<span class="c1"># 2. 起靶站（另开终端，或同一行用 &amp; 后台）</span>
+python3<span class="w"> </span><span class="m">00</span>-local-server.py<span class="w"> </span>--port<span class="w"> </span><span class="m">8099</span><span class="w"> </span><span class="p">&amp;</span><span class="w"> </span><span class="nv">SRV</span><span class="o">=</span><span class="nv">$!</span><span class="p">;</span><span class="w"> </span>sleep<span class="w"> </span><span class="m">1</span>
+
+<span class="c1"># 3. 比对限速写法</span>
+python3<span class="w"> </span><span class="m">04</span>-pitfall-per-worker-sleep.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--rate<span class="w"> </span><span class="m">20</span><span class="w"> </span>--workers<span class="w"> </span><span class="m">8</span><span class="w"> </span>--pages<span class="w"> </span><span class="m">120</span>
+
+<span class="c1"># 4. 看引擎偏差</span>
+python3<span class="w"> </span><span class="m">02</span>-rate-limited-engine.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--pages<span class="w"> </span><span class="m">120</span><span class="w"> </span>--rate<span class="w"> </span><span class="m">20</span><span class="w"> </span>--workers<span class="w"> </span><span class="m">8</span>
+
+<span class="c1"># 5. BFS + robots</span>
+python3<span class="w"> </span><span class="m">01</span>-url-frontier.py<span class="w"> </span>--crawl<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--limit<span class="w"> </span><span class="m">40</span>
+
+<span class="c1"># 6. 重试 + 幂等 + 续爬</span>
+rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day191.sqlite*
+python3<span class="w"> </span><span class="m">03</span>-retry-and-sink.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--pages<span class="w"> </span><span class="m">40</span><span class="w"> </span>--db<span class="w"> </span>/tmp/day191.sqlite
+python3<span class="w"> </span><span class="m">03</span>-retry-and-sink.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8099<span class="w"> </span>--pages<span class="w"> </span><span class="m">40</span><span class="w"> </span>--db<span class="w"> </span>/tmp/day191.sqlite<span class="w"> </span>--resume
+
+<span class="c1"># 7. 查看落库结果</span>
+sqlite3<span class="w"> </span>/tmp/day191.sqlite<span class="w"> </span><span class="s2">&quot;select count(*) from pages; select count(*) from failures;&quot;</span>
+
+<span class="c1"># 8. 清理（必须做）</span>
+<span class="nb">kill</span><span class="w"> </span><span class="nv">$SRV</span><span class="p">;</span><span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day191.sqlite*
+</code></pre></div>
+<p><strong>验收标准</strong></p>
+<ul>
+<li>[ ] 5 个 <code>--self-test</code> 全绿（6/6、11/11、4/4、12/12、4/4）</li>
+<li>[ ] 坑1 的 <code>achieved_rps</code> ≥ 目标 4 倍，正解偏差 &lt; 3%</li>
+<li>[ ] BFS 的 <code>fetched</code> 等于 <code>--limit</code>（预算不泄漏）</li>
+<li>[ ] 续爬 <code>todo</code> 为 0，<code>rows_total</code> 不变</li>
+<li>[ ] <code>failures</code> 表为 0 行（靶站只在首次 503，重试可成功）</li>
+<li>[ ] 靶站进程已 kill，<code>lsof -i :8099</code> 无输出</li>
+</ul>
+<h2 id="_1">二、基础练习</h2>
+<ol>
+<li>
+<p><strong>补规范化规则</strong>：让 <code>normalize</code> 额外处理
+   - <code>http://example.com/a%2Fb</code>（编码后的斜杠，不应还原成路径分隔符）
+   - 重复的 query 键 <code>?a=1&amp;a=2</code>（保留顺序，不要排序后打乱语义）
+   写进 <code>--self-test</code> 用例，跑通再提交。</p>
+</li>
+<li>
+<p><strong>统计口径</strong>：给 <code>CrawlEngine</code> 增加 <code>attempts</code> 指标（总请求次数，含重试），
+   验证它恒等于 <code>ok + http_err + net_err</code>。若不等，说明哪个分支没记账？</p>
+</li>
+<li>
+<p><strong>robots 缓存</strong>：同一个域只拉一次 <code>/robots.txt</code>。
+   在 <code>RobotsGate</code> 里加 <code>dict[host, RobotFileParser]</code>，
+   并解释为什么不能按“完整 URL”缓存。</p>
+</li>
+</ol>
+<h2 id="_2">三、进阶练习</h2>
+<ol start="4">
+<li>
+<p><strong>两级限速</strong>：为“列表页”和“详情页”各建一个令牌桶，
+   列表 1 req/s、详情 5 req/s，共用 8 个 worker。
+   跑 20 个列表页 + 每页 10 个详情，报告两个桶各自的 <code>waited</code>。
+   提示：worker 取任务时要先知道“这是哪一类 URL”。</p>
+</li>
+<li>
+<p><strong>预算与优先级</strong>：给 <code>Frontier</code> 加优先级队列（<code>heapq</code>），
+   高优先级 URL 先抓，但<strong>同域仍受全局桶约束</strong>。
+   验证：插入 5 个高优先级 + 500 个低优先级，前 5 个请求是否是高优先级？</p>
+</li>
+<li>
+<p><strong>崩溃恢复演练</strong>：在 <code>03-retry-and-sink.py</code> 里加 <code>--crash-after N</code>，
+   抓 N 条后 <code>os._exit(1)</code>。然后用 <code>--resume</code> 续跑，
+   证明最终 <code>pages</code> 行数 = 全量 URL 数，且 <code>fetched_at</code> 不重复。</p>
+</li>
+</ol>
+<h2 id="_3">四、思考题（口述即可）</h2>
+<ul>
+<li>为什么 <code>list.pop(0)</code> 在大队列下会拖慢整个爬虫？给出复杂度。</li>
+<li><code>capacity=rate</code> 为什么在长任务里几乎看不出来，在短任务里却翻倍？</li>
+<li>如果目标站点返回 200 但正文是“请求过于频繁”，重试分类器该放在哪一层？</li>
+<li>断点续爬用差集查询，在 500 万行时慢在哪？水位线方案会漏抓什么？</li>
+</ul></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
