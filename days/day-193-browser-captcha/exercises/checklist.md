@@ -196,3 +196,19 @@ pgrep -af '00-lab-target.py' || echo '无残留'
 
 **注意**：脚本退出时会 `terminate()` 自己拉起的靶站；
 如果你用 `--port 8931` 手动起的，需要自己 `Ctrl-C`。
+
+---
+
+## 六、常见失败排查（实测过的坑）
+
+| 现象 | 根因 | 处理 |
+|---|---|---|
+| §Executable doesn't exist at .../chromium_headless_shell-1248§ | pip 的 Playwright 版本与本地浏览器 revision 不匹配 | 脚本自动回退：用 §executable_path§ 指向 §~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome§ |
+| §正确答案也 403，reason=no_sid§ | 闭包捕获了旧 §sid§，第二次仍用第一张图的会话 | 会话显式传参；区分 §no_sid§ 与 §wrong§ |
+| §networkidle§ 很快返回但列表为空 | 定时器未触发，页面"确实"无网络活动 | 改用 §wait_for_selector("#list li")§ 或 §wait_for_function§ |
+| §sleep(1)§ 后 items 仍为 0 | 总延迟 ≈1.4s，固定等待不够 | 不要用固定 sleep；等待目标内容 |
+| OCR 在干净图上是 94% 而不是 98% | 多做了去噪/二值化 | 干净图用 §none§，强噪声才用 §otsu§ |
+| §pip install playwright§ 报 PEP 668 | 系统 Python 受管 | 用 venv，或明确加 §--break-system-packages§（本课实测环境即如此） |
+
+> 以上每一条都对应 README 里的原始输出，可作为回归检查项。
+
