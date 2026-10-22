@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-191%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1370-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-193%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1391-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 192 / 200** · 进度的 96.0% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190 企业资产监控系统，Day 191–192 深入 AI 赋能反爬数据平台：引擎骨架 → 代理池）
+> **Day 193 / 200** · 进度的 96.5% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190 企业资产监控系统，Day 191–193 深入 AI 赋能反爬数据平台：引擎骨架 → 代理池 → 浏览器渲染与验证码）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **192 天** |
-| 📝 总提交次数 | **1,379 commits** |
-| 📄 总代码行数 | **195,765 行** |
-| 📂 总文件数 | **1,366 个** |
-| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 192/200） |
+| 📅 已完成天数 | **193 天** |
+| 📝 总提交次数 | **1,391 commits** |
+| 📄 总代码行数 | **197,103 行** |
+| 📂 总文件数 | **1,376 个** |
+| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 193/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -360,6 +360,7 @@
 - ✅ Day 189 — 资产入库与趋势可视化（SQLite 双层资产模型 / 增量快照与 grace 去抖 / 变更事件审计 / 30 天趋势 + 单文件 HTML 看板；真机翻车：scan_assets 漏写导致看板全 0、20000 行 autocommit 基准跑不完；实测 12.99ms/行 → 7µs/行、索引查询 4.2x）
 - ✅ Day 190 — 定时巡检、变更告警与一键部署（锚点网格 + 确定性抖动 / grace 补跑合并 / 幂等键 + 租约 + full jitter 退避 / 告警五级漏斗 / Compose 一键部署与撤收；真机实验：cron 重叠 75s 复现 `database is locked` 并用 flock 修复、租约只查 pending 导致僵尸任务、500 条变化压缩到 2 条告警、容器栈 22s 内 healthy）
 - ✅ Day 192 — 代理池与 IP 轮换（出口模型 / 三层健康检查 / 评分 success_rate²÷延迟 / 熔断三态与 Retry-After 冷却 / 每出口令牌桶 / 粘滞会话；真机实验：本地真实正向代理集群，四脚本 30 项自检全绿；盲轮询 24/36 vs 评分池 35/36、冷却期 p1 零流量、粘滞同域固定单出口；翻车四例——importlib 未注册 sys.modules、令牌桶等完不扣令牌实测 3.62→2.83 req/s、纯 argmax 饿死其他出口、闭包固化代理凭证）
+- ✅ Day 193 — 浏览器渲染与验证码识别（无头 Chromium + CDP / 六种等待策略实测 / 资源阻断 / 指纹四维一致性：UA·platform·Canvas·WebGL·字体 / Otsu 与形态学预处理 / 一次性验证码重试状态机 / SQLite 幂等入库；真机实验：自建靶站，五脚本 39 项自检全绿，静态抓取 0 条 vs 渲染 12 条、networkidle 698ms 提前返回空、四配置指纹 risk 2/3/2/2、OCR 300 张 clean 98%·medium 91%·hard Otsu 92%、端到端 10/10 登录 245.6ms/次、dry-run 132.9ms/次；翻车三例——闭包旧 sid 致正确答案 403、networkidle 语义陷阱、预处理在 medium 噪声下反降 5pp）
 - ✅ Day 191 — 爬虫引擎架构与骨架（五层分层 / URL 规范化八条 / deque Frontier / 全局令牌桶 capacity=1 / robots 最长匹配与预算归还 / 4xx 不重试 + full jitter / SQLite UPSERT 与断点续爬；真机实验：靶站 6/6、五个脚本 42 项自检全绿，限速 20→20.16、60→60.19 req/s；翻车三例——.. 未出栈、capacity=rate 跑成 119.55、robots 吞掉 18 页预算）
 
 </details>
