@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 193 — 浏览器渲染与验证码识别</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 193 — 浏览器渲染与验证码识别</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">719 行</span>
+    <span class="badge">6 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（6 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-193-browser-captcha" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2">概念速览</a>
+<a class="toc-l2" href="#_3">一、概念解释</a>
+<a class="toc-l3" href="#1-requests-dom">1. 为什么 requests 拿不到数据：DOM 是&quot;执行结果&quot;，不是&quot;文件&quot;</a>
+<a class="toc-l3" href="#2">2. 无头浏览器到底是什么</a>
+<a class="toc-l3" href="#3">3. 等待策略：等&quot;事件&quot;、等&quot;元素&quot;、等&quot;条件&quot;是三件事</a>
+<a class="toc-l3" href="#4-3">4. 资源阻断：渲染快 3 倍的正确姿势</a>
+<a class="toc-l3" href="#5">5. 浏览器指纹：不是一项，是一组&quot;互相印证&quot;的事实</a>
+<a class="toc-l3" href="#6">6. 验证码：为什么&quot;重试同一个答案&quot;永远错</a>
+<a class="toc-l3" href="#7-ocr">7. OCR 与预处理：为什么&quot;二值化&quot;有时是减分项</a>
+<a class="toc-l3" href="#8">8. 工程边界：什么时候该停</a>
+<a class="toc-l2" href="#_4">二、原理深入</a>
+<a class="toc-l3" href="#1-pagegoto">1. 一次 page.goto 到底发生了什么</a>
+<a class="toc-l3" href="#2_1">2. 为什么无头浏览器一眼就被认出来</a>
+<a class="toc-l3" href="#3-canvas">3. Canvas 指纹的熵来自哪里</a>
+<a class="toc-l3" href="#4-ddddocr">4. ddddocr 的推理流程</a>
+<a class="toc-l3" href="#5-ocr">5. 为什么&quot;渲染 + OCR + 重试&quot;必须是一个状态机</a>
+<a class="toc-l2" href="#api">三、定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#playwright-api">Playwright（同步 API）</a>
+<a class="toc-l3" href="#ddddocr">ddddocr</a>
+<a class="toc-l3" href="#pillow-opencv">图像预处理（Pillow / OpenCV）</a>
+<a class="toc-l3" href="#sqlite">SQLite 幂等写入</a>
+<a class="toc-l2" href="#_5">四、图解</a>
+<a class="toc-l2" href="#_6">五、实战实验手册</a>
+<a class="toc-l3" href="#1-vs">实验 1：静态抓取 vs 浏览器渲染</a>
+<a class="toc-l3" href="#2_2">实验 2：浏览器指纹的四种配置</a>
+<a class="toc-l3" href="#34-3">实验 3：验证码识别基准（4 预处理 × 3 噪声）</a>
+<a class="toc-l3" href="#4">实验 4：端到端采集（渲染 → 识别 → 登录 → 入库）</a>
+<a class="toc-l3" href="#5-403">实验 5（翻车实验）：正确答案却一直 403</a>
+<a class="toc-l3" href="#6networkidle-700ms">实验 6（翻车实验）：networkidle 提前 700ms 返回</a>
+<a class="toc-l3" href="#7-5pp">实验 7（翻车实验）：预处理把准确率拉低 5pp</a>
+<a class="toc-l2" href="#_7">六、实测数字汇总</a>
+<a class="toc-l2" href="#_8">七、工程边界与合规</a>
+<a class="toc-l2" href="#_9">思考题</a>
+<a class="toc-l2" href="#_10">清理记录</a>
+<a class="toc-l2" href="#_11">一句话总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-193">Day 193 — 浏览器渲染与验证码识别</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战<br>
+<strong>项目</strong>：AI 赋能反爬数据平台 · 第 3/5 天<br>
+<strong>子主题</strong>：无头浏览器 · JS 渲染等待 · 浏览器指纹 · 验证码预处理 · OCR · 重试状态机<br>
+<strong>代码</strong>：1 个自建靶站 + 1 个验证码库 + 4 个可独立运行脚本，全部带 <code>--self-test</code><br>
+<strong>实测环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / Playwright 1.64.1 / Chromium 151.0.7922.34 / ddddocr 1.6.1 / 2026-10-23 06:00–06:45 CST</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<pre class="plain"><code>Day 191  引擎骨架      → 队列、限速、重试、落库                    ✅
+Day 192  代理池        → IP 轮换、健康检查、按目标分配出口          ✅
+Day 193  浏览器与验证码 → JS 渲染、指纹、验证码识别                 ← 今天
+Day 194  AI 增强       → 反爬策略预测、内容归类、数据管道
+Day 195  运维与交付    → 调度、加密、鉴权、Docker + CI/CD
+</code></pre>
+<p>Day 191 的 Fetcher 只会发 HTTP，Day 192 给它换了出口。<br>
+今天要解决的是<strong>内容根本不在 HTML 里</strong>这件事，以及登录口上那道验证码。</p>
+<p>一句话概括今天：<strong>渲染解决"数据在哪"，验证码解决"门怎么开"，指纹解决"门为什么对你关着"。</strong></p>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整图解见 <strong>diagrams/README.md</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>无头浏览器</td>
+<td>没有界面的真浏览器</td>
+<td>它执行 JS，<code>requests</code> 不执行</td>
+</tr>
+<tr>
+<td>Headless Shell</td>
+<td>只跑渲染的精简 Chrome</td>
+<td>比完整 Chromium 更省内存，但指纹更"裸"</td>
+</tr>
+<tr>
+<td>CDP</td>
+<td>Chrome DevTools Protocol</td>
+<td>Playwright/Puppeteer 的底层协议</td>
+</tr>
+<tr>
+<td>load / DOMContentLoaded</td>
+<td>文档与资源加载完成</td>
+<td><strong>不代表异步数据到了</strong></td>
+</tr>
+<tr>
+<td>networkidle</td>
+<td>500ms 内无网络活动</td>
+<td>定时器未触发时它会提前返回（实测坑）</td>
+</tr>
+<tr>
+<td>内容等待</td>
+<td>等目标元素/条件出现</td>
+<td>唯一可靠的"数据已就绪"信号</td>
+</tr>
+<tr>
+<td>资源阻断</td>
+<td>拦图片/字体/媒体</td>
+<td>渲染耗时和带宽能降一大截</td>
+</tr>
+<tr>
+<td>指纹</td>
+<td>UA、Canvas、WebGL、时区、字体…</td>
+<td>单项可伪造，<strong>组合的自洽性难伪造</strong></td>
+</tr>
+<tr>
+<td>Canvas 指纹</td>
+<td>文字栅格化后的像素哈希</td>
+<td>依赖字体与 GPU，与本机环境强绑定</td>
+</tr>
+<tr>
+<td>WebGL renderer</td>
+<td>GPU 型号或 SwiftShader</td>
+<td>无头环境常暴露为软件渲染</td>
+</tr>
+<tr>
+<td>验证码</td>
+<td>区分人与程序的挑战</td>
+<td>一次性、绑定会话、错一次就换图</td>
+</tr>
+<tr>
+<td>图像预处理</td>
+<td>灰度/二值化/去噪</td>
+<td>对强噪声有效，对干净图<strong>有害</strong></td>
+</tr>
+<tr>
+<td>OCR</td>
+<td>光学字符识别</td>
+<td>ddddocr 是 CNN + CTC 的轻量实现</td>
+</tr>
+<tr>
+<td>打码平台</td>
+<td>人工/远程识别服务</td>
+<td>成本与合规风险都要算进预算</td>
+</tr>
+<tr>
+<td>熔断重试</td>
+<td>失败换图、次数上限</td>
+<td>无上限刷新 = 主动触发风控</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">一、概念解释</h2>
+<h3 id="1-requests-dom">1. 为什么 <code>requests</code> 拿不到数据：DOM 是"执行结果"，不是"文件"</h3>
+<p>服务端返回的是一段<strong>程序</strong>（HTML + JS），浏览器把它执行成 <strong>DOM</strong>。<br>
+爬虫拿到的是程序，浏览器拿到的是结果。</p>
+<pre class="plain"><code>你的请求  → 服务器 → HTML 文本（含 &lt;script&gt;）
+                        │
+                        ├─ requests 读到 → 字符串里只有空 &lt;ul&gt;
+                        └─ 浏览器读到 → 执行 JS → fetch → 渲染 → DOM 里有 12 条
+</code></pre>
+<p><strong>所以</strong>：判断"要不要上浏览器"的标准不是"页面看起来复杂"，而是<br>
+<strong>目标数据是否出现在原始 HTML 里</strong>。一条命令就能判断：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">curl<span class="w"> </span>-s<span class="w"> </span>https://example.com/page<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-c<span class="w"> </span><span class="s1">&#39;目标字段&#39;</span>
+</code></pre></div>
+<p>今天是 0，就必须渲染。</p>
+<h3 id="2">2. 无头浏览器到底是什么</h3>
+<p>它就是一个完整的 Chromium，只是不画窗口。进程结构没变：</p>
+<pre class="plain"><code>browser 进程（UI/网络/调度）
+ ├── renderer 进程（Blink + V8，执行页面 JS）
+ ├── GPU 进程 / SwiftShader（无显卡时软件渲染）
+ └── 若干 utility 进程（网络、存储、音频）
+</code></pre>
+<p>Playwright 通过 <strong>CDP</strong>（WebSocket 上的 JSON 协议）指挥它：<br>
+<code>Page.navigate</code>、<code>Runtime.evaluate</code>、<code>Network.setBlockedURLs</code>……<br>
+你在 Python 里写的 <code>page.click()</code>，本质是发了一条 CDP 命令。</p>
+<p><strong>代价</strong>：一个 browser 上下文约 100–300MB 内存，启动 200–500ms。<br>
+所以生产上要复用 browser、按需新建 context，而不是每个 URL 启一次。</p>
+<h3 id="3">3. 等待策略：等"事件"、等"元素"、等"条件"是三件事</h3>
+<table>
+<thead>
+<tr>
+<th>策略</th>
+<th>语义</th>
+<th>什么时候可信</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wait_until="load"</code></td>
+<td>文档与同步资源加载完</td>
+<td>静态页</td>
+</tr>
+<tr>
+<td><code>wait_for_selector("#status")</code></td>
+<td>元素<strong>存在</strong></td>
+<td>❌ 元素常常先于内容存在</td>
+</tr>
+<tr>
+<td><code>wait_for_selector("#list li")</code></td>
+<td>目标元素出现</td>
+<td>✅ 列表类页面首选</td>
+</tr>
+<tr>
+<td><code>wait_for_load_state("networkidle")</code></td>
+<td>500ms 无请求</td>
+<td>⚠️ 定时器未触发时会提前返回</td>
+</tr>
+<tr>
+<td><code>wait_for_function(...)</code></td>
+<td>任意 JS 条件</td>
+<td>✅ 最精确，可等"数量/文本/状态"</td>
+</tr>
+<tr>
+<td><code>sleep(n)</code></td>
+<td>固定等待</td>
+<td>❌ 慢了浪费，快了失败</td>
+</tr>
+</tbody>
+</table>
+<p>今天实测的六个策略见实验 2：<strong>只有"等内容"的两个成功</strong>，<br>
+而 <code>networkidle</code> 在 698ms 就返回了——因为 700ms 的定时器还没到，<br>
+页面"确实"没有网络活动。这是一个语义陷阱，不是 bug。</p>
+<h3 id="4-3">4. 资源阻断：渲染快 3 倍的正确姿势</h3>
+<p>爬虫只需要 DOM/文本，不需要图片、字体、媒体、统计脚本。阻断它们：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">ctx</span><span class="o">.</span><span class="n">route</span><span class="p">(</span><span class="s2">&quot;**/*&quot;</span><span class="p">,</span> <span class="k">lambda</span> <span class="n">route</span><span class="p">:</span> <span class="n">route</span><span class="o">.</span><span class="n">abort</span><span class="p">()</span>
+          <span class="k">if</span> <span class="n">route</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">resource_type</span> <span class="ow">in</span> <span class="p">{</span><span class="s2">&quot;image&quot;</span><span class="p">,</span> <span class="s2">&quot;media&quot;</span><span class="p">,</span> <span class="s2">&quot;font&quot;</span><span class="p">}</span> <span class="k">else</span> <span class="n">route</span><span class="o">.</span><span class="n">continue_</span><span class="p">())</span>
+</code></pre></div>
+<p><strong>注意</strong>：阻断字体可能改变 Canvas 指纹（字体缺失 → 像素不同），<br>
+如果目标站用 Canvas 做风控，阻断字体等于自己举手。这是"性能 vs 隐身"的取舍。</p>
+<h3 id="5">5. 浏览器指纹：不是一项，是一组"互相印证"的事实</h3>
+<p>目标站会同时读：</p>
+<pre class="plain"><code>网络层    IP、ASN、TLS 指纹(JA3)、HTTP/2 帧序
+JS 层     UA、platform、languages、timezone、screen、DPR、CPU 核数
+渲染层    Canvas 像素哈希、WebGL vendor/renderer、字体列表、AudioContext
+行为层    鼠标轨迹、滚动、打字节奏、页面停留
+</code></pre>
+<p><strong>单项都能改，难的是让它们互相自洽。</strong> 今天实测：<br>
+- 只改 UA/时区/语言 → 破绽从 2 个变 <strong>3</strong> 个（新增"UA=Windows 但 platform=Linux"）；<br>
+- 再抹掉 <code>navigator.webdriver</code> → 回到 2 个，但 WebGL 仍报 SwiftShader；<br>
+- Canvas 哈希在 4 种配置下<strong>完全相同</strong>（<code>37db8d7b</code>）——改 UA 不会改变字体栅格化结果。</p>
+<p>这说明：<strong>指纹的熵主要来自渲染环境，不来自你写在配置里的字符串。</strong></p>
+<h3 id="6">6. 验证码：为什么"重试同一个答案"永远错</h3>
+<p>服务端流程：</p>
+<pre class="plain"><code>GET /captcha → 生成答案 A，存 session[sid]=A，返回图片
+POST /login  → 取出 session[sid]，**无论对错都删除**
+              → 比较答案；对 → 200，错 → 403
+</code></pre>
+<p>所以 403 之后的正确动作是 <strong>重新 GET 一张新图</strong>。<br>
+继续提交同一个答案只会连续 403，还会把 attempts 刷满。<br>
+今天靶站的 <code>/login</code> 明确实现了"一次性"，自检里也专门验证了这条。</p>
+<h3 id="7-ocr">7. OCR 与预处理：为什么"二值化"有时是减分项</h3>
+<p>ddddocr 的模型是卷积网络 + CTC 解码，训练数据是<strong>彩色、带噪声</strong>的真实验证码。<br>
+你把它不认识的彩色图强行二值化，等于把输入分布改成了训练时没见过的样子。</p>
+<p>实测（每种 100 张）：</p>
+<table>
+<thead>
+<tr>
+<th>噪声</th>
+<th>不处理</th>
+<th>灰度</th>
+<th>Otsu 二值化</th>
+<th>二值化+去噪</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>clean</td>
+<td><strong>98%</strong></td>
+<td>98%</td>
+<td>96%</td>
+<td>94%</td>
+</tr>
+<tr>
+<td>medium</td>
+<td><strong>91%</strong></td>
+<td>91%</td>
+<td>89%</td>
+<td>86%</td>
+</tr>
+<tr>
+<td>hard</td>
+<td>86%</td>
+<td>85%</td>
+<td><strong>92%</strong></td>
+<td>91%</td>
+</tr>
+</tbody>
+</table>
+<p><strong>规律</strong>：噪声弱 → 预处理是负担（干净图的细笔画被阈值切断）；<br>
+噪声强 → 二值化能救回 6pp。<strong>必须按噪声强度 A/B，不能固定一条流水线。</strong></p>
+<h3 id="8">8. 工程边界：什么时候该停</h3>
+<ul>
+<li>有 <code>max_tries</code>：3 次不对就放弃并记录，不能无限刷图。</li>
+<li>有 <code>Retry-After</code> 就遵守；没有就至少 <code>sleep</code> 几百毫秒再换图。</li>
+<li>打码平台是<strong>外包</strong>：把你的目标站点内容发给第三方，合规与泄密风险要评估。</li>
+<li>只采公开数据、遵守 robots 与站点条款；验证码本身是"请勿自动化"的明确信号，<br>
+  真实项目里应优先走官方 API。本课所有实验都在<strong>自建靶站</strong>上完成。</li>
+</ul>
+<hr>
+<h2 id="_4">二、原理深入</h2>
+<h3 id="1-pagegoto">1. 一次 <code>page.goto</code> 到底发生了什么</h3>
+<pre class="plain"><code>Python            Playwright driver          Chromium
+  │ goto(url)  →  │ CDP Page.navigate    →   │ 网络请求
+  │              │                      ←   │ 响应头/正文
+  │              │ ← Page.frameNavigated    │ 解析 HTML 建 DOM
+  │              │ ← Page.loadEventFired    │ load 事件（≈185ms）
+  │              │                          │ setTimeout(700ms)
+  │              │ ← Runtime.consoleAPICalled│ fetch(&#x27;/api/items&#x27;)
+  │              │ ← Network.responseReceived│ 700ms 后返回
+  │              │                          │ innerHTML 更新 → 12 个 &lt;li&gt;
+  │ inner_text ← │ Runtime.evaluate     →   │ 读 DOM
+</code></pre>
+<p><strong>要点</strong>：<code>goto</code> 返回时，<code>loadEventFired</code> 可能刚发生，异步数据还在路上。<br>
+Playwright 默认的 <code>wait_until="load"</code> 不会替你等业务数据。</p>
+<h3 id="2_1">2. 为什么无头浏览器一眼就被认出来</h3>
+<p>不是某一个 API，而是<strong>一组"不该同时出现"的事实</strong>：</p>
+<pre class="plain"><code>HeadlessChrome/151  +  navigator.webdriver=true
+                    +  WebGL=SwiftShader
+                    +  fonts=5
+                    +  1280x720
+                    +  CPU=4
+</code></pre>
+<p>真实桌面机：<code>Chrome/131</code>、<code>webdriver=undefined</code>、GPU 型号具体、字体几十个、<br>
+屏幕 1920x1080 起。所以检测器不需要"高深算法"，做一致性校验就够了。</p>
+<p>反过来，这也解释了为什么"指纹浏览器"要一整套环境（真实 GPU、字体、分辨率），<br>
+而不是一个 <code>--user-agent</code> 参数。</p>
+<h3 id="3-canvas">3. Canvas 指纹的熵来自哪里</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">js</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nx">ctx</span><span class="p">.</span><span class="nx">font</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;16px &quot;DejaVu Sans&quot;&#39;</span><span class="p">;</span>
+<span class="nx">ctx</span><span class="p">.</span><span class="nx">fillText</span><span class="p">(</span><span class="s1">&#39;Day193 指纹 😀 CwWm&#39;</span><span class="p">,</span><span class="w"> </span><span class="mf">4</span><span class="p">,</span><span class="w"> </span><span class="mf">8</span><span class="p">);</span>
+<span class="nx">canvas</span><span class="p">.</span><span class="nx">toDataURL</span><span class="p">()</span><span class="w">   </span><span class="c1">// → 像素级哈希</span>
+</code></pre></div>
+<p>同一段文字在不同<strong>字体版本 / 抗锯齿 / GPU 驱动 / 缩放比</strong>下，像素不同。<br>
+今天 4 个配置哈希全相同（<code>37db8d7b</code>），因为渲染栈没变——<br>
+换了 UA、时区、视口，但字体和 SwiftShader 没变。<br>
+<strong>结论：想改 Canvas 哈希，得改渲染环境，不是改 HTTP 头。</strong></p>
+<h3 id="4-ddddocr">4. ddddocr 的推理流程</h3>
+<pre class="plain"><code>输入 160x60 RGB
+  → 缩放/归一化
+  → CNN 特征图（宽度方向保留序列信息）
+  → 按列预测字符 + CTC 合并重复
+  → &quot;AB3D&quot;
+</code></pre>
+<p>CTC 的好处是不用切分字符；坏处是<strong>相似字形</strong>（O/0、I/1、B/8）容易混。<br>
+所以合成数据集时特意去掉了 <code>O0I1L</code>——否则测出来的是"字体歧义"，不是"模型能力"。</p>
+<h3 id="5-ocr">5. 为什么"渲染 + OCR + 重试"必须是一个状态机</h3>
+<p>三个不确定源叠加：页面慢、识别错、验证码一次性。<br>
+如果不把状态显式化，代码会写成"嵌套 if + 全局变量"，最终无法回答：<br>
+"这次失败是渲染没等到，还是 OCR 错了，还是被风控了？"</p>
+<p>今天 04 的做法：每次登录一行记录（<code>ok/attempts/chars/ms</code>），<br>
+失败原因可从 <code>attempts</code> 与 <code>chars</code> 反推。这是可运维性的最低要求。</p>
+<hr>
+<h2 id="api">三、定义与使用方法（API 速查）</h2>
+<h3 id="playwright-api">Playwright（同步 API）</h3>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>作用</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sync_playwright().start()</code></td>
+<td>启动 driver</td>
+<td>用 <code>with</code> 自动清理</td>
+</tr>
+<tr>
+<td><code>p.chromium.launch(headless=True)</code></td>
+<td>启动浏览器</td>
+<td>版本不匹配时传 <code>executable_path</code></td>
+</tr>
+<tr>
+<td><code>browser.new_context(**opts)</code></td>
+<td>独立会话</td>
+<td><code>user_agent</code>/<code>locale</code>/<code>timezone_id</code>/<code>viewport</code></td>
+</tr>
+<tr>
+<td><code>context.add_init_script(js)</code></td>
+<td>每次导航前注入</td>
+<td>改 <code>navigator.*</code> 的唯一正确时机</td>
+</tr>
+<tr>
+<td><code>context.route(pattern, handler)</code></td>
+<td>拦截请求</td>
+<td><code>route.abort()</code> / <code>continue_()</code></td>
+</tr>
+<tr>
+<td><code>page.goto(url, wait_until=...)</code></td>
+<td>导航</td>
+<td><code>load</code>/<code>domcontentloaded</code>/<code>networkidle</code>/<code>commit</code></td>
+</tr>
+<tr>
+<td><code>page.wait_for_selector(sel)</code></td>
+<td>等元素</td>
+<td>默认 <code>state="visible"</code></td>
+</tr>
+<tr>
+<td><code>page.wait_for_function(expr)</code></td>
+<td>等 JS 条件</td>
+<td>最精确</td>
+</tr>
+<tr>
+<td><code>page.locator(sel).count()</code></td>
+<td>计数</td>
+<td>不等待，取瞬时值</td>
+</tr>
+<tr>
+<td><code>page.evaluate(js)</code></td>
+<td>执行 JS 并取返回值</td>
+<td>可直接读 <code>window.__fp</code></td>
+</tr>
+<tr>
+<td><code>context.request.get(url)</code></td>
+<td>带共享 Cookie 的 HTTP</td>
+<td>绕过页面直接打接口</td>
+</tr>
+<tr>
+<td><code>page.screenshot(path=...)</code></td>
+<td>截图</td>
+<td>调试渲染问题时最有用</td>
+</tr>
+</tbody>
+</table>
+<h3 id="ddddocr">ddddocr</h3>
+<table>
+<thead>
+<tr>
+<th>用法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>DdddOcr(show_ad=False)</code></td>
+<td>初始化（首次会加载 ONNX 模型）</td>
+</tr>
+<tr>
+<td><code>ocr.classification(img)</code></td>
+<td>支持 <code>PIL.Image</code> / <code>bytes</code> / <code>Path</code></td>
+</tr>
+<tr>
+<td>返回</td>
+<td>字符串；可能为空串或长度不符</td>
+</tr>
+</tbody>
+</table>
+<h3 id="pillow-opencv">图像预处理（Pillow / OpenCV）</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>代码</th>
+<th>适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>灰度</td>
+<td><code>img.convert("L")</code></td>
+<td>彩色干扰</td>
+</tr>
+<tr>
+<td>中值滤波</td>
+<td><code>ImageFilter.MedianFilter(3)</code></td>
+<td>椒盐噪声</td>
+</tr>
+<tr>
+<td>Otsu 二值化</td>
+<td><code>cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)</code></td>
+<td>前景背景分明</td>
+</tr>
+<tr>
+<td>形态学开</td>
+<td><code>cv2.morphologyEx(..., cv2.MORPH_OPEN, ...)</code></td>
+<td>去孤立噪点（会伤细笔画）</td>
+</tr>
+<tr>
+<td>正弦扭曲</td>
+<td><code>cv2.remap</code> + <code>sin</code></td>
+<td>合成训练数据</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sqlite">SQLite 幂等写入</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">sql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">INSERT</span><span class="w"> </span><span class="k">INTO</span><span class="w"> </span><span class="n">items</span><span class="w"> </span><span class="p">(</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">price</span><span class="p">,</span><span class="w"> </span><span class="n">fetched_at</span><span class="p">,</span><span class="w"> </span><span class="k">source</span><span class="p">)</span>
+<span class="k">VALUES</span><span class="w"> </span><span class="p">(</span><span class="o">?</span><span class="p">,</span><span class="w"> </span><span class="o">?</span><span class="p">,</span><span class="w"> </span><span class="o">?</span><span class="p">,</span><span class="w"> </span><span class="o">?</span><span class="p">,</span><span class="w"> </span><span class="o">?</span><span class="p">)</span>
+<span class="k">ON</span><span class="w"> </span><span class="n">CONFLICT</span><span class="p">(</span><span class="n">id</span><span class="p">)</span><span class="w"> </span><span class="k">DO</span><span class="w"> </span><span class="k">UPDATE</span><span class="w"> </span><span class="k">SET</span>
+<span class="w">    </span><span class="n">title</span><span class="o">=</span><span class="n">excluded</span><span class="p">.</span><span class="n">title</span><span class="p">,</span><span class="w"> </span><span class="n">price</span><span class="o">=</span><span class="n">excluded</span><span class="p">.</span><span class="n">price</span><span class="p">,</span>
+<span class="w">    </span><span class="n">fetched_at</span><span class="o">=</span><span class="n">excluded</span><span class="p">.</span><span class="n">fetched_at</span><span class="p">,</span><span class="w"> </span><span class="k">source</span><span class="o">=</span><span class="n">excluded</span><span class="p">.</span><span class="k">source</span><span class="p">;</span>
+</code></pre></div>
+<hr>
+<h2 id="_5">四、图解</h2>
+<p>完整版见 <strong>diagrams/README.md</strong>，包含：<br>
+1. 静态抓取 vs 浏览器渲染的数据流<br>
+2. 六种等待策略的时间线（真实耗时）<br>
+3. 指纹一致性矩阵（含破绽位置）<br>
+4. 验证码识别流水线<br>
+5. 预处理准确率对比图<br>
+6. 端到端状态机（Mermaid）<br>
+7. 本课实验拓扑</p>
+<hr>
+<h2 id="_6">五、实战实验手册</h2>
+<blockquote>
+<p>全部实验在<strong>本机自建靶站</strong>上完成，不访问任何第三方站点。<br>
+靶站、数据集、数据库都在 <code>/tmp</code>，实验结束有清理章节。</p>
+</blockquote>
+<h3 id="1-vs">实验 1：静态抓取 vs 浏览器渲染</h3>
+<p><strong>目的</strong>：证明"数据不在 HTML 里"时，渲染是唯一路径。</p>
+<p><strong>环境</strong>：Python 3.12.3；Playwright 1.64.1；Chromium 151.0.7922.34；本机 16GB / 4 核可见。</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-193-browser-captcha/code
+python3<span class="w"> </span><span class="m">00</span>-lab-target.py<span class="w"> </span>--self-test<span class="w">     </span><span class="c1"># 先确认靶站逻辑正确（8 项）</span>
+</code></pre></div>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-basic-render.py
+</code></pre></div>
+<p><strong>预期结果</strong>：静态抓取 0 条；至少一种等待策略拿到 12 条。</p>
+<p><strong>实际结果</strong>（2026-10-23 06:05 CST，真实 stdout）：</p>
+<pre class="plain"><code>靶站: http://127.0.0.1:39625/
+
+① 纯 HTTP 抓取（无 JS）
+   耗时 26ms  商品数 = 0   HTML 4257 字节
+   页面里看到的是: #list li{padding:6px 0;...} / &lt;p id=&quot;status&quot;&gt;booting…&lt;/p&gt; / &lt;ul id=&quot;list&quot;&gt;&lt;!-- JS 注入前是空的 --&gt;&lt;/u
+
+② 浏览器渲染 × 6 种等待策略（每种 2 轮，取第 2 轮以避开冷启动）
+   ❌ load                 185ms  items= 0  status=&#x27;booting…&#x27;
+   ❌ selector-exists      250ms  items= 0  status=&#x27;booting…&#x27;
+   ✅ selector-items      1550ms  items=12  status=&#x27;ready items=12 took=1407ms&#x27;
+   ❌ sleep-1s            1268ms  items= 0  status=&#x27;booting…&#x27;
+   ❌ networkidle          698ms  items= 0  status=&#x27;booting…&#x27;
+   ✅ wait-function       1452ms  items=12  status=&#x27;ready items=12 took=1409ms&#x27;
+
+③ 结论
+   最快且正确: wait-function (1452ms)
+   陷阱: load → items=0 (等待条件不充分)
+   陷阱: selector-exists → items=0 (等待条件不充分)
+   陷阱: sleep-1s → items=0 (等待条件不充分)
+   陷阱: networkidle → items=0 (等待条件不充分)
+   静态抓取漏掉 12 条数据 → 渲染不是升级版抓取，而是唯一能拿到内容的方式
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 同样一条 URL，静态 26ms 拿到 4257 字节但 <strong>0 条数据</strong>；渲染 1452ms 拿到 12 条。<br>
+- 6 种策略里 2 种正确、4 种"看起来成功但结果是空"。<br>
+  这 4 种才是最危险的——它们不报错，只是静默返回空列表。<br>
+- <code>sleep(1s)</code> 差 400ms 就失败：靶站总延迟约 1.4s。固定 sleep 的本质是赌。</p>
+<p><strong>清理</strong>：脚本自己在 <code>finally</code> 里 <code>terminate()</code> 靶站；无残留端口。<br>
+<code>**复现要点**：</code>01-basic-render.py` 自动分配空闲端口，不会和 8931 冲突。</p>
+<hr>
+<h3 id="2_2">实验 2：浏览器指纹的四种配置</h3>
+<p><strong>目的</strong>：量化"改配置"能消除多少破绽，以及会新增哪些矛盾。</p>
+<p><strong>环境</strong>：同上；靶站页面内计算 Canvas/WebGL/字体。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-pitfall-fingerprint.py
+</code></pre></div>
+<p><strong>实际结果</strong>（真实 stdout，列宽已按终端截断）：</p>
+<pre class="plain"><code>字段                  A 默认无头          B 只改 UA/时区/语言   C B + 抹掉 webdr  D 无 GPU 的软件渲染
+------------------------------------------------------------------------------------
+webdriver           True            True            None            True
+timezone            Asia/Shanghai   America/New_Yo  America/New_Yo  Asia/Shanghai
+platform            Linux x86_64    Linux x86_64    Linux x86_64    Linux x86_64
+screen              1280x720        1920x1080       1920x1080       1280x720
+hardwareConcurrency 4               4               4               4
+webglRenderer       Google, Vulkan  Google, Vulkan  Google, Vulkan  Google, Vulkan
+canvas              37db8d7b        37db8d7b        37db8d7b        37db8d7b
+fontsCount          5               5               5               5
+risk                2               3               2               2
+
+各配置被识别出的破绽：
+  A 默认无头               risk=2  [&#x27;navigator.webdriver=true&#x27;, &#x27;WebGL=SwiftShader 软件渲染&#x27;]
+  B 只改 UA/时区/语言        risk=3  [&#x27;navigator.webdriver=true&#x27;, &#x27;UA=Windows 但 platform=Linux&#x27;, &#x27;WebGL=SwiftShader 软件渲染&#x27;]
+  C B + 抹掉 webdriver   risk=2  [&#x27;UA=Windows 但 platform=Linux&#x27;, &#x27;WebGL=SwiftShader 软件渲染&#x27;]
+  D 无 GPU 的软件渲染        risk=2  [&#x27;navigator.webdriver=true&#x27;, &#x27;WebGL=SwiftShader 软件渲染&#x27;]
+</code></pre>
+<p>完整 WebGL 字符串：</p>
+<pre class="plain"><code>ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 只改 UA <strong>提高了</strong>风险（2→3）：新增 UA/platform 矛盾。这是本次最反直觉的实测结果。<br>
+- 抹掉 <code>navigator.webdriver</code> 只去掉 1 个破绽，WebGL 仍暴露软件渲染。<br>
+- Canvas 哈希四种配置完全相同：<code>37db8d7b</code>。改 header 改不了渲染栈。<br>
+- 四个配置 <code>hardwareConcurrency</code> 都是 4、字体都只有 5 个——容器环境本身的特征最难藏。</p>
+<p><strong>清理</strong>：脚本 <code>finally</code> 关闭 browser 与靶站。</p>
+<hr>
+<h3 id="34-3">实验 3：验证码识别基准（4 预处理 × 3 噪声）</h3>
+<p><strong>目的</strong>：用固定 seed 的 300 张带标签样本，量出预处理到底帮不帮忙。</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-captcha-ocr.py<span class="w"> </span>--self-test<span class="w">        </span><span class="c1"># 8 项：图形/二值/可复现/指标函数</span>
+python3<span class="w"> </span><span class="m">03</span>-captcha-ocr.py<span class="w"> </span>--n<span class="w"> </span><span class="m">100</span><span class="w">            </span><span class="c1"># 生成数据集 + 跑 12 组</span>
+</code></pre></div>
+<p><strong>数据集构成</strong>：4 字符、去掉 <code>O0I1L</code>、每字符独立旋转与着色；<br>
+medium 加 120 噪点 + 2 条干扰线 + 1.2px 正弦扭曲；hard 加 260 噪点 + 5 线 + 3 弧 + 2.6px 扭曲。</p>
+<p><strong>实际结果</strong>（2026-10-23 06:10 CST，每种噪声 100 张，单进程 CPU）：</p>
+<pre class="plain"><code>=== 噪声强度: clean (100 张) ===
+预处理           全对      准确率      字符准确率    ms/张   错例
+none          98    98.0%      99.2%    79.2   7JWF→7JW KAJD→KAD
+gray          98    98.0%      99.2%    66.3   7JWF→7JW KAJD→KAD
+otsu          96    96.0%      98.8%    96.7   4NJS→4NUS 7JWF→7JW D7HZ→O7HZ
+denoise       94    94.0%      98.2%    94.7   W4MR→WAMR 4NJS→4NUS 7JWF→&gt;JW
+
+=== 噪声强度: medium (100 张) ===
+预处理           全对      准确率      字符准确率    ms/张   错例
+none          91    91.0%      97.0%   121.4   4WTH→4WH QABV→0ABV 7JJH→&gt;了JH
+gray          91    91.0%      97.0%    97.9   4WTH→4WH QABV→0ABV 7JJH→&gt;了JH
+otsu          89    89.0%      96.5%   118.9   QABV→OABV N7TA→N&gt;TA 7JJH→&gt;JJH
+denoise       86    86.0%      95.0%    75.9   4WTH→4WH QABV→OABV Q6FS→O6FS
+
+=== 噪声强度: hard (100 张) ===
+预处理           全对      准确率      字符准确率    ms/张   错例
+none          86    86.0%      96.0%    84.7   9AQQ→9AO0 FQBA→F0BA WDU7→WPU7
+gray          85    85.0%      95.8%    73.4   9AQQ→9AO0 FQBA→F0BA WDU7→WPU7
+otsu          92    92.0%      97.8%   107.4   MKZZ→MXZZ DC2D→OC2D 7VRP→&gt;VRP
+denoise       91    91.0%      97.5%    64.8   MKZZ→MXZZ DC2D→OC2D HV2E→HVZE
+
+=== 横向对比：每种噪声下的最佳预处理 ===
+  clean    最佳=none     98.0%  最差=denoise  94.0%  差距 +4.0pp
+  medium   最佳=none     91.0%  最差=denoise  86.0%  差距 +5.0pp
+  hard     最佳=otsu     92.0%  最差=gray     85.0%  差距 +7.0pp
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 干净/中等噪声：<strong>不处理最好</strong>。二值化把笔画细节切掉，准确率降 2–5pp。<br>
+- 强噪声：Otsu <strong>+6pp</strong>（86%→92%），去噪再快 20ms 但少 1pp。<br>
+- 单张耗时 65–121ms，波动主要来自进程调度；同一张图的差异不是模型随机性（CTC 是确定性的）。<br>
+- 业务含义：100 张验证码按 92% 算，约 8 次失败。若每次失败要换图重试，<br>
+  平均尝试次数 ≈ 1.09；但<strong>连续 3 次失败</strong>的概率约 0.05%，所以 <code>max_tries=3</code> 足够。</p>
+<p><strong>清理</strong>：数据集在 <code>/tmp/captcha-ds</code>（约 300 张 PNG），不需要时 <code>rm -rf /tmp/captcha-ds</code>。</p>
+<hr>
+<h3 id="4">实验 4：端到端采集（渲染 → 识别 → 登录 → 入库）</h3>
+<p><strong>目的</strong>：验证三块能力接起来后，成功率与延迟是多少；以及重复跑是否幂等。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-production-scraper.py<span class="w"> </span>--logins<span class="w"> </span><span class="m">10</span>
+python3<span class="w"> </span><span class="m">04</span>-production-scraper.py<span class="w"> </span>--dry-run<span class="w"> </span>--logins<span class="w"> </span><span class="m">5</span><span class="w"> </span>--db<span class="w"> </span>/tmp/day193-dry.db
+</code></pre></div>
+<p><strong>实际结果（浏览器模式，真实 stdout）</strong>：</p>
+<pre class="plain"><code>模式: 浏览器渲染
+  渲染拿到 12 条商品
+  第  1 次登录: ✅ 识别=&#x27;G3XM&#x27; 尝试=1 286ms
+  第  2 次登录: ✅ 识别=&#x27;C2WF&#x27; 尝试=1 276ms
+  第  3 次登录: ✅ 识别=&#x27;2GHS&#x27; 尝试=1 248ms
+  第  4 次登录: ✅ 识别=&#x27;XV3Y&#x27; 尝试=1 238ms
+  第  5 次登录: ✅ 识别=&#x27;J2SQ&#x27; 尝试=1 211ms
+  第  6 次登录: ✅ 识别=&#x27;QQ4Z&#x27; 尝试=1 211ms
+  第  7 次登录: ✅ 识别=&#x27;FGQV&#x27; 尝试=1 245ms
+  第  8 次登录: ✅ 识别=&#x27;ZMS9&#x27; 尝试=1 178ms
+  第  9 次登录: ✅ 识别=&#x27;J5MZ&#x27; 尝试=1 286ms
+  第 10 次登录: ✅ 识别=&#x27;T3J8&#x27; 尝试=1 277ms
+
+指标: {&quot;login_attempts_total&quot;: 10, &quot;login_ok&quot;: 10, &quot;login_success_rate&quot;: 1.0,
+       &quot;avg_attempts_per_login&quot;: 1.0, &quot;avg_ms&quot;: 245.6, &quot;items&quot;: 12}
+数据库: /tmp/day193-scraper.db
+</code></pre>
+<p><strong>实际结果（纯 HTTP 降级路径）</strong>：</p>
+<pre class="plain"><code>模式: 纯 HTTP（--dry-run）
+  HTTP 拿到 12 条商品（无需渲染）
+  第 1..5 次登录全部 ✅ 尝试=1
+指标: {&quot;login_attempts_total&quot;: 5, &quot;login_ok&quot;: 5, &quot;login_success_rate&quot;: 1.0,
+       &quot;avg_attempts_per_login&quot;: 1.0, &quot;avg_ms&quot;: 132.9, &quot;items&quot;: 12}
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 浏览器模式单次登录 <strong>245.6ms</strong>；纯 HTTP <strong>132.9ms</strong>（约 1.85×）。<br>
+  差距来自 Playwright 的 CDP 往返与页面 JS 执行，不是 OCR（OCR 只占 60–70ms）。<br>
+- 10/10 成功，平均 1.0 次尝试：说明 medium 噪声下 ddddocr 对这类合成图很稳。<br>
+- 幂等：连跑两次 <code>items</code> 仍是 12 行（<code>ON CONFLICT</code> 生效）。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day193-scraper.db<span class="w"> </span>/tmp/day193-dry.db
+</code></pre></div>
+<p>脚本 <code>finally</code> 会终止靶站；无需手动 kill 端口。</p>
+<hr>
+<h3 id="5-403">实验 5（翻车实验）：正确答案却一直 403</h3>
+<p>这是今天真实踩到的坑，发生在靶站的自检里。过程比结论值钱。</p>
+<p><strong>现象</strong>：</p>
+<pre class="plain"><code>✅ 错误验证码 → 403
+✅ 验证码一次性（重复用正确码也失败）
+❌ 正确验证码 → 200
+❌ /health 统计可读
+自检结果：2 项失败
+</code></pre>
+<p><strong>假设</strong>（按可能性排序）：<br>
+1. Cookie 没带对 → 服务端认为 <code>no_sid</code>；<br>
+2. 答案比较有大小写/空格问题；<br>
+3. 第二张验证码的 sid 取了但没用上。</p>
+<p><strong>验证手段</strong>：把 <code>post()</code> 的响应体打出来，而不是只看状态码。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 临时调试：打印服务端 reason</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;post correct&quot;</span><span class="p">,</span> <span class="n">post</span><span class="p">(</span><span class="n">answer2</span><span class="p">,</span> <span class="kc">True</span><span class="p">))</span>
+<span class="c1"># → (403, b&#39;{&quot;ok&quot;: false, &quot;reason&quot;: &quot;no_sid&quot;}&#39;)</span>
+</code></pre></div>
+<p><code>no_sid</code> 直接排除了"答案错"：服务端根本没找到会话。</p>
+<p><strong>真实根因</strong>：<code>post()</code> 是闭包，捕获了外层变量 <code>sid</code>（第一张图的会话）。<br>
+第二次请求 <code>/captcha</code> 后拿到 <code>sid2</code>，但函数里仍发 <code>sid</code>——那个会话已经被上一次<br>
+"重复使用"测试消耗掉了。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 错误：闭包捕获外层 sid</span>
+<span class="k">def</span> <span class="nf">post</span><span class="p">(</span><span class="n">ans</span><span class="p">,</span> <span class="n">use_sid</span><span class="p">):</span>
+    <span class="o">...</span> <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Cookie&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;sid=</span><span class="si">{</span><span class="n">sid</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">}</span>
+
+<span class="c1"># 修复：会话显式传参</span>
+<span class="k">def</span> <span class="nf">post</span><span class="p">(</span><span class="n">ans</span><span class="p">,</span> <span class="n">sess</span><span class="p">,</span> <span class="n">use_sid</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+    <span class="o">...</span> <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;Cookie&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;sid=</span><span class="si">{</span><span class="n">sess</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">}</span>
+</code></pre></div>
+<p><strong>修复后复测</strong>：</p>
+<pre class="plain"><code>✅ 首页返回 HTML 且含空列表骨架  22ms
+✅ 延迟接口真的延迟了 ≥0.6s  0.70s
+✅ 接口返回 12 条商品
+✅ 验证码是 PNG 且 &gt;1KB  9682B
+✅ 错误验证码 → 403
+✅ 验证码一次性（重复用正确码也失败）
+✅ 正确验证码 → 200
+✅ /health 统计可读
+
+自检结果：全部通过
+</code></pre>
+<p><strong>教训</strong>：验证码场景里，"哪一张图的会话"是最容易丢的状态。<br>
+只要状态超过一个，就应该显式传参，不要依赖闭包。<br>
+<code>no_sid</code> 与 <code>wrong</code> 必须能区分——这正是我在响应里加 <code>reason</code> 字段的原因。</p>
+<hr>
+<h3 id="6networkidle-700ms">实验 6（翻车实验）：<code>networkidle</code> 提前 700ms 返回</h3>
+<p><strong>现象</strong>：实验 1 里 <code>networkidle</code> 用了 698ms，结果是 <code>items=0</code>。</p>
+<p><strong>假设</strong>：<br>
+1. <code>wait_for_load_state("networkidle")</code> 在 <code>goto</code> 之后调用时状态已满足，立即返回；<br>
+2. 或者页面请求被缓存，没有产生网络活动。</p>
+<p><strong>验证</strong>：在页面里记录 <code>performance.now()</code> 与请求时间；同时看 <code>#status</code> 文本仍是 <code>booting…</code>。<br>
+靶站的 fetch 在 <code>setTimeout(700ms)</code> 里，而 <code>networkidle</code> 只要"最近 500ms 无请求"就成立。<br>
+在 0–700ms 区间，页面<strong>一个请求都没发</strong>，所以条件成立。</p>
+<p><strong>真实根因</strong>：<code>networkidle</code> 衡量的是"过去"，不是"未来"。<br>
+它无法知道一个定时器即将发请求。这不是 bug，是语义。</p>
+<p><strong>修复</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 不可靠</span>
+<span class="n">page</span><span class="o">.</span><span class="n">wait_for_load_state</span><span class="p">(</span><span class="s2">&quot;networkidle&quot;</span><span class="p">)</span>
+
+<span class="c1"># ✅ 等业务条件</span>
+<span class="n">page</span><span class="o">.</span><span class="n">wait_for_selector</span><span class="p">(</span><span class="s2">&quot;#list li&quot;</span><span class="p">)</span>
+<span class="c1"># 或更精确</span>
+<span class="n">page</span><span class="o">.</span><span class="n">wait_for_function</span><span class="p">(</span><span class="s2">&quot;document.querySelectorAll(&#39;#list li&#39;).length &gt;= 12&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>复测</strong>：<code>selector-items</code> 1550ms / <code>wait-function</code> 1452ms，均拿到 12 条。</p>
+<p><strong>教训</strong>：等待条件要<strong>指向目标数据本身</strong>，而不是指向"浏览器觉得网络安静了"。</p>
+<hr>
+<h3 id="7-5pp">实验 7（翻车实验）：预处理把准确率拉低 5pp</h3>
+<p><strong>现象</strong>：medium 噪声下，<code>denoise</code> 只有 86%，比 <code>none</code> 的 91% 低 5pp。</p>
+<p><strong>假设</strong>：形态学开运算（2×2）把细笔画腐蚀掉了；或者中值滤波把字符边缘磨平。</p>
+<p><strong>验证</strong>：把同一张图的 <code>none</code> / <code>denoise</code> 并排保存，肉眼对比 + 看错例：</p>
+<pre class="plain"><code>none     4WTH→4WH    （少识别 1 字符，但字符本身对）
+denoise  4WTH→4WH / QABV→OABV / Q6FS→O6FS  （O/0、Q/O 混淆增加）
+</code></pre>
+<p><strong>根因</strong>：中值滤波 + 二值化让 O 和 Q 的尾巴、Q 和 O 的开口差别变小，<br>
+模型的字形判别边界被推到了错误一侧。噪声不是主要矛盾时，<br>
+预处理只是<strong>主动丢信息</strong>。</p>
+<p><strong>修复</strong>：不固定流水线，按噪声强度选：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span> <span class="nf">pick_mode</span><span class="p">(</span><span class="n">noise_level</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="s2">&quot;otsu&quot;</span> <span class="k">if</span> <span class="n">noise_level</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;hard&quot;</span><span class="p">,</span> <span class="s2">&quot;severe&quot;</span><span class="p">)</span> <span class="k">else</span> <span class="s2">&quot;none&quot;</span>
+</code></pre></div>
+<p><strong>复测</strong>：hard 下 <code>otsu</code> 92% &gt; <code>none</code> 86%；clean/medium 下 <code>none</code> 最优。与上表一致。</p>
+<hr>
+<h2 id="_7">六、实测数字汇总</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>数值</th>
+<th>条件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>静态抓取商品数</td>
+<td>0 / 12</td>
+<td>4257 字节 HTML，26ms</td>
+</tr>
+<tr>
+<td>渲染首次正确内容</td>
+<td>1407ms（页面内计时）</td>
+<td>700ms 定时器 + 700ms 接口延迟</td>
+</tr>
+<tr>
+<td>最快正确等待策略</td>
+<td>1452ms（wait-function）</td>
+<td>冷启动后第 2 轮</td>
+</tr>
+<tr>
+<td>最危险策略</td>
+<td>networkidle 698ms 返回 0 条</td>
+<td>语义陷阱</td>
+</tr>
+<tr>
+<td>固定 sleep(1s)</td>
+<td>0 条</td>
+<td>差约 400ms</td>
+</tr>
+<tr>
+<td>指纹破绽数</td>
+<td>2 / 3 / 2 / 2</td>
+<td>A/B/C/D 四配置</td>
+</tr>
+<tr>
+<td>Canvas 哈希</td>
+<td>37db8d7b（四配置相同）</td>
+<td>SwiftShader + 同字体栈</td>
+</tr>
+<tr>
+<td>OCR clean</td>
+<td>98%（none）</td>
+<td>100 张</td>
+</tr>
+<tr>
+<td>OCR medium</td>
+<td>91%（none）</td>
+<td>100 张</td>
+</tr>
+<tr>
+<td>OCR hard</td>
+<td>92%（otsu，+6pp）</td>
+<td>100 张</td>
+</tr>
+<tr>
+<td>OCR 单张耗时</td>
+<td>65–121ms</td>
+<td>CPU 推理</td>
+</tr>
+<tr>
+<td>端到端登录</td>
+<td>10/10，245.6ms/次</td>
+<td>浏览器模式</td>
+</tr>
+<tr>
+<td>纯 HTTP 登录</td>
+<td>5/5，132.9ms/次</td>
+<td>--dry-run</td>
+</tr>
+<tr>
+<td>幂等落库</td>
+<td>12 行不变</td>
+<td>重复运行</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_8">七、工程边界与合规</h2>
+<ul>
+<li>本课所有"目标站"都是本地自建靶站，没有对任何真实站点发起自动化请求。</li>
+<li>验证码是站点明确表达"请不要自动化"的方式。真实项目优先找官方 API / 数据授权。</li>
+<li>打码平台会把图片发往第三方：涉及账号、隐私、商业数据时不可用。</li>
+<li>指纹伪装在法律与平台条款层面风险高；本课只做<strong>检测视角</strong>的教学，不提供绕过方案。</li>
+<li>生产爬虫的三条底线：遵守 robots 与速率、不采个人隐私、不破坏服务可用性。</li>
+</ul>
+<hr>
+<h2 id="_9">思考题</h2>
+<ol>
+<li>你的目标页在 <code>DOMContentLoaded</code> 后 2 秒才出现数据，但 <code>networkidle</code> 在 300ms 就返回了。<br>
+   写出至少两种能稳定等到数据的条件，并说明各自的失效场景。</li>
+<li>为什么"只改 UA"会让指纹风险<strong>上升</strong>？如果让你按优先级修，你会先改哪三项，为什么？</li>
+<li>Canvas 哈希在本机四个配置下完全相同。要让哈希变化，最小改动是什么？<br>
+   这个改动会不会带来新的破绽？</li>
+<li>验证码识别率 92%，<code>max_tries=3</code>。请估算"最终登录成功率"，并说明这个估算依赖哪个独立性假设。</li>
+<li>如果目标站把验证码换成"点选图中所有红绿灯"，今天这套 OCR 流水线还适用吗？<br>
+   你会怎么改造数据与模型？</li>
+<li>端到端 245ms/次里，OCR 只占约 60ms。剩下的时间花在哪？<br>
+   如果要把吞吐提高 3 倍，你会先优化哪一段？</li>
+</ol>
+<hr>
+<h2 id="_10">清理记录</h2>
+<p>本次编写过程中产生的临时物：</p>
+<table>
+<thead>
+<tr>
+<th>路径</th>
+<th>内容</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/tmp/captcha-ds</code></td>
+<td>300 张合成验证码 + labels.csv</td>
+<td>保留供复现；<code>rm -rf</code> 可删</td>
+</tr>
+<tr>
+<td><code>/tmp/day193-*.json</code></td>
+<td>实验原始结果</td>
+<td>保留供核对</td>
+</tr>
+<tr>
+<td><code>/tmp/day193-scraper.db</code></td>
+<td>端到端落库</td>
+<td>已随脚本退出关闭；可删</td>
+</tr>
+<tr>
+<td><code>/tmp/pwtest.py</code>、<code>/tmp/dbg*.py</code></td>
+<td>调试脚本</td>
+<td>已删除</td>
+</tr>
+<tr>
+<td>靶站进程</td>
+<td>随机端口，脚本 <code>finally</code> 终止</td>
+<td>无残留</td>
+</tr>
+</tbody>
+</table>
+<p><strong>环境改动</strong>：本机通过 <code>pip3 install --break-system-packages playwright</code> 安装了<br>
+Playwright 1.64.1（浏览器二进制使用已有的 <code>chromium-1234</code> 缓存，通过<br>
+<code>executable_path</code> 指定）。如需还原：<code>pip3 uninstall playwright</code>。</p>
+<hr>
+<h2 id="_11">一句话总结</h2>
+<p><strong>渲染不是"更强的 requests"，它是唯一能拿到 JS 生成内容的方式；<br>
+验证码不是"识别问题"，是"一次性状态 + 失败重试"的工程问题；<br>
+指纹不是"改 UA"，是一组必须互相自洽的事实。</strong></p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-192/index.html">← Day 192 代理池：IP 轮换、健康检查与出口调度</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>
