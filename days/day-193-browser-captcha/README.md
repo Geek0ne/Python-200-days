@@ -700,10 +700,11 @@ def pick_mode(noise_level: str) -> str:
 
 | 路径 | 内容 | 处理 |
 |---|---|---|
-| `/tmp/captcha-ds` | 300 张合成验证码 + labels.csv | 保留供复现；`rm -rf` 可删 |
-| `/tmp/day193-*.json` | 实验原始结果 | 保留供核对 |
-| `/tmp/day193-scraper.db` | 端到端落库 | 已随脚本退出关闭；可删 |
+| `/tmp/captcha-ds` | 300 张合成验证码 + labels.csv | 已删除（脚本固定 seed 可重建） |
+| `/tmp/day193-*.json` | 实验原始结果 | 已删除（数字已写入本文） |
+| `/tmp/day193-scraper.db`、`/tmp/day193-dry.db` | 端到端落库 | 已删除 |
 | `/tmp/pwtest.py`、`/tmp/dbg*.py` | 调试脚本 | 已删除 |
+| `/tmp/r*.log`、`/tmp/verify*.log` | 实验日志 | 已删除 |
 | 靶站进程 | 随机端口，脚本 `finally` 终止 | 无残留 |
 
 **环境改动**：本机通过 `pip3 install --break-system-packages playwright` 安装了
