@@ -1,0 +1,696 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 194 — AI 增强与数据管道</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 194 — AI 增强与数据管道</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">616 行</span>
+    <span class="badge">5 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（5 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-194-ai-data-pipeline" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2">概念速览</a>
+<a class="toc-l2" href="#_3">一、概念解释</a>
+<a class="toc-l3" href="#1-if">1. 为什么要&quot;预测&quot;而不是继续写 if</a>
+<a class="toc-l3" href="#2">2. 特征选择的原则：只要&quot;决策时就能拿到&quot;的</a>
+<a class="toc-l3" href="#3">3. 类别不平衡与代价不对称</a>
+<a class="toc-l3" href="#4">4. 去重：精确哈希为什么不够</a>
+<a class="toc-l3" href="#5">5. 管道：分阶段是为了&quot;错误可定位&quot;</a>
+<a class="toc-l2" href="#_4">二、原理深入</a>
+<a class="toc-l3" href="#1">1. 逻辑回归：从线性打分到概率</a>
+<a class="toc-l3" href="#2_1">2. 为什么必须先标准化</a>
+<a class="toc-l3" href="#3-simhash">3. SimHash 的位运算</a>
+<a class="toc-l3" href="#4-n2">4. 鸽巢分桶：把 n² 变成候选集</a>
+<a class="toc-l3" href="#5_1">5. 两阶段：粗筛 + 精排</a>
+<a class="toc-l3" href="#6">6. 质量门禁：只写&quot;能明确判定错&quot;的规则</a>
+<a class="toc-l2" href="#api">三、API 速查</a>
+<a class="toc-l3" href="#pipeline_lib">pipeline_lib（本课自建，零外部依赖）</a>
+<a class="toc-l3" href="#numpy-sklearn">numpy / sklearn 常用点</a>
+<a class="toc-l2" href="#_5">四、图解</a>
+<a class="toc-l2" href="#_6">五、实战实验手册</a>
+<a class="toc-l3" href="#1_1">实验 1：反爬风险分类器</a>
+<a class="toc-l3" href="#2simhash">实验 2：SimHash 去重与分桶索引</a>
+<a class="toc-l3" href="#3url-419">实验 3：URL 规范化——被删掉的 419 个页面</a>
+<a class="toc-l3" href="#43000">实验 4：端到端管道（3000 条脏数据）</a>
+<a class="toc-l2" href="#_7">六、翻车实验</a>
+<a class="toc-l3" href="#1sqlite-64">翻车 1：SQLite 存不下 64 位哈希</a>
+<a class="toc-l3" href="#2-806">翻车 2：整页文本去重 → 80.6% 被误判重复</a>
+<a class="toc-l3" href="#3-jaccard">翻车 3：我自己的语料把 Jaccard 指标搞失真了</a>
+<a class="toc-l3" href="#4sklearn">翻车 4：sklearn 不收敛（其实是没标准化）</a>
+<a class="toc-l2" href="#_8">七、思考题</a>
+<a class="toc-l2" href="#_9">八、清理与收尾</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-194-ai">Day 194 — AI 增强与数据管道</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战<br>
+<strong>项目</strong>：AI 赋能反爬数据平台 · 第 4/5 天<br>
+<strong>子主题</strong>：反爬风险预测 · 特征工程 · 代价敏感阈值 · SimHash 去重 · 分桶索引 · 管道 · 质量门禁<br>
+<strong>代码</strong>：1 个共享库 + 4 个可独立运行脚本，全部带 <code>--self-test</code>，无一依赖外部服务<br>
+<strong>实测环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / numpy 2.0.0 / scikit-learn 1.9.0 / 2026-10-24 06:00–06:50 CST</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<pre class="plain"><code>Day 191  引擎骨架      → 队列、限速、重试、落库                 ✅
+Day 192  代理池        → IP 轮换、健康检查、按目标分配出口       ✅
+Day 193  浏览器与验证码 → JS 渲染、指纹、验证码识别              ✅
+Day 194  AI 增强       → 风险预测、内容去重、清洗入库管道        ← 今天
+Day 195  运维与交付    → 调度、加密、鉴权、Docker + CI/CD
+</code></pre>
+<p>前三天解决的是"怎么把数据拿回来"。今天要解决的是<strong>拿回来的东西能不能用</strong>：<br>
+哪一页该停、哪两篇是同一篇、哪些字段脏到不能入库。</p>
+<p>一句话概括：<strong>分类器决定要不要继续抓，SimHash 决定要不要再存一份，质量门禁决定能不能入库。</strong></p>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整图解见 <strong>diagrams/README.md</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>软封（soft block）</td>
+<td>HTTP 200，内容是空壳/验证页</td>
+<td>没有任何单点特征，规则必然漏</td>
+</tr>
+<tr>
+<td>特征工程</td>
+<td>把响应变成一行数字</td>
+<td>模型上限由特征决定，不由算法决定</td>
+</tr>
+<tr>
+<td>标准化</td>
+<td>按训练集均值方差缩放</td>
+<td>量纲差 5 个数量级时梯度会失控</td>
+</tr>
+<tr>
+<td>类别不平衡</td>
+<td>正类只占 25.4%</td>
+<td>accuracy 会骗人，要看 P/R/AUC</td>
+</tr>
+<tr>
+<td>代价敏感阈值</td>
+<td>漏报比误报贵 5 倍</td>
+<td>阈值 0.5 是默认值，不是最优值</td>
+</tr>
+<tr>
+<td>数据泄漏</td>
+<td>用了线上拿不到的特征</td>
+<td>离线 AUC 虚高，上线即失效</td>
+</tr>
+<tr>
+<td>SimHash</td>
+<td>64 位指纹，近似文本距离小</td>
+<td>精确哈希抓不住转载</td>
+</tr>
+<tr>
+<td>汉明距离</td>
+<td>两个指纹不同的位数</td>
+<td>阈值 k 必须自己扫，没有普适值</td>
+</tr>
+<tr>
+<td>鸽巢分桶</td>
+<td>切成 bands 段，任一段相同才比对</td>
+<td>把 O(n²) 压到候选集</td>
+</tr>
+<tr>
+<td>粗筛 + 精排</td>
+<td>SimHash 找候选，Jaccard 定终判</td>
+<td>单靠阈值拿不到高精度+高召回</td>
+</tr>
+<tr>
+<td>幂等</td>
+<td>重跑结果不变</td>
+<td>幂等 ≠ 正确（见翻车实验 1）</td>
+</tr>
+<tr>
+<td>质量门禁</td>
+<td>只判"能明确判定错"的规则</td>
+<td>主观判断不该进自动门禁</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">一、概念解释</h2>
+<h3 id="1-if">1. 为什么要"预测"而不是继续写 if</h3>
+<p>规则能覆盖显式拒绝：403、429、验证码、JS 挑战。但真实风控里最贵的是<strong>软封</strong>——<br>
+服务器返回 200，页面正常渲染，内容却是空的或是个"请稍后再试"。</p>
+<pre class="plain"><code>硬封：403 + WAF 页面        → if status == 403: 停     ✅ 规则能抓
+限速：429 + Retry-After     → if 429: 退避             ✅ 规则能抓
+软封：200 + 空壳 + 正常头   → if ???: ???              ❌ 没有单点特征
+</code></pre>
+<p>软封只能靠<strong>多个弱信号的组合</strong>：响应体异常小、延迟偏高、响应头偏少、偶发验证码。<br>
+这就是分类问题：输入一行特征，输出"这一页还能不能继续抓"的概率。</p>
+<p><strong>为什么不用大模型？</strong> 每抓一页调一次 LLM，成本是每千页几块钱、延迟是几百毫秒，<br>
+而逻辑回归是<strong>每页 7 微秒、零边际成本、系数可解释</strong>。这类高频二分类的正确解法是<br>
+特征工程 + 轻量模型，LLM 适合的是低频、需要语义理解的环节（比如判断页面主题）。</p>
+<h3 id="2">2. 特征选择的原则：只要"决策时就能拿到"的</h3>
+<p><code>FEATURES</code> 里的 10 个字段全部来自响应本身：状态码、响应体大小、延迟、验证码、<br>
+Retry-After、WAF cookie、响应头数量、JS 挑战、重定向跳数、UA 是否命中爬虫库。</p>
+<p>反面例子是 <code>block_page_title</code>、<code>waf_reason</code> 这类字段——它们<strong>只在被拦之后才存在</strong>，<br>
+拿它们训练等于让模型抄答案。本次实测（见实验 1 第 3 节）把生成器的隐藏变量<br>
+<code>_propensity</code> 加进去，AUC 从 0.9299 抬到 0.9340：增益只有 +0.0041，因为这份数据里<br>
+10 个特征本身已经很强。<strong>增益小不代表没风险</strong>——换成弱特征数据集，同一个字段能让<br>
+离线 AUC 虚高 0.2–0.3，而你在离线阶段完全看不出来。</p>
+<h3 id="3">3. 类别不平衡与代价不对称</h3>
+<p>正类（需要停抓）只占 25.4%。如果模型全判"安全"，accuracy 也有 74.6%，但一条软封都抓不到。<br>
+所以要看的指标是 precision / recall / AUC，而不是 accuracy。</p>
+<p>更关键的是<strong>两类错误的代价不同</strong>：</p>
+<ul>
+<li>误报（正常页判成被封）→ 少抓几页，代价 1</li>
+<li>漏报（被封了还在抓）→ 继续撞风控，可能整段 IP 段被封，代价 5</li>
+</ul>
+<p>阈值 0.5 是数学默认值，不是业务最优值。实测把阈值下调到 0.34，总代价从 194 降到 144。</p>
+<h3 id="4">4. 去重：精确哈希为什么不够</h3>
+<p>转载场景里，同一篇文章会被改标题前缀、换标点、加推广尾巴。SHA256 对这种改动<br>
+<strong>完全无感</strong>——一个字节不同，哈希就完全不同。实测精确哈希召回只有 0.164。</p>
+<p>SimHash 的思路是把文档压成 64 位指纹：内容相近 → 指纹只差几位。<br>
+于是"是否重复"变成"汉明距离是否 ≤ k"。代价是 k 必须自己定：</p>
+<ul>
+<li>k 太小 → 召回低（改几个词就抓不到）</li>
+<li>k 太大 → 精度崩（无关文档也撞上）</li>
+</ul>
+<p>而 k 的合适值<strong>随文档长度变化</strong>：174 token 的文档最优 k=10，10 token 的商品标题<br>
+k=3 召回只有 3%。所以生产系统里 k 是按长度分层的参数，不是常数。</p>
+<h3 id="5">5. 管道：分阶段是为了"错误可定位"</h3>
+<p>把所有逻辑塞进一个函数，出错时你只知道"结果不对"。分成<br>
+采集 → 清洗 → 抽取 → 去重 → 质检 → 入库 六段之后，每一段都有明确的输入输出计数，<br>
+脏数据在哪一段消失、因为什么消失，一目了然。</p>
+<p>配套的两条硬规则：</p>
+<ol>
+<li><strong>脏数据不静默丢</strong>：进 <code>quarantine</code> 表并带 reason code，否则你永远不知道丢了多少。</li>
+<li><strong>入库必须幂等</strong>：同一批数据跑两遍，行数必须一样。但注意——幂等只保证可重复，<br>
+   不保证正确（Day 194 的 URL 规范化事故就是"幂等但错"）。</li>
+</ol>
+<h2 id="_4">二、原理深入</h2>
+<h3 id="1">1. 逻辑回归：从线性打分到概率</h3>
+<p>模型先算一个线性分：<code>z = w·x + b</code>，再用 sigmoid 压到 (0,1)：</p>
+<pre class="plain"><code>p = 1 / (1 + e^(-z))
+</code></pre>
+<p>训练目标是最小化交叉熵（加 L2）：</p>
+<pre class="plain"><code>L = -(1/n) Σ [ y·log(p) + (1-y)·log(1-p) ] + (λ/2)·||w||²
+</code></pre>
+<p>梯度很干净：</p>
+<pre class="plain"><code>∂L/∂w = (1/n)·Xᵀ(p - y) + λ·w
+∂L/∂b = mean(p - y)
+</code></pre>
+<p>代码里就是这 4 行，1500 轮批量梯度下降，在 2100×10 的训练集上 156 ms 收敛，<br>
+loss 从 0.6932（等价于瞎猜）降到 0.2370。</p>
+<h3 id="2_1">2. 为什么必须先标准化</h3>
+<p><code>body_len</code> 在 10⁵ 量级，<code>status_code</code> 只有 3 位。不标准化时：</p>
+<ul>
+<li>梯度里 body_len 方向的步长远大于其它维度</li>
+<li>同一个学习率下，小量纲特征几乎不动，大量纲特征来回震荡</li>
+</ul>
+<p>实测证据：第一次跑 sklearn 对照时忘了标准化，<code>lbfgs</code> 直接报<br>
+<code>failed to converge after 1000 iterations</code>，还贴心地提示 "You might also want to scale the data"。<br>
+把 <code>StandardScaler</code> 放进 Pipeline 后，5 折交叉验证一次通过，AUC 0.9279 ± 0.0082。</p>
+<p>另外一条容易忽略的规矩：<strong>标准化统计量只能来自训练集</strong>。用全量数据算均值方差，<br>
+测试集的信息就漏进了训练过程。</p>
+<h3 id="3-simhash">3. SimHash 的位运算</h3>
+<p>对每个 token 取一个稳定的 64 位哈希（必须用 blake2b/sha，不能用内置 <code>hash()</code>——<br>
+它受 <code>PYTHONHASHSEED</code> 影响，跨进程不可复现），然后逐位投票：</p>
+<pre class="plain"><code>for each token t with weight w_t:
+    for bit i in 0..63:
+        votes[i] += +w_t if (hash(t) &gt;&gt; i) &amp; 1 else -w_t
+fingerprint = Σ (1 &lt;&lt; i) for votes[i] &gt; 0
+</code></pre>
+<p>两篇文档改了几个词，只有那几位附近的投票会翻转，所以距离小。</p>
+<p>中文没有空格，本课用<strong>字符二元组</strong>（"新能源" → 新能/能源），零依赖且对未登录词鲁棒。<br>
+英文和数字用 <code>[a-z0-9]+</code> 切词。</p>
+<h3 id="4-n2">4. 鸽巢分桶：把 n² 变成候选集</h3>
+<p>把 64 位切成 <code>bands</code> 段。若两篇文档距离 ≤ bands-1，那么<strong>至少有一段完全相同</strong><br>
+（因为最多只有 bands-1 位不同，不可能每段都被污染）。于是只需查"同段同值"的桶。</p>
+<p>实测代价（1200 篇）：</p>
+<table>
+<thead>
+<tr>
+<th>bands</th>
+<th>每段位宽</th>
+<th>保证召回的 k</th>
+<th>平均候选/篇</th>
+<th>候选对</th>
+<th>与全量比对</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>4</td>
+<td>16</td>
+<td>3</td>
+<td>1.5</td>
+<td>285</td>
+<td>✅ 一致</td>
+</tr>
+<tr>
+<td>8</td>
+<td>8</td>
+<td>7</td>
+<td>1.8</td>
+<td>454</td>
+<td>✅ 一致</td>
+</tr>
+</tbody>
+</table>
+<p>段越多 → 保证阈值越高，但每段取值空间越小、桶里越挤。这就是取舍点。</p>
+<h3 id="5_1">5. 两阶段：粗筛 + 精排</h3>
+<p>单靠 SimHash 阈值在 1200 篇上是这样的曲线：</p>
+<pre class="plain"><code>k=3   P=1.000 R=0.539    ← 一个都不敢误报，但漏一半
+k=10  P=0.923 R=0.970    ← 召回够了，误报 43 对
+k=15  P=0.153 R=1.000    ← 全召回，但精度崩了
+</code></pre>
+<p>正确做法是分工：SimHash 只负责<strong>把 719,400 对压到 454 对候选</strong>，<br>
+最终判定交给 Jaccard（token 集合交并比 ≥ 0.6）。实测：</p>
+<pre class="plain"><code>候选对 454 / 719,400（0.06%）
+precision=1.000 recall=0.853 f1=0.920
+误报 0 / 漏报 78，耗时 127 ms
+</code></pre>
+<h3 id="6">6. 质量门禁：只写"能明确判定错"的规则</h3>
+<p>规则分两类：</p>
+<ul>
+<li><strong>可判定</strong>：标题为空、价格不是数字、价格 ≤ 0、日期格式不对、正文 &lt; 50 字、乱码 → 直接拦</li>
+<li><strong>需判断</strong>：内容是否有价值、图片是否清晰、描述是否合规 → 不进自动门禁，进人工队列</li>
+</ul>
+<p>本课 8 条规则全部属于第一类，误报率可控（自检里用一条正常记录验证"不误报"）。</p>
+<p>乱码检测是个例外，它天生是启发式：</p>
+<pre class="plain"><code>信号 1：出现 U+FFFD 或 Ã. / â€ / ï¿½ 组合
+信号 2：Latin-1 补充区字符占比 ≥ 15%
+信号 3：整段能用 cp1252 编码、再用 utf-8 解码得到汉字（可逆修复）
+</code></pre>
+<p>阈值取 0.15 是刻意的：取 0.05 会把正常法语（<code>Le café crème est très bon</code>）当成乱码隔离。</p>
+<hr>
+<h2 id="api">三、API 速查</h2>
+<h3 id="pipeline_lib">pipeline_lib（本课自建，零外部依赖）</h3>
+<table>
+<thead>
+<tr>
+<th>函数 / 类</th>
+<th>作用</th>
+<th>关键参数</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>clean_html(raw)</code></td>
+<td>去脚本/标签/实体/零宽字符，NFKC 归一</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>canon_url(url)</code></td>
+<td>只删已知追踪参数，保留 sku/page</td>
+<td><code>extra_drop</code></td>
+</tr>
+<tr>
+<td><code>tokenize(text)</code></td>
+<td>中文二元组 + 英文单词</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>simhash(text)</code></td>
+<td>64 位指纹</td>
+<td><code>bits</code></td>
+</tr>
+<tr>
+<td><code>hamming(a, b)</code></td>
+<td>不同位数</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>SimHashIndex(bands=4)</code></td>
+<td>分桶索引</td>
+<td><code>bits</code>, <code>bands</code></td>
+</tr>
+<tr>
+<td><code>.add(h, payload)</code> / <code>.query(h, k)</code></td>
+<td>建索引 / 查候选（<code>k ≤ bands-1</code>）</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>hash_to_signed(h)</code> / <code>signed_to_hash(v)</code></td>
+<td>uint64 ↔ SQLite INTEGER</td>
+<td><code>bits</code></td>
+</tr>
+<tr>
+<td><code>check_record(rec)</code></td>
+<td>质量规则，返回 <code>[Issue]</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>synth_responses(n, seed)</code></td>
+<td>带标签的响应样本</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>synth_corpus(n, dup_ratio, seed)</code></td>
+<td>原创 + 转载混合语料</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<h3 id="numpy-sklearn">numpy / sklearn 常用点</h3>
+<table>
+<thead>
+<tr>
+<th>调用</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>np.bitwise_count(x)</code></td>
+<td>numpy ≥ 2.0 的 popcount，算汉明距离</td>
+</tr>
+<tr>
+<td><code>np.triu_indices(n, 1)</code></td>
+<td>上三角下标，避免重复计数</td>
+</tr>
+<tr>
+<td><code>StandardScaler()</code> + <code>make_pipeline</code></td>
+<td>标准化必须放进 Pipeline</td>
+</tr>
+<tr>
+<td><code>cross_val_score(..., scoring='roc_auc')</code></td>
+<td>5 折 AUC</td>
+</tr>
+<tr>
+<td><code>np.argsort(score, kind='mergesort')</code></td>
+<td>AUC 秩和公式要求稳定排序</td>
+</tr>
+</tbody>
+</table>
+<h2 id="_5">四、图解</h2>
+<p>完整版见 <strong>diagrams/README.md</strong>，这里放两张核心图。</p>
+<pre class="plain"><code>风险预测的数据流
+────────────────────────────────────────────────────────
+响应 ──► 特征提取 ──► 标准化 ──► w·x+b ──► sigmoid ──► p
+  │        10 维       训练集统计量     线性分            │
+  │                                                      ▼
+  └─ status/body_len/latency/captcha/...         p ≥ 阈值 ? 继续 : 停抓
+                                                     │
+                                          阈值 0.34（不是 0.5）
+</code></pre>
+<pre class="plain"><code>两阶段去重（1200 篇 → 454 候选 → 终判）
+────────────────────────────────────────────────────────
+全部 719,400 对
+      │  汉明距离 ≤ 7（8 段索引，鸽巢保证）
+      ▼
+   454 对候选（0.06%）
+      │  Jaccard ≥ 0.6
+      ▼
+   precision 1.000 / recall 0.853
+</code></pre>
+<hr>
+<h2 id="_6">五、实战实验手册</h2>
+<p>所有实验都在本机真实执行，输出为原样粘贴。清理命令在每个实验末尾。</p>
+<h3 id="1_1">实验 1：反爬风险分类器</h3>
+<p><strong>目的</strong>：验证"规则基线 vs 逻辑回归"的差距，并量化代价敏感阈值与推理延迟。</p>
+<p><strong>环境</strong>：Python 3.12.3 / numpy 2.0.0 / scikit-learn 1.9.0（仅用于交叉验证对照）</p>
+<p><strong>准备</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-194-ai-data-pipeline/code
+python3<span class="w"> </span>pipeline_lib.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-risk-classifier.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">01</span>-risk-classifier.py
+</code></pre></div>
+<p><strong>实际结果</strong>（2026-10-24 06:12 CST）：</p>
+<pre class="plain"><code>====================================================================
+数据集：3000 条合成响应 | 正类(需停抓)占比 25.4%
+特征：10 个 → status_code, body_len, latency_ms, captcha, retry_after ...
+====================================================================
+
+[1] 规则基线 (403/429/503 或 验证码 或 JS挑战)
+    precision=0.435 recall=0.750 f1=0.551
+    漏报 57 条软封 / 误报 222 条正常页
+
+[2] 逻辑回归（手写 GD，1500 轮）
+    训练耗时 156 ms | 首末 loss 0.6932 → 0.2370
+    AUC=0.9299 accuracy=0.9533 precision=0.979 recall=0.833 f1=0.900
+    代价敏感阈值：0.50 → 0.34（漏报代价=误报×5）
+    代价 194 → 144 | 漏报 26 误报 14
+    单条推理 6.9 µs | 批量 0.02 µs/条（899 行/批）
+
+[3] 反面教材：把生成器的隐藏变量 _propensity 当特征
+    只用泄漏列：AUC=0.8957（一个字段顶整套特征工程）
+    特征+泄漏：AUC=0.9340（比诚实模型 0.9299 高 +0.0041）
+
+[4] 标准化系数 Top5（正=更像被封）
+    body_len       -1.289
+    status_code    +0.985
+    header_count   -0.759
+    latency_ms     +0.268
+    ua_known_bot   -0.134
+
+[5] sklearn 5 折 AUC = 0.9279 ± 0.0082
+    手写模型单次切分 AUC = 0.9299（单次切分会波动 ±0.02 左右）
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 规则基线 F1 0.551，主要亏在 57 条软封漏报和 222 条误报；<br>
+- 逻辑回归把 F1 抬到 0.900，且单条推理 6.9 µs，完全够"每页判一次"；<br>
+- 代价敏感阈值把总代价从 194 降到 144——<strong>阈值是业务参数，不是超参</strong>。</p>
+<p><strong>清理</strong>：本实验不落盘，无残留。</p>
+<hr>
+<h3 id="2simhash">实验 2：SimHash 去重与分桶索引</h3>
+<p><strong>目的</strong>：量化精确哈希的召回、SimHash 阈值曲线、分桶等价性与两阶段收益。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-simhash-dedup.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">02</span>-simhash-dedup.py
+</code></pre></div>
+<p><strong>实际结果</strong>（同日 06:20 CST，节选）：</p>
+<pre class="plain"><code>语料：1200 篇 | 转载/改写 376 篇 | 真实重复对 529
+文档长度：123 ~ 229 token（中位 174）
+
+[1] 精确哈希（SHA256 + 标点归一化）
+    precision=1.000 recall=0.164 f1=0.282
+    抓到 87 对 / 漏 442 对 —— 转载加个前缀就逃掉了
+
+[2] SimHash 阈值扫描（1200 篇全量两两比对）
+    k     precision  recall     f1
+    3     1.000      0.539      0.700
+    7     0.993      0.853      0.918
+    8     0.970      0.921      0.945
+    10    0.923      0.970      0.946
+    15    0.153      1.000      0.265
+
+[3] 分桶索引：段数决定&#x27;保证召回的 k&#x27;与候选规模
+    bands  保证k   平均候选/篇   候选对    与全量一致
+    4       3       1.5           285       ✅  (7 ms)
+    8       7       1.8           454       ✅  (29 ms)
+
+[4] 两阶段去重：SimHash 粗筛（k≤7）+ Jaccard 精排（≥0.6）
+    候选对 454 / 全量 719,400（0.06%）
+    precision=1.000 recall=0.853 f1=0.920
+    误报 0 对 / 漏报 78 对 | 耗时 127 ms
+
+[5] 吞吐量：20000 篇文档（合成语料，单进程无并发，numpy 版 SimHash）
+    生成哈希    3.55 s  (5,636 篇/s)
+    建索引      0.06 s  (339,987 篇/s)
+    全量查询    9.73 s  (2,055 篇/s, 平均 2.0 个候选/篇)
+    桶数量    1,929（8 段 × 2^8）
+
+[6] 短文本：200 条商品标题，仅把价格改掉（应判为同一商品）
+    平均 token 数 10.0
+    汉明距离分布：2:2, 3:4, 4:12, 5:13, 6:23, 7:32, 8:39, 9:31 ...
+    k=3  召回   3.0%
+    k=5  召回  15.5%
+    k=8  召回  62.5%
+    k=10 召回  87.5%
+    对照组（600 条无关标题，179,700 对）：k=3 误判 0.01% | k=8 误判 2.30%
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 精确哈希召回 0.164，转载场景不可用；<br>
+- SimHash 单独使用时，k 无法同时满足精度与召回（k=10 精度 0.923，k=15 精度 0.153）；<br>
+- 两阶段把候选压到 0.06%，同时拿到 precision 1.000 / recall 0.853；<br>
+- 短文本（10 token）对单点改动过于敏感：k=3 只召回 3.0%，而放大到 k=8 时<br>
+  无关标题的误判升到 2.30%——短文本该走集合相似度或规则。</p>
+<p><strong>清理</strong>：本实验只在内存与 /tmp 临时文件中操作，无残留。</p>
+<hr>
+<h3 id="3url-419">实验 3：URL 规范化——被删掉的 419 个页面</h3>
+<p><strong>目的</strong>：复现"删掉全部查询参数"导致的静默数据丢失，并验证白名单修复。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-pitfall-canonicalize.py
+</code></pre></div>
+<p><strong>实际结果</strong>（同日 06:26 CST）：</p>
+<pre class="plain"><code>抓取样本：2709 条 URL | 真实页面（去重后应有）：820 个
+
+[1] 旧规则：删掉全部查询串
+[legacy] 规范化后不同 key：401 个
+    真实页面 820 个 → 能表示出来的 401 个
+    发生合并的 key：401 个，涉及真实页面 820 个
+    静默丢失 419 个页面（没有任何报错）
+      例：https://shop.example.com/product/106 ← [&#x27;/product/106?sku=blue&#x27;, &#x27;/product/106?sku=red&#x27;]
+
+[2] 新规则：只删已知追踪参数（utm_* / spm / ref / from ...）
+[fixed] 规范化后不同 key：820 个
+    真实页面 820 个 → 能表示出来的 820 个
+    发生合并的 key：0 个，涉及真实页面 0 个
+
+[3] 入库结果对比
+    旧规则 401 行 | 新规则 820 行 | 应有 820 行
+
+[4] 重跑两遍：幂等 ≠ 正确
+    旧规则重跑 401 行（与第一次相同 → 幂等）
+    新规则重跑 820 行（与第一次相同 → 幂等）
+</code></pre>
+<p><strong>结论</strong>：旧规则把 820 个页面压成 401 个，重跑行数稳定、日志零报错，<br>
+只有把 key 和真实页面集合对照才看得出来。修复方式是白名单删除 + 参数排序 +<br>
+入库前断言（key 数不应小于原始 URL 数的 1/10）。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day194_old.db<span class="w"> </span>/tmp/day194_new.db<span class="w"> </span>/tmp/day194_st.db
+</code></pre></div>
+<hr>
+<h3 id="43000">实验 4：端到端管道（3000 条脏数据）</h3>
+<p><strong>目的</strong>：验证五阶段管道的吞吐、漏斗、质量门禁与幂等性。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">04</span>-pipeline-e2e.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">04</span>-pipeline-e2e.py<span class="w"> </span>--report<span class="w"> </span>/tmp/day194-report.json
+</code></pre></div>
+<p><strong>实际结果</strong>（同日 06:34 CST）：</p>
+<pre class="plain"><code>Day 194 管道 | 3000 条输入 | dry_run=False | db=/tmp/day194.db
+
+── 阶段耗时 ──
+    s1_fetch                  0.0 ms  (  0.0%)
+    s2s3_clean_extract      175.8 ms  (  6.9%)
+    s4_dedup               2255.4 ms  ( 88.2%)
+    s5_gate                  44.5 ms  (  1.7%)
+    s6_store                 80.8 ms  (  3.2%)
+    合计                     2556.5 ms  (1,173 条/s)
+
+── 数量漏斗 ──
+    采集        3000
+    去重丢弃     349  (11.6%)
+    质检拦截     885  (29.5%)
+    入库        2115
+
+── 拦截原因（按条计，一条可命中多个规则）──
+    TEXT_TOO_SHORT          291
+    TITLE_EMPTY             136
+    MOJIBAKE                135
+    PRICE_OUTLIER           124
+    DATE_BAD                117
+    DATE_OUT_OF_RANGE        44
+    PRICE_NOT_NUMBER         38
+
+── 幂等性 ──
+    第一次入库 2115 行 | 第二次重跑后 2115 行 | ✅ 一致
+    隔离区行数 885 → 1770（每轮都会追加，需按批次清理）
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 去重占 88.2% 的时间——这是全链路唯一值得上索引和并行的阶段；<br>
+- 入 2115 + 拦截 885 = 采集 3000：漏斗是串联的，被去重丢掉的不再进入质检；<br>
+- 每轮质检都会向隔离区追加，<strong>隔离区要按批次号清理</strong>，否则会无限增长。</p>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day194.db<span class="w"> </span>/tmp/day194.db-journal<span class="w"> </span>/tmp/day194-report.json
+</code></pre></div>
+<h2 id="_7">六、翻车实验</h2>
+<p>这一节是本次编写时真实踩到的坑，按发生顺序记录。</p>
+<h3 id="1sqlite-64">翻车 1：SQLite 存不下 64 位哈希</h3>
+<p><strong>现象</strong>：</p>
+<pre class="plain"><code>OverflowError: Python int too large to convert to SQLite INTEGER
+</code></pre>
+<p><strong>假设</strong>：SimHash 是 64 位，SQLite INTEGER 也是 64 位，应该能存。</p>
+<p><strong>验证</strong>：<code>sqlite3</code> 的 INTEGER 是<strong>有符号</strong> 64 位（−2⁶³ ~ 2⁶³−1），<br>
+而 SimHash 是无符号 64 位（0 ~ 2⁶⁴−1）。超过 2⁶³ 的值直接溢出。</p>
+<p><strong>根因</strong>：无符号/有符号边界没对齐。</p>
+<p><strong>修复</strong>：入库前 <code>hash_to_signed()</code> 减 2⁶⁴，读出来后 <code>signed_to_hash()</code> 加回去，<br>
+并加了 0、1、2⁶³−1、2⁶³、2⁶⁴−1 五个边界的往返自检。</p>
+<p><strong>复测</strong>：自检 5 项全过，3000 条全部入库。</p>
+<h3 id="2-806">翻车 2：整页文本去重 → 80.6% 被误判重复</h3>
+<p><strong>现象</strong>：第一次跑管道，3000 条里 2419 条被判重复（80.6%），而注入的重复只有 8%。</p>
+<p><strong>假设 A</strong>：SimHash 阈值太大。把 k 从 7 降到 3 试了一下，召回掉光，误判只降到 70%+。<br>
+<strong>假设 B</strong>：Jaccard 阈值太低。调到 0.8 后误判仍高。</p>
+<p><strong>验证</strong>：打印两篇"被判重复"的正文前 120 字，发现导航、价格、版权声明、<br>
+模板句全都参与相似度计算，正文只有一小段不同。</p>
+<p><strong>根因</strong>：去重对象选错了——拿"整页 clean_html 之后的文本"做哈希。<br>
+站点模板的占比远大于正文差异。</p>
+<p><strong>修复</strong>：新增 <code>extract_body()</code>，只取 <code>&lt;article&gt;</code> 容器清洗后参与去重。</p>
+<p><strong>复测</strong>：仍 89.2%——因为我的生成器正文复用同一个句子池，正文本身也高度雷同。<br>
+进一步把正文改成"随机 5 个片段 + 6 个唯一 SKU"，降到 11.6%（注入 8% + 模板碰撞）。<br>
+同时暴露了一个新问题：<code>TEXT_TOO_SHORT</code> 从 0 涨到 291——正文抽取后，<br>
+"空壳页"终于现形了（此前靠导航文字蒙混过关）。这是修复带来的<strong>正确</strong>结果。</p>
+<h3 id="3-jaccard">翻车 3：我自己的语料把 Jaccard 指标搞失真了</h3>
+<p><strong>现象</strong>：给去重语料第一次做评估时，纯 Jaccard 的 precision 只有 0.006。</p>
+<p><strong>假设</strong>：Jaccard 阈值 0.6 太低。</p>
+<p><strong>验证</strong>：抽 20,000 对无关文档算 Jaccard，中位数 0.55、p90 0.75——<br>
+无关文档本来就高度相似。</p>
+<p><strong>根因</strong>：生成器只用了 6 个模板句子，词汇量太小。<strong>错的是语料，不是算法。</strong></p>
+<p><strong>修复</strong>：改成 40 个片段的池子、每篇抽 7–10 段。修复后无关对 Jaccard 中位数降到 0.13，<br>
+真重复对中位数 0.99，指标才有意义。</p>
+<p><strong>教训</strong>：当指标看起来"荒谬地差"时，先怀疑评估集，再怀疑算法。</p>
+<h3 id="4sklearn">翻车 4：sklearn 不收敛（其实是没标准化）</h3>
+<p><strong>现象</strong>：<code>lbfgs failed to converge after 1000 iterations</code>，五条一模一样的警告刷屏。</p>
+<p><strong>根因</strong>：直接把原始量纲的 X 喂给 <code>LogisticRegression</code>。</p>
+<p><strong>修复</strong>：<code>make_pipeline(StandardScaler(), LogisticRegression(max_iter=2000))</code>，<br>
+并用 <code>warnings.simplefilter("error")</code> 让收敛警告直接抛异常——<strong>警告刷屏然后继续跑，<br>
+是最容易骗过自己的做法。</strong></p>
+<hr>
+<h2 id="_8">七、思考题</h2>
+<ol>
+<li>你的规则基线在测试集上 F1 是 0.55，模型是 0.90。上线后模型真的会更好吗？<br>
+   需要额外验证哪三件事？</li>
+<li>为什么 SimHash 的 k 要随文档长度变化？请用"token 数 → 单 token 权重的期望位移"<br>
+   这个角度解释，并设计一个分长度分桶的方案。</li>
+<li>分桶索引 <code>bands=8</code> 保证 k≤7 的召回。如果业务需要 k=15 且不能用全量比对，<br>
+   你会怎么改？（提示：多个排列、多组 bands）</li>
+<li>质量门禁把 <code>TEXT_TOO_SHORT</code> 设为 50 字。如果目标站点有大量"短公告"（20 字但有效），<br>
+   会发生什么？规则应该怎么写才不误杀？</li>
+<li>幂等 ≠ 正确。请构造一个"重跑结果一致但数据错误"的管道，并给出能在 CI 里自动发现它的断言。</li>
+</ol>
+<hr>
+<h2 id="_9">八、清理与收尾</h2>
+<p>本次实验产生的临时文件与清理命令：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 数据库与报告</span>
+rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day194.db<span class="w"> </span>/tmp/day194.db-journal<span class="w"> </span>/tmp/day194-report.json
+rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day194_old.db<span class="w"> </span>/tmp/day194_new.db<span class="w"> </span>/tmp/day194_st.db
+<span class="c1"># 运行日志（编写过程用）</span>
+rm<span class="w"> </span>-f<span class="w"> </span>/tmp/r1.txt<span class="w"> </span>/tmp/r2.txt<span class="w"> </span>/tmp/r2st.txt<span class="w"> </span>/tmp/r4.txt<span class="w"> </span>/tmp/lib.txt<span class="w"> </span>/tmp/probe*.py
+<span class="c1"># 编译缓存</span>
+find<span class="w"> </span>~/code/Learn-Python/days/day-194-ai-data-pipeline<span class="w"> </span>-name<span class="w"> </span>__pycache__<span class="w"> </span>-type<span class="w"> </span>d<span class="w"> </span>-exec<span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span><span class="o">{}</span><span class="w"> </span>+
+</code></pre></div>
+<p>确认无残留：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">ls<span class="w"> </span>/tmp/day194*<span class="w"> </span><span class="m">2</span>&gt;/dev/null<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;clean&quot;</span>
+pgrep<span class="w"> </span>-fa<span class="w"> </span><span class="s1">&#39;04-pipeline-e2e|02-simhash|01-risk&#39;</span><span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;no process left&quot;</span>
+</code></pre></div>
+<p>本课不启动任何常驻服务、不占用端口、不写系统目录。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-193/index.html">← Day 193 浏览器渲染与验证码识别</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

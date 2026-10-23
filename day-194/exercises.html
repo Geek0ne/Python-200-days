@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 194 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 194 正文</a>
+  <h1>Day 194 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-194">Day 194 练习与验收清单</h1>
+<h2 id="_1">今日完成清单</h2>
+<ul>
+<li>[ ] 读完 README 的"概念解释"与"原理深入"</li>
+<li>[ ] 跑通 <code>pipeline_lib.py --self-test</code>（应全部 ✅）</li>
+<li>[ ] 跑通 <code>01-risk-classifier.py --self-test</code> 与主程序，能解释规则基线为什么漏 57 条软封</li>
+<li>[ ] 跑通 <code>02-simhash-dedup.py</code>，能说出 bands=4 与 bands=8 的取舍</li>
+<li>[ ] 跑通 <code>03-pitfall-canonicalize.py</code>，能复述 419 个页面是怎么消失的</li>
+<li>[ ] 跑通 <code>04-pipeline-e2e.py</code>，确认两次入库行数一致</li>
+<li>[ ] 至少手改一处阈值（如 k、Jaccard、质量规则）并观察指标变化</li>
+<li>[ ] 记录一条自己跑出来的数字（不要抄 README）</li>
+</ul>
+<h2 id="_2">实验复现（逐条可复制）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Learn-Python/days/day-194-ai-data-pipeline/code
+
+<span class="c1"># 0. 公共库</span>
+python3<span class="w"> </span>pipeline_lib.py<span class="w"> </span>--self-test
+
+<span class="c1"># 1. 风险分类器：规则 vs 模型 vs 泄漏</span>
+python3<span class="w"> </span><span class="m">01</span>-risk-classifier.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">01</span>-risk-classifier.py
+
+<span class="c1"># 2. 去重：精确哈希 / SimHash 阈值 / 分桶 / 两阶段</span>
+python3<span class="w"> </span><span class="m">02</span>-simhash-dedup.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">02</span>-simhash-dedup.py
+
+<span class="c1"># 3. 翻车复现：URL 规范化导致的数据丢失</span>
+python3<span class="w"> </span><span class="m">03</span>-pitfall-canonicalize.py
+
+<span class="c1"># 4. 端到端管道</span>
+python3<span class="w"> </span><span class="m">04</span>-pipeline-e2e.py<span class="w"> </span>--self-test
+python3<span class="w"> </span><span class="m">04</span>-pipeline-e2e.py<span class="w"> </span>--report<span class="w"> </span>/tmp/day194-report.json
+
+<span class="c1"># 5. 清理</span>
+rm<span class="w"> </span>-f<span class="w"> </span>/tmp/day194*.db<span class="w"> </span>/tmp/day194-report.json
+find<span class="w"> </span>.<span class="w"> </span>-name<span class="w"> </span>__pycache__<span class="w"> </span>-type<span class="w"> </span>d<span class="w"> </span>-exec<span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span><span class="o">{}</span><span class="w"> </span>+
+</code></pre></div>
+<p><strong>验收标准（本机对照）</strong></p>
+<table>
+<thead>
+<tr>
+<th>脚本</th>
+<th>应看到</th>
+<th>允许偏差</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01</code></td>
+<td>规则 F1 0.551 / 模型 AUC 0.9299 / 阈值 0.34</td>
+<td>AUC ±0.02（切分随机性）</td>
+</tr>
+<tr>
+<td><code>02</code></td>
+<td>精确召回 0.164 / 两阶段 P 1.000 R 0.853</td>
+<td>候选对数量随语料版本变化</td>
+</tr>
+<tr>
+<td><code>03</code></td>
+<td>旧规则丢 419 页 / 新规则丢 0 页</td>
+<td>应完全一致</td>
+</tr>
+<tr>
+<td><code>04</code></td>
+<td>两次入库行数相同；去重约 11.6%</td>
+<td>±2%</td>
+</tr>
+</tbody>
+</table>
+<p>注意：<code>01</code> 依赖 numpy，<code>01</code> 的交叉验证对照依赖 scikit-learn；
+其余脚本纯标准库。没有 sklearn 时 <code>01</code> 会打印跳过提示，不影响主结论。</p>
+<hr>
+<h2 id="_3">基础题</h2>
+<h3 id="1">练习 1：把规则基线补强，看能不能追上模型</h3>
+<p>现在的规则是 <code>status in (403,429,503) or captcha or js_challenge</code>。
+试着加入 <code>body_len &lt; 8000</code> 和 <code>header_count &lt; 5</code> 两条，然后跑 <code>01</code> 看 F1 变化。</p>
+<p>要求：
+1. 记录加规则前后的 precision / recall / F1（贴真实输出）
+2. 解释为什么"规则越加越多"最终会撞上天花板</p>
+<h3 id="2-k">练习 2：换一个 k，画出你自己的阈值曲线</h3>
+<p>在 <code>02</code> 里把扫描区间改成 <code>k = 1..20</code>，把结果写成 CSV，
+然后用任意工具画出 precision/recall 曲线（哪怕用 ASCII 柱状图）。</p>
+<p>要求：
+1. 找到你这台机器上 F1 最高的 k
+2. 解释 k 从 12 涨到 15 时 precision 为什么断崖式下跌</p>
+<h3 id="3">练习 3：给质量门禁加一条规则</h3>
+<p>新增 <code>PRICE_SUSPICIOUS</code>：价格低于同类中位数的 1/10 时告警（不是拦截）。
+要求：
+1. 规则要能拿到"同类中位数"，说明数据从哪来
+2. 写一个自检用例，证明它不会把正常促销价当异常</p>
+<hr>
+<h2 id="_4">进阶题</h2>
+<h3 id="4">练习 4：把去重改成"按长度分层阈值"</h3>
+<p>当前全语料统一 k=7。请实现：
+- 长度 &lt; 50 token → k=10
+- 50–150 token → k=7
+- &gt; 150 token → k=5</p>
+<p>要求：
+1. 在 <code>02</code> 的语料上测 P/R/F1，与统一 k=7 对比
+2. 说明为什么短文本要更大的 k（从"单 token 影响位数"角度解释）
+3. 注意：<code>SimHashIndex.query</code> 会拒绝超过 <code>bands-1</code> 的 k，你需要调整 bands</p>
+<h3 id="5-ci">练习 5：构造一个"幂等但错"的管道，并让 CI 抓住它</h3>
+<p>参考 <code>03</code> 的事故，自己设计一个类似的坑（例如：把商品名当唯一键、
+把时间戳截断到天、把金额四舍五入到元），然后：
+1. 证明重跑两次结果一致
+2. 写一条断言（pytest 或 纯 Python <code>assert</code>）能在 CI 里失败
+3. 说明这条断言依赖什么"黄金数据"，黄金数据怎么维护</p>
+<h3 id="6-resume">练习 6（挑战）：给管道加一个 <code>--resume</code></h3>
+<p>需求：管道中途崩溃后，重跑只处理未完成的批次。</p>
+<p>要求：
+1. 用 SQLite 记录 batch_id 与阶段状态
+2. 保证 resume 后不重复入库、不重复写隔离区
+3. 写自检：模拟在 S5 之后 kill，resume 后行数与一次性跑完一致</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
