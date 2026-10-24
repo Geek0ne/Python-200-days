@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 195 — 运维、加密与交付</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 195 — 运维、加密与交付</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">757 行</span>
+    <span class="badge">8 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（8 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-195-运维-加密与交付" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2">概念速览</a>
+<a class="toc-l2" href="#_3">一、概念解释</a>
+<a class="toc-l3" href="#1">1. 调度、失败重试、日志与告警</a>
+<a class="toc-l3" href="#2-api">2. 数据加密与 API 鉴权</a>
+<a class="toc-l3" href="#3-docker-cicd">3. Docker 与 CI/CD</a>
+<a class="toc-l2" href="#_4">二、原理深入</a>
+<a class="toc-l3" href="#21_1">2.1 为什么指数退避要配抖动</a>
+<a class="toc-l3" href="#22-aes-gcm_1">2.2 AES-GCM 到底做了什么</a>
+<a class="toc-l3" href="#23-canonicalization">2.3 签名 canonicalization 的三个坑</a>
+<a class="toc-l3" href="#24_1">2.4 健康检查的生命周期</a>
+<a class="toc-l3" href="#25">2.5 优雅退出为什么值钱</a>
+<a class="toc-l3" href="#26">2.6 回滚的原子性</a>
+<a class="toc-l2" href="#api">三、定义与使用方法（API 速查）</a>
+<a class="toc-l3" href="#31-ops_libpy">3.1 ops_lib.py</a>
+<a class="toc-l3" href="#32-crypto_libpy">3.2 crypto_lib.py</a>
+<a class="toc-l3" href="#33-apppy">3.3 服务接口（app.py）</a>
+<a class="toc-l3" href="#34_1">3.4 常用命令</a>
+<a class="toc-l2" href="#_5">四、图解</a>
+<a class="toc-l2" href="#_6">看图重点：决策点在哪、失败分支回到哪。运维代码的价值几乎全在这两个问题上。</a>
+<a class="toc-l2" href="#_7">五、实战实验手册</a>
+<a class="toc-l3" href="#0">实验 0：确认环境</a>
+<a class="toc-l3" href="#1_1">实验 1：重试、抖动与幂等（离线 + 本地假上游）</a>
+<a class="toc-l3" href="#2aes-gcm">实验 2：AES-GCM 加密、篡改检测、轮换与吞吐</a>
+<a class="toc-l3" href="#3">实验 3：多阶段构建 + 一键部署</a>
+<a class="toc-l3" href="#4">实验 4：安全基线与“落库真的是密文”</a>
+<a class="toc-l3" href="#5-1-curl-healthcheck-unhealthy">实验 5（翻车 1）：用 curl 写 HEALTHCHECK，容器永远 unhealthy</a>
+<a class="toc-l3" href="#6-2-root-root">实验 6（翻车 2）：绑定挂载目录属主是 root，非 root 容器起不来</a>
+<a class="toc-l3" href="#7-3-31">实验 7（翻车 3）：坏镜像部署，回滚等 31 秒才动</a>
+<a class="toc-l3" href="#8">实验 8：验收与真实延迟</a>
+<a class="toc-l3" href="#9">实验 9：优雅退出</a>
+<a class="toc-l3" href="#10-ci">实验 10：本地 CI</a>
+<a class="toc-l2" href="#_8">六、翻车复盘（现象 → 假设 → 验证 → 根因 → 修复 → 复测）</a>
+<a class="toc-l2" href="#_9">七、收尾卫生（本次实际清理）</a>
+<a class="toc-l2" href="#_10">八、思考题</a>
+<a class="toc-l2" href="#_11">九、验收清单</a>
+<a class="toc-l2" href="#_12">十、已知边界（诚实说明）</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-195">Day 195 — 运维、加密与交付</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战<br>
+<strong>项目</strong>：AI 赋能反爬数据平台 · 第 5/5 天<br>
+<strong>子主题</strong>：调度与重试 · 日志与告警 · 数据加密 · API 鉴权 · Docker 多阶段构建 · 一键部署与回滚<br>
+<strong>代码</strong>：2 个共享库 + 4 个教学脚本 + 1 个可部署服务 + 部署/验收/CI 脚本<br>
+<strong>实测环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / Docker 29.1.3 / Ubuntu 24.04.4 / 4 vCPU / 15.59 GiB / 2026-10-25 06:00–06:10 CST</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<pre class="plain"><code>Day 191  引擎骨架      → 队列、限速、重试、落库                 ✅
+Day 192  代理池        → IP 轮换、健康检查、按目标分配出口       ✅
+Day 193  浏览器与验证码 → JS 渲染、指纹、验证码识别              ✅
+Day 194  AI 增强       → 风险预测、内容去重、清洗入库管道        ✅
+Day 195  运维与交付    → 调度、加密、鉴权、Docker + CI/CD      ← 今天
+</code></pre>
+<p>前四天解决的是<strong>怎么把数据拿回来</strong>。今天解决的是<strong>这套东西怎么长期、安全、可重复地跑</strong>：<br>
+抓取进程半夜挂了有没有人知道？数据库备份泄露了用户手机号会不会裸奔？<br>
+改一行代码后，你敢不敢直接在生产上重启？</p>
+<p>一句话概括：<strong>重试决定故障时能不能自愈，加密决定泄露时损失多大，交付决定你敢不敢改代码。</strong></p>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整图解见 <strong>diagrams/README.md</strong>，定义与对比表见 <strong>concepts.md</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>错误分类</td>
+<td>先判断该不该重试，再决定怎么重试</td>
+<td>对 401 重试是把账号往风控里送</td>
+</tr>
+<tr>
+<td>指数退避</td>
+<td>每次失败等待翻倍，封顶</td>
+<td>固定 1 秒会把上游打死</td>
+</tr>
+<tr>
+<td>full jitter</td>
+<td>在 [0, 退避值] 随机</td>
+<td>500 个客户端同毫秒醒来 = 自己 DDoS 自己</td>
+</tr>
+<tr>
+<td>重试预算</td>
+<td>次数 + 总时长双上限</td>
+<td>只限次数会被 Retry-After 拖到超 SLA</td>
+</tr>
+<tr>
+<td>幂等键</td>
+<td>客户端生成，服务端持久化</td>
+<td>没有它，重试 POST = 重复下单</td>
+</tr>
+<tr>
+<td>结构化日志</td>
+<td>一行 JSON，字段稳定</td>
+<td>自由文本没法按 status 聚合</td>
+</tr>
+<tr>
+<td>日志脱敏</td>
+<td>在 logger 内部替换敏感键</td>
+<td>靠调用方记得 = 迟早泄露</td>
+</tr>
+<tr>
+<td>告警收敛</td>
+<td>冷却窗口 + 抑制计数</td>
+<td>1000 条相同告警 = 没人看</td>
+</tr>
+<tr>
+<td>AES-GCM</td>
+<td>AEAD，机密性 + 完整性</td>
+<td>只加密不认证会被篡改</td>
+</tr>
+<tr>
+<td>AAD</td>
+<td>不加密但参与认证</td>
+<td>防密文被搬到别的记录上</td>
+</tr>
+<tr>
+<td>信封加密</td>
+<td>密文头带 kid</td>
+<td>才能轮换钥匙而不停机</td>
+</tr>
+<tr>
+<td>HMAC 签名</td>
+<td>请求内容 + 时间 + nonce 一起签</td>
+<td>泄露一次不等于永久失守</td>
+</tr>
+<tr>
+<td>防重放</td>
+<td>时间窗 + nonce 表</td>
+<td>有效签名也能被原样重发</td>
+</tr>
+<tr>
+<td>多阶段构建</td>
+<td>builder 装依赖，runtime 只拷产物</td>
+<td>运行镜像更小、攻击面更少</td>
+</tr>
+<tr>
+<td>liveness / readiness</td>
+<td>活着 / 能接流量</td>
+<td>合并会把小故障放大成雪崩</td>
+</tr>
+<tr>
+<td>自动回滚</td>
+<td>失败回到 PREV_REF</td>
+<td>手忙脚乱时最可靠的是脚本</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">一、概念解释</h2>
+<h3 id="1">1. 调度、失败重试、日志与告警</h3>
+<h4 id="11">1.1 为什么“失败就重试”是错的</h4>
+<p>把重试写成 <code>for i in range(3): try: ... except: sleep(1)</code> 有三个问题：</p>
+<ol>
+<li><strong>重试了不该重试的错误</strong>：401 重试三次，等于把错误密码试三次；</li>
+<li><strong>等待时间固定</strong>：上游已经过载，所有客户端仍每秒撞一次；</li>
+<li><strong>重试非幂等操作</strong>：第一次其实成功了，只是响应丢了，第二次又下一单。</li>
+</ol>
+<p>所以重试前必须先回答四个问题：<strong>什么错、等多久、最多等多久、重试安不安全</strong>。<br>
+这四问对应的实现就是：错误分类 → 指数退避 → 预算 → 幂等键。</p>
+<h4 id="12">1.2 退避与抖动</h4>
+<pre class="plain"><code>delay_n = min(max_delay, base × factor^(n-1))
+sleep  = U(0, delay_n)        # full jitter
+</code></pre>
+<p>抖动不是为了“看起来随机”，而是为了<strong>打散重试洪峰</strong>。本机模拟 500 个客户端同时失败：<br>
+无抖动时 500 个客户端落在同一个 10ms 桶里；full jitter 后最大同桶只有 5 个。<br>
+平均总等待从 15.50s 降到 7.68s——因为少了很多“撞车后一起再失败”的轮次。</p>
+<h4 id="13">1.3 幂等：重试的前置条件</h4>
+<p>GET/PUT/DELETE 天然幂等，POST 不是。生产做法：客户端生成 <code>Idempotency-Key</code>，<br>
+服务端把 key 和结果一起落库；重试命中 key 就直接返回第一次的结果。</p>
+<p>本课实测：第一次 POST 已经写库但响应返回 503，朴素重试后数据库里 2 条记录；<br>
+带幂等键重试后仍然是 1 条。<strong>服务端必须持久化 key</strong>，内存表重启就失效。</p>
+<h4 id="14">1.4 调度：至少一次</h4>
+<p>cron 适合低频、允许漂移的任务；长驻 worker + 队列适合高频、需要重试和并发控制的任务。<br>
+所有可靠队列默认 <strong>at-least-once</strong>：任务可能重复投递，所以任务本身必须幂等。<br>
+调度器还要监控 <strong>last_success_at</strong>——“多久没成功”比“有没有报错”更接近真实故障。</p>
+<h4 id="15-json">1.5 日志：一行 JSON</h4>
+<p>固定字段：<code>ts / level / service / event / request_id</code> + 业务字段。<br>
+事件名要稳定（<code>db_connect_failed</code>），不要写自由文本；否则无法聚合与告警。<br>
+脱敏必须做在 logger 内部：按 key 名递归替换 password/token/authorization/cookie/master_key。</p>
+<h4 id="16">1.6 告警：症状、收敛、分级</h4>
+<ul>
+<li>告警<strong>症状</strong>（5xx 比例、支付成功率、队列积压），不是<strong>原因</strong>（CPU 高）；</li>
+<li>同 key 在冷却窗口内只发一条，其余累计 suppressed；</li>
+<li>critical 打电话，warning 只开工单；</li>
+<li>恢复时 reset 冷却状态，否则下次故障会被上一次的窗口吞掉。</li>
+</ul>
+<p>实测：1000 次数据库失败，60s 冷却窗口下只发出 10 条告警，每条汇总 99 次抑制。</p>
+<h3 id="2-api">2. 数据加密与 API 鉴权</h3>
+<h4 id="21">2.1 三种加密边界</h4>
+<table>
+<thead>
+<tr>
+<th>边界</th>
+<th>保护什么</th>
+<th>本课做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>传输</td>
+<td>链路窃听</td>
+<td>生产用 TLS 终止（本机实验未配 TLS，见“已知边界”）</td>
+</tr>
+<tr>
+<td>静态</td>
+<td>磁盘/备份泄露</td>
+<td>AES-256-GCM 加密 secret 字段后入 SQLite</td>
+</tr>
+<tr>
+<td>字段级</td>
+<td>DBA 也看不到明文</td>
+<td>AAD 绑定记录 ID，密文与行强绑定</td>
+</tr>
+</tbody>
+</table>
+<h4 id="22-aes-gcm">2.2 AES-GCM 的关键约束</h4>
+<p>AES-GCM = CTR 加密 + GHASH 认证。它同时给机密性和完整性，但有一个致命约束：<br>
+<strong>同一把钥匙下 nonce 绝不能重复</strong>。重复会让攻击者拿到两条明文的异或，<br>
+认证密钥也可能被恢复。所以 nonce 用 12 字节随机数，密文头里带上 kid。</p>
+<h4 id="23-aad">2.3 AAD 与信封</h4>
+<pre class="plain"><code>v1. | kid_len(1) | kid | nonce(12) | ciphertext+tag(16)
+</code></pre>
+<p>把 record_id 作为 AAD：密文从 row-42 复制到 row-43 会解密失败，而不是静默串号。<br>
+kid 写在密文头里，解密方才知道用哪把钥匙——这是轮换的前提。</p>
+<h4 id="24">2.4 密钥轮换</h4>
+<p>轮换不是“换一把钥匙重启”：旧密文还在。正确顺序是：新增 k2 并设为 primary → 新数据用 k2 →<br>
+后台批量重加密旧数据 → 确认无 k1 密文后再删除 k1。本课实测旧密文在轮换后仍可解；<br>
+只带新钥匙的副本会明确抛 <code>UnknownKeyID</code>，而不是返回垃圾。</p>
+<p>密钥不能和数据放同一个卷，更不能进 git。生产用 KMS/Vault；本课用 <code>.master-key</code>（chmod 600）<br>
+只是为了让实验可复现。</p>
+<h4 id="25-api-key-hmac">2.5 从 API Key 到 HMAC</h4>
+<p>静态 API Key 是一把永久万能钥匙：泄露一次，攻击者可以读、改、重放到天荒地老。<br>
+HMAC 签名把<strong>这一次请求</strong>钉死：</p>
+<pre class="plain"><code>canonical = METHOD + newline + PATH + newline + TS + newline + NONCE + newline + SHA256(body)
+signature = HMAC-SHA256(secret, canonical)
+</code></pre>
+<p>服务端先验时间窗（±300s），再常量时间比较签名，最后查 nonce 表防重放。<br>
+顺序不能反：先记 nonce 会让攻击者用错误签名刷爆内存表。</p>
+<h4 id="26-jwt">2.6 JWT 的边界</h4>
+<p>JWT 只是“签名的 JSON”，不是“更安全的 session”。两个经典洞：<br>
+不锁 <code>alg</code>（<code>alg=none</code> 直接绕过）、只验签名不验 scope。<br>
+另外 JWT 无法主动吊销，必须靠短 TTL + refresh token。</p>
+<h3 id="3-docker-cicd">3. Docker 与 CI/CD</h3>
+<h4 id="31">3.1 镜像分层与多阶段</h4>
+<p>每个 <code>RUN/COPY</code> 一层，层可缓存；多阶段构建把编译器和 pip 缓存留在 builder，<br>
+运行镜像只拷 <code>/install</code>。本课运行镜像 201 MB（python:3.12-slim + cryptography）。</p>
+<h4 id="32">3.2 最小权限</h4>
+<table>
+<thead>
+<tr>
+<th>措施</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>USER app</code>（uid 10001）</td>
+<td>逃逸后不是 root</td>
+</tr>
+<tr>
+<td><code>--read-only</code> + tmpfs /tmp</td>
+<td>运行期不能改镜像</td>
+</tr>
+<tr>
+<td><code>--cap-drop ALL</code></td>
+<td>去掉全部 capabilities</td>
+</tr>
+<tr>
+<td><code>--security-opt no-new-privileges</code></td>
+<td>禁止提权</td>
+</tr>
+</tbody>
+</table>
+<p>这些不是“安全表演”：容器逃逸的第一跳通常是写文件或提权，去掉这些能力会显著抬高成本。</p>
+<h4 id="33">3.3 健康检查与优雅退出</h4>
+<p><code>HEALTHCHECK</code> 在容器内跑，退出码 0 = 健康；<code>start-period</code> 内的失败不计入重试。<br>
+liveness（活着）和 readiness（能接流量）必须分开：数据库抖 10 秒时，<br>
+合并成一个探针会导致所有副本被重启，把小故障放大成雪崩。</p>
+<p>SIGTERM 到来时停止接收新连接、等在途请求处理完再退出。<br>
+本课实测 <code>docker stop</code> 0.40s，日志里依次出现 <code>shutdown_requested signal=15</code> 与 <code>shutdown_complete</code>。</p>
+<h4 id="34">3.4 部署与回滚</h4>
+<p>部署脚本启动前记录当前镜像引用 <code>PREV_REF</code>；新容器健康检查或验收失败就回滚。<br>
+验收不能只 curl 首页，要真实走一遍：readyz → 签名写入 → 解密读回 → 重放拒绝。<br>
+本课坏镜像在 8 秒内被判 unhealthy，自动回滚到 v1，验收重新通过（详见实验 7）。</p>
+<h4 id="35-ci">3.5 CI</h4>
+<p>流水线：语法检查 → 离线自检 → 起服务跑验收 → 构建镜像。<br>
+每一层都要能在<strong>没有外部服务</strong>的情况下自证，否则 CI 会变成“只有 CI 机器能过”的玄学。</p>
+<hr>
+<h2 id="_4">二、原理深入</h2>
+<h3 id="21_1">2.1 为什么指数退避要配抖动</h3>
+<p>假设 1000 个客户端在同一秒失败，退避都是 1s、2s、4s：它们会在同一毫秒再次同时醒来。<br>
+上游刚缓过来又被同样规模的流量打回去，形成“同步重试 → 二次过载 → 再同步”的循环。</p>
+<p>full jitter 把第 n 次等待从固定值变成 <code>U(0, delay_n)</code>，代价是平均等待变长，<br>
+收益是到达时间被摊平。实测 500 客户端：同桶峰值 500 → 5，平均总等待 15.50s → 7.68s。</p>
+<p>重试预算（deadline）是第二道闸：只限次数时，一次 <code>Retry-After: 5</code> 就能把 5 次重试拖成 25 秒。<br>
+预算到了必须抛错，把“继续等”变成“上层决定降级”。</p>
+<h3 id="22-aes-gcm_1">2.2 AES-GCM 到底做了什么</h3>
+<pre class="plain"><code>明文 ──CTR(key, nonce)──▶ 密文
+                    │
+AAD ──▶ GHASH(H, AAD, 密文) ──▶ tag(16B)
+</code></pre>
+<ul>
+<li>CTR 部分提供机密性：nonce 复用 = 两次性 One-Time Pad 复用，异或即可消掉密钥流；</li>
+<li>GHASH 部分提供完整性：任何一位改动都会让 tag 不匹配；</li>
+<li>tag 不匹配时 <code>cryptography</code> 抛 <code>InvalidTag</code>，<strong>不要</strong>捕获后返回部分明文。</li>
+</ul>
+<p>信封里带 kid 的意义：解密时先读 kid，再选钥匙；轮换期间新旧密文共存。</p>
+<h3 id="23-canonicalization">2.3 签名 canonicalization 的三个坑</h3>
+<ol>
+<li><strong>字段拼接歧义</strong>：<code>a|bc</code> 和 <code>ab|c</code> 可能拼成同一个字符串。用换行分隔并固定字段顺序；</li>
+<li><strong>只签 path 不签 query</strong>：攻击者可以改 <code>?amount=1</code> 为 <code>?amount=999</code>；</li>
+<li><strong>只签 body 不签 method</strong>：GET 的签名能被拿去发 POST。本课实测这两种篡改都被 401 拦下。</li>
+</ol>
+<p>比较签名必须用 <code>hmac.compare_digest</code>，普通 <code>==</code> 的短路比较会泄露前缀匹配长度。</p>
+<h3 id="24_1">2.4 健康检查的生命周期</h3>
+<pre class="plain"><code>容器启动 → starting（start-period 内的失败不计入 retries）
+        → healthy（连续成功）
+        → unhealthy（连续 retries 次失败）
+</code></pre>
+<p>Docker 只在 healthy/unhealthy 之间切换，<strong>不会</strong>因为 unhealthy 自动重启容器（除非用 Swarm/K8s）。<br>
+所以部署脚本必须自己把 unhealthy 当作失败——本课第一版漏了这个分支，白等 30 秒。</p>
+<h3 id="25">2.5 优雅退出为什么值钱</h3>
+<p>直接 <code>kill -9</code> 会丢掉在途请求，客户端看到连接重置；对写操作还可能留下半条数据。<br>
+正确顺序：收到 SIGTERM → 停止 accept → 等在途 handler 结束 → 关数据库 → 退出 0。<br>
+本课用 <code>ThreadingHTTPServer(daemon_threads=False, block_on_close=True)</code> 实现，<br>
+实测 <code>docker stop</code> 0.40s，exit code 0。</p>
+<h3 id="26">2.6 回滚的原子性</h3>
+<p>回滚不是“把旧镜像再跑一遍”这么简单：<br>
+- 要先删掉失败容器（同名冲突）；<br>
+- 要复用同一个数据卷（数据不能丢）；<br>
+- 要重新等健康检查，确认旧版本真的活了；<br>
+- 回滚本身失败要返回不同退出码（本课 1 = 已回滚，2 = 回滚也失败），让上层告警分级。</p>
+<hr>
+<h2 id="api">三、定义与使用方法（API 速查）</h2>
+<h3 id="31-ops_libpy">3.1 ops_lib.py</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>签名</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>classify</code></td>
+<td><code>classify(exc) -&gt; Failure</code></td>
+<td>异常 → retryable / rate_limit / auth / fatal</td>
+</tr>
+<tr>
+<td><code>RetryPolicy</code></td>
+<td><code>(attempts=5, base_delay=0.2, factor=2.0, max_delay=5.0, jitter='full', deadline=None)</code></td>
+<td>重试参数</td>
+</tr>
+<tr>
+<td><code>retry_call</code></td>
+<td><code>retry_call(fn, policy, on_retry=None, sleep=time.sleep, clock=time.monotonic) -&gt; (value, report)</code></td>
+<td>执行并按策略重试</td>
+</tr>
+<tr>
+<td><code>compute_delay</code></td>
+<td><code>compute_delay(policy, attempt, retry_after=None) -&gt; float</code></td>
+<td>计算第 n 次失败后的等待</td>
+</tr>
+<tr>
+<td><code>JsonLogger</code></td>
+<td><code>JsonLogger(service, level='INFO').bind(**fields)</code></td>
+<td>结构化日志；<code>info/warning/error</code></td>
+</tr>
+<tr>
+<td><code>redact</code></td>
+<td><code>redact(obj) -&gt; obj</code></td>
+<td>递归脱敏</td>
+</tr>
+<tr>
+<td><code>AlertSink</code></td>
+<td><code>AlertSink(cooldown=60, clock=time.monotonic)</code></td>
+<td><code>emit(key, severity, message)</code>；<code>reset(key)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-crypto_libpy">3.2 crypto_lib.py</h3>
+<table>
+<thead>
+<tr>
+<th>名称</th>
+<th>签名</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>KeyRing</code></td>
+<td><code>KeyRing(keys=None, primary=None)</code></td>
+<td>钥匙环；<code>rotate(kid)</code> / <code>key(kid)</code> / <code>export()</code></td>
+</tr>
+<tr>
+<td><code>encrypt</code></td>
+<td><code>encrypt(ring, plaintext: bytes, aad=b'', kid=None) -&gt; str</code></td>
+<td>返回 <code>v1.</code> 前缀密文</td>
+</tr>
+<tr>
+<td><code>decrypt</code></td>
+<td><code>decrypt(ring, token, aad=b'') -&gt; bytes</code></td>
+<td>篡改/错 AAD 抛 <code>InvalidTag</code></td>
+</tr>
+<tr>
+<td><code>envelope_kid</code></td>
+<td><code>envelope_kid(token) -&gt; str</code></td>
+<td>不解密读 kid</td>
+</tr>
+<tr>
+<td><code>reencrypt</code></td>
+<td><code>reencrypt(ring, token, aad=b'') -&gt; str</code></td>
+<td>轮换后重加密</td>
+</tr>
+<tr>
+<td><code>sign_request</code></td>
+<td><code>sign_request(secret, method, path, ts, nonce, body) -&gt; hex</code></td>
+<td>生成签名</td>
+</tr>
+<tr>
+<td><code>verify_request</code></td>
+<td><code>verify_request(...) -&gt; (bool, reason)</code></td>
+<td>时间窗 + 签名</td>
+</tr>
+<tr>
+<td><code>NonceStore</code></td>
+<td><code>NonceStore(ttl=300).use(nonce) -&gt; bool</code></td>
+<td>防重放（单进程内存）</td>
+</tr>
+<tr>
+<td><code>issue_token</code></td>
+<td><code>issue_token(secret, subject, scopes, ttl=300) -&gt; str</code></td>
+<td>HS256 JWT</td>
+</tr>
+<tr>
+<td><code>verify_token</code></td>
+<td><code>verify_token(secret, token, now=None, leeway=0) -&gt; dict</code></td>
+<td>校验 exp/alg/签名</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-apppy">3.3 服务接口（app.py）</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>路径</th>
+<th>鉴权</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/healthz</code></td>
+<td>否</td>
+<td>存活探针，只证明进程能响应</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/readyz</code></td>
+<td>否</td>
+<td>就绪探针，检查 SQLite 可读 + 主密钥存在</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/metrics</code></td>
+<td>否</td>
+<td>进程内计数器 JSON</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/v1/records</code></td>
+<td>HMAC</td>
+<td>body: <code>{name, secret}</code>；secret 加密落库</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/v1/records/{id}</code></td>
+<td>HMAC</td>
+<td>解密返回</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/v1/records</code></td>
+<td>HMAC</td>
+<td>列出 id/name/kid，绝不返回 secret</td>
+</tr>
+</tbody>
+</table>
+<p>请求头：<code>X-Timestamp</code>、<code>X-Nonce</code>、<code>X-Signature</code>；可选 <code>X-Request-ID</code>（不传则服务端生成）。</p>
+<h3 id="34_1">3.4 常用命令</h3>
+<table>
+<thead>
+<tr>
+<th>目的</th>
+<th>命令</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>离线自检</td>
+<td><code>python3 code/app.py --self-test</code></td>
+</tr>
+<tr>
+<td>本地起服务</td>
+<td><code>DATA_DIR=./data API_SECRET=demo python3 code/app.py --port 8080</code></td>
+</tr>
+<tr>
+<td>构建</td>
+<td><code>docker build -t learn195-app:v1 -f code/Dockerfile code</code></td>
+</tr>
+<tr>
+<td>一键部署</td>
+<td><code>cd code &amp;&amp; ./deploy.sh --tag v1</code></td>
+</tr>
+<tr>
+<td>部署已有镜像</td>
+<td><code>./deploy.sh --ref learn195-app:v1 --no-build</code></td>
+</tr>
+<tr>
+<td>验收</td>
+<td><code>python3 smoke_test.py --url http://127.0.0.1:18095 --secret ...</code></td>
+</tr>
+<tr>
+<td>查看健康</td>
+<td><code>docker inspect -f '{{.State.Health.Status}}' learn195-app</code></td>
+</tr>
+<tr>
+<td>清理</td>
+<td><code>./deploy.sh --down</code></td>
+</tr>
+<tr>
+<td>本地 CI</td>
+<td><code>./ci/run-local.sh --with-docker</code></td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_5">四、图解</h2>
+<p>Mermaid + ASCII 全套见 <strong>diagrams/README.md</strong>。最重要的两张：</p>
+<pre class="plain"><code>重试：Call → Classify →(可重试) Wait → Call
+                     └(401/4xx) FailFast
+部署：记录 PREV_REF → 起新容器 → HEALTHCHECK → smoke → 成功
+                                └─失败→ 回滚 PREV_REF → 再验收
+</code></pre>
+<h2 id="_6">看图重点：<strong>决策点在哪、失败分支回到哪</strong>。运维代码的价值几乎全在这两个问题上。</h2>
+<h2 id="_7">五、实战实验手册</h2>
+<blockquote>
+<p>所有「实际结果」都是 2026-10-25 06:00–06:10 CST 在本机跑出来的原文，<br>
+不是示意图。命令按顺序可直接复制；每个实验末尾都有清理步骤。</p>
+</blockquote>
+<h3 id="0">实验 0：确认环境</h3>
+<p><strong>目的</strong>：记录可复现的基线。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>-V
+docker<span class="w"> </span>--version
+uname<span class="w"> </span>-r
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>Python 3.12.3
+Docker version 29.1.3, build 29.1.3-0ubuntu3~24.04.2
+7.0.0-34-generic
+</code></pre>
+<hr>
+<h3 id="1_1">实验 1：重试、抖动与幂等（离线 + 本地假上游）</h3>
+<p><strong>目的</strong>：验证错误分类、退避、抖动、幂等键四件事。</p>
+<p><strong>准备</strong>：无外部依赖。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-195-运维-加密与交付/code
+python3<span class="w"> </span><span class="m">01</span>-retry-backoff.py
+</code></pre></div>
+<p><strong>实际结果（节选）</strong>：</p>
+<pre class="plain"><code>演示 1：两次 503 之后成功 —— 看时间线
+  attempt 1: GET /flaky
+    ↳ TransientError(HTTP 503) → sleep 0.079s
+  attempt 2: GET /flaky
+    ↳ TransientError(HTTP 503) → sleep 0.200s
+  attempt 3: GET /flaky
+  ✅ HTTP 200 {&quot;ok&quot;: true, &quot;call&quot;: 3}
+  总尝试 3 次，实际耗时 0.313s，退避序列 [0.079, 0.2]
+
+演示 2：错误分类决定重试次数
+  401 凭证过期       分类=auth       调用 1 次  耗时 0.0ms
+  404 资源不存在      分类=fatal      调用 1 次  耗时 0.0ms
+  503 上游过载       分类=retryable  调用 4 次  耗时 70.4ms
+  429 被限流        分类=rate_limit 调用 4 次  耗时 600.4ms
+
+演示 3：500 个客户端同时重试
+  策略                   同一 10ms 桶最大并发        平均总等待(s)
+  无抖动                          500             15.50
+  equal                          5             11.59
+  full                           5              7.68
+
+演示 4：重试 POST
+  服务端实际落库 2 条（客户端只看到 1 次成功）
+  带幂等键后实际落库 1 条
+</code></pre>
+<p><strong>结论</strong>：<br>
+- 401/404 一次就停，503/429 才值得重试；<br>
+- 抖动把同桶峰值从 500 压到 5；<br>
+- 幂等键把重复写入从 2 条降到 1 条。</p>
+<p><strong>清理</strong>：脚本自己 shutdown 本地 server，无残留端口。</p>
+<hr>
+<h3 id="2aes-gcm">实验 2：AES-GCM 加密、篡改检测、轮换与吞吐</h3>
+<p><strong>目的</strong>：确认 AAD 防搬家、认证标签能拦篡改、轮换可解旧数据，并测真实吞吐。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-crypto-envelope.py
+</code></pre></div>
+<p><strong>实际结果（节选）</strong>：</p>
+<pre class="plain"><code>轮换前 primary=k1，密文 kid 全是 k1
+轮换后 primary=k2，钥匙环含 [&#x27;k1&#x27;, &#x27;k2&#x27;]
+旧密文仍可解: b&#x27;secret-0&#x27;
+批量重加密后 kid: [&#x27;k2&#x27;, &#x27;k2&#x27;, &#x27;k2&#x27;]
+✅ 缺少旧钥匙时明确报 UnknownKeyID(k1)，而不是静默返回垃圾
+
+负载 1 MiB × 30 次，取中位数
+加密: 4.98 ms/次  ≈ 201 MiB/s
+解密: 6.46 ms/次  ≈ 155 MiB/s
+小记录（54 B）加解密: 13.8 µs/次 ≈ 72,592 次/秒
+</code></pre>
+<p><strong>结论</strong>：加密不是瓶颈；瓶颈在密钥管理（KMS 往返）和轮换重加密窗口。</p>
+<hr>
+<h3 id="3">实验 3：多阶段构建 + 一键部署</h3>
+<p><strong>目的</strong>：验证 Dockerfile、非 root、只读根文件系统、健康检查与验收脚本能协同工作。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-195-运维-加密与交付/code
+./deploy.sh<span class="w"> </span>--tag<span class="w"> </span>v1
+</code></pre></div>
+<p><strong>实际结果（节选）</strong>：</p>
+<pre class="plain"><code>[deploy 06:05:47] 当前运行版本: learn195-app:v1
+[deploy 06:05:48] 启动 learn195-app:v1 → 127.0.0.1:18095
+[deploy 06:05:54] 容器健康（耗时 7s）
+[deploy 06:05:54] 验收：签名写入 → 解密读回 → 重放拒绝
+  ✅ readyz 200     HTTP 200 b&#x27;{&quot;status&quot;: &quot;ready&quot;, &quot;kid&quot;: &quot;env&quot;}&#x27;
+  ✅ 签名写入 201       HTTP 201 b&#x27;{&quot;id&quot;: &quot;672d931d...&quot;, &quot;kid&quot;: &quot;env&quot;}&#x27;
+  ✅ 解密读回一致         HTTP 200 secret=&#x27;smoke-d5d05463&#x27;
+  ✅ 重放被拒 409       HTTP 409 b&#x27;{&quot;error&quot;: &quot;replayed_nonce&quot;}&#x27;
+SMOKE PASS
+[deploy 06:05:54] ✅ 部署成功：learn195-app:v1
+  镜像=learn195-app:v1 状态=running 健康=healthy
+</code></pre>
+<p>镜像大小：<code>learn195-app:v1  201MB</code>（多阶段构建后的运行镜像）。</p>
+<p><strong>清理</strong>：<code>./deploy.sh --down</code>（会删除容器与数据卷）。</p>
+<hr>
+<h3 id="4">实验 4：安全基线与“落库真的是密文”</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>inspect<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;User={{.Config.User}} Readonly={{.HostConfig.ReadonlyRootfs}} CapDrop={{.HostConfig.CapDrop}} NoNewPriv={{.HostConfig.SecurityOpt}}&#39;</span><span class="w"> </span>learn195-app
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18095/metrics
+docker<span class="w"> </span><span class="nb">exec</span><span class="w"> </span>learn195-app<span class="w"> </span>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import sqlite3;c=sqlite3.connect(&#39;/data/app.db&#39;);print(c.execute(&#39;select ciphertext from records limit 1&#39;).fetchone()[0][:40])&quot;</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>User=app Readonly=true CapDrop=[ALL] NoNewPriv=[no-new-privileges]
+{&quot;auth_checks&quot;: 6, &quot;auth_failures&quot;: 2, &quot;metrics_scrapes&quot;: 1, &quot;records_created&quot;: 2, &quot;records_read&quot;: 2, &quot;requests_total&quot;: 14}
+v1.A2VudhSSWADq_T1gE3vgGmkeL79gE76MqKfP-...
+</code></pre>
+<p><strong>结论</strong>：容器以 uid 10001 运行、根文件系统只读、能力全 drop；数据库里只有 <code>v1.</code> 前缀的密文。</p>
+<hr>
+<h3 id="5-1-curl-healthcheck-unhealthy">实验 5（翻车 1）：用 curl 写 HEALTHCHECK，容器永远 unhealthy</h3>
+<p><strong>目的</strong>：复现一个极常见的 Docker 事故。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>d195-curlhealth<span class="w"> </span>-p<span class="w"> </span><span class="m">127</span>.0.0.1:18097:8080<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">API_SECRET</span><span class="o">=</span>x<span class="w"> </span>-e<span class="w"> </span><span class="nv">MASTER_KEY</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>.master-key<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>-v<span class="w"> </span>d195-curl-vol:/data<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--health-cmd<span class="w"> </span><span class="s1">&#39;curl -fsS http://127.0.0.1:8080/healthz || exit 1&#39;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--health-interval<span class="w"> </span>2s<span class="w"> </span>--health-timeout<span class="w"> </span>1s<span class="w"> </span>--health-retries<span class="w"> </span><span class="m">2</span><span class="w"> </span>learn195-app:v1
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>t=1s health=starting
+...
+t=13s health=unhealthy
+
+=== health log ===
+{&quot;ExitCode&quot;: 1, &quot;Output&quot;: &quot;/bin/sh: 1: curl: not found\n&quot;}
+{&quot;ExitCode&quot;: 1, &quot;Output&quot;: &quot;/bin/sh: 1: curl: not found\n&quot;}
+
+=== app still serving ===
+HTTP 200
+</code></pre>
+<p><strong>根因</strong>：<code>python:3.12-slim</code> 里没有 curl。健康检查失败被 Docker 判为 unhealthy，<br>
+但应用本身完全正常（直接请求 /healthz 返回 200）。这就是“探针骗人”。</p>
+<p><strong>修复</strong>：用镜像里一定存在的 python 自检（最终 Dockerfile 的写法）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">dockerfile</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">HEALTHCHECK</span><span class="w"> </span>--interval<span class="o">=</span>5s<span class="w"> </span>--timeout<span class="o">=</span>3s<span class="w"> </span>--start-period<span class="o">=</span>8s<span class="w"> </span>--retries<span class="o">=</span><span class="m">3</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>CMD<span class="w"> </span><span class="o">[</span><span class="s2">&quot;python&quot;</span>,<span class="w"> </span><span class="s2">&quot;-c&quot;</span>,<span class="w"> </span><span class="s2">&quot;import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(&#39;http://127.0.0.1:8080/healthz&#39;, timeout=2).status == 200 else 1)&quot;</span><span class="o">]</span>
+</code></pre></div>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>d195-curlhealth
+docker<span class="w"> </span>volume<span class="w"> </span>rm<span class="w"> </span>d195-curl-vol
+</code></pre></div>
+<hr>
+<h3 id="6-2-root-root">实验 6（翻车 2）：绑定挂载目录属主是 root，非 root 容器起不来</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">mkdir<span class="w"> </span>-p<span class="w"> </span>/tmp/d195-bind-data<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>chown<span class="w"> </span>root:root<span class="w"> </span>/tmp/d195-bind-data<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>chmod<span class="w"> </span><span class="m">755</span><span class="w"> </span>/tmp/d195-bind-data
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>d195-bind<span class="w"> </span>-p<span class="w"> </span><span class="m">127</span>.0.0.1:18098:8080<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-e<span class="w"> </span><span class="nv">API_SECRET</span><span class="o">=</span>x<span class="w"> </span>-e<span class="w"> </span><span class="nv">MASTER_KEY</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>.master-key<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-v<span class="w"> </span>/tmp/d195-bind-data:/data<span class="w"> </span>learn195-app:v1
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>bind dir: root:root 755
+status=exited exit=1
+  File &quot;/app/app.py&quot;, line 394, in main
+    app = App(data_dir, api_secret.encode(), keyring)
+  File &quot;/app/app.py&quot;, line 108, in __init__
+    self._init_db()
+sqlite3.OperationalError: unable to open database file
+</code></pre>
+<p><strong>根因</strong>：容器内 uid 10001 对 root:root 755 目录没有写权限；SQLite 连 WAL 都建不了。<br>
+命名卷（named volume）不会踩坑，因为 Docker 首次创建时会继承镜像里 /data 的属主；<br>
+<strong>绑定挂载（bind mount）不会</strong>，它原样暴露宿主机权限。</p>
+<p><strong>修复方式（三选一）</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 1) 用命名卷（本课 deploy.sh 的选择）</span>
+docker<span class="w"> </span>volume<span class="w"> </span>create<span class="w"> </span>learn195-data
+<span class="c1"># 2) 预先把宿主机目录 chown 10001:10001</span>
+sudo<span class="w"> </span>chown<span class="w"> </span>-R<span class="w"> </span><span class="m">10001</span>:10001<span class="w"> </span>/tmp/d195-bind-data
+<span class="c1"># 3) 启动时用 --user $(id -u):$(id -g)（会牺牲“固定非 root uid”的可移植性）</span>
+</code></pre></div>
+<p><strong>清理</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>rm<span class="w"> </span>-f<span class="w"> </span>d195-bind
+rm<span class="w"> </span>-rf<span class="w"> </span>/tmp/d195-bind-data
+</code></pre></div>
+<hr>
+<h3 id="7-3-31">实验 7（翻车 3）：坏镜像部署，回滚等 31 秒才动</h3>
+<p><strong>目的</strong>：验证自动回滚，并暴露等待逻辑的缺陷。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>learn195-app:broken<span class="w"> </span>-f<span class="w"> </span>broken/Dockerfile<span class="w"> </span>broken
+./deploy.sh<span class="w"> </span>--ref<span class="w"> </span>learn195-app:broken<span class="w"> </span>--no-build
+</code></pre></div>
+<p><strong>第一次实际结果（有缺陷的版本）</strong>：</p>
+<pre class="plain"><code>[deploy 06:07:11] 启动 learn195-app:broken → 127.0.0.1:18095
+[deploy 06:07:42] 等待健康超时（30s），最后状态=unhealthy
+[deploy 06:07:42] ❌ 新版本未通过健康检查
+[deploy 06:07:43] 回滚到 learn195-app:v1
+</code></pre>
+<p><strong>根因</strong>：<code>wait_healthy</code> 的 <code>case</code> 只处理了 healthy / exited / dead / missing，<br>
+漏了 <strong>unhealthy</strong>。Docker 早已判定失败，脚本却继续轮询到 30 秒超时。</p>
+<p><strong>修复</strong>：把 unhealthy 当作立即失败（见 deploy.sh 注释）。</p>
+<p><strong>复测实际结果</strong>：</p>
+<pre class="plain"><code>[deploy 06:07:53] 启动 learn195-app:broken → 127.0.0.1:18095
+[deploy 06:08:01] 健康检查失败（unhealthy），不再等待
+[deploy 06:08:01] ❌ 新版本未通过健康检查，最近日志：
+broken app listening on :8080
+[deploy 06:08:01] 回滚到 learn195-app:v1
+</code></pre>
+<p><strong>数字对比</strong>：故障判定 31s → 8s；回滚后 <code>smoke_test.py</code> 重新 PASS。</p>
+<hr>
+<h3 id="8">实验 8：验收与真实延迟</h3>
+<p><strong>目的</strong>：证明服务不只好看，写入/解密读回真的可用，并量化延迟。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span>smoke_test.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:18095<span class="w"> </span>--secret<span class="w"> </span>demo-api-secret-change-me
+python3<span class="w"> </span>/tmp/d195-bench.py<span class="w">   </span><span class="c1"># 100 次 POST + 100 次 GET，单线程顺序</span>
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>  ✅ readyz 200     HTTP 200 b&#x27;{&quot;status&quot;: &quot;ready&quot;, &quot;kid&quot;: &quot;env&quot;}&#x27;
+  ✅ 签名写入 201       HTTP 201
+  ✅ 解密读回一致         HTTP 200 secret=&#x27;smoke-d40122b1&#x27;
+  ✅ 重放被拒 409       HTTP 409 b&#x27;{&quot;error&quot;: &quot;replayed_nonce&quot;}&#x27;
+SMOKE PASS
+
+POST /api/v1/records (AES-GCM + SQLite): n=100 mean=8.57ms p50=8.13ms p95=11.92ms max=23.48ms
+GET  /api/v1/records/{id} (SQLite + decrypt): n=100 mean=1.81ms p50=1.40ms p95=4.06ms max=5.33ms
+</code></pre>
+<p><strong>测试条件</strong>：同一台 4 vCPU / 15.59 GiB 机器，客户端与服务端同机，单线程顺序请求，<br>
+含 TLS 之外的完整 HTTP + HMAC 验签 + AES-GCM + SQLite WAL 写。数字用于横向比较，不是容量承诺。</p>
+<hr>
+<h3 id="9">实验 9：优雅退出</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">/usr/bin/time<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;stop took %e s&#39;</span><span class="w"> </span>docker<span class="w"> </span>stop<span class="w"> </span>learn195-app
+docker<span class="w"> </span>logs<span class="w"> </span>--tail<span class="w"> </span><span class="m">4</span><span class="w"> </span>learn195-app
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>stop took 0.40 s
+{&quot;event&quot;: &quot;shutdown_requested&quot;, &quot;signal&quot;: 15}
+{&quot;event&quot;: &quot;shutdown_complete&quot;}
+status: exited exit=0
+</code></pre>
+<hr>
+<h3 id="10-ci">实验 10：本地 CI</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">./ci/run-local.sh
+</code></pre></div>
+<p><strong>实际结果（节选）</strong>：</p>
+<pre class="plain"><code>▶ 1/4 语法检查（compileall）
+  所有 .py 编译通过
+▶ 2/4 离线自检
+  ops_lib.py / crypto_lib.py / 01 / 02 / 03 / 04 / app.py  OK
+▶ 3/4 起服务 + 跑验收
+  ✅ readyz 200 ... SMOKE PASS
+▶ 4/4 跳过 Docker（加 --with-docker 启用）
+✅ CI 全部通过
+</code></pre>
+<p><strong>未实测说明</strong>：<code>ci/github-actions.yml</code> 没有在 GitHub 上真正触发（本课环境没有远程 Actions 运行器）。<br>
+它和 <code>run-local.sh</code> 的步骤一一对应；验证方法：把该文件放到仓库 <code>.github/workflows/</code> 下推送，<br>
+预期看到 test job 依次通过 compileall、7 个 self-test、docker build。</p>
+<hr>
+<h2 id="_8">六、翻车复盘（现象 → 假设 → 验证 → 根因 → 修复 → 复测）</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>现象</th>
+<th>假设</th>
+<th>验证</th>
+<th>真实根因</th>
+<th>修复</th>
+<th>复测</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>容器一直 unhealthy，但手 curl 服务是 200</td>
+<td>应用挂了 / 探针写错</td>
+<td><code>docker inspect .State.Health.Log</code></td>
+<td>slim 镜像没有 curl，探针命令本身失败</td>
+<td>改用 <code>python -c urllib</code></td>
+<td>healthy，容器正常接流量</td>
+</tr>
+<tr>
+<td>2</td>
+<td>非 root 容器启动即退出</td>
+<td>代码 bug / 卷权限</td>
+<td><code>docker logs</code> 看到 sqlite <code>unable to open database file</code></td>
+<td>bind mount 目录 root:root 755，uid 10001 不可写</td>
+<td>换命名卷或 chown 10001</td>
+<td>服务起来，readyz 200</td>
+</tr>
+<tr>
+<td>3</td>
+<td>坏镜像回滚要等 31 秒</td>
+<td>Docker 没检测到失败</td>
+<td>日志显示 30s 超时后状态才 unhealthy</td>
+<td><code>wait_healthy</code> 漏了 unhealthy 分支</td>
+<td>加 case unhealthy 立即失败</td>
+<td>判定时间 8 秒</td>
+</tr>
+</tbody>
+</table>
+<p>三条都不是“理论上的坑”，是这次编写时真实踩到并修掉的。它们共同说明一件事：<br>
+<strong>运维脚本的错误分支比正常分支更值得写测试。</strong></p>
+<hr>
+<h2 id="_9">七、收尾卫生（本次实际清理）</h2>
+<pre class="plain"><code>docker rm -f learn195-app d195-curlhealth d195-bind
+docker volume rm learn195-data d195-curl-vol
+docker rmi learn195-app:v1 learn195-app:broken learn195-app:ci
+rm -rf code/__pycache__ code/.master-key code/data
+</code></pre>
+<p>验证结果：</p>
+<pre class="plain"><code>no containers
+no volumes
+no images
+</code></pre>
+<p>清理后宿主机没有残留监听端口（18095/18097/18098 均已释放）。<br>
+注意：<code>.master-key</code> 被删除意味着本次实验数据的解密钥匙也没了——这正是预期行为，<br>
+演示“密钥不与数据同生命周期”。</p>
+<hr>
+<h2 id="_10">八、思考题</h2>
+<ol>
+<li>你的服务对下游重试 3 次，下游也对它的下游重试 3 次，最坏情况下一次用户请求会放大成多少次调用？<br>
+   怎么用重试预算和抖动把放大倍数压住？</li>
+<li>为什么 AES-GCM 的 nonce 复用比“密钥稍微弱一点”更危险？如果必须在分布式系统里生成 nonce，你会怎么保证唯一？</li>
+<li>HMAC 签名已经覆盖 body 哈希，为什么还要签 method 和 path？举一个只签 body 会被利用的场景。</li>
+<li>liveness 探针里如果检查数据库连接，会发生什么？请描述“数据库抖动 10 秒”到“全站雪崩”的完整链条。</li>
+<li>自动回滚失败时，脚本应该返回什么退出码、发什么级别的告警？如果回滚后旧版本也不健康，人工介入的第一步应该是什么？</li>
+</ol>
+<hr>
+<h2 id="_11">九、验收清单</h2>
+<ul>
+<li>[ ] <code>python3 code/ops_lib.py --self-test</code> 通过</li>
+<li>[ ] <code>python3 code/crypto_lib.py --self-test</code> 通过</li>
+<li>[ ] 01–04 四个脚本的 <code>--self-test</code> 全部通过</li>
+<li>[ ] <code>python3 code/app.py --self-test</code> 通过</li>
+<li>[ ] <code>docker build</code> 成功，镜像以非 root 运行、根文件系统只读</li>
+<li>[ ] <code>./deploy.sh</code> 输出 SMOKE PASS，健康状态 healthy</li>
+<li>[ ] 用坏镜像部署能看到“回滚到上一版本”，且回滚后 smoke 重新 PASS</li>
+<li>[ ] <code>docker stop</code> 在 1 秒级完成，日志有 shutdown_complete，退出码 0</li>
+<li>[ ] 实验结束后 <code>docker ps -a</code> / <code>docker volume ls</code> / <code>docker images</code> 无 learn195 残留</li>
+</ul>
+<p>逐条命令与预期输出见 <strong>exercises/checklist.md</strong>。</p>
+<hr>
+<h2 id="_12">十、已知边界（诚实说明）</h2>
+<ol>
+<li><strong>没有配 TLS</strong>：本机实验直接跑 HTTP。生产必须在反向代理/负载均衡终止 TLS，<br>
+   并把 HSTS、证书轮换纳入交付流程。</li>
+<li><strong>密钥管理是教学级</strong>：<code>MASTER_KEY</code> 放环境变量、<code>.master-key</code> 放仓库目录（已 gitignore），<br>
+   生产应使用 KMS/Vault，且密钥不落盘。</li>
+<li><strong>nonce 表在进程内存</strong>：多副本部署时各副本各记各的，重放可打到另一个副本。生产换 Redis。</li>
+<li><strong>单机部署</strong>：本课是 recreate 策略，有秒级停机；生产用滚动/蓝绿，并做连接 draining。</li>
+<li><strong>GitHub Actions 未实际触发</strong>：只做了本地等价验证（见实验 10 的未实测说明）。</li>
+<li><strong>压测是单线程顺序请求</strong>：数字用于比较实现开销，不代表并发容量。</li>
+</ol>
+<p>下一步（Day 196–200）会把 200 天的知识串成体系，并准备面试与开源贡献。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-194/index.html">← Day 194 AI 增强与数据管道</a><span class="nav-next disabled">已是最后一课</span>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

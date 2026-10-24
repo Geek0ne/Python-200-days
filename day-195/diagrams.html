@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 195 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 195 正文</a>
+  <h1>Day 195 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-195">Day 195 图解 — 重试、加密、交付</h1>
+<blockquote>
+<p>Mermaid 源码可直接粘到支持 Mermaid 的 Markdown 渲染器；ASCII 图用于终端阅读。</p>
+</blockquote>
+<h2 id="1">1. 重试状态机</h2>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; Call
+    Call --&gt; Success: 2xx
+    Call --&gt; Classify: 异常 / 非 2xx
+    Classify --&gt; FailFast: 401/403/4xx/未知
+    Classify --&gt; Wait: 5xx/超时/429
+    Wait --&gt; Call: attempt &lt; max 且未超预算
+    Wait --&gt; GiveUp: 次数或预算耗尽
+    Success --&gt; [*]
+    FailFast --&gt; [*]
+    GiveUp --&gt; [*]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; Call
+    Call --&gt; Success: 2xx
+    Call --&gt; Classify: 异常 / 非 2xx
+    Classify --&gt; FailFast: 401/403/4xx/未知
+    Classify --&gt; Wait: 5xx/超时/429
+    Wait --&gt; Call: attempt &lt; max 且未超预算
+    Wait --&gt; GiveUp: 次数或预算耗尽
+    Success --&gt; [*]
+    FailFast --&gt; [*]
+    GiveUp --&gt; [*]
+</code></pre></div>
+<p>ASCII 时间线（实测 01 脚本，base=0.1s，factor=2，full jitter）：</p>
+<pre class="plain"><code>attempt 1 ──503──▶ sleep 0.079s
+attempt 2 ──503──▶ sleep 0.200s   (Retry-After 下限)
+attempt 3 ──200──▶ done            总耗时 0.313s
+</code></pre>
+<h2 id="2">2. 抖动如何削平重试洪峰</h2>
+<pre class="plain"><code>无抖动（500 客户端）               full jitter
+│██████████████████│ 500           │█│█│█│█│█│█│█│█│ 峰值 5
+└── 同一 10ms 桶 ──┘               └── 分散到整个窗口 ──┘
+</code></pre>
+<h2 id="3">3. 信封密文布局</h2>
+<pre class="plain"><code> v1. | kid_len | kid | nonce(12B) | ciphertext + tag(16B)
+ ─┬─   ─┬──     ─┬─   ───┬─────     ─────────┬─────────
+  │     │        │        │                   │
+  │     │        │        └─ 随机，绝不复用    └─ AES-256-GCM 输出
+  │     │        └─ 密钥 ID，支持轮换
+  │     └─ 1 字节长度
+  └─ 版本前缀（base64url 整体编码）
+
+AAD（例如 record_id）不进密文，但参与认证：
+密文从 row-42 复制到 row-43 → tag 校验失败 → InvalidTag
+</code></pre>
+<h2 id="4">4. 请求签名与校验顺序</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as Client
+    participant S as Server
+    C-&gt;&gt;C: canonical = METHOD/PATH/TS/NONCE/SHA256(body)
+    C-&gt;&gt;C: sig = HMAC-SHA256(secret, canonical)
+    C-&gt;&gt;S: headers + body
+    S-&gt;&gt;S: 1. |now-ts| &lt;= 300 ?
+    S-&gt;&gt;S: 2. compare_digest(sig, expected)
+    S-&gt;&gt;S: 3. nonce 未用过 ?
+    alt 全部通过
+        S--&gt;&gt;C: 200
+    else 时间/签名/nonce 失败
+        S--&gt;&gt;C: 401 / 409
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as Client
+    participant S as Server
+    C-&gt;&gt;C: canonical = METHOD/PATH/TS/NONCE/SHA256(body)
+    C-&gt;&gt;C: sig = HMAC-SHA256(secret, canonical)
+    C-&gt;&gt;S: headers + body
+    S-&gt;&gt;S: 1. |now-ts| &lt;= 300 ?
+    S-&gt;&gt;S: 2. compare_digest(sig, expected)
+    S-&gt;&gt;S: 3. nonce 未用过 ?
+    alt 全部通过
+        S--&gt;&gt;C: 200
+    else 时间/签名/nonce 失败
+        S--&gt;&gt;C: 401 / 409
+    end
+</code></pre></div>
+<h2 id="5">5. 部署与自动回滚</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[记录 PREV_REF] --&gt; B[构建新镜像]
+    B --&gt; C[停旧容器 / 起新容器]
+    C --&gt; D{HEALTHCHECK 通过?}
+    D -- 是 --&gt; E[跑 smoke_test]
+    D -- 否 --&gt; R[回滚 PREV_REF]
+    E -- 通过 --&gt; F[部署成功]
+    E -- 失败 --&gt; R
+    R --&gt; G{旧版本健康?}
+    G -- 是 --&gt; H[退出码 1，人工介入]
+    G -- 否 --&gt; I[退出码 2，紧急告警]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[记录 PREV_REF] --&gt; B[构建新镜像]
+    B --&gt; C[停旧容器 / 起新容器]
+    C --&gt; D{HEALTHCHECK 通过?}
+    D -- 是 --&gt; E[跑 smoke_test]
+    D -- 否 --&gt; R[回滚 PREV_REF]
+    E -- 通过 --&gt; F[部署成功]
+    E -- 失败 --&gt; R
+    R --&gt; G{旧版本健康?}
+    G -- 是 --&gt; H[退出码 1，人工介入]
+    G -- 否 --&gt; I[退出码 2，紧急告警]
+</code></pre></div>
+<h2 id="6-liveness-vs-readiness">6. liveness vs readiness</h2>
+<pre class="plain"><code>            ┌──────────────┐
+  probe ───▶│  /healthz    │ 进程活着？ → 失败：重启容器
+            └──────────────┘
+            ┌──────────────┐
+  probe ───▶│  /readyz     │ 能写库 + 有密钥？ → 失败：摘掉流量
+            └──────────────┘
+
+合并成一个的后果：数据库抖 10 秒 → 所有副本被重启 → 雪崩
+</code></pre>
+<h2 id="7">7. 告警收敛时间轴</h2>
+<pre class="plain"><code>t=0s      error █  → 发第 1 条（suppressed=0）
+t=0.6s    error █  → 抑制
+...
+t=59.4s   error █  → 抑制（共 99 条）
+t=60s     error █  → 发第 2 条（suppressed=99）
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

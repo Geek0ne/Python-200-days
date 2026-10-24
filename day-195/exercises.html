@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 195 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 195 正文</a>
+  <h1>Day 195 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-195">Day 195 练习与验收 — 运维、加密与交付</h1>
+<blockquote>
+<p>先跑通「本机验收」，再做题。所有命令都在 <code>days/day-195-运维-加密与交付/code</code> 目录下执行。</p>
+</blockquote>
+<h2 id="_1">一、本机验收（必须全部打勾）</h2>
+<h3 id="1-docker">1. 离线自检（不需要 Docker、不占端口）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-195-运维-加密与交付/code
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span>ops_lib.py<span class="w"> </span>crypto_lib.py<span class="w"> </span><span class="m">01</span>-retry-backoff.py<span class="w"> </span><span class="m">02</span>-crypto-envelope.py<span class="w"> </span><span class="se">\</span>
+<span class="w">         </span><span class="m">03</span>-api-auth.py<span class="w"> </span><span class="m">04</span>-logging-alert.py<span class="w"> </span>app.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span>python3<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$f</span><span class="s2">&quot;</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;FAIL: </span><span class="nv">$f</span><span class="s2">&quot;</span>
+<span class="k">done</span>
+</code></pre></div>
+<p><strong>预期</strong>：7 行 ✅，没有 FAIL。</p>
+<h3 id="2">2. 本地起服务 + 验收</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nv">WORK</span><span class="o">=</span><span class="k">$(</span>mktemp<span class="w"> </span>-d<span class="k">)</span>
+<span class="nv">API_SECRET</span><span class="o">=</span>dev-secret<span class="w"> </span><span class="nv">DATA_DIR</span><span class="o">=</span><span class="s2">&quot;</span><span class="nv">$WORK</span><span class="s2">&quot;</span><span class="w"> </span>python3<span class="w"> </span>app.py<span class="w"> </span>--port<span class="w"> </span><span class="m">18095</span><span class="w"> </span><span class="p">&amp;</span>
+<span class="nv">APP_PID</span><span class="o">=</span><span class="nv">$!</span>
+sleep<span class="w"> </span><span class="m">2</span>
+python3<span class="w"> </span>smoke_test.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:18095<span class="w"> </span>--secret<span class="w"> </span>dev-secret
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18095/readyz
+<span class="nb">kill</span><span class="w"> </span><span class="nv">$APP_PID</span><span class="p">;</span><span class="w"> </span>rm<span class="w"> </span>-rf<span class="w"> </span><span class="s2">&quot;</span><span class="nv">$WORK</span><span class="s2">&quot;</span>
+</code></pre></div>
+<p><strong>预期</strong>：四行 ✅ + <code>SMOKE PASS</code>；readyz 返回 <code>{"status": "ready", "kid": "local"}</code>。</p>
+<h3 id="3-docker">3. 容器部署（需要 Docker）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">./deploy.sh<span class="w"> </span>--tag<span class="w"> </span>v1
+docker<span class="w"> </span>inspect<span class="w"> </span>-f<span class="w"> </span><span class="s1">&#39;health={{.State.Health.Status}} user={{.Config.User}} readonly={{.HostConfig.ReadonlyRootfs}}&#39;</span><span class="w"> </span>learn195-app
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:18095/healthz
+./deploy.sh<span class="w"> </span>--down
+</code></pre></div>
+<p><strong>预期</strong>：</p>
+<pre class="plain"><code>SMOKE PASS
+[deploy ...] ✅ 部署成功：learn195-app:v1
+health=healthy user=app readonly=true
+{&quot;status&quot;: &quot;ok&quot;, &quot;pid&quot;: 1}
+</code></pre>
+<h3 id="4">4. 回滚演练（可选但强烈建议）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>learn195-app:broken<span class="w"> </span>-f<span class="w"> </span>broken/Dockerfile<span class="w"> </span>broken
+./deploy.sh<span class="w"> </span>--ref<span class="w"> </span>learn195-app:broken<span class="w"> </span>--no-build<span class="w">   </span><span class="c1"># 预期非 0 退出，但服务回到 v1</span>
+python3<span class="w"> </span>smoke_test.py<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:18095<span class="w"> </span>--secret<span class="w"> </span>demo-api-secret-change-me
+</code></pre></div>
+<p><strong>预期</strong>：日志出现 <code>健康检查失败（unhealthy）</code> 与 <code>回滚到 learn195-app:v1</code>；回滚后 SMOKE PASS。</p>
+<h3 id="5">5. 清理确认</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">docker<span class="w"> </span>ps<span class="w"> </span>-a<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Names}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>learn195<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;no containers&#39;</span>
+docker<span class="w"> </span>volume<span class="w"> </span>ls<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Name}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>learn195<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;no volumes&#39;</span>
+docker<span class="w"> </span>images<span class="w"> </span>--format<span class="w"> </span><span class="s1">&#39;{{.Repository}}:{{.Tag}}&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>learn195<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;no images&#39;</span>
+</code></pre></div>
+<p><strong>预期</strong>：三行 no …；端口 18095 已释放。</p>
+<hr>
+<h2 id="_2">二、基础练习</h2>
+<h3 id="1">练习 1：给重试加“按错误类型选择策略”</h3>
+<p>修改 <code>ops_lib.retry_call</code>，让 429 的等待<strong>至少等于</strong> Retry-After、且不应用抖动；
+让 5xx 使用 full jitter。写一个 self-test 证明两者行为不同。</p>
+<p>验收：<code>python3 -c "import ops_lib"</code> 无副作用；你的测试里 fake sleep 序列可预测。</p>
+<h3 id="2_1">练习 2：给日志加采样</h3>
+<p>实现 <code>JsonLogger.sample(every_n)</code>：同一个 event 每 N 条只输出 1 条，但计数器照常累加。
+要求：输出里带 <code>sampled=true</code> 与 <code>suppressed</code> 字段。</p>
+<p>验收：连续写 100 条 <code>request</code> 日志，输出 10 条（N=10），且总计数仍是 100。</p>
+<h3 id="3-aad">练习 3：把 AAD 用错，观察后果</h3>
+<p>把 <code>app.get_record</code> 里的 <code>aad=row[0].encode()</code> 改成 <code>aad=b''</code>，
+然后用两条记录交叉读取，解释为什么“还能读出来”，并说明这为什么危险。</p>
+<p>验收：能用自己的话写出“密文搬家”攻击的完整步骤。</p>
+<hr>
+<h2 id="_3">三、进阶挑战</h2>
+<h3 id="1noncestore-sqlite">挑战 1：NonceStore 换成 SQLite 实现</h3>
+<p>当前 nonce 表在内存，多副本会失效。用 SQLite 建 <code>nonces(nonce PRIMARY KEY, expires_at)</code> 表，
+实现原子 <code>INSERT OR IGNORE</code>，并清理过期行。</p>
+<p>验收：两个独立进程共享同一个 DB 文件，重放第二个进程的 nonce 必须返回 409。</p>
+<h3 id="2_2">挑战 2：给部署脚本加“金丝雀”</h3>
+<p>在同一个镜像上同时起 v1（18095）和 v2（18096），用脚本把 10% 的 smoke 请求打到 v2；
+v2 的 p95 超过 v1 两倍或错误率 &gt; 1% 就自动摘掉 v2 并回滚。</p>
+<p>提示：不要用随机数直接决定生产流量；真实系统在网关层按 header/cookie 分桶。</p>
+<h3 id="3">挑战 3：把密钥轮换做成后台任务</h3>
+<p>实现 <code>rotate_keys.py</code>：新增 k3 → 把所有 <code>kid != k3</code> 的记录重加密 → 校验解密 → 删除旧 key。
+要求：可中断、可重入、每批 100 条、失败时打印 record_id 并继续。</p>
+<p>验收：<code>--self-test</code> 在临时目录里造 1000 条记录，轮换后 1000 条全部可解，且 kid 都是 k3。</p>
+<hr>
+<h2 id="_4">四、复盘问题（写进你的笔记）</h2>
+<ol>
+<li>你所在的项目里，哪一个 POST 接口最需要 Idempotency-Key？为什么？</li>
+<li>如果明天密钥泄露，你的系统多久能完成轮换？瓶颈在哪一步？</li>
+<li>你们的健康检查如果哪天开始误报，最先坏掉的会是什么？</li>
+</ol>
+<hr>
+<h2 id="_5">五、提交前自检</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">git<span class="w"> </span>status<span class="w"> </span>--short
+find<span class="w"> </span>.<span class="w"> </span>-name<span class="w"> </span><span class="s1">&#39;__pycache__&#39;</span><span class="w"> </span>-o<span class="w"> </span>-name<span class="w"> </span><span class="s1">&#39;.master-key&#39;</span><span class="w"> </span>-o<span class="w"> </span>-name<span class="w"> </span><span class="s1">&#39;data&#39;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>head
+</code></pre></div>
+<p><strong>预期</strong>：<code>.master-key</code>、<code>data/</code>、<code>__pycache__/</code> 都不应出现在 git status 里（已在 .gitignore 中）。</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
