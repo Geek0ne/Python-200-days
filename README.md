@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-196%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1428-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-197%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1439-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 196 / 200** · 进度的 98.0% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190 企业资产监控系统、Day 191–195 AI 赋能反爬数据平台，进入 Day 196–200 总复习：知识地图 → 面试准备 → 开源贡献 → 技术写作 → 成长路径）
+> **Day 197 / 200** · 进度的 98.5% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190 企业资产监控系统、Day 191–195 AI 赋能反爬数据平台，进入 Day 196–200 总复习：知识地图 ✅ → 面试准备 ✅ → 开源贡献 → 技术写作 → 成长路径）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **196 天** |
-| 📝 总提交次数 | **1,428 commits** |
-| 📄 总代码行数 | **201,830 行** |
-| 📂 总文件数 | **1,415 个** |
-| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 196/200） |
+| 📅 已完成天数 | **197 天** |
+| 📝 总提交次数 | **1,439 commits** |
+| 📄 总代码行数 | **203,645 行** |
+| 📂 总文件数 | **1,424 个** |
+| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 197/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -364,6 +364,7 @@
 - ✅ Day 194 — AI 增强与数据管道（反爬风险分类器：规则基线 F1 0.551 → 逻辑回归 0.900、AUC 0.9299、代价敏感阈值 0.34 使总代价 194→144 / SimHash 64 位指纹 + 鸽巢分桶（bands=8 保证 k≤7，候选压到 0.06%）+ Jaccard 精排 P 1.000·R 0.853 / 五阶段管道 3000 条 1173 条/s、质检拦截 29.5%、UPSERT 幂等；真机翻车四例——SQLite 无符号 64 位溢出、整页文本去重误判 80.6%、语料模板导致 Jaccard 精度 0.006、sklearn 未标准化不收敛；另有 2709 条 URL 因规范化过头静默丢失 419 个页面）
 - ✅ Day 195 — 运维、加密与交付（重试四问：错误分类 / 指数退避 + full jitter / 总时长预算 / 幂等键；结构化 JSON 日志与密钥脱敏；告警 60s 收敛 1000→10 条；AES-256-GCM 信封加密 + AAD 防密文搬家 + kid 轮换；HMAC 签名 + 时间窗 + nonce 防重放 + JWT alg 锁；多阶段镜像 201MB、非 root/只读根文件系统/能力全 drop；一键部署 7s healthy、坏镜像 8s 判定并自动回滚、验收 SMOKE PASS；真机翻车三例——curl 探针在 slim 镜像不存在导致假 unhealthy、bind mount root:root 致 sqlite 无法打开、wait_healthy 漏 unhealthy 分支白等 31s→修后 8s；实测 AES 201/155 MiB/s、POST p50 8.13ms p95 11.92ms、GET p50 1.40ms、优雅退出 0.40s）
 - ✅ Day 196 — 知识体系全景复习（知识地图：扫描 196 课 / 712 个 .py / 201,558 行 / 283 万字符；SM-2 间隔重复 + sqlite 持久化，180 天模拟 185 次复习、遗忘 50 次、平均间隔 87.6 天，固定 7 天需 312 次；按真实代码量加权的 14 天计划 46/56 槽位，P10 安全权重 46,108 为 P9 的 4.7 倍；扫描基准 scandir 30.3ms vs glob 51.4ms、冷热缓存 535.3→99.6ms；翻车两例——基准计时器把 I/O 只算进一边测出假数据、SM-2 模拟闭包写死日期导致 180 天零遗忘）
+- ✅ Day 197 — 面试准备（三层能力模型；9 类算法模板 25 条断言；12 条 Python 八股实测 25 条断言：dict vs list 1220.6x、生成器峰值 0.5KB vs 7835.5KB、装饰器开销 0.281µs；12 题本地题库 + 四维评分器 35 条断言，8 条校准准确率 100%、及格线 60、通过/未通过间隔 22.2；GIL 真机实验：CPU 密集线程 0.57–0.77x 反而更慢、进程 1.46–2.09x，IO 密集线程 3.98x；内存三口径 800,056B vs 3,991,952B 差 4.99x；翻车四例——岛屿测试用例漏看垂直相邻、getsizeof 低估真实内存、忘 join 测出 0.0004s、字符串 intern 断言写错）
 - ✅ Day 191 — 爬虫引擎架构与骨架（五层分层 / URL 规范化八条 / deque Frontier / 全局令牌桶 capacity=1 / robots 最长匹配与预算归还 / 4xx 不重试 + full jitter / SQLite UPSERT 与断点续爬；真机实验：靶站 6/6、五个脚本 42 项自检全绿，限速 20→20.16、60→60.19 req/s；翻车三例——.. 未出栈、capacity=rate 跑成 119.55、robots 吞掉 18 页预算）
 
 </details>
