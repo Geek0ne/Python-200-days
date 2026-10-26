@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 197 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 197 正文</a>
+  <h1>Day 197 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-197">Day 197 图解 — 面试准备</h1>
+<blockquote>
+<p>所有图都可用 Mermaid Live（https://mermaid.live）或支持 Mermaid 的 Markdown 渲染器打开。
+最后一张是纯 ASCII，方便在终端里直接看。</p>
+</blockquote>
+<hr>
+<h2 id="1">1. 面试准备的闭环</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[题库 12 题] --&gt; B[限时作答]
+    B --&gt; C{四维评分}
+    C --&gt;|概念覆盖不足| D[补知识缺口]
+    C --&gt;|技术深度不足| E[补因果与边界]
+    C --&gt;|结构不足| F[改表达模板]
+    C --&gt;|简洁度不足| G[删冗余]
+    D --&gt; H[重答]
+    E --&gt; H
+    F --&gt; H
+    G --&gt; H
+    H --&gt; C
+    C --&gt;|稳定 ≥60| I[进入追问演练]
+    I --&gt; J[项目深挖 / 系统设计]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[题库 12 题] --&gt; B[限时作答]
+    B --&gt; C{四维评分}
+    C --&gt;|概念覆盖不足| D[补知识缺口]
+    C --&gt;|技术深度不足| E[补因果与边界]
+    C --&gt;|结构不足| F[改表达模板]
+    C --&gt;|简洁度不足| G[删冗余]
+    D --&gt; H[重答]
+    E --&gt; H
+    F --&gt; H
+    G --&gt; H
+    H --&gt; C
+    C --&gt;|稳定 ≥60| I[进入追问演练]
+    I --&gt; J[项目深挖 / 系统设计]
+</code></pre></div>
+<p>要点：<strong>评分不是为了打分，而是为了决定下一轮改什么</strong>。
+没有反馈的重复练习，只是把同一个错误练得更熟练。</p>
+<hr>
+<h2 id="2-gil-cpu-vs-io">2. GIL 下的 CPU 密集 vs IO 密集</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant T1 as 线程 1
+    participant T2 as 线程 2
+    participant G as GIL
+    participant CPU as CPU 核
+    participant IO as 内核/IO
+
+    Note over T1,CPU: CPU 密集型
+    T1-&gt;&gt;G: 申请 GIL
+    G--&gt;&gt;T1: 获得
+    T1-&gt;&gt;CPU: 执行字节码
+    T2-&gt;&gt;G: 阻塞等待
+    T1-&gt;&gt;G: 释放（时间片到）
+    G--&gt;&gt;T2: 获得
+    T2-&gt;&gt;CPU: 执行字节码
+    Note over T1,CPU: 任一时刻只有一个线程在跑 → 无多核加速
+
+    Note over T1,IO: IO 密集型
+    T1-&gt;&gt;IO: read() 阻塞
+    T1-&gt;&gt;G: 主动释放 GIL
+    G--&gt;&gt;T2: 获得
+    T2-&gt;&gt;IO: read() 阻塞
+    T2-&gt;&gt;G: 主动释放
+    Note over T1,IO: 等待期间 GIL 空闲 → 多线程有效
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant T1 as 线程 1
+    participant T2 as 线程 2
+    participant G as GIL
+    participant CPU as CPU 核
+    participant IO as 内核/IO
+
+    Note over T1,CPU: CPU 密集型
+    T1-&gt;&gt;G: 申请 GIL
+    G--&gt;&gt;T1: 获得
+    T1-&gt;&gt;CPU: 执行字节码
+    T2-&gt;&gt;G: 阻塞等待
+    T1-&gt;&gt;G: 释放（时间片到）
+    G--&gt;&gt;T2: 获得
+    T2-&gt;&gt;CPU: 执行字节码
+    Note over T1,CPU: 任一时刻只有一个线程在跑 → 无多核加速
+
+    Note over T1,IO: IO 密集型
+    T1-&gt;&gt;IO: read() 阻塞
+    T1-&gt;&gt;G: 主动释放 GIL
+    G--&gt;&gt;T2: 获得
+    T2-&gt;&gt;IO: read() 阻塞
+    T2-&gt;&gt;G: 主动释放
+    Note over T1,IO: 等待期间 GIL 空闲 → 多线程有效
+</code></pre></div>
+<p>一句话：<strong>GIL 限制的是「同时执行 Python 字节码」，不是「同时等待 IO」</strong>。</p>
+<hr>
+<h2 id="3">3. 迭代器协议状态机</h2>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; Iterable: 实现 __iter__
+    Iterable --&gt; Iterator: iter(obj)
+    Iterator --&gt; Yield: next(it)
+    Yield --&gt; Iterator: 还有元素
+    Yield --&gt; Exhausted: StopIteration
+    Exhausted --&gt; [*]
+
+    note right of Iterable
+        每次 __iter__ 返回新的迭代器
+        list / dict / str 都是可迭代对象
+    end note
+
+    note right of Iterator
+        实现 __iter__ 返回 self
+        实现 __next__ 推进状态
+    end note
+
+    note right of Exhausted
+        生成器耗尽后不可复用
+        再 next() 继续抛 StopIteration
+    end note
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; Iterable: 实现 __iter__
+    Iterable --&gt; Iterator: iter(obj)
+    Iterator --&gt; Yield: next(it)
+    Yield --&gt; Iterator: 还有元素
+    Yield --&gt; Exhausted: StopIteration
+    Exhausted --&gt; [*]
+
+    note right of Iterable
+        每次 __iter__ 返回新的迭代器
+        list / dict / str 都是可迭代对象
+    end note
+
+    note right of Iterator
+        实现 __iter__ 返回 self
+        实现 __next__ 推进状态
+    end note
+
+    note right of Exhausted
+        生成器耗尽后不可复用
+        再 next() 继续抛 StopIteration
+    end note
+</code></pre></div>
+<hr>
+<h2 id="4">4. 装饰器的调用链</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[&quot;@timed def add(a, b)&quot;] --&gt; B[&quot;add = timed(add)&quot;]
+    B --&gt; C[&quot;timed 返回 wrapper&quot;]
+    C --&gt; D[&quot;调用 add(1, 2)&quot;]
+    D --&gt; E[&quot;wrapper(*args) 开始计时&quot;]
+    E --&gt; F[&quot;调用原函数 fn(1, 2)&quot;]
+    F --&gt; G[&quot;finally 记录耗时&quot;]
+    G --&gt; H[&quot;返回结果&quot;]
+    C -.-&gt;|functools.wraps| I[&quot;复制 __name__ / __doc__ / __wrapped__&quot;]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[&quot;@timed def add(a, b)&quot;] --&gt; B[&quot;add = timed(add)&quot;]
+    B --&gt; C[&quot;timed 返回 wrapper&quot;]
+    C --&gt; D[&quot;调用 add(1, 2)&quot;]
+    D --&gt; E[&quot;wrapper(*args) 开始计时&quot;]
+    E --&gt; F[&quot;调用原函数 fn(1, 2)&quot;]
+    F --&gt; G[&quot;finally 记录耗时&quot;]
+    G --&gt; H[&quot;返回结果&quot;]
+    C -.-&gt;|functools.wraps| I[&quot;复制 __name__ / __doc__ / __wrapped__&quot;]
+</code></pre></div>
+<p>没有 <code>wraps</code> 时，<code>add.__name__</code> 会变成 <code>"wrapper"</code>，
+日志、文档生成、框架反射全部拿到错误信息。</p>
+<hr>
+<h2 id="5-star">5. STAR 的信息结构</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    S[背景 Situation&lt;br/&gt;约束是什么] --&gt; T[目标 Task&lt;br/&gt;要达成什么]
+    T --&gt; A[行动 Action&lt;br/&gt;我具体做了什么]
+    A --&gt; R[结果 Result&lt;br/&gt;数字证明]
+    R --&gt; F[反思&lt;br/&gt;如果重做改什么]
+
+    S -.-&gt;|缺失| X1[面试官不知道难度]
+    T -.-&gt;|缺失| X2[不知道你的判断标准]
+    A -.-&gt;|缺失| X3[不知道是不是你做的]
+    R -.-&gt;|缺失| X4[不知道有没有效果]
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    S[背景 Situation&lt;br/&gt;约束是什么] --&gt; T[目标 Task&lt;br/&gt;要达成什么]
+    T --&gt; A[行动 Action&lt;br/&gt;我具体做了什么]
+    A --&gt; R[结果 Result&lt;br/&gt;数字证明]
+    R --&gt; F[反思&lt;br/&gt;如果重做改什么]
+
+    S -.-&gt;|缺失| X1[面试官不知道难度]
+    T -.-&gt;|缺失| X2[不知道你的判断标准]
+    A -.-&gt;|缺失| X3[不知道是不是你做的]
+    R -.-&gt;|缺失| X4[不知道有没有效果]
+</code></pre></div>
+<p>STAR 的本质是<strong>降低对方重建你经历的成本</strong>。
+顺序固定，是因为它对应「约束 → 目标 → 选择 → 验证」的决策链。</p>
+<hr>
+<h2 id="6-n">6. 复杂度预算图（n 与可接受复杂度）</h2>
+<pre class="plain"><code>每秒可执行的 Python 基本操作（量级，实测相关）：
+  简单循环/比较       ~1e7 次/秒
+  函数调用            ~5e6 次/秒
+  哈希查找            ~1e7 次/秒
+  排序（C 实现）      ~1e6~1e7 元素/秒
+
+题目给的 n          允许的复杂度            典型算法
+---------------------------------------------------------------
+n ≤ 10               O(n!) / O(2^n)          回溯、暴力枚举
+n ≤ 20               O(2^n)                  状压 DP
+n ≤ 100              O(n^3)                  区间 DP、Floyd
+n ≤ 1,000            O(n^2)                  普通 DP、双重循环
+n ≤ 100,000          O(n log n)              排序、堆、二分
+n ≤ 1,000,000        O(n)                    双指针、滑动窗口、哈希
+n ≤ 10^8             O(log n) / O(1)         数学、二分答案
+---------------------------------------------------------------
+经验：先把 n 写下来，再选模板。反过来（先想算法再看 n）十次有三次会选错。
+</code></pre>
+<hr>
+<h2 id="7">7. 评分流水线（本课实现）</h2>
+<pre class="plain"><code>answer.txt
+   │
+   ├─ normalize：去空白 + 小写
+   │
+   ├─ 概念覆盖 ── must_have 逐项匹配（支持 a|b 同义词）── 权重 35%
+   ├─ 技术深度 ── 因果/复杂度/边界/实测等信号计数 ────── 权重 25%
+   ├─ 表达结构 ── 首句定义 + 分句数 + 边界（或 STAR 组）─ 权重 30%
+   └─ 简洁度   ── 80–1200 字区间 ───────────────────── 权重 10%
+   │
+   ├─ 总分 = Σ(维度得分 × 权重)
+   ├─ 及格线 60（校准集上选出）
+   └─ 建议 = 缺失概念 + 最低维度对应的改法
+</code></pre>
+<p>已知局限：词袋匹配不懂语义；同义改写可能被低估；长段关键词堆砌可能蒙混过关。
+所以它只能当自查清单，不能替代真人面试。</p>
+<hr>
+<h2 id="8-ascii">8. 一句话记忆卡（ASCII）</h2>
+<pre class="plain"><code>GIL      : 同一时刻一个线程跑字节码；IO 等待会释放 → IO 用线程，CPU 用进程
+内存     : 引用计数为主，分代 GC 兜循环引用
+迭代器   : __iter__ 返回迭代器，__next__ 推进，StopIteration 结束
+生成器   : yield 暂停/恢复，惰性，只能遍历一次
+装饰器   : 函数 → 函数；@ 是语法糖；wraps 保元数据
+默认参数 : 定义时求值一次，可变默认值跨调用共享 → 用 None 哨兵
+MRO      : C3 线性化；子类先于父类，声明靠前者优先
+拷贝     : 浅拷贝共享内层，深拷贝递归复制
+slots    : 省 __dict__，代价是不能动态加属性
+异常     : finally 里的 return 会吞异常
+哈希     : dict 平均 O(1)，key 必须可哈希
+排序     : Timsort 稳定，key 每元素只调一次
+二分     : 先定区间语义，再写 mid ± 1
+滑动窗口 : 连续子段 + 单调性 → O(n)
+DP       : 状态 → 转移 → 边界 → 顺序 → 空间优化
+STAR     : 背景 → 目标 → 行动 → 结果（+ 数字 + 反思）
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
