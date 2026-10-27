@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 198 · 图解</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 198 正文</a>
+  <h1>Day 198 · 图解</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-198">Day 198 图解 — 开源贡献</h1>
+<p>本文件是 <code>README.md</code> 中图解部分的独立版本，方便单独阅读或打印。</p>
+<h2 id="1-fork">1. fork 工作流</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    U[(upstream/main)] --&gt;|Fork| F[(origin/main)]
+    F --&gt;|git switch -c| B[feature 分支]
+    B --&gt;|commit| C[gh-12345: fix typo]
+    C --&gt;|format-patch| P[0001-change.patch]
+    P --&gt; CI{CI + review}
+    CI --&gt;|request changes| B
+    CI --&gt;|approved| AM[maintainer: git am]
+    AM --&gt; U
+    U --&gt;|fetch + rebase| F
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    U[(upstream/main)] --&gt;|Fork| F[(origin/main)]
+    F --&gt;|git switch -c| B[feature 分支]
+    B --&gt;|commit| C[gh-12345: fix typo]
+    C --&gt;|format-patch| P[0001-change.patch]
+    P --&gt; CI{CI + review}
+    CI --&gt;|request changes| B
+    CI --&gt;|approved| AM[maintainer: git am]
+    AM --&gt; U
+    U --&gt;|fetch + rebase| F
+</code></pre></div>
+<p>读图要点：</p>
+<ol>
+<li>你的分支永远在 fork 里，不直接写 upstream。</li>
+<li>上游接受的是 patch（或等价的 PR 合并），不是你的分支引用。</li>
+<li>同步方向只有一条：upstream → fork，且用 rebase 保持线性历史。</li>
+</ol>
+<h2 id="2-hunk">2. hunk 结构</h2>
+<pre class="plain"><code>@@ -3,6 +3,6 @@ Quickstart
+│  │   │    │   │
+│  │   │    │   └── 新文件起始行号
+│  │   │    └────── 新文件行数
+│  │   └─────────── 旧文件起始行号
+│  └─────────────── 旧文件行数
+└────────────────── hunk 头（@@ 包围）
+
+ 上下文行（空格开头）：必须逐字节匹配，否则 am 失败
+-删除行
++新增行
+</code></pre>
+<h2 id="3">3. 三方合并</h2>
+<div class="mermaid-wrap"><div class="mermaid">sequenceDiagram
+    participant C as 贡献者
+    participant U as upstream
+    participant R as reviewer
+    U-&gt;&gt;C: clone / fork
+    C-&gt;&gt;C: 基于 base 提交 patch
+    U-&gt;&gt;U: 修改同一区域（漂移）
+    C-&gt;&gt;R: 发送 patch
+    R-&gt;&gt;R: git am（严格上下文）→ 失败
+    R-&gt;&gt;R: git am -3（base/ours/theirs）
+    alt 改动不重叠
+        R-&gt;&gt;U: 自动合并成功
+    else 同一行
+        R-&gt;&gt;R: CONFLICT，手工解决
+        R-&gt;&gt;U: git add + am --continue
+    end
+</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>sequenceDiagram
+    participant C as 贡献者
+    participant U as upstream
+    participant R as reviewer
+    U-&gt;&gt;C: clone / fork
+    C-&gt;&gt;C: 基于 base 提交 patch
+    U-&gt;&gt;U: 修改同一区域（漂移）
+    C-&gt;&gt;R: 发送 patch
+    R-&gt;&gt;R: git am（严格上下文）→ 失败
+    R-&gt;&gt;R: git am -3（base/ours/theirs）
+    alt 改动不重叠
+        R-&gt;&gt;U: 自动合并成功
+    else 同一行
+        R-&gt;&gt;R: CONFLICT，手工解决
+        R-&gt;&gt;U: git add + am --continue
+    end
+</code></pre></div>
+<h2 id="4-cpython">4. CPython 目录分层</h2>
+<pre class="plain"><code>        ┌──────────────────────────────────────────┐
+        │                Lib/ (Python)             │
+        │  argparse.py  asyncio/  json/  ...       │
+        └───────────────┬──────────────────────────┘
+                        │ import _ssl / _sqlite3 ...
+        ┌───────────────▼──────────────────────────┐
+        │              Modules/ (C 扩展)            │
+        │  _ssl.c  _sqlite/module.c  posixmodule.c │
+        └───────────────┬──────────────────────────┘
+                        │ 调用对象协议
+        ┌───────────────▼──────────────────────────┐
+        │   Objects/ (数据)      Python/ (执行)     │
+        │   listobject.c         ceval.c           │
+        │   dictobject.c         compile.c         │
+        └───────────────┬──────────────────────────┘
+                        │ 公共 API
+        ┌───────────────▼──────────────────────────┐
+        │                Include/                  │
+        │   Python.h  internal/pycore_*.h          │
+        └──────────────────────────────────────────┘
+
+  旁路：Doc/（Sphinx 源文件）  Tools/（开发工具）  Misc/NEWS.d/（变更条目）
+</code></pre>
+<h2 id="5-pr">5. PR 价值公式</h2>
+<pre class="plain"><code>            收益
+  ─────────────────────────
+   理解 + 验证 + 维护成本
+
+  收益 ↑：修真实问题、覆盖边界、可复用
+  成本 ↓：diff 小、证据全、命名清楚、提交信息完整
+</code></pre></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
