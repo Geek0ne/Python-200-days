@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-197%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1439-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1459-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -49,15 +49,15 @@
 
 ## 📊 当前进度
 
-> **Day 198 / 200** · 进度的 99.0% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190 企业资产监控系统、Day 191–195 AI 赋能反爬数据平台，Day 196–200 总复习：知识地图 ✅ → 面试准备 ✅ → 开源贡献 ✅ → 技术写作 → 成长路径）
+> **Day 199 / 200** · 进度的 99.5% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190 企业资产监控系统、Day 191–195 AI 赋能反爬数据平台，Day 196–200 总复习：知识地图 ✅ → 面试准备 ✅ → 开源贡献 ✅ → 技术写作 ✅ → 成长路径）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **198 天** |
-| 📝 总提交次数 | **1,447 commits** |
-| 📄 总代码行数 | **204,383 行** |
-| 📂 总文件数 | **1,430 个** |
-| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 198/200） |
+| 📅 已完成天数 | **199 天** |
+| 📝 总提交次数 | **1,459 commits** |
+| 📄 总代码行数 | **205,271 行** |
+| 📂 总文件数 | **1,439 个** |
+| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 199/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -366,6 +366,7 @@
 - ✅ Day 196 — 知识体系全景复习（知识地图：扫描 196 课 / 712 个 .py / 201,558 行 / 283 万字符；SM-2 间隔重复 + sqlite 持久化，180 天模拟 185 次复习、遗忘 50 次、平均间隔 87.6 天，固定 7 天需 312 次；按真实代码量加权的 14 天计划 46/56 槽位，P10 安全权重 46,108 为 P9 的 4.7 倍；扫描基准 scandir 30.3ms vs glob 51.4ms、冷热缓存 535.3→99.6ms；翻车两例——基准计时器把 I/O 只算进一边测出假数据、SM-2 模拟闭包写死日期导致 180 天零遗忘）
 - ✅ Day 197 — 面试准备（三层能力模型；9 类算法模板 25 条断言；12 条 Python 八股实测 25 条断言：dict vs list 1220.6x、生成器峰值 0.5KB vs 7835.5KB、装饰器开销 0.281µs；12 题本地题库 + 四维评分器 35 条断言，8 条校准准确率 100%、及格线 60、通过/未通过间隔 22.2；GIL 真机实验：CPU 密集线程 0.57–0.77x 反而更慢、进程 1.46–2.09x，IO 密集线程 3.98x；内存三口径 800,056B vs 3,991,952B 差 4.99x；翻车四例——岛屿测试用例漏看垂直相邻、getsizeof 低估真实内存、忘 join 测出 0.0004s、字符串 intern 断言写错）
 - ✅ Day 198 — 开源贡献（fork 工作流真机实验：本地裸仓库 upstream/fork/reviewer 三仓，A/B/C/D 四组独立实验；上下文漂移 git am exit 128 → git am -3 自动合并；同一行 CONFLICT 手工解决；尾随空白 apply --check 拒绝；真实 CPython 926b0bf 稀疏克隆 5,846 文件 / 37MB，doctest 7→4 修复 3 处 list repr；三脚本 01/02/03 自检全绿，patch-doctor 体检 0 error；翻车五例——上下文窗口 3 行判断错、贡献提交误推上游致 -3 已应用、邮件签名被当删除行、doctest 5 个假阳性、demo 重复 step 号）
+- ✅ Day 199 — 技术写作（读者模型与三层可退出结构 / 可复现性契约五字段 / 断言三级；真机实验六项：环境指纹、坏稿 65 分体检、三档压测（30KB 44.06ms → 636KB 130.84ms，stdout 哈希 5 次全等、小文件极差 22.8%）、体检器 7 条误报修复到 100 分、静态站构建 + HTTP 200 验证、收尾清理；翻车五例——自测夹具写错反怪规则、中文标题 slug 成哈希致 TOC 与 id 分叉、跨层引号两次打断脚本、pkill -f 杀掉自己的 shell、文章自称 168 行实际 245 行）
 - ✅ Day 191 — 爬虫引擎架构与骨架（五层分层 / URL 规范化八条 / deque Frontier / 全局令牌桶 capacity=1 / robots 最长匹配与预算归还 / 4xx 不重试 + full jitter / SQLite UPSERT 与断点续爬；真机实验：靶站 6/6、五个脚本 42 项自检全绿，限速 20→20.16、60→60.19 req/s；翻车三例——.. 未出栈、capacity=rate 跑成 119.55、robots 吞掉 18 页预算）
 
 </details>
@@ -376,7 +377,7 @@
 
 ```
 📁 Python-200-days/
-├── 📓 days/                    # 每日学习内容（day-001 ~ day-198，共 198 个主题）
+├── 📓 days/                    # 每日学习内容（day-001 ~ day-199，共 199 个主题）
 │   ├── day-001-hello-python/
 │   ├── day-002-variables-and-datatypes/
 │   ├── ...
