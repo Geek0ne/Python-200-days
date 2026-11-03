@@ -50,7 +50,7 @@ sys.exit()'''
         "在事件处理中直接修改游戏状态（如移动玩家），\n"
         "会导致同一帧内事件处理和状态更新的顺序不确定，\n"
         "出现难以调试的 bug。",
-        "事件循环只做"标记"或"记录意图"，\n"
+        "事件循环只做“标记”或“记录意图”，\n"
         "实际状态更新统一放在 update() 阶段。",
         code_bad='''for event in pygame.event.get():
     if event.type == pygame.KEYDOWN:
@@ -103,7 +103,7 @@ pygame.time.set_timer(TIMER_B, 2000)'''
     print_trap(
         5,
         "KEYDOWN 和 get_pressed 用错场景",
-        "用 get_pressed() 处理"按一次触发一次"的动作（如跳跃），\n"
+        "用 get_pressed() 处理“按一次触发一次”的动作（如跳跃），\n"
         "会导致每帧都触发，角色无限连跳。\n"
         "反过来用 KEYDOWN 处理持续移动，只能移动一小段。",
         "一次性动作（跳跃、射击）→ KEYDOWN\n"
@@ -145,7 +145,7 @@ if need_pathfinding:
         "不处理 pygame.event.get() 导致窗口无响应",
         "如果一帧内不调用 pygame.event.get()，\n"
         "事件队列会堆积，操作系统认为程序无响应，\n"
-        "弹出"未响应"对话框。",
+        "弹出“未响应”对话框。",
         "每一帧都必须调用 pygame.event.get()，\n"
         "即使你不需要处理任何事件。",
         code_bad='''while running:

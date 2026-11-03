@@ -171,7 +171,7 @@ class LintReport:
 
 
 def logical_lines(text: str) -> list[tuple[int, str]]:
-    """
+    r"""
     把 Dockerfile 解析成「逻辑行」：合并以 \ 结尾的续行，并保留起始行号。
 
     不做这一步会误报：HEALTHCHECK CMD python -c "..." 里的 CMD 只是

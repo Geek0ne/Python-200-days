@@ -311,7 +311,7 @@ class PreOrderIterator:
 
 
 def build_sample_tree() -> TreeNode:
-    """构建示例二叉树
+    r"""构建示例二叉树
 
         1
        / \

@@ -87,7 +87,7 @@ class AsyncChatServer:
                         target_id, private_msg = parts
                         await self.send_private(client_id, target_id, private_msg)
                     else:
-                        writer.write(b'{"type":"error","message":"用法: /msg 用户名 消息"}\n')
+                        writer.write('{"type":"error","message":"用法: /msg 用户名 消息"}\n'.encode())
                         await writer.drain()
                 else:
                     # 广播消息

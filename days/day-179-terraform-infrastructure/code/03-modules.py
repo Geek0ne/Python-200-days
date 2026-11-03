@@ -108,7 +108,7 @@ class EC2Module:
             "ami": self.ami,
             "subnet_ids": self.subnet_ids
         }
-        lines = [f'module "{self.name}" {{')
+        lines = [f'module "{self.name}" {{']
         lines.append(f'  source = "./modules/ec2/{self.name}"')
         lines.append('  # EC2 实例配置')
         for k, v in inputs.items():
@@ -141,7 +141,7 @@ class SecurityGroupModule:
             "description": self.description,
             "cidr_blocks": self.cidr_blocks
         }
-        lines = [f'module "{self.name}" {{')
+        lines = [f'module "{self.name}" {{']
         lines.append(f'  source = "./modules/securitygroup/{self.name}"')
         lines.append('  # 安全组配置')
         for k, v in inputs.items():

@@ -248,7 +248,7 @@ remote2.volume_up()
 # ====================================
 print("\n" + "=" * 60)
 print("4️⃣ 工厂模式 — 组合对象创建逻辑")
-    print("=" * 60)
+print("=" * 60)
 
 
 class NotificationSender:

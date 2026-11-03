@@ -350,7 +350,7 @@ def search_text(
 
     Examples:
         >>> search_text("log.txt", "ERROR", case_sensitive=True)
-        >>> search_text("code.py", r"def \w+", use_regex=True)
+        >>> search_text("code.py", r"def \\w+", use_regex=True)
     """
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"文件不存在: {filepath}")

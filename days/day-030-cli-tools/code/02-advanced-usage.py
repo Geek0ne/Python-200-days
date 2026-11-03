@@ -177,7 +177,7 @@ print(f"  当前目录: {current_dir}")
 
 # 查找所有 .py 文件
 py_files = find_files(str(current_dir), name_pattern='*.py', file_type='f')
-print(f"\  找到 {len(py_files)} 个 Python 文件:")
+print(f"  找到 {len(py_files)} 个 Python 文件:")
 for f in py_files:
     size = f.stat().st_size
     print(f"    {f.name:<25} {size:>6} bytes")
