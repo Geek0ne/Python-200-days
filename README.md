@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1459-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey)
+![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1459-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
 
 [🌐 在线学习站](https://python.geek0ne.com/) · [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -25,6 +25,16 @@
 - 🧑‍💻 **零基础转行** — 从 Hello World 开始，系统化学习
 - 📚 **自学巩固** — 查漏补缺，构建完整的 Python 知识树
 - 🚀 **进阶提升** — 覆盖网络安全、爬虫、自动化、数据分析、AI 等方向
+
+---
+
+## 🇬🇧 English Summary
+
+**Python 200 Days** — a structured 200-day Python learning plan, from zero basics to production-grade projects. Every day ships a four-piece set: **notes · runnable code · diagrams · exercises with solutions**.
+
+- **12 phases**: basics → core programming → OOP → advanced features → stdlib & ecosystem → projects → performance → data science & AI/ML → web scraping → security → DevOps → capstone
+- **Hands-on first**: real-machine experiments with honest post-mortems of everything that went wrong
+- 🌐 [Online learning site](https://python.geek0ne.com/) · 📖 [Roadmap](ROADMAP.md) (Chinese)
 
 ---
 
