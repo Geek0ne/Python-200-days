@@ -3,20 +3,20 @@
 > **阶段**：Phase 12 — 综合实战
 > **项目**：AI 赋能反爬数据平台 · 第 2/5 天
 > **子主题**：出口模型 · 健康检查 · 评分 · 熔断冷却 · 每出口限速 · 粘滞会话 · CONNECT 隧道
-> **代码**：1 个可复用实验台 + 3 个可独立运行脚本，全部带 \`--self-test\`
+> **代码**：1 个可复用实验台 + 3 个可独立运行脚本，全部带 `--self-test`
 > **实测环境**：Linux 7.0.0-34-generic / Python 3.12.3 / 2026-10-22 06:00–06:30 CST
 
 ---
 
 ## 今天在项目里的位置
 
-\`\`\`text
+```text
 Day 191  引擎骨架      → 队列、限速、重试、落库：先让引擎能稳定跑        ✅
 Day 192  代理池        → IP 轮换、健康检查、按目标分配出口              ← 今天
 Day 193  浏览器与验证码 → JS 渲染、指纹、识别
 Day 194  AI 增强       → 反爬策略预测、内容归类、数据管道
 Day 195  运维与交付    → 调度、加密、鉴权、Docker + CI/CD
-\`\`\`
+```
 
 Day 191 的 Fetcher 只会说一句「把 URL 变成 HTML 或一个分类过的错误」。
 今天要做的事，就是给这句话加一个前提：**用哪个出口去变**。
@@ -34,10 +34,10 @@ Day 191 的 Fetcher 只会说一句「把 URL 变成 HTML 或一个分类过的�
 | 概念 | 一句话 | 为什么重要 |
 |---|---|---|
 | 出口（exit） | 目标站看到的那个 IP | 代理池调度的最小单位，不是"代理 URL" |
-| 透明/匿名/高匿 | 目标站能否看到你在用代理 | 透明代理会把 \`X-Forwarded-For\` 带过去，等于自报家门 |
+| 透明/匿名/高匿 | 目标站能否看到你在用代理 | 透明代理会把 `X-Forwarded-For` 带过去，等于自报家门 |
 | 正向代理 | 客户端主动把请求交给代理转发 | 爬虫用的就是这种；反向代理是服务端的事 |
 | CONNECT | 让代理建立 TCP 隧道，用于 HTTPS | 不支持 CONNECT 的代理，HTTP 能通、HTTPS 全废 |
-| 绝对 URI | \`GET http://host/path HTTP/1.1\` | 正向代理的请求行格式，和普通请求不同 |
+| 绝对 URI | `GET http://host/path HTTP/1.1` | 正向代理的请求行格式，和普通请求不同 |
 | 407 | Proxy Authentication Required | 代理自己的鉴权，不是目标站的 401 |
 | 健康检查 | 真发一次请求，验证"从它出去了" | TCP 端口能连 ≠ 能上网 ≠ 目标站可达 |
 | 出口指纹 | 出口 IP + ASN + 延迟 + 成功率 | 单看 IP 会漏掉"同 C 段整批被封" |
@@ -59,7 +59,7 @@ Day 191 的 Fetcher 只会说一句「把 URL 变成 HTML 或一个分类过的�
 
 一个列表只回答"有哪些地址"；一个池要回答四个问题：
 
-\`\`\`text
+```text
         ┌──────────────────────────────────────────────┐
         │                  ProxyPool                   │
         │                                              │
@@ -70,7 +70,7 @@ Day 191 的 Fetcher 只会说一句「把 URL 变成 HTML 或一个分类过的�
         └───────┼──────────────┼─────────────┼────────┘
                 │              │             │
             定时探活        每次请求结果    429/403/超时
-\`\`\`
+```
 
 **为什么要这四块**：
 
@@ -83,48 +83,48 @@ Day 191 的 Fetcher 只会说一句「把 URL 变成 HTML 或一个分类过的�
 
 ### 2. 健康检查：三种"通"不是一回事
 
-\`\`\`text
+```text
 TCP 握手成功          代理进程活着            ≠ 能访问外网
 HTTP 200（任意页面）   代理能转发              ≠ 转发的是你的目标
 200 + 预期标记         真的从该出口出去了      ← 唯一可信的判据
-\`\`\`
+```
 
-本课实验台的做法：代理给每个转发请求注入 \`X-Exit-Id\`，靶站原样回显。
+本课实验台的做法：代理给每个转发请求注入 `X-Exit-Id`，靶站原样回显。
 于是「这个响应到底是不是从 p2 出来的」有密码学级别的确定性——不，是协议级别的确定性。
 
-**为什么不用 \`https://httpbin.org/ip\`**：
+**为什么不用 `https://httpbin.org/ip`**：
 
 1. 生产环境常常没有外网出口（内网爬虫走专线）；
 2. 第三方站点会限流你的健康检查，把"检查太频繁"误判成"代理全死"；
 3. 它只告诉你出口 IP，不告诉你延迟分布和目标站可达性。
 
-自己起一个 \`/health\` 靶站，成本几乎为零，可控性高一个数量级。
+自己起一个 `/health` 靶站，成本几乎为零，可控性高一个数量级。
 
 ### 3. 评分：为什么是"成功率平方"
 
-\`\`\`python
+```python
 score = success_rate ** 2 / (1 + ewma_latency)
-\`\`\`
+```
 
 - **平方**：把"偶尔失败"的出口压下去。0.9²=0.81，0.5²=0.25。
   代理池里"能用但经常失败"比"完全不能用"更危险——它会让你以为任务在推进。
 - **除以延迟**：延迟直接决定单位时间产出。120ms 的出口吞吐只有 2ms 的 1/60。
-- **EWMA**：\`new = 0.3 * sample + 0.7 * old\`。出口恢复后能在十几次请求内回到高分，
+- **EWMA**：`new = 0.3 * sample + 0.7 * old`。出口恢复后能在十几次请求内回到高分，
   不会因为昨天被封过就永久冷藏。
 
-**冷启动问题**：所有出口初始分数相同，纯 \`argmax\` 会永远选字典里第一个。
-实测（见翻车实验 4）p2/p3 的 \`req=0\`，坏代理一次都没被探测到。
+**冷启动问题**：所有出口初始分数相同，纯 `argmax` 会永远选字典里第一个。
+实测（见翻车实验 4）p2/p3 的 `req=0`，坏代理一次都没被探测到。
 所以必须先给每个新出口一个**探针请求**，再进入评分竞争。
 
 ### 4. 冷却与熔断：为什么"立刻换一个"是错的
 
-\`\`\`text
+```text
 请求 → 429
   ├─ 错误做法：立刻换出口，同一页继续打
   │    → 3 个出口在 1 秒内全部 429（实测 30 次请求打出 18 个 429）
   └─ 正确做法：该出口冷却 max(Retry-After, base)
        → 冷却期内不分配；到期放一个探针（半开）；成功才恢复权重
-\`\`\`
+```
 
 **为什么冷却要指数增长**：一个出口如果每次冷却结束都立刻失败，说明它不是"临时抖动"，
 而是"已经进了目标站的黑名单"。冷却 1s → 2s → 4s → 8s，能把探测成本压到最低。
@@ -136,19 +136,19 @@ score = success_rate ** 2 / (1 + ewma_latency)
 
 这是本课最容易被忽略的一条。
 
-\`\`\`text
+```text
 全局 3 req/s，3 个出口：
   错误理解：总量 3/s，每个出口 1/s        ← 只有你主动按出口分配时才成立
   实际写法：每个 worker 都 sleep(1/3)
             → 每个出口 3/s，总 9/s
             → 目标站按出口看到 3/s，立刻 429
-\`\`\`
+```
 
 正确模型：
 
-\`\`\`text
+```text
 allowed_total = Σ (每个出口的允许速率)
-\`\`\`
+```
 
 **轮换只是把风险摊开，不会让目标站放宽限制。**
 加出口能提高总吞吐，前提是每个出口都守自己的规矩。
@@ -166,27 +166,27 @@ allowed_total = Σ (每个出口的允许速率)
 | 模式 | 适用 | 实现 |
 |---|---|---|
 | 轮换（rotating） | 无状态列表页、图片、详情页 | 每次取当前最高分 |
-| 粘滞（sticky） | 登录、下单、分页表单 | \`domain → exit\` 固定映射，出口冷却时才迁移 |
+| 粘滞（sticky） | 登录、下单、分页表单 | `domain → exit` 固定映射，出口冷却时才迁移 |
 
 粘滞的失效条件只有一个：**该出口进入冷却**。这时必须迁移，并把"迁移次数"记进指标——
 迁移频繁说明出口池太小。
 
 ### 7. CONNECT：HTTPS 代理的分水岭
 
-\`\`\`text
+```text
 HTTP  (明文)                           HTTPS (TLS)
 ──────────────                         ──────────────
 客户端 → 代理: GET http://a/b          客户端 → 代理: CONNECT a:443
 代理   → 目标: GET /b                  代理   → 目标: TCP 连接
 代理   读得到明文                       代理   只转发密文，看不到内容
-\`\`\`
+```
 
 **所以**：一个只实现了绝对 URI 转发的代理，HTTP 健康检查 200，
 HTTPS 业务却会报：
 
-\`\`\`text
+```text
 URLError: <urlopen error Tunnel connection failed: 501 Not Implemented>
-\`\`\`
+```
 
 你会以为是目标站封了你，其实是代理不会打隧道。
 **健康检查必须覆盖业务真正使用的协议。**
@@ -195,8 +195,8 @@ URLError: <urlopen error Tunnel connection failed: 501 Not Implemented>
 
 - 代理能看到你所有**明文 HTTP** 的 URL、Header、Cookie。HTTPS 只能看到目标域名。
 - 免费代理最常见的商业模式就是记录并转卖流量，**不要把任何凭证发给代理**。
-- \`Proxy-Authorization\` 只发给代理，绝不能透传给目标站（本课实验台显式做了过滤）。
-- 日志里记录出口时只记 \`name\` 和出口 IP 哈希，不要记完整代理 URL（含账号密码）。
+- `Proxy-Authorization` 只发给代理，绝不能透传给目标站（本课实验台显式做了过滤）。
+- 日志里记录出口时只记 `name` 和出口 IP 哈希，不要记完整代理 URL（含账号密码）。
 
 ---
 
@@ -206,11 +206,11 @@ URLError: <urlopen error Tunnel connection failed: 501 Not Implemented>
 
 | 方法 | 参数 | 返回 | 说明 |
 |---|---|---|---|
-| \`check_all()\` | — | \`dict[name, bool]\` | 并发/串行探活，判据是 200 + 标记 |
-| \`acquire(domain, sticky)\` | \`domain: str\`, \`sticky: bool\` | \`ProxyState \| None\` | 取一个可用出口，内部处理限速与冷却 |
-| \`report(proxy, ok, latency, status, retry_after)\` | 见左 | None | 回填结果；429/403 触发冷却 |
-| \`metrics()\` | — | \`dict\` | 总数、成功率、p50/p95、每出口状态 |
-| \`proxy.score()\` | — | \`float\` | \`success_rate² / (1 + ewma_latency)\` |
+| `check_all()` | — | `dict[name, bool]` | 并发/串行探活，判据是 200 + 标记 |
+| `acquire(domain, sticky)` | `domain: str`, `sticky: bool` | `ProxyState \| None` | 取一个可用出口，内部处理限速与冷却 |
+| `report(proxy, ok, latency, status, retry_after)` | 见左 | None | 回填结果；429/403 触发冷却 |
+| `metrics()` | — | `dict` | 总数、成功率、p50/p95、每出口状态 |
+| `proxy.score()` | — | `float` | `success_rate² / (1 + ewma_latency)` |
 
 ### 常见状态码的处置
 
@@ -220,13 +220,13 @@ URLError: <urlopen error Tunnel connection failed: 501 Not Implemented>
 | 301/302 | 重定向 | 跟随，但限制次数 | 当成失败重试 |
 | 403 | 目标站拒绝 | 出口冷却，换出口 | 立刻用同一出口重试 |
 | 407 | 代理鉴权失败 | 该代理配置错误，**永久**摘除 | 当成目标站封禁 |
-| 429 | 限流 | 按 \`Retry-After\` 冷却 | 立刻换出口继续打 |
+| 429 | 限流 | 按 `Retry-After` 冷却 | 立刻换出口继续打 |
 | 502/504 | 代理上游坏 | 连续 1–2 次即冷却 | 无限重试 |
 | 超时 | 出口慢/黑洞 | 计失败，超过阈值冷却 | 无限等 |
 
 ### urllib 的代理写法（标准库，不引第三方）
 
-\`\`\`python
+```python
 import urllib.request
 
 # 显式代理：必须自己 build_opener，别依赖全局默认 opener
@@ -236,7 +236,7 @@ opener = urllib.request.build_opener(
 )
 # 显式直连（清空环境变量影响）
 direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-\`\`\`
+```
 
 ---
 
@@ -244,7 +244,7 @@ direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 ### 请求在池子里的完整生命周期
 
-\`\`\`text
+```text
                        ┌─────────────────────┐
    task.get(url) ─────►│  选择出口            │
                        │  1. 过滤冷却中的      │
@@ -269,11 +269,11 @@ direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
                     └─────────────┴─────────────┘
                                   ▼
                           metrics / 告警
-\`\`\`
+```
 
 ### 冷却状态机
 
-\`\`\`mermaid
+```mermaid
 stateDiagram-v2
     [*] --> Healthy
     Healthy --> Cooling: 429 / 403 / 连续失败
@@ -281,11 +281,11 @@ stateDiagram-v2
     HalfOpen --> Healthy: 探针成功
     HalfOpen --> Cooling: 探针失败（冷却翻倍）
     Cooling --> Cooling: 期间请求被拒绝分配
-\`\`\`
+```
 
 ### 两种调度模式对比
 
-\`\`\`text
+```text
 轮换（rotating）                    粘滞（sticky）
 req1 → p1                           shop:req1 → p1
 req2 → p2                           shop:req2 → p1
@@ -293,7 +293,7 @@ req3 → p3                           shop:req3 → p1
 req4 → p1                           news:req1 → p2
   cookie 每次都变                      同域 cookie 稳定
   适合：公开列表 / 图片                 适合：登录 / 下单 / 表单
-\`\`\`
+```
 
 ---
 
@@ -303,12 +303,12 @@ req4 → p1                           news:req1 → p2
 
 | 文件 | 作用 | 自证 |
 |---|---|---|
-| \`code/00-proxy-lab.py\` | 真实靶站 + 真实正向代理（支持 407 / CONNECT / 限流 / 延迟 / 502） | \`8/8\` |
-| \`code/01-basic-proxy-rotation.py\` | 健康检查 + 轮询 + 摘除死出口 | \`7/7\` |
-| \`code/02-pitfall-connect-and-env.py\` | CONNECT、环境变量、轮换绕过限速三个翻车现场 | \`6/6\` |
-| \`code/03-production-proxy-pool.py\` | 评分 + 熔断 + 冷却 + 粘滞 + 指标 | \`9/9\` |
+| `code/00-proxy-lab.py` | 真实靶站 + 真实正向代理（支持 407 / CONNECT / 限流 / 延迟 / 502） | `8/8` |
+| `code/01-basic-proxy-rotation.py` | 健康检查 + 轮询 + 摘除死出口 | `7/7` |
+| `code/02-pitfall-connect-and-env.py` | CONNECT、环境变量、轮换绕过限速三个翻车现场 | `6/6` |
+| `code/03-production-proxy-pool.py` | 评分 + 熔断 + 冷却 + 粘滞 + 指标 | `9/9` |
 
-代码里的实验台不是 mock：它监听真实端口、收发真实 HTTP 报文、真的会 \`Connection refused\`。
+代码里的实验台不是 mock：它监听真实端口、收发真实 HTTP 报文、真的会 `Connection refused`。
 不这样做，407、501、超时这些坑一个都复现不出来。
 
 ---
@@ -326,16 +326,16 @@ req4 → p1                           news:req1 → p2
 
 **准备 + 执行**：
 
-\`\`\`bash
+```bash
 cd days/day-192-proxy-pool/code
 python3 00-proxy-lab.py --self-test
-\`\`\`
+```
 
 **预期结果**：8 项全部 PASS。
 
 **实际结果**（本次真机输出）：
 
-\`\`\`text
+```text
 [PASS] 直连靶站 200  ->  {'ok': True, 'exit': 'direct', 'origin': 'lab'}
 [PASS] 经 p1 出口标识正确  ->  {'ok': True, 'exit': 'p1', 'origin': 'lab'}
 [PASS] p1 确实收到 1 个请求  ->  {'requests': 1, 'bytes_out': 43, '407': 0, '502': 0}
@@ -346,12 +346,12 @@ python3 00-proxy-lab.py --self-test
 [PASS] kill 后连接被拒  ->  URLError: <urlopen error [Errno 111] Connection refused>
 
 8/8 项通过
-\`\`\`
+```
 
 **结论**：实验台的"出口标识注入"可证明请求真的经过了指定代理，而不是直连。
-\`kill 后连接被拒\` 说明端口是真的关了，不是假死。
+`kill 后连接被拒` 说明端口是真的关了，不是假死。
 
-**清理**：脚本退出时 \`Lab.stop()\` 关闭所有监听端口；可再一次运行确认端口不冲突。
+**清理**：脚本退出时 `Lab.stop()` 关闭所有监听端口；可再一次运行确认端口不冲突。
 
 ---
 
@@ -361,15 +361,15 @@ python3 00-proxy-lab.py --self-test
 
 **执行**：
 
-\`\`\`bash
+```bash
 python3 01-basic-proxy-rotation.py
-\`\`\`
+```
 
 **预期结果**：9 个请求 3/3/3；杀掉 p2 后 6 个请求 3/0/3；全死后返回 None。
 
 **实际结果**：
 
-\`\`\`text
+```text
 ── 代理池状态（请求结束后）──
 出口          健康   延迟ms   成功/失败   最近错误
 p1           ❌         1.7    8/1       URLError: <urlopen error [Errno 111] Con
@@ -388,9 +388,9 @@ p3           ❌         3.9    8/1       URLError: <urlopen error [Errno 111] C
 [PASS] 全死时 acquire 返回 None
 [PASS] 全死时 get 也安全返回 None
 7/7 项通过
-\`\`\`
+```
 
-**结论**：\`靶站实际收到请求 = 20\` 与池子的 20 次分配完全一致，
+**结论**：`靶站实际收到请求 = 20` 与池子的 20 次分配完全一致，
 说明没有"偷偷直连"的旁路——这是健康检查可信的前提。
 
 **清理**：进程退出即释放端口。
@@ -401,19 +401,19 @@ p3           ❌         3.9    8/1       URLError: <urlopen error [Errno 111] C
 
 **目的**：复现"HTTP 绿灯、HTTPS 全灭"的假健康。
 
-**执行**（需要外网；无外网用 \`--offline\` 跳过 1b/1c）：
+**执行**（需要外网；无外网用 `--offline` 跳过 1b/1c）：
 
-\`\`\`bash
+```bash
 python3 02-pitfall-connect-and-env.py
-\`\`\`
+```
 
 **实际结果**：
 
-\`\`\`text
+```text
 [1a] HTTP 健康检查      -> 200 {'ok': True, 'exit': 'p1', 'origin': 'lab'}   ← 绿灯，骗过你
 [1b] HTTPS 经同一代理    -> URLError: <urlopen error Tunnel connection failed: 501 Not Implemented>
 [1c] 打开 CONNECT 后重试 -> HTTP 200 首字节=b'<!doctype html>'
-\`\`\`
+```
 
 **结论**：同一台代理，HTTP 200、HTTPS 501。健康检查选错协议 = 整池误判。
 1c 证明问题在代理能力，不在网络，也不在目标站。
@@ -428,17 +428,17 @@ python3 02-pitfall-connect-and-env.py
 
 **实际结果**：
 
-\`\`\`text
+```text
 [2a] 默认 opener          -> URLError: <urlopen error [Errno 111] Connection refused>
 [2b] ProxyHandler({})   -> 200 exit=direct
-\`\`\`
+```
 
-**结论**：\`build_opener()\` 不带参数时，\`ProxyHandler()\` 会读 \`http_proxy\`。
+**结论**：`build_opener()` 不带参数时，`ProxyHandler()` 会读 `http_proxy`。
 实验把环境变量指向一个"刚申请就关闭"的端口，于是默认 opener 必然失败，
-而显式 \`ProxyHandler({})\` 直连成功。生产容器里那个看不见的 \`http_proxy\`
+而显式 `ProxyHandler({})` 直连成功。生产容器里那个看不见的 `http_proxy`
 就是"整池代理突然全死"的头号嫌疑。
 
-**清理**：实验在 \`finally\` 中恢复原始环境变量（包括原本不存在的键）。
+**清理**：实验在 `finally` 中恢复原始环境变量（包括原本不存在的键）。
 
 ---
 
@@ -450,17 +450,17 @@ python3 02-pitfall-connect-and-env.py
 
 **执行**：
 
-\`\`\`bash
+```bash
 python3 02-pitfall-connect-and-env.py --self-test
-\`\`\`
+```
 
 **实际结果**：
 
-\`\`\`text
+```text
 [3a] 裸轮换 30 次        -> 200=12 429=18
      前 15 个状态码: [200 ×12, 429, 429, 429]
 [3b] 每出口限速+冷却     -> 200=30 429=0 用时=10.61s (2.83 req/s)
-\`\`\`
+```
 
 **结论**：3 个出口 × 0.9 req/s 理论总速率 2.7/s，实测 2.83/s（开销约 5%）。
 裸轮换虽然"每个出口看起来只打了 10 次"，但全挤在 1 秒内，直接触发窗口限流。
@@ -475,13 +475,13 @@ python3 02-pitfall-connect-and-env.py --self-test
 
 **执行**：
 
-\`\`\`bash
+```bash
 python3 03-production-proxy-pool.py --self-test
-\`\`\`
+```
 
 **实际结果**（真机完整输出）：
 
-\`\`\`text
+```text
 实验 A：盲轮询 vs 评分选择（p2 慢 120ms，p3 永远 502）
 盲轮询 : 成功 24/36  失败 12  分布 {'p1': 12, 'p2': 12, 'p3': 12}
 评分池 : 成功 35/36  失败 1  分布 {'p1': 34, 'p2': 1, 'p3': 1}
@@ -501,7 +501,7 @@ p1 被打爆后: 429=2 冷却次数=2 原因=429
 冷却结束后恢复: True，下一个请求出口=p2
 
 9/9 项通过
-\`\`\`
+```
 
 **结论**：
 
@@ -517,34 +517,34 @@ p1 被打爆后: 429=2 冷却次数=2 原因=429
 
 ## 翻车实验（真实踩坑记录）
 
-### 翻车 1：\`importlib\` 加载带 \`@dataclass\` 的脚本直接崩
+### 翻车 1：`importlib` 加载带 `@dataclass` 的脚本直接崩
 
 **现象**：
 
-\`\`\`text
+```text
 File ".../00-proxy-lab.py", line 136, in <module>
     @dataclass
 AttributeError: 'NoneType' object has no attribute '__dict__'
-\`\`\`
+```
 
 **假设**：dataclass 与 Python 3.12 不兼容。
 
-**验证**：单独运行 \`00-proxy-lab.py\` 正常；只在被 \`spec.loader.exec_module\` 加载时崩。
-查 \`dataclasses._is_type\` 源码：它执行 \`sys.modules.get(cls.__module__).__dict__\`。
+**验证**：单独运行 `00-proxy-lab.py` 正常；只在被 `spec.loader.exec_module` 加载时崩。
+查 `dataclasses._is_type` 源码：它执行 `sys.modules.get(cls.__module__).__dict__`。
 
-**真实根因**：用 \`module_from_spec\` 创建的模块**不会自动注册进 \`sys.modules\`**，
-而 \`exec_module\` 期间 dataclass 要按模块名反查自己。\`.get()\` 返回 \`None\` → 崩。
+**真实根因**：用 `module_from_spec` 创建的模块**不会自动注册进 `sys.modules`**，
+而 `exec_module` 期间 dataclass 要按模块名反查自己。`.get()` 返回 `None` → 崩。
 
 **修复**：
 
-\`\`\`python
+```python
 spec = importlib.util.spec_from_file_location("proxy_lab", path)
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module      # ← 必须先注册
 spec.loader.exec_module(module)
-\`\`\`
+```
 
-**复测**：01/02/03 三个脚本都能加载实验台，\`--self-test\` 全绿。
+**复测**：01/02/03 三个脚本都能加载实验台，`--self-test` 全绿。
 
 ---
 
@@ -556,29 +556,29 @@ spec.loader.exec_module(module)
 **假设**：靶站的限流窗口算错了。
 
 **验证**：直接算日志——429 出现在第 13 个请求附近，说明实际发送速率确实超了。
-检查 \`take()\`：
+检查 `take()`：
 
-\`\`\`python
+```python
 def take(self):
     if self.tokens >= 1:
         self.tokens -= 1
         return 0.0
     return (1 - self.tokens) / self.rate   # ← 返回等待时间，但没扣令牌
-\`\`\`
+```
 
-调用方 \`time.sleep(wait)\` 后再发请求，令牌数原地不动。
+调用方 `time.sleep(wait)` 后再发请求，令牌数原地不动。
 于是每次"等完"都白嫖一个请求，速率被抬高约 34%。
 
 **修复**：等待与扣减必须在同一个方法里完成：
 
-\`\`\`python
+```python
 def acquire(self):
     self._refill()
     if self.tokens < 1:
         time.sleep((1 - self.tokens) / self.rate)
         self._refill()
     self.tokens -= 1
-\`\`\`
+```
 
 **复测**：30 个请求 10.61s（2.83 req/s），429 = 0。
 
@@ -586,20 +586,20 @@ def acquire(self):
 
 ---
 
-### 翻车 3：纯 \`argmax\` 评分把其他出口饿死
+### 翻车 3：纯 `argmax` 评分把其他出口饿死
 
 **现象**：第一版评分池 36 个请求全部打到 p1，
-\`p2: req=0, p3: req=0\`，坏代理 p3 一次都没被探测到，\`冷却次数=0\`。
+`p2: req=0, p3: req=0`，坏代理 p3 一次都没被探测到，`冷却次数=0`。
 
-**假设**：p3 的失败没有被 \`report\` 记录。
+**假设**：p3 的失败没有被 `report` 记录。
 
-**验证**：打印每出口 \`requests\` —— p3 就是 0 次。不是没记录，是根本没被选中。
+**验证**：打印每出口 `requests` —— p3 就是 0 次。不是没记录，是根本没被选中。
 
 **真实根因**：p1 第一次成功后 EWMA 延迟极低，分数 0.44；
-未使用的 p2/p3 用 0.5s 的默认延迟，分数只有 0.33。\`max()\` 每次都选 p1，
+未使用的 p2/p3 用 0.5s 的默认延迟，分数只有 0.33。`max()` 每次都选 p1，
 形成"强者恒强"的马太效应，坏出口永远没有样本。
 
-**修复**：冷启动强制探针——\`requests == 0\` 的出口优先各用一次，再进入评分竞争。
+**修复**：冷启动强制探针——`requests == 0` 的出口优先各用一次，再进入评分竞争。
 
 **复测**：分布变成 p1=34、p2=1、p3=1；p3 的 502 触发熔断，后续 0 流量。
 
@@ -609,12 +609,12 @@ def acquire(self):
 
 ### 翻车 4：代理配置在闭包里只算一次
 
-**现象**：实验台启动后修改 \`cfg.username\`，407 鉴权不生效，永远 200。
+**现象**：实验台启动后修改 `cfg.username`，407 鉴权不生效，永远 200。
 
-**根因**：\`make_proxy_handler\` 在创建 handler 类时把 \`expected_auth\` 算成闭包常量，
+**根因**：`make_proxy_handler` 在创建 handler 类时把 `expected_auth` 算成闭包常量，
 之后修改配置读不到。
 
-**修复**：把凭证计算放进 \`_check_auth()\`，每次请求重算。
+**修复**：把凭证计算放进 `_check_auth()`，每次请求重算。
 代价可忽略（一次 base64），换来运行期可轮换凭证。
 
 ---
@@ -637,16 +637,16 @@ def acquire(self):
 本次实验全部在 127.0.0.1 的临时端口上完成，脚本退出即关闭监听。
 已确认：
 
-- 无残留代理/靶站进程（\`pgrep -af 'proxy-lab|production-proxy|basic-proxy'\` 为空）；
-- 无临时文件（所有输出写入 \`/tmp/d192_*.log\`，仅用于本次编写，未进仓库）；
-- 未修改系统代理设置；实验 3 修改的环境变量在 \`finally\` 中已恢复；
-- 未访问除 \`example.com\` 以外的任何外部地址。
+- 无残留代理/靶站进程（`pgrep -af 'proxy-lab|production-proxy|basic-proxy'` 为空）；
+- 无临时文件（所有输出写入 `/tmp/d192_*.log`，仅用于本次编写，未进仓库）；
+- 未修改系统代理设置；实验 3 修改的环境变量在 `finally` 中已恢复；
+- 未访问除 `example.com` 以外的任何外部地址。
 
 复现命令：
 
-\`\`\`bash
+```bash
 cd days/day-192-proxy-pool/code
 for f in 00-proxy-lab.py 01-basic-proxy-rotation.py 02-pitfall-connect-and-env.py 03-production-proxy-pool.py; do
   echo "== $f =="; python3 "$f" --self-test || exit 1
 done
-\`\`\`
+```

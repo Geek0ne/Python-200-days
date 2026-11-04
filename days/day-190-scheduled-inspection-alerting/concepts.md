@@ -16,10 +16,10 @@
 
 真实数字（code/01，24 小时 / 96 个 15 分钟格子，单次任务 1–3 秒）：
 
-`@text
+```text
 fixed-delay   96 次   末次漂移 187.0s
 fixed-rate    96 次   末次漂移 -17.1s（仅抖动）
-`@
+```
 
 **为什么固定延迟一定会漂**：漂移是耗时的积分。只要单次执行有耗时，下一次的起点就往后推一点，一天 96 次就是 96 个耗时之和。想"每 15 分钟扫一次"，就必须用锚点网格，而不是"跑完再睡 15 分钟"。
 
@@ -28,13 +28,13 @@ fixed-rate    96 次   末次漂移 -17.1s（仅抖动）
 1. **错过的格子怎么办？** 进程挂了 6 小时，恢复时是补 24 次还是补 1 次？
 2. **同时刻的实例会不会撞车？** 8 个副本同一秒醒来，扫描目标会被打成 DDoS。
 
-`@text
+```text
 锚点网格：  |----|----|----|----|----|----|     每个 | 是一个 slot
             s0   s1   s2   s3   s4   s5
 停机 6h 后：                                  ▲ 现在
             积压 s1..s24，全补 = catch-up storm
             grace=300s + max_catchup=1 → 只补 1 次，跳过 23 次并记账
-`@
+```
 
 **grace（迟到容忍）的取值逻辑**：巡检的语义是"现在长什么样"，不是"历史上曾经长什么样"。迟到超过 grace 的结果已经过期，补跑只会浪费资源并制造一堆"看起来刚变化"的假告警。被跳过的格子必须写进审计表，否则监控里看不出这段缺口。
 
@@ -42,9 +42,9 @@ fixed-rate    96 次   末次漂移 -17.1s（仅抖动）
 
 抖动必须可复现：同一个 slot 每次算出的偏移必须一样，否则重启后同一格会被当成新任务重复执行。实现上用 hash(job_id, slot) 做种子，而不是 random.random()。
 
-`@@@@python
+```python
 offset = ((hash(f"slot-{slot}") % 1000) / 1000.0 * 2 - 1) * JITTER * INTERVAL
-`@@@@
+```
 
 实测（code/01）：8 个实例，无抖动时窗口跨度 0s（全部同一秒），±8% 抖动后跨度 85s。总工作量不变，峰值降了一个数量级。
 
@@ -74,29 +74,29 @@ offset = ((hash(f"slot-{slot}") % 1000) / 1000.0 * 2 - 1) * JITTER * INTERVAL
 
 ### 2.2 租约（lease）与崩溃恢复
 
-`@text
+```text
 worker A: claim → status=running, lease_until=now+30s
           ↓ 崩溃（没 finish）
 t+30s:    worker B: claim → 命中 "running 且 lease 过期" → 接手，attempts+1
           ↓
           finish → effects 唯一键挡住第二次副作用
-`@
+```
 
 第一版实现只查 status='pending'，崩溃任务永远卡在 running —— 这是本课真实踩到的坑（见 README 翻车实验 2）。正确条件：
 
-`@@@@sql
+```sql
 WHERE (status='pending' AND visible_at<=?)
    OR (status='running' AND lease_until<=?)
-`@@@@
+```
 
 ### 2.3 退避：为什么必须加 jitter
 
 指数退避（1s, 2s, 4s…）解决"别立刻再打"，但所有失败任务会**同步**重试，形成 thundering herd。full jitter 把等待时间摊成 uniform(0, ceiling)：
 
-`@@@@python
+```python
 ceiling = min(60, 1 * 2 ** (attempt - 1))
 delay = random.uniform(0, ceiling)
-`@@@@
+```
 
 实测退避值（code/02）：attempt 1 → 0.13s，attempt 3 → 0.54s，attempt 20 → 8.06s（封顶 60s）。
 
@@ -111,7 +111,7 @@ delay = random.uniform(0, ceiling)
 
 ## 3. 告警降噪：五级漏斗
 
-`@text
+```text
 500 条变化
    │  ① 归一化：统一 rule / asset / severity 词表
    ▼
@@ -124,7 +124,7 @@ delay = random.uniform(0, ceiling)
    │  ⑤ 限流：令牌桶，超出的合并进下一条，绝不静默丢弃
    ▼
   2 条消息（实测：500 → 2）
-`@
+```
 
 ### 3.1 指纹（fingerprint）设计
 
@@ -150,7 +150,7 @@ delay = random.uniform(0, ceiling)
 
 ## 4. 告警文案：一条消息该有什么
 
-`@@@@json
+```json
 {
   "title": "资产变更 56 条（严重 20 / 警告 0 / 提示 36）",
   "counts": {"critical": 20, "warning": 0, "info": 36},
@@ -158,7 +158,7 @@ delay = random.uniform(0, ceiling)
   "items": [{"rule": "...", "asset": "10.0.2.3:3389", "severity": "critical", "title": "..."}],
   "truncated": 48
 }
-`@@@@
+```
 
 四个必备字段：**总量**（有多大）、**分级计数**（有多急）、**Top N 明细**（先看哪个）、**截断数**（还有多少没展示）。缺了 truncated，读者会以为看到的就是全部。
 
@@ -181,11 +181,11 @@ delay = random.uniform(0, ceiling)
 
 ### 5.3 依赖顺序
 
-`@@@@yaml
+```yaml
 depends_on:
   sink:
     condition: service_healthy   # 不是 service_started
-`@@@@
+```
 
 service_started 只保证容器起来了，不保证端口能连。用 service_healthy + healthcheck，才能消掉"启动竞态"这类偶发失败。
 
@@ -197,13 +197,13 @@ service_started 只保证容器起来了，不保证端口能连。用 service_h
 
 ## 6. 验收：断言，不是肉眼
 
-`@text
+```text
 [PASS] 任务数等于差异数（重复入队被去重）   jobs=7 entries=7
 [PASS] 每个任务只产生一次副作用             effects=7 dup=0
 [PASS] 严重事件全部送达                     critical=2
 [PASS] 消息条数受控                         messages=1
 [PASS] 消息内无重复条目                     dup_items=0
-`@
+```
 
 验收脚本必须**返回非零退出码**才算失败。打印 "OK" 但 exit 0 的脚本，在 CI 里等于没有。
 

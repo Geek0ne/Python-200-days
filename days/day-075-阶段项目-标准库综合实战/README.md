@@ -828,7 +828,7 @@ rename-tool add-prefix --prefix "text_" --directory ./files --filter "*.txt"
 
 ### README.md 模板
 
-```markdown
+````markdown
 # Rename Tool
 
 文件批量重命名工具 - 让文件管理更简单
@@ -883,7 +883,7 @@ pytest --cov=rename_tool --cov-report=html
 ## 许可证
 
 MIT License
-```
+````
 
 ---
 

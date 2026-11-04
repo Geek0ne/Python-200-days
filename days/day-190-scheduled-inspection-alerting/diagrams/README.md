@@ -6,7 +6,7 @@
 
 ## 1. 三种调度模型的时间轴
 
-`@text
+```text
 时间 ──────────────────────────────────────────────────────►
 
 固定延迟（跑完 + interval）：
@@ -17,9 +17,9 @@
  |---------|---------|---------|---------|---------|
  ▲         ▲         ▲         ▲         ▲         ▲
  s0        s1        s2        s3        s4        s5     ← 与耗时无关
-`@
+```
 
-`@mermaid
+```mermaid
 flowchart LR
     A[anchor 锚点] --> B[slot n = floor&#40;now-anchor / interval&#41;]
     B --> C{fire_at 已到?}
@@ -30,13 +30,13 @@ flowchart LR
     F --> G[执行巡检]
     G --> H[记录结果/告警]
     H --> D
-`@
+```
 
 ---
 
 ## 2. 停机恢复：catch-up storm 与 grace
 
-`@text
+```text
 正常：   s1    s2    s3    s4    s5    s6
         [✓]   [✓]   [✓]   [✓]   [✓]   [✓]
 
@@ -46,20 +46,20 @@ flowchart LR
 无策略：  ████████████████████████████████████████  24 次同时补跑 → 打爆目标
 有策略：                                          [✓]  只补 1 次
          跳过 23 次，写 audit 表：skipped=23
-`@
+```
 
 判定公式：
 
-`@text
+```text
 可补跑条件 = (now - fire_at) <= grace_s
 实际补跑数 = min(count(可补跑), max_catchup)
-`@
+```
 
 ---
 
 ## 3. 任务状态机（租约 + 重试）
 
-`@mermaid
+```mermaid
 stateDiagram-v2
     [*] --> pending: enqueue（idem_key 唯一）
     pending --> running: claim（BEGIN IMMEDIATE）
@@ -69,9 +69,9 @@ stateDiagram-v2
     running --> pending: 租约过期（崩溃恢复）
     done --> [*]
     dead --> [*]
-`@
+```
 
-`@text
+```text
          claim                     finish
 pending ───────► running ─────────────────► done
    ▲               │
@@ -80,13 +80,13 @@ pending ───────► running ─────────────
                    │ lease_until < now
                    ▼
               可被其他 worker 重新 claim
-`@
+```
 
 ---
 
 ## 4. 告警五级漏斗
 
-`@text
+```text
 500 events
    │
    ├─① 归一化 ─────────────── 统一字段/词表
@@ -101,9 +101,9 @@ pending ───────► running ─────────────
    │
    ▼
  2 条消息（critical 20/20 全达）
-`@
+```
 
-`@mermaid
+```mermaid
 flowchart TD
     E[Alert] --> S{静默窗口?}
     S -- 是 --> X[计数丢弃]
@@ -117,13 +117,13 @@ flowchart TD
     T -- 否 --> O[overflow 队列]
     O --> M
     M --> H[HTTP 投递 + 重试]
-`@
+```
 
 ---
 
 ## 5. 指纹设计三种结局
 
-`@text
+```text
 v1  fingerprint = rule
     info(10.0.0.1) ─┐
     info(10.0.0.2) ─┼─► 同一个键 ─► 只发 1 条 ─► critical 被吞（丢 4 条）
@@ -133,13 +133,13 @@ v2  fingerprint = rule + asset + title("第 N 次")
 
 v3  fingerprint = rule + asset，severity 升级放行
     12 个资产 = 12 条 + 5 条 critical = 17 条 ─► 零丢失、可读
-`@
+```
 
 ---
 
 ## 6. 部署拓扑
 
-`@text
+```text
              host: 127.0.0.1:18090
                      │
         ┌────────────▼─────────────┐
@@ -155,13 +155,13 @@ v3  fingerprint = rule + asset，severity 升级放行
         └──────────────────────────┘
                      │
               volume d190-data（sink 与 worker 各自子目录）
-`@
+```
 
 ---
 
 ## 7. 一键部署 / 撤收时序
 
-`@mermaid
+```mermaid
 sequenceDiagram
     participant U as deploy.sh
     participant D as docker compose
@@ -183,13 +183,13 @@ sequenceDiagram
     D->>S: stop + remove
     D->>W: stop + remove
     U->>U: 校验端口已释放、容器为 0
-`@
+```
 
 ---
 
 ## 8. 真实故障：cron 每分钟触发 + 单次跑 75 秒
 
-`@text
+```text
 06:03:01  cron 触发 #1  ── BEGIN IMMEDIATE ── 持有写锁 ──────────────┐
 06:04:01  cron 触发 #2  ── BEGIN IMMEDIATE ── 等锁 5s ── ✗ locked   │
 06:04:16                                              #1 COMMIT ─────┘
@@ -197,4 +197,4 @@ sequenceDiagram
 修复：flock -n 包住整个脚本
 06:05:01  cron 触发 #1  ── flock 拿到锁 ── 执行 ── DONE
 06:06:01  cron 触发 #2  ── flock -n 失败 ── SKIP（立即退出，不排队）
-`@
+```

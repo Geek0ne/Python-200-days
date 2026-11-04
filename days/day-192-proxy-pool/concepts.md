@@ -14,7 +14,7 @@
 所以调度单位是出口，而不是代理 URL。
 
 **观测**：向受控靶站发一次请求，读回它看到的源 IP / 标记。
-本课用 \`X-Exit-Id\` 注入，生产可用 \`/ip\` 端点。
+本课用 `X-Exit-Id` 注入，生产可用 `/ip` 端点。
 
 ---
 
@@ -22,7 +22,7 @@
 
 | 类型 | 目标站看到 | 风险 |
 |---|---|---|
-| 透明 | 你的真实 IP + \`X-Forwarded-For\` | 等于没代理，还会暴露内网结构 |
+| 透明 | 你的真实 IP + `X-Forwarded-For` | 等于没代理，还会暴露内网结构 |
 | 匿名 | 代理 IP，但能识别出用了代理 | 部分站点直接拒绝 |
 | 高匿 | 只看到代理 IP，无代理痕迹 | 爬虫唯一可用类型 |
 
@@ -35,38 +35,38 @@
 
 **定义**：客户端把完整目标 URL 放进请求行，交给代理转发。
 
-\`\`\`http
+```http
 GET http://target.example/item/1 HTTP/1.1
 Host: target.example
-\`\`\`
+```
 
 **为什么这样设计**：代理需要知道"往哪转发"，而普通请求行只有路径。
 所以正向代理收到的是绝对 URI，反向代理收到的是普通路径。
 
-**坑**：自己写代理时若只解析 \`self.path\` 当路径用，会得到 400 或转发到错误主机。
+**坑**：自己写代理时若只解析 `self.path` 当路径用，会得到 400 或转发到错误主机。
 
 ---
 
 ## 4. CONNECT 隧道
 
-**定义**：客户端对代理说 \`CONNECT host:443 HTTP/1.1\`，代理建立 TCP 连接后
-回复 \`200 Connection Established\`，之后双方只转发字节流。
+**定义**：客户端对代理说 `CONNECT host:443 HTTP/1.1`，代理建立 TCP 连接后
+回复 `200 Connection Established`，之后双方只转发字节流。
 
 **为什么必须**：HTTPS 的 TLS 握手是端到端的，代理不能解密（也不该）。
 没有 CONNECT，代理无法承载任何 HTTPS 请求。
 
-**观测**：\`URLError: Tunnel connection failed: 501 Not Implemented\`。
+**观测**：`URLError: Tunnel connection failed: 501 Not Implemented`。
 
 ---
 
 ## 5. 407 Proxy Authentication Required
 
-**定义**：代理自身的鉴权挑战，配 \`Proxy-Authenticate: Basic realm="..."\`。
+**定义**：代理自身的鉴权挑战，配 `Proxy-Authenticate: Basic realm="..."`。
 
 **与 401 的区别**：401 是目标站要你登录，407 是代理要你付费/认证。
-HTTP 头也不同：\`Proxy-Authorization\` vs \`Authorization\`。
+HTTP 头也不同：`Proxy-Authorization` vs `Authorization`。
 
-**安全要求**：\`Proxy-Authorization\` 只能发给代理，绝不能透传给目标站。
+**安全要求**：`Proxy-Authorization` 只能发给代理，绝不能透传给目标站。
 
 ---
 
@@ -88,17 +88,17 @@ HTTP 头也不同：\`Proxy-Authorization\` vs \`Authorization\`。
 
 ## 7. 出口评分（Score）
 
-\`\`\`text
+```text
 score = success_rate² / (1 + ewma_latency)
-\`\`\`
+```
 
 **为什么平方**：让"经常失败"的出口快速掉队。0.9 → 0.81，0.5 → 0.25。
 
-**为什么 EWMA**：\`new = α·sample + (1-α)·old\`，α 常取 0.2–0.3。
+**为什么 EWMA**：`new = α·sample + (1-α)·old`，α 常取 0.2–0.3。
 出口恢复后十几次请求就能回到高分，不会被历史永久封印。
 
 **冷启动**：所有出口初始分相同，纯 argmax 会永远选第一个。
-必须给新出口一次强制探针（本课实现：\`requests == 0\` 优先）。
+必须给新出口一次强制探针（本课实现：`requests == 0` 优先）。
 
 ---
 
@@ -123,8 +123,8 @@ score = success_rate² / (1 + ewma_latency)
 
 **时长来源**（优先级从高到低）：
 
-1. 响应头 \`Retry-After\`（秒数或 HTTP 日期）；
-2. 指数退避 \`base × 2^n\`，封顶；
+1. 响应头 `Retry-After`（秒数或 HTTP 日期）；
+2. 指数退避 `base × 2^n`，封顶；
 3. 业务配置的默认值。
 
 **为什么尊重 Retry-After**：服务端已经给出"多久后再来"。
@@ -136,12 +136,12 @@ score = success_rate² / (1 + ewma_latency)
 
 **定义**：以固定速率补充令牌，请求前必须先取到令牌。
 
-\`\`\`text
+```text
 capacity = 2, rate = 1/s
 t=0.0  tokens=2  → 连发 2 个
 t=0.5  tokens=0  → 等 0.5s
 t=1.0  tokens=1  → 发 1 个
-\`\`\`
+```
 
 **capacity 的含义**：允许的瞬时突发。设成 rate 会让短任务速率翻倍。
 
@@ -166,9 +166,9 @@ t=1.0  tokens=1  → 发 1 个
 
 ## 12. 出口池水位（Pool Water Level）
 
-\`\`\`text
+```text
 water_level = 可用出口数 / 总出口数
-\`\`\`
+```
 
 **经验阈值**：
 
@@ -214,10 +214,10 @@ water_level = 可用出口数 / 总出口数
 
 ## 15. 一页速查
 
-\`\`\`text
+```text
 请求前：过滤冷却 → 冷启动探针 → 粘滞复用 → 最高分
 请求中：每出口令牌桶 → 超时上限
 请求后：200 记成功/延迟；429 按 Retry-After 冷却；
         403 冷却；407 永久摘除；5xx 连续 N 次熔断
 全局：水位监控、迁移率、p95、每出口分布
-\`\`\`
+```

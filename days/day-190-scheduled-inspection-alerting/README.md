@@ -10,13 +10,13 @@
 
 ## 今天在项目里的位置
 
-`@text
+```text
 Day 186  资产发现        → 有哪些域名/IP
 Day 187  端口 + 指纹     → 哪些端口开着、跑什么服务
 Day 188  Web 漏洞检测    → 开着的服务有没有洞
 Day 189  入库 + 可视化   → 把"某一天"变成"可比较的历史"
 Day 190  调度 + 告警     → 让它自己跑，出事自己喊人   ← 今天
-`@
+```
 
 前四天造好了一台"能手动开的机器"。今天要解决的是**它不在你盯着的时候怎么办**：
 
@@ -68,13 +68,13 @@ while True:
 
 它假设 `scan()` 不花时间。真实扫描 1~3 秒，于是每一天的起点都在往后蹭：
 
-`@text
+```text
 第 1 次   00:00:00 开始，00:00:02 结束
 第 2 次   00:15:02 开始   ← 晚了 2 秒
 第 3 次   00:30:04 开始   ← 晚了 4 秒
 ...
 第 96 次  23:47:xx 开始   ← 一天累计晚了 187 秒
-`@
+```
 
 这不是"误差"，是**系统性的积分**。一天 96 次、每次 2 秒，就是 192 秒。三个月后，你的"每天 0 点巡检"会跑到凌晨 3 点。
 
@@ -108,12 +108,12 @@ fire_at = anchor + slot * interval + jitter_offset(slot)
 
 cron 每 60 秒触发一次，而一次扫描要 75 秒 —— 这是真实项目里最常见的配置错误。后果不只是"跑两遍"，而是两个进程同时写同一个 SQLite：
 
-`@text
+```text
 Traceback (most recent call last):
   File "/tmp/d190-cron/job.py", line 6, in <module>
     conn.execute("BEGIN IMMEDIATE")
 sqlite3.OperationalError: database is locked
-`@
+```
 
 这是本次真机实验的实际输出（见实验 3）。SQLite 的默认 busy timeout 是 5 秒，第一个进程持锁 75 秒，第二个等 5 秒后放弃。
 
@@ -131,11 +131,11 @@ sqlite3.OperationalError: database is locked
 
 两者相乘，才是业务意义上的"恰好一次"。
 
-`@text
+```text
 claim:   UPDATE jobs SET status='running', lease_until=now+30
                   WHERE idem_key=? AND (status='pending' OR lease 过期)
 finish:  INSERT OR IGNORE INTO effects(idem_key)   ← 第二次插入被主键挡住
-`@
+```
 
 实验 2 的数字：60 个任务、8 个 worker 并发、0.03 秒跑完，**effects=60/60**，没有一条重复副作用。
 
@@ -147,14 +147,14 @@ finish:  INSERT OR IGNORE INTO effects(idem_key)   ← 第二次插入被主键�
 
 ### 6. 告警降噪：一条漏斗，五道闸
 
-`@text
+```text
 500 条变化
   → 去重（同资产同规则，30 分钟内只发一次）    拦掉 444
   → 静默（维护窗口内只计数）
   → 分组（一个时间窗合成一条）
   → 限流（令牌桶，超出的进 overflow 队列）
   → 2 条消息，critical 20/20 全部送达
-`@
+```
 
 关键不是"少发"，而是**该发的不能少**。实验 5 证明：指纹设计错一次，就能让 4 条 critical 凭空消失（实测 v1 丢失 4 条）。
 
@@ -180,17 +180,17 @@ services:
 
 固定延迟下，第 n 次的开始时刻：
 
-`@text
+```text
 T(n) = T(0) + n * interval + Σ(i=1..n) duration(i)
 漂移(n) = Σ duration(i)   ← 单调递增，不可逆
-`@
+```
 
 锚点网格下：
 
-`@text
+```text
 T(n) = anchor + n * interval + jitter(n)
 漂移(n) = jitter(n)       ← 有界，不累积
-`@
+```
 
 所以判断一个调度实现对不对，只需要问：**它的触发时刻函数里有没有"上次的完成时间"**。有，就会漂。
 
@@ -212,11 +212,11 @@ full jitter 把等待摊成 `uniform(0, ceiling)`：期望不变，峰值削平�
 
 ### 12. 为什么指纹里不能放"描述"
 
-`@text
+```text
 fingerprint = rule + asset          → 17 条消息，0 丢失   ✅
 fingerprint = rule + asset + "第3次" → 125 条消息，0 丢失  ❌ 等于没降噪
 fingerprint = rule                   → 2 条消息，丢 4 条   ❌ 更危险
-`@
+```
 
 身份（哪个资产、哪条规则）稳定；描述（第几次、多少条、什么时间）每次都变。把描述放进指纹，冷却窗口永远命不中。
 
@@ -269,18 +269,18 @@ fingerprint = rule                   → 2 条消息，丢 4 条   ❌ 更危险
 
 ### 调度网格与补跑
 
-`@text
+```text
 锚点网格：  |----|----|----|----|----|----|
             s0   s1   s2   s3   s4   s5
 停机 6h 后：                                ▲ 现在
             积压 s1..s24
             无策略：24 次同时补跑（catch-up storm）
             有策略：只补 1 次，skipped=23 落审计
-`@
+```
 
 ### 告警漏斗
 
-`@mermaid
+```mermaid
 flowchart TD
     E[Alert] --> S{静默窗口?}
     S -- 是 --> X[只计数]
@@ -294,7 +294,7 @@ flowchart TD
     T -- 否 --> O[overflow 队列]
     O --> M
     M --> H[HTTP 投递 + 重试]
-`@
+```
 
 ---
 
