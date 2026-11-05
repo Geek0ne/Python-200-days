@@ -1,4 +1,4 @@
-# Day 069 — MySQL 图解
+# Day 069 — MySQL 基础：pymysql、SQL 进阶与备份恢复 图解
 
 ```mermaid
 flowchart LR

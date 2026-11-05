@@ -11,7 +11,7 @@
     - 天数/标题：扫描 days/ 目录 + 各日 README 的 H1
     - 阶段划分：解析根 README.md 的路线表格
     - 进度百分比：progress.json（缺失时回退为 days/ 目录数）
-  · 零第三方依赖，标准库即可跑
+  · 构建依赖仅 markdown + pygments（CI 已安装：pip install markdown pygments），无框架依赖
   · 可重复执行（幂等），每天学习内容生成后重跑即可刷新站点
 """
 
@@ -90,7 +90,7 @@ def parse_phases(readme: Path) -> list[Phase]:
         num, name, start, end, status_raw = m.groups()
         name = name.strip()
         # 去掉名字里的 emoji 与装饰性符号
-        name = re.sub(r"[🔥📦⏳✅\s]+", "", name).strip()
+        name = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\s]+", "", name).strip()
         s = status_raw.strip()
         if "已完成" in s:
             status = "done"

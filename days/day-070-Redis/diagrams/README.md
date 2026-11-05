@@ -1,4 +1,4 @@
-# Day 070 — Redis 图解
+# Day 070 — Redis 基础：缓存、队列与分布式锁 图解
 
 ```mermaid
 flowchart LR

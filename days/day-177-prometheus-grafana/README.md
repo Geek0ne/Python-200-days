@@ -1,4 +1,4 @@
-# Day 177 — Prometheus + Grafana
+# Day 177 — Prometheus + Grafana：监控与可视化
 
 > **阶段**：Phase 11 — 自动化运维与 DevOps（Day 166–185）
 > **子主题**：监控指标暴露 · Prometheus 采集 · Grafana 看板 · **实战**：应用监控看板

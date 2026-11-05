@@ -42,18 +42,18 @@
 
 | 阶段 | 内容 | 天数 | 状态 |
 |:----:|:----|:----:|:----:|
-| **Phase 1** | Python 基础 | Day 001–015 | ✅ 已完成 |
-| **Phase 2** | 核心编程概念 | Day 016–030 | ✅ 已完成 |
-| **Phase 3** | 面向对象编程 | Day 031–045 | ✅ 已完成 |
-| **Phase 4** | 高阶特性 | Day 046–060 | ✅ 已完成 |
-| **Phase 5** | 标准库与生态系统 | Day 061–075 | ✅ 已完成 |
-| **Phase 6** | 实战项目 | Day 076–090 | ✅ 已完成 |
-| **Phase 7** | 进阶与性能优化 | Day 091–100 | ✅ 已完成 |
-| **Phase 8** | 数据分析与 AI/ML | Day 101–125 | ✅ 已完成 |
-| **Phase 9** | 爬虫与反爬对抗 | Day 126–145 | ✅ 已完成 |
-| **Phase 10** | 网络安全开发 | Day 146–165 | ✅ 已完成 |
-| **Phase 11** | 自动化运维与 DevOps | Day 166–185 | ✅ 已完成 |
-| **Phase 12** | 综合实战 | Day 186–200 | **进行中** |
+| **Phase 1** | 🐍 Python 基础 | Day 001–015 | ✅ 已完成 |
+| **Phase 2** | 🧩 Python 核心编程概念 | Day 016–030 | ✅ 已完成 |
+| **Phase 3** | 🏗️ Python 面向对象编程 | Day 031–045 | ✅ 已完成 |
+| **Phase 4** | 🔥 Python 高阶特性 | Day 046–060 | ✅ 已完成 |
+| **Phase 5** | 📦 Python 标准库与生态系统 | Day 061–075 | ✅ 已完成 |
+| **Phase 6** | 🛠️ Python 实战项目 | Day 076–090 | ✅ 已完成 |
+| **Phase 7** | ⚡ Python 进阶与性能优化 | Day 091–100 | ✅ 已完成 |
+| **Phase 8** | 🤖 数据分析与 AI/ML | Day 101–125 | ✅ 已完成 |
+| **Phase 9** | 🕷️ 爬虫与反爬对抗 | Day 126–145 | ✅ 已完成 |
+| **Phase 10** | 🛡️ 网络安全开发 | Day 146–165 | ✅ 已完成 |
+| **Phase 11** | 🚀 自动化运维与 DevOps | Day 166–185 | ✅ 已完成 |
+| **Phase 12** | 🏆 综合实战 | Day 186–200 | **进行中** |
 
 ---
 
@@ -95,7 +95,7 @@
 </details>
 
 <details>
-<summary><b>Phase 2：核心编程概念（Day 016–030）— ✅ 已完成</b></summary>
+<summary><b>Phase 2：Python 核心编程概念（Day 016–030）— ✅ 已完成</b></summary>
 
 - ✅ Day 016 — 文件 I/O（文件基础 / 日志分析器 / 编码处理工具）
 - ✅ Day 017 — 异常处理（异常基础 / 输入校验器 / 自定义异常 / 异常链 / 常见陷阱）
@@ -116,7 +116,7 @@
 </details>
 
 <details>
-<summary><b>Phase 3：面向对象编程（Day 031–045）— ✅ 已完成</b></summary>
+<summary><b>Phase 3：Python 面向对象编程（Day 031–045）— ✅ 已完成</b></summary>
 
 - ✅ Day 031 — 类与对象（OOP 三大特征 / 类的定义与实例化 / self 与构造方法）
 - ✅ Day 032 — 属性与方法（实例·类·静态方法 / property 属性 / 进阶用法）
@@ -137,7 +137,7 @@
 </details>
 
 <details>
-<summary><b>Phase 4：高阶特性（Day 046–060）— ✅ 已完成</b></summary>
+<summary><b>Phase 4：Python 高阶特性（Day 046–060）— ✅ 已完成</b></summary>
 
 - ✅ Day 046 — 元类 Metaclass（type 创建类 / 自定义元类 / ORM 校验实战）
 - ✅ Day 047 — 描述符 Descriptor（描述符基础 / 进阶用法 / ORM 描述符实战）
@@ -158,7 +158,7 @@
 </details>
 
 <details>
-<summary><b>Phase 5：标准库与生态系统（Day 061–075）— ✅ 已完成</b></summary>
+<summary><b>Phase 5：Python 标准库与生态系统（Day 061–075）— ✅ 已完成</b></summary>
 
 - ✅ Day 061 — 文件与路径操作（os 模块 / pathlib 现代路径 / shutil 同步工具）
 - ✅ Day 062 — 数据序列化与配置管理（JSON / pickle·msgpack·YAML / 配置管理）
@@ -168,8 +168,8 @@
 - ✅ Day 066 — Flask 进阶（SQLAlchemy 基础 / JWT 用户认证 / Todo API）
 - ✅ Day 067 — FastAPI 入门（第一个应用 / Pydantic / 请求与响应 / 依赖注入 / 异步）
 - ✅ Day 068 — 数据库基础：SQLite 与 SQL（sqlite3 基础 / SQL CRUD / 索引与事务）
-- ✅ Day 069 — MySQL（pymysql / 连接池 / SQL 进阶与执行计划 / 备份与恢复）
-- ✅ Day 070 — Redis（数据结构 / 缓存与过期 / 队列 / 分布式锁）
+- ✅ Day 069 — MySQL 基础（pymysql / 连接池 / SQL 进阶与执行计划 / 备份与恢复）
+- ✅ Day 070 — Redis 基础（数据结构 / 缓存与过期 / 队列 / 分布式锁）
 - ✅ Day 071 — ORM 深入 SQLAlchemy（模型定义 / 关系映射 / 查询 API / 会话管理）
 - ✅ Day 072 — 测试与数据库安全（pytest 与 TDD / 参数化与异步测试 / SQL 注入防护）
 - ✅ Day 073 — 包管理与虚拟环境（pip / venv / Poetry·PDM·uv / 打包发布）
@@ -179,7 +179,7 @@
 </details>
 
 <details>
-<summary><b>Phase 6：实战项目（Day 076–090）— ✅ 已完成</b></summary>
+<summary><b>Phase 6：Python 实战项目（Day 076–090）— ✅ 已完成</b></summary>
 
 - ✅ Day 076 — Scrapy 框架入门（基础爬虫 / Pipeline 数据处理 / 反爬策略与实战）
 - ✅ Day 077 — 请求调度与数据管道（调度基础 / 管道进阶 / 电商监控实战）
@@ -200,7 +200,7 @@
 </details>
 
 <details>
-<summary><b>Phase 7：进阶与性能优化（Day 091–100）— ✅ 已完成</b></summary>
+<summary><b>Phase 7：Python 进阶与性能优化（Day 091–100）— ✅ 已完成</b></summary>
 
 - ✅ Day 091 — 性能剖析（cProfile / line_profiler / 性能分析实战）
 - ✅ Day 092 — 代码优化技巧（数据结构优化 / 高级优化 / 优化实战）
@@ -251,7 +251,7 @@
 
 - ✅ Day 126 — requests 深入（Session 与 Cookie / 请求头与重试 / 登录实战）
 - ✅ Day 127 — BeautifulSoup / lxml 解析（bs4 基础 / 高级解析 / 实战抓取）
-- ✅ Day 128 — Scrapy 框架（基础用法 / 进阶用法 / 实战爬虫）
+- ✅ Day 128 — Scrapy 框架：基础与进阶实战（基础用法 / 进阶用法 / 实战爬虫）
 - ✅ Day 129 — Selenium 动态渲染（基础用法 / 进阶用法 / 实战案例）
 - ✅ Day 130 — Playwright 现代爬虫（基础用法 / 进阶用法 / 实战案例）
 - ✅ Day 131 — 爬虫策略（URL 去重 / 断点续爬与限速 / 实战爬虫）
@@ -308,11 +308,11 @@
 - ✅ Day 170 — 定时任务（APScheduler 四件套 / 持久化 JobStore / 多实例互斥 / 定时备份系统）
 - ✅ Day 171 — 通知告警（四层模型 / 三平台 Webhook 封装 / 告警中枢 AlertHub）
 - ✅ Day 172 — Docker 容器化（namespace 与 cgroup / 分层文件系统 / 缓存实测 / 多阶段构建）
-- ✅ Day 173 — Docker Compose（声明式编排 / 内置 DNS / healthcheck / 五服务栈实测）
+- ✅ Day 173 — Docker Compose：多服务编排（声明式编排 / 内置 DNS / healthcheck / 五服务栈实测）
 - ✅ Day 174 — CI/CD GitHub Actions（调度链路 / matrix 展开语义 / 缓存实测 / CD 流水线演练）
 - ✅ Day 175 — Ansible 批量部署（playbook 与角色 / 变量优先级 / Vault 加密 / 回滚机制）
 - ✅ Day 176 — ELK 日志系统（倒排索引原理 / Docker 部署 / 日志采集查询 / Kibana 可视化）
-- ✅ Day 177 — Prometheus + Grafana（pull 模型 / 四种指标类型 / PromQL / 采集与看板）
+- ✅ Day 177 — Prometheus + Grafana：监控与可视化（pull 模型 / 四种指标类型 / PromQL / 采集与看板）
 - ✅ Day 178 — 容器编排 K8s 入门（核心对象 / 调和循环 / Service 网络 / 滚动更新）
 - ✅ Day 179 — Terraform 基础设施（基础用法 / 状态管理 / 模块化）
 - ✅ Day 180 — 自动化测试（基础用法 / 进阶用法 / 实战案例）
