@@ -1,4 +1,4 @@
-# Day 197 图解 — 面试准备
+# Day 197 — 面试准备 图解
 
 > 所有图都可用 Mermaid Live（https://mermaid.live）或支持 Mermaid 的 Markdown 渲染器打开。
 > 最后一张是纯 ASCII，方便在终端里直接看。

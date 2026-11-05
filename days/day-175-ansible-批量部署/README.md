@@ -806,12 +806,12 @@ if __name__ == "__main__":
 
 **准备**:
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 ```
 
 **执行**:
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 python3 code/01-generate-inventory.py
 cat hosts.ini
 ```
@@ -849,7 +849,7 @@ crawler-1 ansible_host=10.0.1.11 node_role=spider
 
 **清理**:
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 rm -f hosts.ini
 ```
 
@@ -916,7 +916,7 @@ python3 code/03-healthcheck.py --self-test
 - `deploy_report_*.json`、`deploy_check_*.json` — 运行结果，任务结束前会清理
 
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 rm -f hosts.ini deploy_report_*.json deploy_check_*.json
 ls code/
 ```

@@ -1,4 +1,4 @@
-# Day 130 - Playwright 现代爬虫
+# Day 130 — Playwright 现代爬虫
 
 > 🎯 **今日目标**：掌握微软出品的 Playwright 浏览器自动化框架，理解它相比 Selenium 的优势（自动等待、多浏览器、API 更现代），并学会用它突破反爬网站。
 

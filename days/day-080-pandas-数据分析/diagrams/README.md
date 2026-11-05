@@ -1,4 +1,4 @@
-# Day 080 — Pandas 数据分析 · 图解
+# Day 080 — Pandas 数据分析 图解
 
 ---
 

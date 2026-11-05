@@ -1,4 +1,4 @@
-# Day 129 - 动态渲染（Selenium） 图解
+# Day 129 — 动态渲染（Selenium） 图解
 
 ## 1. 静态 vs 动态渲染页面
 

@@ -141,7 +141,7 @@ for f in 0*.py; do python3 "$f" --self-test || exit 1; done
 
 ## 实战实验手册
 
-> 所有命令都在 `~/code/Learn-Python/days/day-186-项目架构与子域名收集/code` 下执行。
+> 所有命令都在 `~/code/Python-200-days/days/day-186-项目架构与子域名收集/code` 下执行。
 > 实测环境：Linux 7.0.0-34-generic (x64) / Python 3.12.3 / 2026-10-18。
 > 实验对象 `python.org` 是公开域名，仅做 DNS/CT 查询，不做端口与漏洞探测。
 

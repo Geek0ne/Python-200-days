@@ -1,4 +1,4 @@
-# Day 126 — Requests 深入：图解
+# Day 126 — Requests 深入 图解
 
 ## 1. Session 与独立请求对比
 

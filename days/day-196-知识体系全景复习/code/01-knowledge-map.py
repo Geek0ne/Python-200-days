@@ -44,7 +44,7 @@ PHASES: list[tuple[int, str]] = [
     (45, "面向对象编程"),
     (60, "高阶特性"),
     (75, "标准库与生态系统"),
-    (90, "实战项目（一）"),
+    (90, "实战项目"),
     (100, "进阶与性能优化"),
     (125, "数据分析与 AI/ML"),
     (145, "爬虫与反爬对抗"),
@@ -215,7 +215,7 @@ def self_test() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="从 days/ 生成知识地图")
-    parser.add_argument("--root", default=os.environ.get("LEARN_PYTHON_ROOT", str(Path.home() / "code" / "Learn-Python")))
+    parser.add_argument("--root", default=os.environ.get("LEARN_PYTHON_ROOT", str(Path.home() / "code" / "Python-200-days")))
     parser.add_argument("--mermaid", action="store_true", help="输出 Mermaid mindmap")
     parser.add_argument("--json", metavar="PATH", help="导出 JSON")
     parser.add_argument("--self-test", action="store_true")

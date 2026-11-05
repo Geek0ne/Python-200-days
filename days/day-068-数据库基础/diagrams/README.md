@@ -1,4 +1,4 @@
-# Day 068 — SQLite 事务
+# Day 068 — 数据库基础：SQLite 与 SQL 图解
 
 ```mermaid
 flowchart TD

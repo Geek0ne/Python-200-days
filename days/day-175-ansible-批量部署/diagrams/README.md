@@ -1,4 +1,4 @@
-# Day 175 - Ansible 批量部署架构图解
+# Day 175 — Ansible 批量部署 图解
 
 ## 1. Ansible 核心架构
 

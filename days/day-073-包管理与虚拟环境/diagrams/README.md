@@ -1,4 +1,4 @@
-# Day 073 — 虚拟环境隔离
+# Day 073 — 包管理与虚拟环境 图解
 
 ```mermaid
 flowchart TD

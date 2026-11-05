@@ -1,4 +1,4 @@
-# Day 160 — 完成清单与练习题（日志安全分析）
+# Day 160 练习题清单
 
 > 全部操作在**授权环境**进行：只分析你自己拥有或已获授权的日志。
 > 分析器只读日志文件，**不修改日志、不发起任何网络请求**、不构造任何攻击请求。
@@ -66,7 +66,7 @@
 ## 四、验收命令
 
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 D=days/day-160-日志安全分析/code
 python3 $D/01-log-parser.py --self-test
 python3 $D/02-detectors.py --self-test

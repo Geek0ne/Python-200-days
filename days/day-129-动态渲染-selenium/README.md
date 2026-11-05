@@ -1,4 +1,4 @@
-# Day 129 - 动态渲染（Selenium）
+# Day 129 — 动态渲染（Selenium）
 
 > 🎯 **今日目标**：理解 JavaScript 渲染页面的本质，掌握 Selenium WebDriver 的工作原理、元素定位与等待策略、无头浏览器，能抓取 requests 抓不到的"动态页面"。
 

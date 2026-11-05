@@ -177,7 +177,7 @@ good 模式 → ok=True  waited=0.738s
 ## 实战代码案例
 
 ```bash
-cd ~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+cd ~/code/Python-200-days/days/day-184-运维平台-日志收集与可视化/code
 
 python3 01-structured-logging.py            # 人读格式 vs JSON Lines 的真实输出对比
 python3 02-log-ingest-server.py --self-test # 起真服务收 3 条（含坏行）→ 查库断言
@@ -205,7 +205,7 @@ python3 06-log-report.py --db /tmp/day184/logs.db --html /tmp/day184/report.html
 
 **准备**：
 ```bash
-cd ~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+cd ~/code/Python-200-days/days/day-184-运维平台-日志收集与可视化/code
 DIR=/tmp/day184-exp; PORT=8101
 rm -rf $DIR && mkdir -p $DIR
 ss -ltn | grep -q ":$PORT " && echo "端口被占用，先换端口"   # 隔离守卫：别连到别人的服务上
@@ -265,7 +265,7 @@ rm -rf /tmp/day184-exp
 
 **准备**：
 ```bash
-cd ~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+cd ~/code/Python-200-days/days/day-184-运维平台-日志收集与可视化/code
 DIR=/tmp/day184-exp; PORT=8101
 # 正确采集器（默认模式）
 python3 03-log-collector.py --file $DIR/app.log --url http://127.0.0.1:$PORT/ingest --seconds 20 &
@@ -352,7 +352,7 @@ pkill -f '[l]og-collector'; pkill -f '[l]og-ingest-server'; rm -rf /tmp/day184-e
 
 **执行**：
 ```bash
-cd ~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+cd ~/code/Python-200-days/days/day-184-运维平台-日志收集与可视化/code
 python3 04-pitfall-db-locked.py --mode bad     # 预期：失败
 python3 04-pitfall-db-locked.py --mode good    # 预期：等待后成功
 python3 04-pitfall-db-locked.py --self-test    # 两种模式都断言一遍

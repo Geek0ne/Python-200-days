@@ -1,4 +1,4 @@
-# Day 185 练习与验收清单 —— 一键部署与端到端验收
+# Day 185 练习题清单
 
 > 所有命令可直接复制执行；每个脚本都带 `--self-test`（离线、零第三方依赖）。
 
@@ -18,14 +18,14 @@
 ### 一键离线自证（不起任何外部依赖）
 
 ```bash
-cd ~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+cd ~/code/Python-200-days/days/day-185-运维平台-一键部署与验收/code
 for f in 0*.py; do echo "== $f"; timeout 120 python3 "$f" --self-test || echo "❌ $f 失败"; done
 ```
 
 ### 真机端到端（本课实验手册的精简版）
 
 ```bash
-cd ~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+cd ~/code/Python-200-days/days/day-185-运维平台-一键部署与验收/code
 STATE=/tmp/d185-demo; PORT=8400
 rm -rf $STATE && mkdir -p $STATE
 printf '%s' '[{"host":"web-01"},{"host":"web-02"}]' > $STATE/hosts.json

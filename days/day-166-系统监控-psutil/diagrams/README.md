@@ -1,4 +1,4 @@
-# Day 166 — 系统监控（psutil）图解
+# Day 166 — 系统监控（psutil） 图解
 
 > 本文件用 ASCII 图 + Mermaid 图讲清 psutil 的四层结构与采样原理。
 > GitHub 支持 Mermaid 渲染；终端环境直接看 ASCII 图即可。

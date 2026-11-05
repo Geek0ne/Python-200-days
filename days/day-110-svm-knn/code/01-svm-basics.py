@@ -147,7 +147,7 @@ for idx, (kernel, title) in enumerate([
     axes[idx].set_ylabel('特征 2')
 
 plt.tight_layout()
-plt.savefig('/root/code/Learn-Python/days/day-110-svm-knn/svm_boundaries.png', dpi=100)
+plt.savefig('/root/code/Python-200-days/days/day-110-svm-knn/svm_boundaries.png', dpi=100)
 print("✅ 决策边界图已保存到 svm_boundaries.png")
 
 # ============================================================

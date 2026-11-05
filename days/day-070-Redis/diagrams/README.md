@@ -1,4 +1,4 @@
-# Day 070 图解
+# Day 070 — Redis 图解
 
 ```mermaid
 flowchart LR

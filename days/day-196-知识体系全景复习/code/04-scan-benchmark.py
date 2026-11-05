@@ -140,7 +140,7 @@ def self_test() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="目录扫描与行数统计基准")
-    parser.add_argument("--root", default=str(Path.home() / "code" / "Learn-Python" / "days"))
+    parser.add_argument("--root", default=str(Path.home() / "code" / "Python-200-days" / "days"))
     parser.add_argument("--repeat", type=int, default=5)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-生成 Learn-Python 静态站（B 版：首页 + 索引目录 + 进度）
+生成 Python-200-days 静态站（B 版：首页 + 索引目录 + 进度）
 
 用法：
     python3 site/build.py                  # 生成到 site/dist/
@@ -558,7 +558,7 @@ def build(repo: Path, out: Path) -> dict:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="生成 Learn-Python 静态站")
+    ap = argparse.ArgumentParser(description="生成 Python-200-days 静态站")
     ap.add_argument("--out", default=str(OUT_DEFAULT))
     args = ap.parse_args()
     out = Path(args.out)

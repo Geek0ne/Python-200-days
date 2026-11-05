@@ -722,7 +722,7 @@ CLI 额外把**空输入**和 **read_error**（编码错误、IO 错误、超过
 ### 5.7 快速开始
 
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 D=days/day-160-日志安全分析/code
 
 python3 $D/01-log-parser.py --self-test          # 标准化与覆盖统计
@@ -808,7 +808,7 @@ python3 $D/03-log-analyzer.py analyze /var/log --brute-threshold 20 --work-start
 ### 7.0 准备
 
 ```bash
-cd /root/code/Learn-Python
+cd /root/code/Python-200-days
 D=days/day-160-日志安全分析/code
 ```
 

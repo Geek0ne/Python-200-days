@@ -1,4 +1,4 @@
-# Day 167 — 文件监控（watchdog）· 图解
+# Day 167 — 文件监控（watchdog） 图解
 
 > 本文件只放**图**，文字说明见 `../README.md`。
 > 所有图用 ASCII / Mermaid 表达，**不生成图片文件**。

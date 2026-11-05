@@ -1,4 +1,4 @@
-# Day 079 — NumPy 基础：图解
+# Day 079 — NumPy 基础 图解
 
 ---
 

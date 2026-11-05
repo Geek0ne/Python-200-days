@@ -1,4 +1,4 @@
-# Day 068 — 数据库基础：SQLite3 与 SQL 入门
+# Day 068 — 数据库基础：SQLite 与 SQL
 
 ## 概述
 

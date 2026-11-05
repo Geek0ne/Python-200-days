@@ -1,4 +1,4 @@
-# Day 175 — Ansible 批量部署
+# Day 175 练习题清单
 
 ## 今日完成清单
 
@@ -16,7 +16,7 @@
 
 实验 1：生成 Inventory
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 python3 days/day-175-ansible-批量部署/code/01-generate-inventory.py
 cat days/day-175-ansible-批量部署/hosts.ini
 ```
@@ -36,7 +36,7 @@ python3 days/day-175-ansible-批量部署/code/03-healthcheck.py --dry-run
 
 实验 4（进阶）：用 Python 生成 100 节点清单并验证格式
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 python3 - <<'EOF'
 import sys
 sys.path.insert(0, 'days/day-175-ansible-批量部署/code')
@@ -57,7 +57,7 @@ EOF
 ### 四、清理（实验后必须执行）
 
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 rm -f days/day-175-ansible-批量部署/hosts.ini
 rm -f days/day-175-ansible-批量部署/deploy_report_*.json
 rm -f days/day-175-ansible-批量部署/deploy_check_*.json

@@ -151,7 +151,7 @@ t1.34 进程退出（exit_took 0.051s）            用户看到连接重置
 ## 实战代码案例
 
 ```bash
-cd ~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+cd ~/code/Python-200-days/days/day-185-运维平台-一键部署与验收/code
 for f in 0*.py; do echo "== $f"; timeout 120 python3 "$f" --self-test || echo "❌ $f"; done
 ```
 
@@ -172,7 +172,7 @@ for f in 0*.py; do echo "== $f"; timeout 120 python3 "$f" --self-test || echo "�
 
 **准备 + 执行**：
 ```bash
-cd ~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+cd ~/code/Python-200-days/days/day-185-运维平台-一键部署与验收/code
 python3 03-smoke-acceptance.py --self-test
 ```
 
@@ -205,7 +205,7 @@ SIGTERM 后在途请求拿到 200（1.201s 跑完），进程随后 51ms 退出�
 
 **执行**：
 ```bash
-cd ~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+cd ~/code/Python-200-days/days/day-185-运维平台-一键部署与验收/code
 STATE=/tmp/d185-exp; rm -rf $STATE; mkdir -p $STATE
 printf '%s' '[{"host":"web-01"},{"host":"web-02"}]' > $STATE/hosts.json
 
@@ -240,7 +240,7 @@ python3 02-deploy-oneclick.py --self-test        # 三个场景的自动断言�
 
 **执行**：
 ```bash
-cd ~/code/Learn-Python/days/day-185-运维平台-一键部署与验收/code
+cd ~/code/Python-200-days/days/day-185-运维平台-一键部署与验收/code
 python3 05-drill-chaos.py --json /tmp/d185-drill.json
 ```
 

@@ -1,4 +1,4 @@
-# Day 184 练习与验收清单 —— 日志收集 + 可视化
+# Day 184 练习题清单
 
 > 所有命令都可以**直接复制执行**。每个脚本都带 `--self-test`，
 > 所以在没有外部服务的机器上也能先自证代码是对的（离线、零第三方依赖）。
@@ -20,14 +20,14 @@
 ### 一键离线自证（不需要起任何服务）
 
 ```bash
-cd ~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+cd ~/code/Python-200-days/days/day-184-运维平台-日志收集与可视化/code
 for f in 0*.py; do echo "== $f"; python3 "$f" --self-test || echo "❌ $f 失败"; done
 ```
 
 ### 真机端到端（本课实验手册的精简版）
 
 ```bash
-cd ~/code/Learn-Python/days/day-184-运维平台-日志收集与可视化/code
+cd ~/code/Python-200-days/days/day-184-运维平台-日志收集与可视化/code
 mkdir -p /tmp/day184
 
 # 1) 起接收端

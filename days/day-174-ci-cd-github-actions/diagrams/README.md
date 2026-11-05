@@ -1,4 +1,4 @@
-# Day 174 图解 — CI/CD（GitHub Actions）
+# Day 174 — CI/CD（GitHub Actions） 图解
 
 ## 1. 一次 push 到底发生了什么
 

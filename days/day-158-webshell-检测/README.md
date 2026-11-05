@@ -653,7 +653,7 @@ JSON 输出结构：
 ### 9.1 自测（四个文件）
 
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 python3 days/day-158-webshell-检测/code/static_scan.py        --self-test
 python3 days/day-158-webshell-检测/code/01-static-scanner.py  --self-test
 python3 days/day-158-webshell-检测/code/02-behavior-hunter.py --self-test

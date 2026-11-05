@@ -33,7 +33,7 @@ import sys
 import threading
 from typing import Any
 
-BANNER = "Learn-Python Capture SMTP"
+BANNER = "Python-200-days Capture SMTP"
 
 
 class SMTPHandler(socketserver.StreamRequestHandler):

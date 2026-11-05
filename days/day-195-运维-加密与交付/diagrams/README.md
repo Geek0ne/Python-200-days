@@ -1,4 +1,4 @@
-# Day 195 图解 — 重试、加密、交付
+# Day 195 — 运维、加密与交付 图解
 
 > Mermaid 源码可直接粘到支持 Mermaid 的 Markdown 渲染器；ASCII 图用于终端阅读。
 

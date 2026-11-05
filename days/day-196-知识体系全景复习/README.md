@@ -400,7 +400,7 @@ $ python3 01-knowledge-map.py
 3     Day 031-045       15      54     18724      174050  面向对象编程
 4     Day 046-060       15      45     10264      207749  高阶特性
 5     Day 061-075       15      67     15083      262890  标准库与生态系统
-6     Day 076-090       15      52     12951      201402  实战项目（一）
+6     Day 076-090       15      52     12951      201402  实战项目
 7     Day 091-100       10      30      8814       95069  进阶与性能优化
 8     Day 101-125       25      77     17106      251830  数据分析与 AI/ML
 9     Day 126-145       20      59      7431      114052  爬虫与反爬对抗
@@ -435,8 +435,8 @@ SM-2           185    1.03    12      50     87.6     0.78
 
 Day1  P10 网络安全开发、P11 自动化运维与 DevOps、P2 核心编程概念、P1 Python 基础
 Day2  P10 网络安全开发、P3 面向对象编程、P8 数据分析与 AI/ML、P5 标准库与生态系统
-Day3  P6 实战项目（一）、P12 综合实战、P11 自动化运维与 DevOps、P4 高阶特性
-Day8  P10 网络安全开发、P5 标准库与生态系统、P6 实战项目（一）、P12 综合实战
+Day3  P6 实战项目、P12 综合实战、P11 自动化运维与 DevOps、P4 高阶特性
+Day8  P10 网络安全开发、P5 标准库与生态系统、P6 实战项目、P12 综合实战
 ```
 
 ---
@@ -452,7 +452,7 @@ Day8  P10 网络安全开发、P5 标准库与生态系统、P6 实战项目（�
 **准备**：
 
 ```bash
-cd ~/code/Learn-Python/days/day-196-知识体系全景复习/code
+cd ~/code/Python-200-days/days/day-196-知识体系全景复习/code
 python3 01-knowledge-map.py --self-test
 ```
 
@@ -614,7 +614,7 @@ decode().splitlines()     42.7 ms
 ### 清理
 
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 find days/day-196-知识体系全景复习 -name '__pycache__' -type d -exec rm -rf {} +
 rm -f /tmp/knowledge-map.json
 git status --porcelain   # 应只剩待提交的课程文件

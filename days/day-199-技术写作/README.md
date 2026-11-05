@@ -460,7 +460,7 @@ python3 -VV
 uname -r
 grep -m1 'model name' /proc/cpuinfo
 nproc
-cd ~/code/Learn-Python && git rev-parse --short HEAD
+cd ~/code/Python-200-days && git rev-parse --short HEAD
 ```
 
 **实际结果**（2026-10-29 06:00 CST）：

@@ -92,7 +92,7 @@ plt.ylabel('准确率')
 plt.title('K 值对 KNN 性能的影响')
 plt.legend()
 plt.grid(True, alpha=0.3)
-plt.savefig('/root/code/Learn-Python/days/day-110-svm-knn/knn_k_selection.png', dpi=100)
+plt.savefig('/root/code/Python-200-days/days/day-110-svm-knn/knn_k_selection.png', dpi=100)
 print("\n✅ K 值选择图已保存")
 
 # ============================================================

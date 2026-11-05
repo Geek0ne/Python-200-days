@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1459-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
+![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1469-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
 
 [🌐 在线学习站](https://python.geek0ne.com/) · [📖 路线图](ROADMAP.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -47,7 +47,7 @@
 | **Phase 3** | 面向对象编程 | Day 031–045 | ✅ 已完成 |
 | **Phase 4** | 🔥 高阶特性 | Day 046–060 | ✅ 已完成 |
 | **Phase 5** | 📦 标准库与生态系统 | Day 061–075 | ✅ 已完成 |
-| **Phase 6** | 实战项目（一） | Day 076–090 | ✅ 已完成 |
+| **Phase 6** | 实战项目 | Day 076–090 | ✅ 已完成 |
 | **Phase 7** | 进阶与性能优化 | Day 091–100 | ✅ 已完成 |
 | **Phase 8** | 数据分析与 AI/ML | Day 101–125 | ✅ 已完成 |
 | **Phase 9** | 爬虫与反爬对抗 | Day 126–145 | ✅ 已完成 |
@@ -64,9 +64,9 @@
 | 指标 | 数据 |
 |:----|:----:|
 | 📅 已完成天数 | **199 天** |
-| 📝 总提交次数 | **1,459 commits** |
-| 📄 总代码行数 | **205,271 行** |
-| 📂 总文件数 | **1,439 个** |
+| 📝 总提交次数 | **1,469 commits** |
+| 📄 总代码行数 | **207,555 行** |
+| 📂 总文件数 | **1,449 个** |
 | 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 199/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
@@ -76,7 +76,7 @@
 <details>
 <summary><b>Phase 1：Python 基础（Day 001–015）— ✅ 已完成</b></summary>
 
-- ✅ Day 001 — Hello Python（环境搭建 / 第一个程序 / 交互式解释器）
+- ✅ Day 001 — 你好，Python（环境搭建 / 第一个程序 / 交互式解释器）
 - ✅ Day 002 — 变量与数据类型（变量与类型基础 / 个人资料卡实战）
 - ✅ Day 003 — 字符串深入（字符串基础与常用操作 / 模板引擎实战）
 - ✅ Day 004 — 数字与运算（数值类型与运算规则 / 科学计算器实战）
@@ -85,12 +85,12 @@
 - ✅ Day 007 — 元组（基础与解包 / 坐标系统 / 设计模式 / CPython 内部实现）
 - ✅ Day 008 — 字典（基础操作 / 词频分析器 / 标签云 / JSON 查询工具 / 性能基准）
 - ✅ Day 009 — 集合（基础操作 / 数据清洗管道）
-- ✅ Day 010 — 循环与迭代（九九乘法表 / 菱形打印）
-- ✅ Day 011 — 函数（函数定义与参数 / 计算器库实战）
+- ✅ Day 010 — 循环（for/while · 九九乘法表 / 菱形打印）
+- ✅ Day 011 — 函数基础（函数定义与参数 / 计算器库实战）
 - ✅ Day 012 — 函数进阶（默认参数陷阱 / args 与 kwargs / 类型提示 / 通用数据处理器）
 - ✅ Day 013 — 作用域与命名空间（LEGB 规则 / 闭包与计数器工厂）
 - ✅ Day 014 — 模块与包（导入机制 / __name__ 与 __main__）
-- ✅ Day 015 — Python 工具箱（pytools 工具包 / 文本·文件·统计工具集）
+- ✅ Day 015 — 阶段项目：Python 工具箱（pytools 工具包 / 文本·文件·统计工具集）
 
 </details>
 
@@ -104,14 +104,14 @@
 - ✅ Day 020 — 递归（递归基础 / 文件树遍历 / 递归与迭代对比）
 - ✅ Day 021 — 迭代器与可迭代对象（迭代器基础 / 自定义迭代器 / itertools）
 - ✅ Day 022 — 生成器（生成器基础 / 大文件处理 / 协程基础）
-- ✅ Day 023 — 装饰器基础（装饰器原理 / 日志装饰器 / 计时装饰器）
+- ✅ Day 023 — 装饰器入门（装饰器原理 / 日志装饰器 / 计时装饰器）
 - ✅ Day 024 — 装饰器进阶（带参装饰器 / 缓存·重试·认证 / 装饰器链）
 - ✅ Day 025 — 上下文管理器（with 协议与执行流程 / __enter__ 与 __exit__ / 异常处理模式）
-- ✅ Day 026 — 字符串进阶（正则基础与进阶 / 日志解析 / 编码实战）
-- ✅ Day 027 — datetime 时间处理（datetime 基础 / 时区进阶 / 日志时间戳实战）
+- ✅ Day 026 — 字符串高级（正则基础与进阶 / 日志解析 / 编码实战）
+- ✅ Day 027 — 时间与日期（datetime 基础 / 时区进阶 / 日志时间戳实战）
 - ✅ Day 028 — 数据结构综合（栈与队列 / 优先队列 / 表达式求值引擎）
 - ✅ Day 029 — 算法入门（时间与空间复杂度 / 基础算法实现 / 复杂度分析）
-- ✅ Day 030 — CLI 命令行工具（sys.argv / argparse / 高级参数类型 / 实战工具）
+- ✅ Day 030 — 阶段项目：命令行工具（sys.argv / argparse / 高级参数类型 / 实战工具）
 
 </details>
 
@@ -122,7 +122,7 @@
 - ✅ Day 032 — 属性与方法（实例·类·静态方法 / property 属性 / 进阶用法）
 - ✅ Day 033 — 继承（继承语法 / super() / MRO 与 C3 线性化）
 - ✅ Day 034 — 多态（多态基础 / 鸭子类型与抽象 / 插件系统实战）
-- ✅ Day 035 — 魔术方法（常用魔术方法 / 运算符重载 / 向量类实战）
+- ✅ Day 035 — 特殊方法（常用魔术方法 / 运算符重载 / 向量类实战）
 - ✅ Day 036 — 封装（访问控制 / 命名改写与保护 / 安全 API 实战）
 - ✅ Day 037 — 组合（组合 vs 继承 / 委托模式 / 汽车模型实战）
 - ✅ Day 038 — 创建型设计模式（工厂与建造者 / 单例与原型 / 配置管理器实战）
@@ -132,7 +132,7 @@
 - ✅ Day 042 — Type Hints（类型提示基础 / 泛型与 TypeVar / 类型安全 API）
 - ✅ Day 043 — Dataclass（装饰器参数 / field() 与 __post_init__ / 与 namedtuple 对比）
 - ✅ Day 044 — 枚举与常量（枚举基础 / 枚举进阶 / 状态机实战）
-- ✅ Day 045 — OOP 项目实战（ORM 框架 / API 客户端 / 学生管理系统）
+- ✅ Day 045 — 阶段项目：面向对象实战（ORM 框架 / API 客户端 / 学生管理系统）
 
 </details>
 
@@ -143,17 +143,17 @@
 - ✅ Day 047 — 描述符 Descriptor（描述符基础 / 进阶用法 / ORM 描述符实战）
 - ✅ Day 048 — Mixin 混入（混入协议 / 协作式多重继承 / 常用混入模式）
 - ✅ Day 049 — 抽象基类 ABC（ABCMeta / 虚拟子类 register() / 抽象属性与方法）
-- ✅ Day 050 — Slots 优化（内存布局 / 底层实现 / 与继承的交互）
+- ✅ Day 050 — 槽（__slots__）（内存布局 / 底层实现 / 与继承的交互）
 - ✅ Day 051 — Weakref 弱引用（弱引用基础 / 弱引用容器 / 缓存实战）
-- ✅ Day 052 — Copy 与 DeepCopy（浅拷贝与深拷贝 / 拷贝进阶 / 快照与回滚）
+- ✅ Day 052 — 深拷贝与浅拷贝（拷贝机制 / 拷贝进阶 / 快照与回滚）
 - ✅ Day 053 — 内存管理与垃圾回收（GC 基础 / 内存泄漏 / 内存分析器）
-- ✅ Day 054 — 并发：多线程（线程基础 / 线程安全 / 并发下载器）
-- ✅ Day 055 — 并发：多进程（进程基础 / IPC 队列与管道 / 进程池并行）
+- ✅ Day 054 — 并发入门：线程（线程基础 / 线程安全 / 并发下载器）
+- ✅ Day 055 — 并发进阶：进程（进程基础 / IPC 队列与管道 / 进程池并行）
 - ✅ Day 056 — asyncio 异步编程（异步基础 / Task 与 Future / 异步爬虫）
 - ✅ Day 057 — asyncio 进阶（异步上下文管理器 / 异步迭代器与生成器 / aiohttp 实战）
 - ✅ Day 058 — 并发模型对比（多线程 / 多进程 / 性能基准对比）
 - ✅ Day 059 — C 扩展与性能（Numba JIT / ctypes 与 cffi / Cython）
-- ✅ Day 060 — HPC 项目实战（并发爬虫 / 图像处理管道 / 基准测试框架）
+- ✅ Day 060 — 阶段项目：高性能计算（并发爬虫 / 图像处理管道 / 基准测试框架）
 
 </details>
 
@@ -161,7 +161,7 @@
 <summary><b>Phase 5：标准库与生态系统（Day 061–075）— ✅ 已完成</b></summary>
 
 - ✅ Day 061 — 文件与路径操作（os 模块 / pathlib 现代路径 / shutil 同步工具）
-- ✅ Day 062 — 数据序列化（JSON / pickle·msgpack·YAML / 配置解析器）
+- ✅ Day 062 — 数据序列化与配置管理（JSON / pickle·msgpack·YAML / 配置管理）
 - ✅ Day 063 — CSV 与 Excel 处理（CSV 基础 / openpyxl 处理 Excel / 报表生成器）
 - ✅ Day 064 — 网络请求（urllib vs requests / Session 与 Cookie / 天气 CLI）
 - ✅ Day 065 — Web 框架入门（Flask 基础 / Flask 进阶 / 博客应用 / API 速查）
@@ -179,7 +179,7 @@
 </details>
 
 <details>
-<summary><b>Phase 6：实战项目（一）（Day 076–090）— ✅ 已完成</b></summary>
+<summary><b>Phase 6：实战项目（Day 076–090）— ✅ 已完成</b></summary>
 
 - ✅ Day 076 — Scrapy 框架入门（基础爬虫 / Pipeline 数据处理 / 反爬策略与实战）
 - ✅ Day 077 — 请求调度与数据管道（调度基础 / 管道进阶 / 电商监控实战）
@@ -209,9 +209,9 @@
 - ✅ Day 095 — 函数式编程深入（functools / 柯里化与不可变 / 函数式管道）
 - ✅ Day 096 — AST 与代码分析（AST 基础操作 / 变换与分析 / 自定义 Linter 实战）
 - ✅ Day 097 — 领域特定语言 DSL（装饰器与上下文管理器 DSL / 规则引擎 DSL / 配置 DSL）
-- ✅ Day 098 — Python 内部原理（字节码基础 / VM 内部机制 / 字节码分析器）
+- ✅ Day 098 — Python 内部机制（字节码基础 / VM 内部机制 / 字节码分析器）
 - ✅ Day 099 — 扩展 Python（Cython 基础 / pybind11 进阶 / 混合编程实战）
-- ✅ Day 100 — 阶段项目 · 知识融合回顾（知识融合 / 设计模式综合 / 性能与并发）
+- ✅ Day 100 — 阶段里程碑：知识体系梳理（回顾知识图谱 / 查漏补缺 / 选择深耕方向）
 
 </details>
 
@@ -222,7 +222,7 @@
 - ✅ Day 102 — Pandas 核心（基础操作 / 索引进阶 / 实战配方）
 - ✅ Day 103 — Pandas 进阶（数据清洗 / 分组聚合与合并 / 时间序列实战）
 - ✅ Day 104 — 数据可视化（matplotlib 基础 / seaborn 进阶 / EDA 报告）
-- ✅ Day 105 — 数据分析 Pipeline（数据采集 / 分析可视化 / 全流程管道）
+- ✅ Day 105 — 阶段项目：数据分析 Pipeline（数据采集 / 分析可视化 / 全流程管道）
 - ✅ Day 106 — 机器学习基础（ML 入门 / scikit-learn 流水线 / 鸢尾花分类器）
 - ✅ Day 107 — 线性回归（回归基础 / 回归评估 / 房价预测实战）
 - ✅ Day 108 — 逻辑回归（逻辑回归基础 / 正则化与交叉验证 / 欺诈检测实战）
@@ -242,7 +242,7 @@
 - ✅ Day 122 — 推荐系统基础（协同过滤 / 矩阵分解 SVD / 电影推荐器）
 - ✅ Day 123 — 模型部署（Flask 模型服务 / FastAPI 模型服务 / ONNX 部署）
 - ✅ Day 124 — 时间序列预测（时序分解 / ARIMA / Prophet）
-- ✅ Day 125 — 综合 AI 应用（数据处理 / 模型训练 / FastAPI 部署）
+- ✅ Day 125 — 阶段项目：综合 AI 应用（数据处理 / 模型训练 / FastAPI 部署）
 
 </details>
 
@@ -268,7 +268,7 @@
 - ✅ Day 142 — 爬虫法律合规（robots 解析 / 合规检查器 / 礼貌爬虫）
 - ✅ Day 143 — 反爬项目实战（上）（代理池 / 浏览器渲染 / 抓取管道）
 - ✅ Day 144 — 反爬项目实战（下）（验证码检测 / 数据清洗 / 调度告警）
-- ✅ Day 145 — Phase 9 阶段收官（阶段回顾 / 项目审计）
+- ✅ Day 145 — 阶段收官（阶段回顾 / 项目审计）
 
 </details>
 
@@ -352,10 +352,10 @@
 ```
 📁 Python-200-days/
 ├── 📓 days/                    # 每日学习内容（day-001 ~ day-199，共 199 个主题）
-│   ├── day-001-hello-python/
-│   ├── day-002-variables-and-datatypes/
+│   ├── day-001-你好-python/
+│   ├── day-002-变量与数据类型/
 │   ├── ...
-│   └── day-164-安全审计工具箱-part3/
+│   └── day-199-技术写作/
 ├── 📁 docs/                    # 补充文档
 ├── 📄 ROADMAP.md               # 完整学习路线图
 ├── 📄 CONTRIBUTING.md          # 贡献指南

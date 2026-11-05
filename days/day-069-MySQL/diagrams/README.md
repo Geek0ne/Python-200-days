@@ -1,4 +1,4 @@
-# Day 069 图解
+# Day 069 — MySQL 图解
 
 ```mermaid
 flowchart LR

@@ -1,4 +1,4 @@
-# Day 177 — 原理图解
+# Day 177 — Prometheus + Grafana 图解
 
 五张图，从「谁拉谁」到「看板怎么出数」。
 

@@ -42,7 +42,7 @@ for i, ax in enumerate(axes.flat):
     ax.axis('off')
 plt.suptitle('手写数字样本', fontsize=14)
 plt.tight_layout()
-plt.savefig('/root/code/Learn-Python/days/day-110-svm-knn/digit_samples.png', dpi=100)
+plt.savefig('/root/code/Python-200-days/days/day-110-svm-knn/digit_samples.png', dpi=100)
 print("✅ 样本可视化已保存")
 
 # ============================================================
@@ -178,7 +178,7 @@ axes[1].set_title(f'KNN 混淆矩阵\n准确率: {accuracy_score(y_test, y_pred_
 
 plt.suptitle('手写数字识别 - 混淆矩阵对比', fontsize=14)
 plt.tight_layout()
-plt.savefig('/root/code/Learn-Python/days/day-110-svm-knn/confusion_matrices.png', dpi=100)
+plt.savefig('/root/code/Python-200-days/days/day-110-svm-knn/confusion_matrices.png', dpi=100)
 print("✅ 混淆矩阵已保存")
 
 # ============================================================
@@ -197,7 +197,7 @@ for i, ax in enumerate(axes.flat):
     ax.axis('off')
 plt.suptitle(f'{best_name} 预测结果（绿色=正确，红色=错误）', fontsize=14)
 plt.tight_layout()
-plt.savefig('/root/code/Learn-Python/days/day-110-svm-knn/predictions.png', dpi=100)
+plt.savefig('/root/code/Python-200-days/days/day-110-svm-knn/predictions.png', dpi=100)
 print("✅ 预测可视化已保存")
 
 # ============================================================

@@ -1,7 +1,7 @@
-# Day 196 练习与检查清单
+# Day 196 练习题清单
 
 > 所有命令都可直接复制执行。工作目录：
-> `cd ~/code/Learn-Python/days/day-196-知识体系全景复习/code`
+> `cd ~/code/Python-200-days/days/day-196-知识体系全景复习/code`
 
 ## 一、今日完成清单
 
@@ -129,7 +129,7 @@ assert c.interval <= 5, c.interval
 ## 四、验收命令（全部应通过）
 
 ```bash
-cd ~/code/Learn-Python/days/day-196-知识体系全景复习/code
+cd ~/code/Python-200-days/days/day-196-知识体系全景复习/code
 python3 01-knowledge-map.py --self-test
 python3 02-spaced-repetition.py --self-test
 python3 03-review-planner.py --self-test

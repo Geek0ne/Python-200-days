@@ -35,7 +35,7 @@ from pathlib import Path
 
 PHASES = [
     (15, "Python 基础"), (30, "核心编程概念"), (45, "面向对象编程"),
-    (60, "高阶特性"), (75, "标准库与生态系统"), (90, "实战项目（一）"),
+    (60, "高阶特性"), (75, "标准库与生态系统"), (90, "实战项目"),
     (100, "进阶与性能优化"), (125, "数据分析与 AI/ML"), (145, "爬虫与反爬对抗"),
     (165, "网络安全开发"), (185, "自动化运维与 DevOps"), (200, "综合实战"),
 ]
@@ -176,7 +176,7 @@ def self_test() -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="按真实代码量生成复习计划")
     parser.add_argument("--root", default=os.environ.get("LEARN_PYTHON_ROOT",
-                                                         str(Path.home() / "code" / "Learn-Python")))
+                                                         str(Path.home() / "code" / "Python-200-days")))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--write", metavar="PATH")
     parser.add_argument("--self-test", action="store_true")

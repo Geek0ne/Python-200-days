@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Markdown → HTML 渲染器（Learn-Python 静态站专用）
+Markdown → HTML 渲染器（Python-200-days 静态站专用）
 
 为什么不手写解析器：150k 行的真实教材文档里有嵌套列表、表格、`<details>` 原始 HTML、
 以及 183 张 mermaid 图，手写必然漏。`markdown` + `pygments` 是成熟方案。

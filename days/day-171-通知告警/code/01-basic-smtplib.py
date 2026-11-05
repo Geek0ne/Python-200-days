@@ -42,7 +42,7 @@ def send_plain(host: str, port: int, sender: str, to: str, subject: str, body: s
     msg = EmailMessage()
     # formataddr 会把中文名编码成 RFC 2047，例如
     # "=?utf-8?b?5pWw5o2u5bqT?= <alert@example.com>"
-    msg["From"] = formataddr(("Learn-Python 告警", sender))
+    msg["From"] = formataddr(("Python-200-days 告警", sender))
     msg["To"] = to
     msg["Subject"] = subject          # 中文主题会被自动编码，无需自己 base64
     msg["Date"] = formatdate(localtime=True)
@@ -79,7 +79,7 @@ def send_with_attachment(host: str, port: int, sender: str, to: str,
         所以最省心的做法是：文本附件传 str，二进制附件传 bytes + 显式类型。
     """
     msg = EmailMessage()
-    msg["From"] = formataddr(("Learn-Python 告警", sender))
+    msg["From"] = formataddr(("Python-200-days 告警", sender))
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
@@ -107,7 +107,7 @@ def send_via_real_server(user: str, password: str, host: str, port: int,
        「POP3/SMTP/IMAP 服务」拿到一串 16 位授权码。
     """
     msg = EmailMessage()
-    msg["From"] = formataddr(("Learn-Python 告警", sender or user))
+    msg["From"] = formataddr(("Python-200-days 告警", sender or user))
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)

@@ -1,4 +1,4 @@
-# Day 171 — 通知告警 · 图解
+# Day 171 — 通知告警 图解
 
 共 11 张图。
 
@@ -150,7 +150,7 @@ sequenceDiagram
 │   RCPT TO:<niedong@company.com>                           │
 ├─────────────────────────────────────────────────────────┤
 │ Header（信头）— 你自己写的，只影响显示                    │
-│   From: "Learn-Python 告警" <noreply@company.com>        │
+│   From: "Python-200-days 告警" <noreply@company.com>        │
 │   To:   niedong@company.com                              │
 │   Subject: [P1] 磁盘告警                                   │
 └─────────────────────────────────────────────────────────┘

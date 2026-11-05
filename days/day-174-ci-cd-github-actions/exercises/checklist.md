@@ -1,4 +1,4 @@
-# Day 174 练习与验收清单 — CI/CD（GitHub Actions）
+# Day 174 练习题清单
 
 所有命令都在 `days/day-174-ci-cd-github-actions/` 目录下执行。
 
@@ -129,7 +129,7 @@ def test_add():
     assert add(1, 2) == 3
 EOF
 printf 'pytest==8.3.4\n' > requirements.txt
-cp ~/code/Learn-Python/days/day-174-ci-cd-github-actions/workflows/ci.yml .github/workflows/
+cp ~/code/Python-200-days/days/day-174-ci-cd-github-actions/workflows/ci.yml .github/workflows/
 cat > pyproject.toml <<'EOF'
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -161,7 +161,7 @@ rm -rf /tmp/ci-lab
 
 ```bash
 cd /tmp/ci-lab
-cp ~/code/Learn-Python/days/day-174-ci-cd-github-actions/workflows/cache-bench.yml .github/workflows/
+cp ~/code/Python-200-days/days/day-174-ci-cd-github-actions/workflows/cache-bench.yml .github/workflows/
 git add -A && git -c user.email=a@b -c user.name=c commit -qm bench
 act -P ubuntu-latest=catthehacker/ubuntu:act-latest workflow_dispatch 2>&1 \
   | grep -E "COLD_secs|WARM_secs|cache_size"
@@ -183,7 +183,7 @@ cache_size=14M
 ### 挑战 6：验证 CD 回滚
 
 ```bash
-cd ~/code/Learn-Python/days/day-174-ci-cd-github-actions
+cd ~/code/Python-200-days/days/day-174-ci-cd-github-actions
 rm -rf /tmp/cd-pipeline
 
 python3 code/03-cd-deploy-pipeline.py run            # 第一次：v1.0.1 上线

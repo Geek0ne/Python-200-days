@@ -510,10 +510,10 @@ python3 code/05-rollback-drill.py               # 真跑
 
 ```bash
 # 1) 生成一个「无外部 action」的等价 workflow（本机拉不到 github.com 上的 action，见下表）
-python3 code/03-ci-pipeline.py --out /root/code/Learn-Python/days/day-183-运维平台-容器化部署/.act-probe \
+python3 code/03-ci-pipeline.py --out /root/code/Python-200-days/days/day-183-运维平台-容器化部署/.act-probe \
         --act-mode --path-prefix "days/day-183-运维平台-容器化部署/"
 # 2) 在仓库根跑（--bind 是关键，见下表）
-cd /root/code/Learn-Python
+cd /root/code/Python-200-days
 act push --bind \
   -W "days/day-183-运维平台-容器化部署/.act-probe/.github/workflows/ci.yml" \
   -P ubuntu-latest=catthehacker/ubuntu:act-latest --pull=false -j lint -j test

@@ -1,4 +1,4 @@
-# Day 169 — Fabric 批量执行 · 图解
+# Day 169 — Fabric 批量执行 图解
 
 > 全部为纯文本/Mermaid，可离线阅读。
 

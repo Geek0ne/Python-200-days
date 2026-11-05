@@ -11,7 +11,7 @@
 ## 运行方式
 
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 python3 days/day-096-ast与代码分析/code/01-ast基础操作.py
 python3 days/day-096-ast与代码分析/code/02-ast变换与分析.py
 python3 days/day-096-ast与代码分析/code/03-实战自定义Linter.py

@@ -6,7 +6,7 @@
 ## 运行顺序
 
 ```bash
-cd ~/code/Learn-Python/days/day-196-知识体系全景复习/code
+cd ~/code/Python-200-days/days/day-196-知识体系全景复习/code
 
 # 1. 地图：先知道有什么
 python3 01-knowledge-map.py --self-test
@@ -47,7 +47,7 @@ python3 04-scan-benchmark.py --repeat 5
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| `--root` | `~/code/Learn-Python` | 可用 `LEARN_PYTHON_ROOT` 环境变量覆盖 |
+| `--root` | `~/code/Python-200-days` | 可用 `LEARN_PYTHON_ROOT` 环境变量覆盖 |
 | `--repeat` | 5 | 基准重复次数，取中位数 |
 | 每日槽位 | 4 | 03 的模块常量 `SLOTS_PER_DAY` |
 | 计划窗口 | 14 天 | 03 的 `HORIZON` |

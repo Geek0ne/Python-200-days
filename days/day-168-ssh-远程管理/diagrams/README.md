@@ -1,4 +1,4 @@
-# Day 168 — SSH 远程管理（paramiko）· 图解
+# Day 168 — SSH 远程管理（paramiko） 图解
 
 > 图都可用纯文本阅读。Mermaid 代码块可直接粘到支持 Mermaid 的渲染器里看效果。
 

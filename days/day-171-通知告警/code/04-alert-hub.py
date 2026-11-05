@@ -146,7 +146,7 @@ class SMTPChannel(Channel):
     def send(self, alert: Alert) -> SendResult:
         t0 = time.perf_counter()
         msg = EmailMessage()
-        msg["From"] = formataddr(("Learn-Python 告警", self.sender))
+        msg["From"] = formataddr(("Python-200-days 告警", self.sender))
         msg["To"] = self.to
         msg["Subject"] = alert.title()
         msg["Date"] = formatdate(localtime=True)

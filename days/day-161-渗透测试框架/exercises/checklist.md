@@ -1,4 +1,4 @@
-# Day 161 — 完成清单与练习题（渗透测试框架）
+# Day 161 练习题清单
 
 > **全部操作只在授权环境进行**：本课所有实验都在 `127.0.0.1` 的回环实验服务上完成。
 > 框架**只读**探测（TCP connect + 读取服务主动发来的 banner），
@@ -143,7 +143,7 @@
 ## 四、验收命令
 
 ```bash
-cd ~/code/Learn-Python
+cd ~/code/Python-200-days
 D="days/day-161-渗透测试框架/code"
 python3 "$D/pentest_core.py" --self-test
 python3 "$D/01-scan-engine.py" --self-test

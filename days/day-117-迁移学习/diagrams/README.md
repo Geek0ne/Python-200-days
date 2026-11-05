@@ -1,4 +1,4 @@
-# Day 117 — 迁移学习 图解
+# Day 117 — 迁移学习 (Transfer Learning) 图解
 
 ## 1. 迁移学习整体流程
 
