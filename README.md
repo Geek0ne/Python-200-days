@@ -8,7 +8,7 @@
 
 ![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1459-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
 
-[🌐 在线学习站](https://python.geek0ne.com/) · [📖 路线图](ROADMAP.md) · [📋 执行计划](PLAN.md) · [🤝 贡献指南](CONTRIBUTING.md)
+[🌐 在线学习站](https://python.geek0ne.com/) · [📖 路线图](ROADMAP.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
 </div>
 
@@ -167,14 +167,14 @@
 - ✅ Day 065 — Web 框架入门（Flask 基础 / Flask 进阶 / 博客应用 / API 速查）
 - ✅ Day 066 — Flask 进阶（SQLAlchemy 基础 / JWT 用户认证 / Todo API）
 - ✅ Day 067 — FastAPI 入门（第一个应用 / Pydantic / 请求与响应 / 依赖注入 / 异步）
-- ✅ Day 068 — 数据库基础（sqlite3 基础 / SQL CRUD / 连接查询 / 索引与事务）
-- ✅ Day 069 — ORM 深入 SQLAlchemy（模型定义 / 关系映射 / 查询 API / 会话管理）
-- ✅ Day 070 — 测试基础（unittest / pytest / fixtures / mock 与 patch / 覆盖率）
-- ✅ Day 071 — 日志与调试（logging 基础 / 组件与配置 / 日志轮转 / pdb）
-- ✅ Day 072 — 正则表达式深入（NFA 与 DFA / 前后瞻断言 / 贪婪匹配 / HTML 解析）
-- ✅ Day 073 — 包管理与虚拟环境（pip / venv / Poetry 与 PDM / 打包发布）
-- ✅ Day 074 — 单元测试进阶（TDD / 参数化测试 / 集成与异步测试 / Flask 测试套件）
-- ✅ Day 075 — 阶段项目 · 标准库综合实战（文件重命名器 / 测试 / 演示）
+- ✅ Day 068 — 数据库基础：SQLite 与 SQL（sqlite3 基础 / SQL CRUD / 索引与事务）
+- ✅ Day 069 — MySQL（pymysql / 连接池 / SQL 进阶与执行计划 / 备份与恢复）
+- ✅ Day 070 — Redis（数据结构 / 缓存与过期 / 队列 / 分布式锁）
+- ✅ Day 071 — ORM 深入 SQLAlchemy（模型定义 / 关系映射 / 查询 API / 会话管理）
+- ✅ Day 072 — 测试与数据库安全（pytest 与 TDD / 参数化与异步测试 / SQL 注入防护）
+- ✅ Day 073 — 包管理与虚拟环境（pip / venv / Poetry·PDM·uv / 打包发布）
+- ✅ Day 074 — 日志、调试与正则进阶（logging 生产配置 / pdb / 正则引擎与断言）
+- ✅ Day 075 — 阶段项目 · 标准库综合实战（文件重命名器 / 数据管道 / 漏洞扫描器）
 
 </details>
 
@@ -358,7 +358,6 @@
 │   └── day-164-安全审计工具箱-part3/
 ├── 📁 docs/                    # 补充文档
 ├── 📄 ROADMAP.md               # 完整学习路线图
-├── 📄 PLAN.md                  # 详细执行计划
 ├── 📄 CONTRIBUTING.md          # 贡献指南
 ├── 📄 .gitignore
 └── 📖 README.md                # 本文件
@@ -378,9 +377,6 @@ cd days/day-160-日志安全分析
 
 # 运行示例代码（多数脚本支持 --self-test 离线自检）
 python3 code/01-log-parser.py --self-test
-
-# 查看完整计划
-cat PLAN.md
 
 # 查看路线图
 cat ROADMAP.md
