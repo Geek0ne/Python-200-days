@@ -45,8 +45,8 @@
 | **Phase 1** | Python 基础 | Day 001–015 | ✅ 已完成 |
 | **Phase 2** | 核心编程概念 | Day 016–030 | ✅ 已完成 |
 | **Phase 3** | 面向对象编程 | Day 031–045 | ✅ 已完成 |
-| **Phase 4** | 🔥 高阶特性 | Day 046–060 | ✅ 已完成 |
-| **Phase 5** | 📦 标准库与生态系统 | Day 061–075 | ✅ 已完成 |
+| **Phase 4** | 高阶特性 | Day 046–060 | ✅ 已完成 |
+| **Phase 5** | 标准库与生态系统 | Day 061–075 | ✅ 已完成 |
 | **Phase 6** | 实战项目 | Day 076–090 | ✅ 已完成 |
 | **Phase 7** | 进阶与性能优化 | Day 091–100 | ✅ 已完成 |
 | **Phase 8** | 数据分析与 AI/ML | Day 101–125 | ✅ 已完成 |
@@ -413,6 +413,12 @@ cat ROADMAP.md
 - 发现错误 → [提交 Issue](https://github.com/Geek0ne/Python-200-days/issues)
 - 有改进建议 → [提交 PR](https://github.com/Geek0ne/Python-200-days/pulls)
 - 详细贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Geek0ne/Python-200-days&type=Date)](https://star-history.com/#Geek0ne/Python-200-days&Date)
 
 ---
 
