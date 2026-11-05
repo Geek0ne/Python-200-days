@@ -534,7 +534,7 @@ def numba_pi(n):
             count += 1
     return 4 * count / n
 
-# 方式 4：Cython 版本见 code/03-cython-monte-carlo.pyx
+# 方式 4：Cython 版本见 code/03-cython-performance.py
 ```
 
 ---

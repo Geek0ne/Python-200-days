@@ -688,7 +688,7 @@ brew install wireshark       # macOS
 ### 6.2 全部自检（**必须逐个跑，输出 SELF-TEST OK 才算通过**）
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 python3 -B days/day-157-pyshark-流量分析/code/pcap_lib.py --self-test
 python3 -B days/day-157-pyshark-流量分析/code/01-basic-usage.py --self-test
 python3 -B days/day-157-pyshark-流量分析/code/02-advanced-filtering.py --self-test

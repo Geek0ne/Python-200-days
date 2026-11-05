@@ -877,7 +877,7 @@ python3 code/01-xss-types-basics.py
 
 ```bash
 # ① 默认：起本地演示服务（只绑 127.0.0.1），真实跑三种 XSS 并打印原始响应体
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 python3 days/day-152-xss-web-漏洞/code/01-xss-types-basics.py
 
 # ② 自测：完全离线（不建 socket、不联网、无第三方依赖），秒级返回
@@ -992,7 +992,7 @@ python3 code/02-xss-defense-pitfalls.py
 #### 5.2.3 运行命令
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 
 # ① 完整演示：讲坑 → 自测断言 → 真实响应头验证 → 防护清单（需要回环服务）
 python3 days/day-152-xss-web-漏洞/code/02-xss-defense-pitfalls.py
@@ -1108,7 +1108,7 @@ python3 code/03-xss-scanner.py --url http://127.0.0.1:8080/   # 扫自建授权�
 #### 5.3.3 运行命令
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 
 # ① 扫描内置本地靶场（脚本自己启动 127.0.0.1 靶场，用完即关）
 python3 days/day-152-xss-web-漏洞/code/03-xss-scanner.py
@@ -1235,7 +1235,7 @@ def self_test() -> int:
 ### 6.4 退出码契约（可直接接 CI）
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 for f in days/day-152-xss-web-漏洞/code/*.py; do
   python3 -B "$f" --self-test >/dev/null || { echo "FAILED: $f"; exit 1; }
 done
@@ -1272,7 +1272,7 @@ echo "all self-tests passed"
 ### 6.7 本地自证记录（本次升级实测）
 
 ```bash
-$ cd /root/code/Python-200-days
+$ cd ~/code/Python-200-days
 $ python3 -B days/day-152-xss-web-漏洞/code/01-xss-types-basics.py --self-test | tail -1
 ✅ SELF-TEST OK（28 项断言全部通过；无网络、无 sudo、无第三方依赖）        # exit 0
 $ python3 -B days/day-152-xss-web-漏洞/code/02-xss-defense-pitfalls.py --self-test | tail -1

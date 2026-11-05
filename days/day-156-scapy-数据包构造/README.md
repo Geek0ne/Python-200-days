@@ -1036,7 +1036,7 @@ pip install scapy
 ### 8.2 四个自检（**离线、不需要 root、不需要网卡、不联网**）
 
 ```bash
-cd /root/code/Python-200-days/days/day-156-scapy-数据包构造/code
+cd ~/code/Python-200-days/days/day-156-scapy-数据包构造/code
 python3 -B 01-scapy-basics.py --self-test
 python3 -B 02-sniff-pitfalls.py --self-test
 python3 -B 03-network-probe.py --self-test

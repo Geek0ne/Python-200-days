@@ -7,7 +7,7 @@
 > ✅ **本批次新增的验收入口**：三个脚本都支持 `--self-test`（离线、确定性）。
 > 一键验收：
 > ```bash
-> cd /root/code/Python-200-days
+> cd ~/code/Python-200-days
 > for f in days/day-150-oauth2-认证安全/code/*.py; do
 >   python3 -B "$f" --self-test | tail -1; done
 > # 三行都必须输出: SELF-TEST OK

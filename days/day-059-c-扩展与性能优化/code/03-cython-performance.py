@@ -3,7 +3,7 @@ Day 059 - Cython 性能加速实战
 实战案例：图像灰度值计算 + 矩阵运算
 
 运行方式：
-    编译：cythonize -i 03-cython-performance.pyx
+    编译：cythonize -i 03-cython-performance.py
     运行：python3 03-cython-performance.py
 
 注意：此文件需要先通过 cython 编译为 .so 才能运行。

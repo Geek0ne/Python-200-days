@@ -717,7 +717,7 @@ def complex_function(a, b, c=None):
 
 ### 6.3 完整代码
 
-详见 `code/01-calculator-library.py`，这里展示核心部分：
+详见 `code/02-calculator-library.py`，这里展示核心部分：
 
 **基本运算函数：**
 

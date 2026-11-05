@@ -1008,7 +1008,7 @@ python3 code/01-nmap-basics.py
 #### 5.1.3 运行命令
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 
 # ① 完整演示（会真跑 nmap；没装 nmap 会自动降级到 socket 兜底，照样跑完）
 python3 days/day-153-端口扫描进阶/code/01-nmap-basics.py
@@ -1120,7 +1120,7 @@ python3 code/02-banner-grab-pitfalls.py
 #### 5.2.3 运行命令
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 
 # ① 完整演示：起三个演示服务，逐个踩坑 + 综合识别（秒级返回）
 python3 days/day-153-端口扫描进阶/code/02-banner-grab-pitfalls.py
@@ -1262,7 +1262,7 @@ python3 code/03-auto-port-scanner.py --ports 22,80,443,8000-8100 --show-closed
 #### 5.3.3 运行命令
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 
 # ① 默认：起本机演示服务 + 扫 top 端口（结果默认落到系统临时目录）
 python3 days/day-153-端口扫描进阶/code/03-auto-port-scanner.py
@@ -1366,7 +1366,7 @@ echo $?        # 0 = SELF-TEST OK；1 = 断言失败
 作为 CI 门禁可以直接这样用：
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 for f in days/day-153-端口扫描进阶/code/*.py; do
   python3 -B "$f" --self-test >/dev/null || { echo "SELF-TEST FAILED: $f"; exit 1; }
 done
@@ -1396,7 +1396,7 @@ echo "all self-tests passed"
 ### 6.6 本地自证记录（本次升级实测）
 
 ```bash
-$ cd /root/code/Python-200-days
+$ cd ~/code/Python-200-days
 $ python3 -B days/day-153-端口扫描进阶/code/01-nmap-basics.py --self-test | tail -1
 ✅ SELF-TEST OK（命令构造与 XML 解析断言全部通过；未启动 nmap、未发起任何网络连接）   # exit 0
 $ python3 -B days/day-153-端口扫描进阶/code/02-banner-grab-pitfalls.py --self-test | tail -1
@@ -1423,7 +1423,7 @@ $ python3 -B days/day-153-端口扫描进阶/code/03-auto-port-scanner.py     # 
 
 ```bash
 # 验证：跑完扫描后，仓库工作树里不应该出现 scan-output/ 之类的目录
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 python3 days/day-153-端口扫描进阶/code/03-auto-port-scanner.py >/dev/null
 git status --porcelain days/day-153-端口扫描进阶/    # 只应看到代码/README 的改动
 ```

@@ -730,7 +730,7 @@ sequenceDiagram
 ### 7.0 统一验证命令（一键跑完三个自检）
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 for f in days/day-150-oauth2-认证安全/code/*.py; do
   echo "=== $f"
   python3 -B "$f" --self-test > /tmp/st.log 2>&1
@@ -775,7 +775,7 @@ exit=0
 **运行命令**
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 python3 -B days/day-150-oauth2-认证安全/code/01-oauth2-auth-code-flow.py
 ```
 

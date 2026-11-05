@@ -797,7 +797,7 @@ curl -s -x http://127.0.0.1:<代理端口> http://127.0.0.1:<上游端口>/mock/
 **离线自检（不联网、不装库、不写仓库）：**
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 for f in days/day-155-mitmproxy-中间人/code/*.py; do
   echo "== $f"; python3 -B "$f" --self-test | tail -2
 done
@@ -1002,7 +1002,7 @@ $ grep -c "injected by mitmproxy" /tmp/body.html
 ### 7.5 四个脚本的离线自检（**本日的可验证性证据**）
 
 ```bash
-$ cd /root/code/Python-200-days
+$ cd ~/code/Python-200-days
 $ python3 -B days/day-155-mitmproxy-中间人/code/00-local-lab.py --self-test
 ✅ Addon01：request() 被调用过一次: 1
 ✅ Addon03：Authorization 已脱敏: '***'
@@ -1242,7 +1242,7 @@ days/day-155-mitmproxy-中间人/
 **自检命令（全部离线、无第三方依赖、不写仓库）：**
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 for f in days/day-155-mitmproxy-中间人/code/*.py; do
   echo "== $f"; python3 -B "$f" --self-test | tail -2
 done

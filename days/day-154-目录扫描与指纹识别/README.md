@@ -1038,7 +1038,7 @@ $ python3 code/03-asset-discovery.py --url http://127.0.0.1:8080 --workers 5 --d
 ### 7.5 四个脚本的离线自检（**本日的可验证性证据**）
 
 ```bash
-$ cd /root/code/Python-200-days
+$ cd ~/code/Python-200-days
 $ python3 -B days/day-154-目录扫描与指纹识别/code/00-local-lab.py --self-test
 ...
 ✅ 全部 32 项断言通过
@@ -1361,7 +1361,7 @@ days/day-154-目录扫描与指纹识别/
 **自检命令（全部离线、无第三方依赖、不写仓库）：**
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 for f in days/day-154-目录扫描与指纹识别/code/*.py; do
   echo "== $f"; python3 -B "$f" --self-test | tail -2
 done

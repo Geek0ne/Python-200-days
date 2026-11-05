@@ -690,7 +690,7 @@ sequenceDiagram
 ### 7.0 统一验证命令（一键跑完三个自检）
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 for f in days/day-151-sql-注入原理/code/*.py; do
   echo "=== $f"
   python3 -B "$f" --self-test > /tmp/st.log 2>&1

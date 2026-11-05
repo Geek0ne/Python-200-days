@@ -808,7 +808,7 @@ python3 $D/03-log-analyzer.py analyze /var/log --brute-threshold 20 --work-start
 ### 7.0 准备
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 D=days/day-160-日志安全分析/code
 ```
 

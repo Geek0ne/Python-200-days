@@ -228,7 +228,7 @@ class ProxyMiddleware:
 
 ## 五、实战代码案例
 
-完整的高匿名代理池实现见 `code/03-proxy-pool.py`，包含：
+完整的高匿名代理池实现见 `code/03-高匿名代理池实战.py`，包含：
 - 多来源免费代理抓取
 - asyncio 并发验证（含匿名度检测）
 - 内存 ZSet 式分数管理

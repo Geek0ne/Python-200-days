@@ -1024,7 +1024,7 @@ no lab dirs
 $ ss -ltnp | grep -E ':(8000|8080|6379|5432) ' || echo "no lab ports"
 no lab ports
 $ git worktree list
-/root/code/Python-200-days  3c9f0d2 [main]
+~/code/Python-200-days  3c9f0d2 [main]
 ```
 
 没有遗留目录、没有监听端口、没有额外 worktree。实验全程只用到 git 与 Python 标准库，

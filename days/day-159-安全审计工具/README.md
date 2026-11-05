@@ -878,7 +878,7 @@ secret_cloud_access_key:1a5d44a2dca19669       # 按"规则:证据指纹"抑制
 ### 7.0 准备
 
 ```bash
-cd /root/code/Python-200-days
+cd ~/code/Python-200-days
 D=days/day-159-安全审计工具/code
 ```
 
