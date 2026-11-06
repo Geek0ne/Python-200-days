@@ -390,7 +390,7 @@ def main():
         
         if choice == "0":
             print("\n👋 感谢使用，再见！")
-            print(f"  Python {sys.version.split()[0]}  |  OpenClaw Python-200-days")
+            print(f"  Python {sys.version.split()[0]}  |  Python 200 Days")
             break
         elif choice == "1":
             basic_calculator()
