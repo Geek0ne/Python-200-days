@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 70 — Redis 基础：缓存、队列与分布式锁</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 70 — Redis 基础：缓存、队列与分布式锁</h1>
+  <div class="lmeta">
+    <span class="badge">Python标准库与生态系统</span>
+    <span class="badge">152 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-070-Redis" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="概述">概述</a>
+<a class="toc-l2" href="#_2" title="学习目标">学习目标</a>
+<a class="toc-l2" href="#1" title="1. 环境准备">1. 环境准备</a>
+<a class="toc-l2" href="#2" title="2. 五大结构与场景选型">2. 五大结构与场景选型</a>
+<a class="toc-l2" href="#3" title="3. 缓存模式与过期策略">3. 缓存模式与过期策略</a>
+<a class="toc-l2" href="#4" title="4. 队列与分布式锁">4. 队列与分布式锁</a>
+<a class="toc-l2" href="#5" title="5. 常见陷阱（实测）">5. 常见陷阱（实测）</a>
+<a class="toc-l2" href="#6" title="6. 实战：缓存加速 + 任务队列">6. 实战：缓存加速 + 任务队列</a>
+<a class="toc-l2" href="#_3" title="小结">小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-070-redis">Day 070 — Redis 基础：缓存、队列与分布式锁</h1>
+<blockquote>
+<p>🎯 <strong>今日目标</strong>：拿下最高频的缓存中间件——redis-py 基础操作、五大结构的场景选型、缓存与过期策略（穿透 / 击穿 / 雪崩）、队列与分布式锁，最后用「缓存加速 + 任务队列」实战收尾。</p>
+</blockquote>
+<h2 id="_1">概述</h2>
+<p>Redis 是一个内存键值数据库，快（单线程模型 + 内存操作）、结构丰富（string / hash / list / set / zset）、用途广（缓存、队列、锁、计数器、排行榜）。今天的定位是：<strong>把它当作 Python 项目里"随手可用的基础设施"</strong>——知道什么场景该用哪个结构，以及用错会怎样。</p>
+<blockquote>
+<p>💡 本日代码同样双模式：有 Redis 环境时用 <code>redis-py</code> 打真库；<code>--self-test</code> 用内置的 <code>MiniRedis</code>（约 60 行的内存模拟）离线验证逻辑，不装任何第三方包。</p>
+</blockquote>
+<h2 id="_2">学习目标</h2>
+<ul>
+<li>掌握 redis-py 的连接与五大结构操作</li>
+<li>能为场景选对数据结构（缓存 / 队列 / 排序 / 去重）</li>
+<li>理解缓存三大问题：穿透、击穿、雪崩，以及对应防护</li>
+<li>会用 list 实现任务队列、用 SET NX EX 实现分布式锁</li>
+<li>知道 KEYS、序列化、大 value 等常见坑</li>
+</ul>
+<hr>
+<h2 id="1">1. 环境准备</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># Docker 一行起</span>
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>redis-dev<span class="w"> </span>-p<span class="w"> </span><span class="m">6379</span>:6379<span class="w"> </span>redis:7
+
+<span class="c1"># 安装客户端</span>
+pip<span class="w"> </span>install<span class="w"> </span>redis
+</code></pre></div>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">redis</span>
+
+<span class="n">r</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">host</span><span class="o">=</span><span class="s2">"127.0.0.1"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">6379</span><span class="p">,</span> <span class="n">db</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                <span class="n">decode_responses</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>   <span class="c1"># 直接返回 str，强烈建议开启</span>
+<span class="n">r</span><span class="o">.</span><span class="n">ping</span><span class="p">()</span>   <span class="c1"># True</span>
+</code></pre></div>
+<h2 id="2">2. 五大结构与场景选型</h2>
+<p>完整代码见 <code>code/01-redis-basics.py</code>。</p>
+<table>
+<thead>
+<tr>
+<th>结构</th>
+<th>常用命令</th>
+<th>典型场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>string</td>
+<td><code>set / get / incr / setex</code></td>
+<td>缓存对象、计数器、限流计数</td>
+</tr>
+<tr>
+<td>hash</td>
+<td><code>hset / hget / hgetall</code></td>
+<td>对象字段级缓存（用户资料）</td>
+</tr>
+<tr>
+<td>list</td>
+<td><code>lpush / brpop / lrange</code></td>
+<td>任务队列、最新 N 条列表</td>
+</tr>
+<tr>
+<td>set</td>
+<td><code>sadd / smembers / sismember</code></td>
+<td>去重、标签、共同好友</td>
+</tr>
+<tr>
+<td>zset</td>
+<td><code>zadd / zrangebyscore</code></td>
+<td>排行榜、延时队列、滑动窗口限流</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 计数器：文章阅读量（原子自增，天然并发安全）</span>
+<span class="n">r</span><span class="o">.</span><span class="n">incr</span><span class="p">(</span><span class="s2">"article:1001:views"</span><span class="p">)</span>
+
+<span class="c1"># 排行榜：分数更新 + 取前 10</span>
+<span class="n">r</span><span class="o">.</span><span class="n">zadd</span><span class="p">(</span><span class="s2">"leaderboard"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"alice"</span><span class="p">:</span> <span class="mi">95</span><span class="p">,</span> <span class="s2">"bob"</span><span class="p">:</span> <span class="mi">87</span><span class="p">,</span> <span class="s2">"carol"</span><span class="p">:</span> <span class="mi">92</span><span class="p">})</span>
+<span class="n">r</span><span class="o">.</span><span class="n">zrevrange</span><span class="p">(</span><span class="s2">"leaderboard"</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">9</span><span class="p">)</span>   <span class="c1"># 降序 Top 10</span>
+</code></pre></div>
+<h2 id="3">3. 缓存模式与过期策略</h2>
+<p>完整代码见 <code>code/02-cache-patterns.py</code>。</p>
+<p><strong>Cache-Aside（旁路缓存）</strong>是标准姿势：</p>
+<pre class="plain"><code>读：先查缓存 → 命中返回 / 未命中查库 → 回填缓存（设 TTL）
+写：更新数据库 → 删除缓存（而不是更新缓存）</code></pre>
+<p>三大经典问题：</p>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>现象</th>
+<th>防护</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>穿透</td>
+<td>查不存在的 key，每次都打到库</td>
+<td>空值缓存 / 布隆过滤器</td>
+</tr>
+<tr>
+<td>击穿</td>
+<td>热点 key 过期瞬间，流量全打到库</td>
+<td>互斥锁重建 / 逻辑过期</td>
+</tr>
+<tr>
+<td>雪崩</td>
+<td>大批 key 同时过期</td>
+<td>TTL 加随机抖动 / 多级缓存</td>
+</tr>
+</tbody>
+</table>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span><span class="w"> </span><span class="nf">get_user</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">db</span><span class="p">,</span> <span class="n">user_id</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"user:</span><span class="si">{</span><span class="n">user_id</span><span class="si">}</span><span class="s2">"</span>
+    <span class="n">cached</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">cached</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">cached</span><span class="p">)</span>
+    <span class="n">user</span> <span class="o">=</span> <span class="n">db</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">user_id</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">user</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">r</span><span class="o">.</span><span class="n">setex</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="mi">60</span><span class="p">,</span> <span class="s2">"null"</span><span class="p">)</span>          <span class="c1"># 空值缓存，防穿透</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">r</span><span class="o">.</span><span class="n">setex</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="mi">300</span> <span class="o">+</span> <span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">60</span><span class="p">),</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">user</span><span class="p">))</span>  <span class="c1"># TTL 抖动，防雪崩</span>
+    <span class="k">return</span> <span class="n">user</span>
+</code></pre></div>
+<h2 id="4">4. 队列与分布式锁</h2>
+<p>完整代码见 <code>code/03-queue-and-lock.py</code>。</p>
+<p><strong>任务队列</strong>——<code>lpush</code> 生产 + <code>brpop</code> 阻塞消费：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">r</span><span class="o">.</span><span class="n">lpush</span><span class="p">(</span><span class="s2">"tasks"</span><span class="p">,</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">({</span><span class="s2">"type"</span><span class="p">:</span> <span class="s2">"email"</span><span class="p">,</span> <span class="s2">"to"</span><span class="p">:</span> <span class="s2">"a@b.com"</span><span class="p">}))</span>
+<span class="n">task</span> <span class="o">=</span> <span class="n">r</span><span class="o">.</span><span class="n">brpop</span><span class="p">(</span><span class="s2">"tasks"</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>   <span class="c1"># 阻塞等待，空闲不空转</span>
+</code></pre></div>
+<p><strong>分布式锁</strong>——<code>SET key value NX EX</code> 三件套（原子加锁 + 自动过期）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span><span class="w"> </span><span class="nf">acquire_lock</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">ttl</span><span class="o">=</span><span class="mi">10</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">r</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="sa">f</span><span class="s2">"lock:</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">uuid4</span><span class="p">()</span><span class="o">.</span><span class="n">hex</span><span class="p">,</span> <span class="n">nx</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">ex</span><span class="o">=</span><span class="n">ttl</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">release_lock</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">token</span><span class="p">):</span>
+    <span class="c1"># 只删自己的锁（Lua 保证原子，避免误删他人锁）</span>
+    <span class="n">script</span> <span class="o">=</span> <span class="s1">'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) end'</span>
+    <span class="n">r</span><span class="o">.</span><span class="n">eval</span><span class="p">(</span><span class="n">script</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="sa">f</span><span class="s2">"lock:</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">token</span><span class="p">)</span>
+</code></pre></div>
+<p>⚠️ 锁的两条铁律：<strong>必须设 TTL</strong>（防止持锁进程崩溃后死锁）、<strong>只能删自己的锁</strong>（用 token 校验）。生产环境直接用 Redlock / <code>redis.lock()</code>，手写锁仅用于理解原理。</p>
+<h2 id="5">5. 常见陷阱（实测）</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>陷阱</th>
+<th>后果</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>线上用 <code>KEYS pattern</code></td>
+<td>全库扫描，Redis 卡死</td>
+<td><code>SCAN</code> 游标迭代</td>
+</tr>
+<tr>
+<td>2</td>
+<td>存大 JSON value</td>
+<td>网络/内存放大，慢查询</td>
+<td>拆 hash 或压缩</td>
+</tr>
+<tr>
+<td>3</td>
+<td>忘记 <code>decode_responses=True</code></td>
+<td>到处 <code>.decode()</code></td>
+<td>连接时就开</td>
+</tr>
+<tr>
+<td>4</td>
+<td>用 Redis 当持久化主存储</td>
+<td>丢数据</td>
+<td>它是缓存/协调，不是 source of truth</td>
+</tr>
+<tr>
+<td>5</td>
+<td>TTL 全设一样</td>
+<td>雪崩</td>
+<td>加随机抖动</td>
+</tr>
+<tr>
+<td>6</td>
+<td>分布式锁不设过期</td>
+<td>死锁</td>
+<td><code>EX</code> 必须带</td>
+</tr>
+<tr>
+<td>7</td>
+<td>更新缓存而非删除</td>
+<td>并发下脏写</td>
+<td>删缓存，让读回填</td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>hgetall</code> 大 hash</td>
+<td>一次拉爆带宽</td>
+<td>按需 <code>hget</code> / 分桶</td>
+</tr>
+<tr>
+<td>9</td>
+<td>单连接裸用</td>
+<td>高并发连接风暴</td>
+<td>连接池（redis-py 自带）</td>
+</tr>
+<tr>
+<td>10</td>
+<td>不设内存上限</td>
+<td>挤爆宿主机</td>
+<td><code>maxmemory</code> + 淘汰策略</td>
+</tr>
+</tbody>
+</table>
+<h2 id="6">6. 实战：缓存加速 + 任务队列</h2>
+<p><code>code/04-cache-taskqueue.py</code> 端到端跑通一个小型数据管道：</p>
+<ol>
+<li><strong>慢查询模拟</strong>：一个 200ms 的"报表聚合"函数</li>
+<li><strong>缓存加速</strong>：Cache-Aside 包一层，对比冷/热查询耗时</li>
+<li><strong>任务队列</strong>：聚合结果变更 → 发布失效任务 → 后台 worker 消费重建缓存</li>
+<li><strong>防重放</strong>：消费端用 SET NX 做幂等去重</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python<span class="w"> </span>code/04-cache-taskqueue.py<span class="w"> </span>--self-test<span class="w">   </span><span class="c1"># MiniRedis 离线跑全流程</span>
+python<span class="w"> </span>code/04-cache-taskqueue.py<span class="w">               </span><span class="c1"># 真实 Redis 环境</span>
+</code></pre></div>
+<h2 id="_3">小结</h2>
+<ul>
+<li>选结构先选场景：计数用 string、队列用 list、排行用 zset</li>
+<li>Cache-Aside + 删除式失效 + TTL 抖动，覆盖 80% 缓存需求</li>
+<li>队列用 <code>lpush/brpop</code>，锁用 <code>SET NX EX</code> + token 校验删除</li>
+<li>线上禁 <code>KEYS</code>，value 别贪大，内存设上限</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-069/index.html">← Day 69 MySQL 基础：pymysql、SQL 进阶与备份恢复</a><a class="nav-next" href="../day-071/index.html">Day 71 ORM 深入：SQLAlchemy 对象关系映射 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

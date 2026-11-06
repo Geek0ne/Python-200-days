@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 192 — 代理池：IP 轮换、健康检查与出口调度</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 192 — 代理池：IP 轮换、健康检查与出口调度</h1>
+  <div class="lmeta">
+    <span class="badge">综合实战</span>
+    <span class="badge">652 行</span>
+    <span class="badge">4 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（4 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-192-代理池-ip-轮换" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="今天在项目里的位置">今天在项目里的位置</a>
+<a class="toc-l2" href="#_2" title="概念速览">概念速览</a>
+<a class="toc-l2" href="#_3" title="概念解释">概念解释</a>
+<a class="toc-l3" href="#1" title="1. 为什么&quot;代理列表&quot;不够，必须是&quot;池&quot;">1. 为什么&quot;代理列表&quot;不够，必须是&quot;池&quot;</a>
+<a class="toc-l3" href="#2" title="2. 健康检查：三种&quot;通&quot;不是一回事">2. 健康检查：三种&quot;通&quot;不是一回事</a>
+<a class="toc-l3" href="#3" title="3. 评分：为什么是&quot;成功率平方&quot;">3. 评分：为什么是&quot;成功率平方&quot;</a>
+<a class="toc-l3" href="#4" title="4. 冷却与熔断：为什么&quot;立刻换一个&quot;是错的">4. 冷却与熔断：为什么&quot;立刻换一个&quot;是错的</a>
+<a class="toc-l3" href="#5" title="5. 每出口限速：轮换 ≠ 提速">5. 每出口限速：轮换 ≠ 提速</a>
+<a class="toc-l3" href="#6-ip" title="6. 粘滞会话：为什么同一域不能随便换 IP">6. 粘滞会话：为什么同一域不能随便换 IP</a>
+<a class="toc-l3" href="#7-connecthttps" title="7. CONNECT：HTTPS 代理的分水岭">7. CONNECT：HTTPS 代理的分水岭</a>
+<a class="toc-l3" href="#8" title="8. 代理本身的安全边界">8. 代理本身的安全边界</a>
+<a class="toc-l2" href="#_4" title="定义与使用方法">定义与使用方法</a>
+<a class="toc-l3" href="#proxypool-api" title="ProxyPool 核心 API（本课实现）">ProxyPool 核心 API（本课实现）</a>
+<a class="toc-l3" href="#_5" title="常见状态码的处置">常见状态码的处置</a>
+<a class="toc-l3" href="#urllib" title="urllib 的代理写法（标准库，不引第三方）">urllib 的代理写法（标准库，不引第三方）</a>
+<a class="toc-l2" href="#_6" title="图解">图解</a>
+<a class="toc-l3" href="#_7" title="请求在池子里的完整生命周期">请求在池子里的完整生命周期</a>
+<a class="toc-l3" href="#_8" title="冷却状态机">冷却状态机</a>
+<a class="toc-l3" href="#_9" title="两种调度模式对比">两种调度模式对比</a>
+<a class="toc-l2" href="#_10" title="实战代码案例">实战代码案例</a>
+<a class="toc-l2" href="#_11" title="实战实验手册">实战实验手册</a>
+<a class="toc-l3" href="#0" title="实验 0：实验台自证">实验 0：实验台自证</a>
+<a class="toc-l3" href="#1_1" title="实验 1：健康检查 + 轮询">实验 1：健康检查 + 轮询</a>
+<a class="toc-l3" href="#2-http-https" title="实验 2：健康检查用 HTTP，业务走 HTTPS">实验 2：健康检查用 HTTP，业务走 HTTPS</a>
+<a class="toc-l3" href="#3_1" title="实验 3：环境变量劫持">实验 3：环境变量劫持</a>
+<a class="toc-l3" href="#4_1" title="实验 4：轮换绕过自己的限速">实验 4：轮换绕过自己的限速</a>
+<a class="toc-l3" href="#5429" title="实验 5：评分、熔断、粘滞、429 冷却">实验 5：评分、熔断、粘滞、429 冷却</a>
+<a class="toc-l2" href="#_12" title="翻车实验（真实踩坑记录）">翻车实验（真实踩坑记录）</a>
+<a class="toc-l3" href="#1importlib-dataclass" title="翻车 1：importlib 加载带 @dataclass 的脚本直接崩">翻车 1：importlib 加载带 @dataclass 的脚本直接崩</a>
+<a class="toc-l3" href="#2-362s-27s" title="翻车 2：令牌桶&quot;等完了却不扣令牌&quot;，实测速率 3.62/s（配置 2.7/s）">翻车 2：令牌桶&quot;等完了却不扣令牌&quot;，实测速率 3.62/s（配置 2.7/s）</a>
+<a class="toc-l3" href="#3-argmax" title="翻车 3：纯 argmax 评分把其他出口饿死">翻车 3：纯 argmax 评分把其他出口饿死</a>
+<a class="toc-l3" href="#4_2" title="翻车 4：代理配置在闭包里只算一次">翻车 4：代理配置在闭包里只算一次</a>
+<a class="toc-l2" href="#_13" title="思考题">思考题</a>
+<a class="toc-l2" href="#_14" title="收尾卫生">收尾卫生</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-192-ip">Day 192 — 代理池：IP 轮换、健康检查与出口调度</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 12 — 综合实战<br>
+<strong>项目</strong>：AI 赋能反爬数据平台 · 第 2/5 天<br>
+<strong>子主题</strong>：出口模型 · 健康检查 · 评分 · 熔断冷却 · 每出口限速 · 粘滞会话 · CONNECT 隧道<br>
+<strong>代码</strong>：1 个可复用实验台 + 3 个可独立运行脚本，全部带 <code>--self-test</code><br>
+<strong>实测环境</strong>：Linux 7.0.0-34-generic / Python 3.12.3 / 2026-10-22 06:00–06:30 CST</p>
+</blockquote>
+<hr>
+<h2 id="_1">今天在项目里的位置</h2>
+<pre class="plain"><code>Day 191  引擎骨架      → 队列、限速、重试、落库：先让引擎能稳定跑        ✅
+Day 192  代理池        → IP 轮换、健康检查、按目标分配出口              ← 今天
+Day 193  浏览器与验证码 → JS 渲染、指纹、识别
+Day 194  AI 增强       → 反爬策略预测、内容归类、数据管道
+Day 195  运维与交付    → 调度、加密、鉴权、Docker + CI/CD</code></pre>
+<p>Day 191 的 Fetcher 只会说一句「把 URL 变成 HTML 或一个分类过的错误」。<br>
+今天要做的事，就是给这句话加一个前提：<strong>用哪个出口去变</strong>。</p>
+<p>代理池不是"代理列表 + 随机取一个"。它是一套<strong>带状态的调度器</strong>：<br>
+每个出口都有健康度、成功率、延迟、冷却时间，而这些值全部来自<strong>真实请求的结果</strong>，<br>
+不是配置文件里写死的。</p>
+<hr>
+<h2 id="_2">概念速览</h2>
+<p>完整词典见 <strong>concepts.md</strong>，图解见 <strong>diagrams/README.md</strong>。</p>
+<table>
+<thead>
+<tr>
+<th>概念</th>
+<th>一句话</th>
+<th>为什么重要</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>出口（exit）</td>
+<td>目标站看到的那个 IP</td>
+<td>代理池调度的最小单位，不是"代理 URL"</td>
+</tr>
+<tr>
+<td>透明/匿名/高匿</td>
+<td>目标站能否看到你在用代理</td>
+<td>透明代理会把 <code>X-Forwarded-For</code> 带过去，等于自报家门</td>
+</tr>
+<tr>
+<td>正向代理</td>
+<td>客户端主动把请求交给代理转发</td>
+<td>爬虫用的就是这种；反向代理是服务端的事</td>
+</tr>
+<tr>
+<td>CONNECT</td>
+<td>让代理建立 TCP 隧道，用于 HTTPS</td>
+<td>不支持 CONNECT 的代理，HTTP 能通、HTTPS 全废</td>
+</tr>
+<tr>
+<td>绝对 URI</td>
+<td><code>GET http://host/path HTTP/1.1</code></td>
+<td>正向代理的请求行格式，和普通请求不同</td>
+</tr>
+<tr>
+<td>407</td>
+<td>Proxy Authentication Required</td>
+<td>代理自己的鉴权，不是目标站的 401</td>
+</tr>
+<tr>
+<td>健康检查</td>
+<td>真发一次请求，验证"从它出去了"</td>
+<td>TCP 端口能连 ≠ 能上网 ≠ 目标站可达</td>
+</tr>
+<tr>
+<td>出口指纹</td>
+<td>出口 IP + ASN + 延迟 + 成功率</td>
+<td>单看 IP 会漏掉"同 C 段整批被封"</td>
+</tr>
+<tr>
+<td>评分</td>
+<td>成功率² / (1 + EWMA 延迟)</td>
+<td>让好出口多干活，慢出口自然退场</td>
+</tr>
+<tr>
+<td>EWMA</td>
+<td>指数加权移动平均</td>
+<td>只看最近表现，不被历史成绩永久绑架</td>
+</tr>
+<tr>
+<td>熔断</td>
+<td>连续失败 N 次 → 暂停使用</td>
+<td>坏代理不该被每个 worker 各试一遍</td>
+</tr>
+<tr>
+<td>冷却（cooldown）</td>
+<td>暂停一段时间后再放一个探针</td>
+<td>立刻重试 = 把 429 变成 429×N</td>
+</tr>
+<tr>
+<td>Retry-After</td>
+<td>服务端告诉你多久后再来</td>
+<td>尊重它比任何指数退避都有效</td>
+</tr>
+<tr>
+<td>半开（half-open）</td>
+<td>冷却结束先放一个请求试探</td>
+<td>直接满速恢复会把刚恢复的出口再打死</td>
+</tr>
+<tr>
+<td>每出口令牌桶</td>
+<td>每个 IP 一个速率阀门</td>
+<td>轮换不等于提速，目标站按 IP 计数</td>
+</tr>
+<tr>
+<td>粘滞会话</td>
+<td>同一域固定同一出口</td>
+<td>换 IP 会丢 cookie、触发二次验证</td>
+</tr>
+<tr>
+<td>出口池水位</td>
+<td>可用出口数 / 总出口数</td>
+<td>水位低于 30% 就该告警，而不是继续硬跑</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">概念解释</h2>
+<h3 id="1">1. 为什么"代理列表"不够，必须是"池"</h3>
+<p>一个列表只回答"有哪些地址"；一个池要回答四个问题：</p>
+<pre class="plain"><code>        ┌──────────────────────────────────────────────┐
+        │                  ProxyPool                   │
+        │                                              │
+ 注册 → │  ┌────────┐   ┌────────┐   ┌────────────┐  │ → 分配
+        │  │ 健康检查│ → │ 评分排序│ → │ 冷却/熔断  │  │
+        │  └────────┘   └────────┘   └────────────┘  │
+        │       ▲              ▲             ▲        │
+        └───────┼──────────────┼─────────────┼────────┘
+                │              │             │
+            定时探活        每次请求结果    429/403/超时</code></pre>
+<p><strong>为什么要这四块</strong>：</p>
+<ul>
+<li><strong>健康检查</strong>解决"它还活着吗"。注意是"能出去"，不是"端口开着"。</li>
+<li><strong>评分</strong>解决"活着的里面谁更好"。慢出口不该和快出口平分流量。</li>
+<li><strong>冷却/熔断</strong>解决"刚失败的那个别再用了"。没有它，重试会把一个坏出口放大成一片错误。</li>
+<li><strong>分配</strong>解决"这次给谁"。轮询、随机、最低延迟、粘滞，各有适用场景。</li>
+</ul>
+<p>少任何一块，池子都会退化成"带随机数的列表"。</p>
+<h3 id="2">2. 健康检查：三种"通"不是一回事</h3>
+<pre class="plain"><code>TCP 握手成功          代理进程活着            ≠ 能访问外网
+HTTP 200（任意页面）   代理能转发              ≠ 转发的是你的目标
+200 + 预期标记         真的从该出口出去了      ← 唯一可信的判据</code></pre>
+<p>本课实验台的做法：代理给每个转发请求注入 <code>X-Exit-Id</code>，靶站原样回显。<br>
+于是「这个响应到底是不是从 p2 出来的」有密码学级别的确定性——不，是协议级别的确定性。</p>
+<p><strong>为什么不用 <code>https://httpbin.org/ip</code></strong>：</p>
+<ol>
+<li>生产环境常常没有外网出口（内网爬虫走专线）；</li>
+<li>第三方站点会限流你的健康检查，把"检查太频繁"误判成"代理全死"；</li>
+<li>它只告诉你出口 IP，不告诉你延迟分布和目标站可达性。</li>
+</ol>
+<p>自己起一个 <code>/health</code> 靶站，成本几乎为零，可控性高一个数量级。</p>
+<h3 id="3">3. 评分：为什么是"成功率平方"</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">score</span> <span class="o">=</span> <span class="n">success_rate</span> <span class="o">**</span> <span class="mi">2</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">+</span> <span class="n">ewma_latency</span><span class="p">)</span>
+</code></pre></div>
+<ul>
+<li><strong>平方</strong>：把"偶尔失败"的出口压下去。0.9²=0.81，0.5²=0.25。<br>
+  代理池里"能用但经常失败"比"完全不能用"更危险——它会让你以为任务在推进。</li>
+<li><strong>除以延迟</strong>：延迟直接决定单位时间产出。120ms 的出口吞吐只有 2ms 的 1/60。</li>
+<li><strong>EWMA</strong>：<code>new = 0.3 * sample + 0.7 * old</code>。出口恢复后能在十几次请求内回到高分，<br>
+  不会因为昨天被封过就永久冷藏。</li>
+</ul>
+<p><strong>冷启动问题</strong>：所有出口初始分数相同，纯 <code>argmax</code> 会永远选字典里第一个。<br>
+实测（见翻车实验 4）p2/p3 的 <code>req=0</code>，坏代理一次都没被探测到。<br>
+所以必须先给每个新出口一个<strong>探针请求</strong>，再进入评分竞争。</p>
+<h3 id="4">4. 冷却与熔断：为什么"立刻换一个"是错的</h3>
+<pre class="plain"><code>请求 → 429
+  ├─ 错误做法：立刻换出口，同一页继续打
+  │    → 3 个出口在 1 秒内全部 429（实测 30 次请求打出 18 个 429）
+  └─ 正确做法：该出口冷却 max(Retry-After, base)
+       → 冷却期内不分配；到期放一个探针（半开）；成功才恢复权重</code></pre>
+<p><strong>为什么冷却要指数增长</strong>：一个出口如果每次冷却结束都立刻失败，说明它不是"临时抖动"，<br>
+而是"已经进了目标站的黑名单"。冷却 1s → 2s → 4s → 8s，能把探测成本压到最低。</p>
+<p><strong>为什么必须尊重 Retry-After</strong>：服务端已经告诉你"2 秒后再来"，<br>
+你 0.2 秒后换 IP 再来，在风控看来就是"同一批人在换马甲"。这是行为特征，不是 IP 特征。</p>
+<h3 id="5">5. 每出口限速：轮换 ≠ 提速</h3>
+<p>这是本课最容易被忽略的一条。</p>
+<pre class="plain"><code>全局 3 req/s，3 个出口：
+  错误理解：总量 3/s，每个出口 1/s        ← 只有你主动按出口分配时才成立
+  实际写法：每个 worker 都 sleep(1/3)
+            → 每个出口 3/s，总 9/s
+            → 目标站按出口看到 3/s，立刻 429</code></pre>
+<p>正确模型：</p>
+<pre class="plain"><code>allowed_total = Σ (每个出口的允许速率)</code></pre>
+<p><strong>轮换只是把风险摊开，不会让目标站放宽限制。</strong><br>
+加出口能提高总吞吐，前提是每个出口都守自己的规矩。</p>
+<h3 id="6-ip">6. 粘滞会话：为什么同一域不能随便换 IP</h3>
+<p>目标站识别爬虫，不只看 IP，还看<strong>一致性</strong>：</p>
+<ul>
+<li>登录态 / cookie 绑定 IP → 换 IP 掉登录；</li>
+<li>购物车、表单分步提交 → 换 IP 后会话对不上；</li>
+<li>风控打分 → 同一账号 10 秒内跨 3 个省登录，直接挑战验证码。</li>
+</ul>
+<p>所以调度器要支持两种模式：</p>
+<table>
+<thead>
+<tr>
+<th>模式</th>
+<th>适用</th>
+<th>实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>轮换（rotating）</td>
+<td>无状态列表页、图片、详情页</td>
+<td>每次取当前最高分</td>
+</tr>
+<tr>
+<td>粘滞（sticky）</td>
+<td>登录、下单、分页表单</td>
+<td><code>domain → exit</code> 固定映射，出口冷却时才迁移</td>
+</tr>
+</tbody>
+</table>
+<p>粘滞的失效条件只有一个：<strong>该出口进入冷却</strong>。这时必须迁移，并把"迁移次数"记进指标——<br>
+迁移频繁说明出口池太小。</p>
+<h3 id="7-connecthttps">7. CONNECT：HTTPS 代理的分水岭</h3>
+<pre class="plain"><code>HTTP  (明文)                           HTTPS (TLS)
+──────────────                         ──────────────
+客户端 → 代理: GET http://a/b          客户端 → 代理: CONNECT a:443
+代理   → 目标: GET /b                  代理   → 目标: TCP 连接
+代理   读得到明文                       代理   只转发密文，看不到内容</code></pre>
+<p><strong>所以</strong>：一个只实现了绝对 URI 转发的代理，HTTP 健康检查 200，<br>
+HTTPS 业务却会报：</p>
+<pre class="plain"><code>URLError: &lt;urlopen error Tunnel connection failed: 501 Not Implemented&gt;</code></pre>
+<p>你会以为是目标站封了你，其实是代理不会打隧道。<br>
+<strong>健康检查必须覆盖业务真正使用的协议。</strong></p>
+<h3 id="8">8. 代理本身的安全边界</h3>
+<ul>
+<li>代理能看到你所有<strong>明文 HTTP</strong> 的 URL、Header、Cookie。HTTPS 只能看到目标域名。</li>
+<li>免费代理最常见的商业模式就是记录并转卖流量，<strong>不要把任何凭证发给代理</strong>。</li>
+<li><code>Proxy-Authorization</code> 只发给代理，绝不能透传给目标站（本课实验台显式做了过滤）。</li>
+<li>日志里记录出口时只记 <code>name</code> 和出口 IP 哈希，不要记完整代理 URL（含账号密码）。</li>
+</ul>
+<hr>
+<h2 id="_4">定义与使用方法</h2>
+<h3 id="proxypool-api">ProxyPool 核心 API（本课实现）</h3>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>参数</th>
+<th>返回</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>check_all()</code></td>
+<td>—</td>
+<td><code>dict[name, bool]</code></td>
+<td>并发/串行探活，判据是 200 + 标记</td>
+</tr>
+<tr>
+<td><code>acquire(domain, sticky)</code></td>
+<td><code>domain: str</code>, <code>sticky: bool</code></td>
+<td><code>ProxyState \| None</code></td>
+<td>取一个可用出口，内部处理限速与冷却</td>
+</tr>
+<tr>
+<td><code>report(proxy, ok, latency, status, retry_after)</code></td>
+<td>见左</td>
+<td>None</td>
+<td>回填结果；429/403 触发冷却</td>
+</tr>
+<tr>
+<td><code>metrics()</code></td>
+<td>—</td>
+<td><code>dict</code></td>
+<td>总数、成功率、p50/p95、每出口状态</td>
+</tr>
+<tr>
+<td><code>proxy.score()</code></td>
+<td>—</td>
+<td><code>float</code></td>
+<td><code>success_rate² / (1 + ewma_latency)</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="_5">常见状态码的处置</h3>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>含义</th>
+<th>正确处置</th>
+<th>错误处置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>200</td>
+<td>成功</td>
+<td>记成功、更新延迟</td>
+<td>—</td>
+</tr>
+<tr>
+<td>301/302</td>
+<td>重定向</td>
+<td>跟随，但限制次数</td>
+<td>当成失败重试</td>
+</tr>
+<tr>
+<td>403</td>
+<td>目标站拒绝</td>
+<td>出口冷却，换出口</td>
+<td>立刻用同一出口重试</td>
+</tr>
+<tr>
+<td>407</td>
+<td>代理鉴权失败</td>
+<td>该代理配置错误，<strong>永久</strong>摘除</td>
+<td>当成目标站封禁</td>
+</tr>
+<tr>
+<td>429</td>
+<td>限流</td>
+<td>按 <code>Retry-After</code> 冷却</td>
+<td>立刻换出口继续打</td>
+</tr>
+<tr>
+<td>502/504</td>
+<td>代理上游坏</td>
+<td>连续 1–2 次即冷却</td>
+<td>无限重试</td>
+</tr>
+<tr>
+<td>超时</td>
+<td>出口慢/黑洞</td>
+<td>计失败，超过阈值冷却</td>
+<td>无限等</td>
+</tr>
+</tbody>
+</table>
+<h3 id="urllib">urllib 的代理写法（标准库，不引第三方）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">urllib.request</span>
+
+<span class="c1"># 显式代理：必须自己 build_opener，别依赖全局默认 opener</span>
+<span class="n">opener</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">build_opener</span><span class="p">(</span>
+    <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">ProxyHandler</span><span class="p">({</span><span class="s2">"http"</span><span class="p">:</span> <span class="s2">"http://127.0.0.1:8080"</span><span class="p">,</span>
+                                 <span class="s2">"https"</span><span class="p">:</span> <span class="s2">"http://127.0.0.1:8080"</span><span class="p">})</span>
+<span class="p">)</span>
+<span class="c1"># 显式直连（清空环境变量影响）</span>
+<span class="n">direct</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">build_opener</span><span class="p">(</span><span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">ProxyHandler</span><span class="p">({}))</span>
+</code></pre></div>
+<hr>
+<h2 id="_6">图解</h2>
+<h3 id="_7">请求在池子里的完整生命周期</h3>
+<pre class="plain"><code>                       ┌─────────────────────┐
+   task.get(url) ─────►│  选择出口            │
+                       │  1. 过滤冷却中的      │
+                       │  2. 冷启动优先探针    │
+                       │  3. 粘滞域优先复用    │
+                       │  4. 否则取最高分      │
+                       └──────────┬──────────┘
+                                  │ proxy
+                                  ▼
+                       ┌─────────────────────┐
+                       │  每出口令牌桶 acquire │  ← 等在这里，不占用出口
+                       └──────────┬──────────┘
+                                  ▼
+                       ┌─────────────────────┐
+                       │  fetch(url, proxy)  │
+                       └──────────┬──────────┘
+                    ┌─────────────┼─────────────┐
+                    ▼             ▼             ▼
+                  200           429/403       超时/5xx
+                    │             │             │
+              成功+延迟      冷却+退避      计失败，N 次熔断
+                    └─────────────┴─────────────┘
+                                  ▼
+                          metrics / 告警</code></pre>
+<h3 id="_8">冷却状态机</h3>
+<div class="mermaid-wrap"><div class="mermaid">stateDiagram-v2
+    [*] --&gt; Healthy
+    Healthy --&gt; Cooling: 429 / 403 / 连续失败
+    Cooling --&gt; HalfOpen: cooldown 到期
+    HalfOpen --&gt; Healthy: 探针成功
+    HalfOpen --&gt; Cooling: 探针失败（冷却翻倍）
+    Cooling --&gt; Cooling: 期间请求被拒绝分配</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>stateDiagram-v2
+    [*] --&gt; Healthy
+    Healthy --&gt; Cooling: 429 / 403 / 连续失败
+    Cooling --&gt; HalfOpen: cooldown 到期
+    HalfOpen --&gt; Healthy: 探针成功
+    HalfOpen --&gt; Cooling: 探针失败（冷却翻倍）
+    Cooling --&gt; Cooling: 期间请求被拒绝分配</code></pre></div>
+<h3 id="_9">两种调度模式对比</h3>
+<pre class="plain"><code>轮换（rotating）                    粘滞（sticky）
+req1 → p1                           shop:req1 → p1
+req2 → p2                           shop:req2 → p1
+req3 → p3                           shop:req3 → p1
+req4 → p1                           news:req1 → p2
+  cookie 每次都变                      同域 cookie 稳定
+  适合：公开列表 / 图片                 适合：登录 / 下单 / 表单</code></pre>
+<hr>
+<h2 id="_10">实战代码案例</h2>
+<p>四个文件，全部只用标准库，全部可离线运行：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>作用</th>
+<th>自证</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>code/00-proxy-lab.py</code></td>
+<td>真实靶站 + 真实正向代理（支持 407 / CONNECT / 限流 / 延迟 / 502）</td>
+<td><code>8/8</code></td>
+</tr>
+<tr>
+<td><code>code/01-basic-proxy-rotation.py</code></td>
+<td>健康检查 + 轮询 + 摘除死出口</td>
+<td><code>7/7</code></td>
+</tr>
+<tr>
+<td><code>code/02-pitfall-connect-and-env.py</code></td>
+<td>CONNECT、环境变量、轮换绕过限速三个翻车现场</td>
+<td><code>6/6</code></td>
+</tr>
+<tr>
+<td><code>code/03-production-proxy-pool.py</code></td>
+<td>评分 + 熔断 + 冷却 + 粘滞 + 指标</td>
+<td><code>9/9</code></td>
+</tr>
+</tbody>
+</table>
+<p>代码里的实验台不是 mock：它监听真实端口、收发真实 HTTP 报文、真的会 <code>Connection refused</code>。<br>
+不这样做，407、501、超时这些坑一个都复现不出来。</p>
+<hr>
+<h2 id="_11">实战实验手册</h2>
+<blockquote>
+<p>所有实验都在 127.0.0.1 上，不访问外网（只有实验 4 的 1c 需要外网，已标注）。<br>
+运行环境：Linux 7.0.0-34-generic / Python 3.12.3 / 2026-10-22 06:00–06:30 CST。</p>
+</blockquote>
+<h3 id="0">实验 0：实验台自证</h3>
+<p><strong>目的</strong>：确认靶站、正向代理、407、CONNECT、限流、kill 端口都按预期工作。</p>
+<p><strong>环境</strong>：Python 3.12.3，无第三方依赖。</p>
+<p><strong>准备 + 执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-192-代理池-ip-轮换/code
+python3<span class="w"> </span><span class="m">00</span>-proxy-lab.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>预期结果</strong>：8 项全部 PASS。</p>
+<p><strong>实际结果</strong>（本次真机输出）：</p>
+<pre class="plain"><code>[PASS] 直连靶站 200  -&gt;  {&#x27;ok&#x27;: True, &#x27;exit&#x27;: &#x27;direct&#x27;, &#x27;origin&#x27;: &#x27;lab&#x27;}
+[PASS] 经 p1 出口标识正确  -&gt;  {&#x27;ok&#x27;: True, &#x27;exit&#x27;: &#x27;p1&#x27;, &#x27;origin&#x27;: &#x27;lab&#x27;}
+[PASS] p1 确实收到 1 个请求  -&gt;  {&#x27;requests&#x27;: 1, &#x27;bytes_out&#x27;: 43, &#x27;407&#x27;: 0, &#x27;502&#x27;: 0}
+[PASS] 无 CONNECT 时代理拒绝 HTTPS  -&gt;  URLError: &lt;urlopen error Tunnel connection failed: 501 Not Implemented&gt;
+[PASS] 不带凭证得到 407  -&gt;  407 {&#x27;raw&#x27;: &#x27;proxy auth required&#x27;}
+[PASS] 带对凭证得到 200  -&gt;  200 {&#x27;ok&#x27;: True, &#x27;exit&#x27;: &#x27;p3&#x27;, &#x27;origin&#x27;: &#x27;lab&#x27;}
+[PASS] 同一出口超过窗口得到 429  -&gt;  [200, 200, 200, 429, 429]
+[PASS] kill 后连接被拒  -&gt;  URLError: &lt;urlopen error [Errno 111] Connection refused&gt;
+
+8/8 项通过</code></pre>
+<p><strong>结论</strong>：实验台的"出口标识注入"可证明请求真的经过了指定代理，而不是直连。<br>
+<code>kill 后连接被拒</code> 说明端口是真的关了，不是假死。</p>
+<p><strong>清理</strong>：脚本退出时 <code>Lab.stop()</code> 关闭所有监听端口；可再一次运行确认端口不冲突。</p>
+<hr>
+<h3 id="1_1">实验 1：健康检查 + 轮询</h3>
+<p><strong>目的</strong>：验证"死代理会被摘除，活着的均分流量"，以及全死时的安全返回。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">01</span>-basic-proxy-rotation.py
+</code></pre></div>
+<p><strong>预期结果</strong>：9 个请求 3/3/3；杀掉 p2 后 6 个请求 3/0/3；全死后返回 None。</p>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>── 代理池状态（请求结束后）──
+出口          健康   延迟ms   成功/失败   最近错误
+p1           ❌         1.7    8/1       URLError: &lt;urlopen error [Errno 111] Con
+p2           ❌         3.8    4/2       URLError: &lt;urlopen error [Errno 111] Con
+p3           ❌         3.9    8/1       URLError: &lt;urlopen error [Errno 111] Con
+
+轮换分布: {&#x27;p1&#x27;: 3, &#x27;p2&#x27;: 3, &#x27;p3&#x27;: 3}  |  p2 死后: {&#x27;p1&#x27;: 3, &#x27;p2&#x27;: 0, &#x27;p3&#x27;: 3}
+靶站实际收到请求: 20 次
+
+── 断言 ──
+[PASS] 三个代理都健康
+[PASS] 健康检查真的发了请求
+[PASS] 轮询分布均匀 3/3/3
+[PASS] 死掉的 p2 被摘除
+[PASS] 剩余两个均分 3/3
+[PASS] 全死时 acquire 返回 None
+[PASS] 全死时 get 也安全返回 None
+7/7 项通过</code></pre>
+<p><strong>结论</strong>：<code>靶站实际收到请求 = 20</code> 与池子的 20 次分配完全一致，<br>
+说明没有"偷偷直连"的旁路——这是健康检查可信的前提。</p>
+<p><strong>清理</strong>：进程退出即释放端口。</p>
+<hr>
+<h3 id="2-http-https">实验 2：健康检查用 HTTP，业务走 HTTPS</h3>
+<p><strong>目的</strong>：复现"HTTP 绿灯、HTTPS 全灭"的假健康。</p>
+<p><strong>执行</strong>（需要外网；无外网用 <code>--offline</code> 跳过 1b/1c）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-pitfall-connect-and-env.py
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>[1a] HTTP 健康检查      -&gt; 200 {&#x27;ok&#x27;: True, &#x27;exit&#x27;: &#x27;p1&#x27;, &#x27;origin&#x27;: &#x27;lab&#x27;}   ← 绿灯，骗过你
+[1b] HTTPS 经同一代理    -&gt; URLError: &lt;urlopen error Tunnel connection failed: 501 Not Implemented&gt;
+[1c] 打开 CONNECT 后重试 -&gt; HTTP 200 首字节=b&#x27;&lt;!doctype html&gt;&#x27;</code></pre>
+<p><strong>结论</strong>：同一台代理，HTTP 200、HTTPS 501。健康检查选错协议 = 整池误判。<br>
+1c 证明问题在代理能力，不在网络，也不在目标站。</p>
+<p><strong>清理</strong>：无残留；外网请求只发往 example.com，不携带任何本地信息。</p>
+<hr>
+<h3 id="3_1">实验 3：环境变量劫持</h3>
+<p><strong>目的</strong>：证明"显式传 proxy"不等于"显式 opener"。</p>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>[2a] 默认 opener          -&gt; URLError: &lt;urlopen error [Errno 111] Connection refused&gt;
+[2b] ProxyHandler({})   -&gt; 200 exit=direct</code></pre>
+<p><strong>结论</strong>：<code>build_opener()</code> 不带参数时，<code>ProxyHandler()</code> 会读 <code>http_proxy</code>。<br>
+实验把环境变量指向一个"刚申请就关闭"的端口，于是默认 opener 必然失败，<br>
+而显式 <code>ProxyHandler({})</code> 直连成功。生产容器里那个看不见的 <code>http_proxy</code><br>
+就是"整池代理突然全死"的头号嫌疑。</p>
+<p><strong>清理</strong>：实验在 <code>finally</code> 中恢复原始环境变量（包括原本不存在的键）。</p>
+<hr>
+<h3 id="4_1">实验 4：轮换绕过自己的限速</h3>
+<p><strong>目的</strong>：量化"裸轮换"与"每出口令牌桶 + 冷却"的差距。</p>
+<p><strong>环境</strong>：靶站策略 = 每个出口 3 秒窗口内最多 6 次（实验 3a 用 4 次）。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">02</span>-pitfall-connect-and-env.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>实际结果</strong>：</p>
+<pre class="plain"><code>[3a] 裸轮换 30 次        -&gt; 200=12 429=18
+     前 15 个状态码: [200 ×12, 429, 429, 429]
+[3b] 每出口限速+冷却     -&gt; 200=30 429=0 用时=10.61s (2.83 req/s)</code></pre>
+<p><strong>结论</strong>：3 个出口 × 0.9 req/s 理论总速率 2.7/s，实测 2.83/s（开销约 5%）。<br>
+裸轮换虽然"每个出口看起来只打了 10 次"，但全挤在 1 秒内，直接触发窗口限流。</p>
+<p><strong>清理</strong>：进程退出释放端口；无临时文件。</p>
+<hr>
+<h3 id="5429">实验 5：评分、熔断、粘滞、429 冷却</h3>
+<p><strong>目的</strong>：验证生产级调度器的四个核心行为。</p>
+<p><strong>执行</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python3<span class="w"> </span><span class="m">03</span>-production-proxy-pool.py<span class="w"> </span>--self-test
+</code></pre></div>
+<p><strong>实际结果</strong>（真机完整输出）：</p>
+<pre class="plain"><code>实验 A：盲轮询 vs 评分选择（p2 慢 120ms，p3 永远 502）
+盲轮询 : 成功 24/36  失败 12  分布 {&#x27;p1&#x27;: 12, &#x27;p2&#x27;: 12, &#x27;p3&#x27;: 12}
+评分池 : 成功 35/36  失败 1  分布 {&#x27;p1&#x27;: 34, &#x27;p2&#x27;: 1, &#x27;p3&#x27;: 1}
+评分池指标: p50=2.2ms p95=15.7ms 冷却次数=1
+   p1: req=34 ok=34 fail=0 ewma=2.4ms score=0.943 cooldown=0
+   p2: req=1 ok=1 fail=0 ewma=122.3ms score=0.396 cooldown=0
+   p3: req=1 ok=0 fail=1 ewma=0.0ms score=0.074 cooldown=1
+
+实验 B：粘滞会话（同一域必须固定出口）
+粘滞   : {&#x27;shop&#x27;: [&#x27;p1&#x27;], &#x27;news&#x27;: [&#x27;p2&#x27;]}
+盲轮询 : {&#x27;shop&#x27;: [&#x27;p1&#x27;, &#x27;p2&#x27;, &#x27;p3&#x27;], &#x27;news&#x27;: [&#x27;p1&#x27;, &#x27;p2&#x27;, &#x27;p3&#x27;]}
+
+实验 C：429 冷却与恢复
+p1 被打爆后: 429=2 冷却次数=2 原因=429
+冷却期间 6 个请求: [(&#x27;p2&#x27;, 200), (&#x27;p3&#x27;, 200), (&#x27;p2&#x27;, 200), (&#x27;p2&#x27;, 200), (&#x27;p2&#x27;, 200), (&#x27;p2&#x27;, 200)]
+冷却期间落到 p1 的次数: 0
+冷却结束后恢复: True，下一个请求出口=p2
+
+9/9 项通过</code></pre>
+<p><strong>结论</strong>：</p>
+<ul>
+<li>盲轮询固定损失 1/3 流量（12/36 失败）；评分池只损失 1 次探针。</li>
+<li>p3 的 1 次 502 就让分数掉到 0.074 并熔断，后续 0 流量——<strong>坏出口的成本是一次探针</strong>。</li>
+<li>p2 虽然只被用 1 次，但 122ms 的 EWMA 让它评分只有 p1 的 42%，自然退居二线。</li>
+<li>粘滞模式下两个域各自固定一个出口；盲轮询同域会漂 3 个出口。</li>
+<li>429 冷却期间 p1 一个请求都没接到；冷却到期后恢复，但分数已低于 p2，所以先回 p2。</li>
+</ul>
+<p><strong>清理</strong>：无外部服务；进程退出后端口全部释放。</p>
+<hr>
+<h2 id="_12">翻车实验（真实踩坑记录）</h2>
+<h3 id="1importlib-dataclass">翻车 1：<code>importlib</code> 加载带 <code>@dataclass</code> 的脚本直接崩</h3>
+<p><strong>现象</strong>：</p>
+<pre class="plain"><code>File &quot;.../00-proxy-lab.py&quot;, line 136, in &lt;module&gt;
+    @dataclass
+AttributeError: &#x27;NoneType&#x27; object has no attribute &#x27;__dict__&#x27;</code></pre>
+<p><strong>假设</strong>：dataclass 与 Python 3.12 不兼容。</p>
+<p><strong>验证</strong>：单独运行 <code>00-proxy-lab.py</code> 正常；只在被 <code>spec.loader.exec_module</code> 加载时崩。<br>
+查 <code>dataclasses._is_type</code> 源码：它执行 <code>sys.modules.get(cls.__module__).__dict__</code>。</p>
+<p><strong>真实根因</strong>：用 <code>module_from_spec</code> 创建的模块<strong>不会自动注册进 <code>sys.modules</code></strong>，<br>
+而 <code>exec_module</code> 期间 dataclass 要按模块名反查自己。<code>.get()</code> 返回 <code>None</code> → 崩。</p>
+<p><strong>修复</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">spec</span> <span class="o">=</span> <span class="n">importlib</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="n">spec_from_file_location</span><span class="p">(</span><span class="s2">"proxy_lab"</span><span class="p">,</span> <span class="n">path</span><span class="p">)</span>
+<span class="n">module</span> <span class="o">=</span> <span class="n">importlib</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="n">module_from_spec</span><span class="p">(</span><span class="n">spec</span><span class="p">)</span>
+<span class="n">sys</span><span class="o">.</span><span class="n">modules</span><span class="p">[</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">module</span>      <span class="c1"># ← 必须先注册</span>
+<span class="n">spec</span><span class="o">.</span><span class="n">loader</span><span class="o">.</span><span class="n">exec_module</span><span class="p">(</span><span class="n">module</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>复测</strong>：01/02/03 三个脚本都能加载实验台，<code>--self-test</code> 全绿。</p>
+<hr>
+<h3 id="2-362s-27s">翻车 2：令牌桶"等完了却不扣令牌"，实测速率 3.62/s（配置 2.7/s）</h3>
+<p><strong>现象</strong>：配置每出口 0.9 req/s、3 个出口，30 个请求却只用 8.28 秒（3.62 req/s），<br>
+并打出 7 个 429。</p>
+<p><strong>假设</strong>：靶站的限流窗口算错了。</p>
+<p><strong>验证</strong>：直接算日志——429 出现在第 13 个请求附近，说明实际发送速率确实超了。<br>
+检查 <code>take()</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span><span class="w"> </span><span class="nf">take</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">-=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="mf">0.0</span>
+    <span class="k">return</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">rate</span>   <span class="c1"># ← 返回等待时间，但没扣令牌</span>
+</code></pre></div>
+<p>调用方 <code>time.sleep(wait)</code> 后再发请求，令牌数原地不动。<br>
+于是每次"等完"都白嫖一个请求，速率被抬高约 34%。</p>
+<p><strong>修复</strong>：等待与扣减必须在同一个方法里完成：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span><span class="w"> </span><span class="nf">acquire</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">_refill</span><span class="p">()</span>
+    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">rate</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_refill</span><span class="p">()</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span> <span class="o">-=</span> <span class="mi">1</span>
+</code></pre></div>
+<p><strong>复测</strong>：30 个请求 10.61s（2.83 req/s），429 = 0。</p>
+<p><strong>教训</strong>：限速器的正确性只能靠"实测总速率"，不能靠"代码看起来在 sleep"。</p>
+<hr>
+<h3 id="3-argmax">翻车 3：纯 <code>argmax</code> 评分把其他出口饿死</h3>
+<p><strong>现象</strong>：第一版评分池 36 个请求全部打到 p1，<br>
+<code>p2: req=0, p3: req=0</code>，坏代理 p3 一次都没被探测到，<code>冷却次数=0</code>。</p>
+<p><strong>假设</strong>：p3 的失败没有被 <code>report</code> 记录。</p>
+<p><strong>验证</strong>：打印每出口 <code>requests</code> —— p3 就是 0 次。不是没记录，是根本没被选中。</p>
+<p><strong>真实根因</strong>：p1 第一次成功后 EWMA 延迟极低，分数 0.44；<br>
+未使用的 p2/p3 用 0.5s 的默认延迟，分数只有 0.33。<code>max()</code> 每次都选 p1，<br>
+形成"强者恒强"的马太效应，坏出口永远没有样本。</p>
+<p><strong>修复</strong>：冷启动强制探针——<code>requests == 0</code> 的出口优先各用一次，再进入评分竞争。</p>
+<p><strong>复测</strong>：分布变成 p1=34、p2=1、p3=1；p3 的 502 触发熔断，后续 0 流量。</p>
+<p><strong>教训</strong>：没有探索的评分系统不是"聪明"，是"偏见"。</p>
+<hr>
+<h3 id="4_2">翻车 4：代理配置在闭包里只算一次</h3>
+<p><strong>现象</strong>：实验台启动后修改 <code>cfg.username</code>，407 鉴权不生效，永远 200。</p>
+<p><strong>根因</strong>：<code>make_proxy_handler</code> 在创建 handler 类时把 <code>expected_auth</code> 算成闭包常量，<br>
+之后修改配置读不到。</p>
+<p><strong>修复</strong>：把凭证计算放进 <code>_check_auth()</code>，每次请求重算。<br>
+代价可忽略（一次 base64），换来运行期可轮换凭证。</p>
+<hr>
+<h2 id="_13">思考题</h2>
+<ol>
+<li><strong>健康检查该多快一次？</strong> 如果 100 个出口、每 10 秒检查一次，检查流量本身会不会触发目标站限流？<br>
+   你会怎么设计"分层探活"（快探 TCP、慢探业务）？</li>
+<li><strong>出口 IP 相同但端口不同，算一个出口还是两个？</strong> 从目标站风控视角看，答案是什么？</li>
+<li><strong>429 冷却期间，队列里的任务该怎么办？</strong> 阻塞等待、换出口、还是降级返回缓存？<br>
+   三种选择分别适合什么业务？</li>
+<li><strong>粘滞会话的迁移次数上升</strong>，说明池子的什么指标在恶化？你会先加出口还是先降速？</li>
+<li><strong>免费代理把你当肉鸡</strong>：如果代理运营方记录了你的 Cookie，你的"反反爬"还有意义吗？<br>
+   从威胁模型角度说明为什么"自建出口"在某些场景是唯一解。</li>
+</ol>
+<hr>
+<h2 id="_14">收尾卫生</h2>
+<p>本次实验全部在 127.0.0.1 的临时端口上完成，脚本退出即关闭监听。<br>
+已确认：</p>
+<ul>
+<li>无残留代理/靶站进程（<code>pgrep -af 'proxy-lab|production-proxy|basic-proxy'</code> 为空）；</li>
+<li>无临时文件（所有输出写入 <code>/tmp/d192_*.log</code>，仅用于本次编写，未进仓库）；</li>
+<li>未修改系统代理设置；实验 3 修改的环境变量在 <code>finally</code> 中已恢复；</li>
+<li>未访问除 <code>example.com</code> 以外的任何外部地址。</li>
+</ul>
+<p>复现命令：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>days/day-192-代理池-ip-轮换/code
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">00</span>-proxy-lab.py<span class="w"> </span><span class="m">01</span>-basic-proxy-rotation.py<span class="w"> </span><span class="m">02</span>-pitfall-connect-and-env.py<span class="w"> </span><span class="m">03</span>-production-proxy-pool.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"== </span><span class="nv">$f</span><span class="s2"> =="</span><span class="p">;</span><span class="w"> </span>python3<span class="w"> </span><span class="s2">"</span><span class="nv">$f</span><span class="s2">"</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="k">done</span>
+</code></pre></div>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-191/index.html">← Day 191 爬虫引擎架构与骨架</a><a class="nav-next" href="../day-193/index.html">Day 193 浏览器渲染与验证码识别 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

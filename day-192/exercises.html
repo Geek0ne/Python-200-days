@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 192 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 192 正文</a>
+  <h1>Day 192 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-192">Day 192 练习题清单</h1>
+<h2 id="_1">今日完成清单</h2>
+<ul>
+<li>[ ] 能说清"代理列表"和"代理池"的区别（至少四个职责）</li>
+<li>[ ] 能解释为什么健康检查必须是"200 + 预期标记"，而不是 TCP 能连</li>
+<li>[ ] 能解释 407 与 401 的区别，以及为什么 Proxy-Authorization 不能透传</li>
+<li>[ ] 能解释 CONNECT 隧道与"HTTP 通、HTTPS 全灭"的关系</li>
+<li>[ ] 能写出 score = success_rate² / (1 + EWMA 延迟) 并说明平方的意义</li>
+<li>[ ] 能画出闭→开→半开→闭的熔断状态机</li>
+<li>[ ] 能解释为什么"轮换不等于提速"，以及每出口令牌桶的必要性</li>
+<li>[ ] 能说清粘滞会话的适用场景与失效条件</li>
+<li>[ ] 跑通四个脚本的 <code>--self-test</code>，全部 PASS</li>
+</ul>
+<hr>
+<h2 id="_2">本机复现命令（逐条执行）</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="nb">cd</span><span class="w"> </span>~/code/Python-200-days/days/day-192-代理池-ip-轮换/code
+
+<span class="c1"># 1. 实验台自证（8 项）</span>
+python3<span class="w"> </span><span class="m">00</span>-proxy-lab.py<span class="w"> </span>--self-test
+
+<span class="c1"># 2. 基础代理池（7 项）</span>
+python3<span class="w"> </span><span class="m">01</span>-basic-proxy-rotation.py<span class="w"> </span>--self-test
+
+<span class="c1"># 3. 三个翻车现场（6 项；无外网加 --offline）</span>
+python3<span class="w"> </span><span class="m">02</span>-pitfall-connect-and-env.py<span class="w"> </span>--self-test
+
+<span class="c1"># 4. 生产级池（9 项）</span>
+python3<span class="w"> </span><span class="m">03</span>-production-proxy-pool.py<span class="w"> </span>--self-test
+
+<span class="c1"># 5. 一条命令串跑，任一失败即停</span>
+<span class="k">for</span><span class="w"> </span>f<span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="m">00</span>-proxy-lab.py<span class="w"> </span><span class="m">01</span>-basic-proxy-rotation.py<span class="w"> </span><span class="se">\</span>
+<span class="w">         </span><span class="m">02</span>-pitfall-connect-and-env.py<span class="w"> </span><span class="m">03</span>-production-proxy-pool.py<span class="p">;</span><span class="w"> </span><span class="k">do</span>
+<span class="w">  </span><span class="nb">echo</span><span class="w"> </span><span class="s2">"== </span><span class="nv">$f</span><span class="s2"> =="</span><span class="p">;</span><span class="w"> </span>python3<span class="w"> </span><span class="s2">"</span><span class="nv">$f</span><span class="s2">"</span><span class="w"> </span>--self-test<span class="w"> </span><span class="o">||</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<span class="k">done</span>
+</code></pre></div>
+<p><strong>期望</strong>：依次输出 <code>8/8 项通过</code>、<code>7/7 项通过</code>、<code>6/6 项通过</code>、<code>9/9 项通过</code>。
+<strong>若失败</strong>：先看端口是否被占用（<code>ss -ltn | grep 127.0.0.1</code>），
+脚本用的是随机空闲端口，正常不会冲突；再确认 Python ≥ 3.10。</p>
+<hr>
+<h2 id="1">练习 1（基础）：给健康检查加"延迟上限"</h2>
+<p>当前 <code>check_one()</code> 只看状态码。请增加：延迟超过 <code>max_latency_ms</code> 的出口仍算健康，
+但 <code>healthy</code> 与 <code>usable</code> 分开——<code>healthy</code> 表示能通，<code>usable</code> 表示还能接业务。</p>
+<p><strong>验收</strong>：构造一个 <code>delay=0.5</code> 的代理，设置 <code>max_latency_ms=200</code>，
+断言 <code>healthy is True and usable is False</code>。</p>
+<p><strong>提示</strong>：不要直接把 <code>healthy=False</code>，否则你分不清"坏了"和"慢"。</p>
+<hr>
+<h2 id="2">练习 2（基础）：实现"最少使用"策略</h2>
+<p>给 <code>ProxyPool</code> 增加 <code>strategy="least_used"</code>：每次选 <code>requests</code> 最小的可用出口，
+同数时选最久没用的。</p>
+<p><strong>验收</strong>：9 个请求后三个出口的请求数为 3/3/3；连续 2 个请求不会落在同一出口。</p>
+<p><strong>思考</strong>：它和轮询有什么区别？在出口性能差异很大时，哪个更合理？</p>
+<hr>
+<h2 id="3">练习 3（进阶）：把粘滞迁移记成指标</h2>
+<p>给 <code>ProductionProxyPool</code> 增加：</p>
+<ul>
+<li><code>migrations: list[dict]</code>，每次粘滞域因冷却换出口时追加
+  <code>{"domain": ..., "from": ..., "to": ..., "reason": ...}</code>；</li>
+<li><code>metrics()["migration_rate"] = 迁移次数 / 粘滞会话数</code>。</li>
+</ul>
+<p><strong>验收</strong>：让 shop 的固定出口在两次请求之间进入冷却，
+断言发生 1 次迁移，且下一次请求落在新出口并保持粘滞。</p>
+<hr>
+<h2 id="4">练习 4（进阶）：实现半开探针</h2>
+<p>当前冷却到期后会直接参与正常评分竞争。请改成严格半开：</p>
+<ol>
+<li>冷却到期 → 状态 <code>half_open</code>，只允许 1 个请求；</li>
+<li>成功 → <code>closed</code>，权重恢复；</li>
+<li>失败 → <code>open</code>，冷却时间 ×2（上限 60s）。</li>
+</ol>
+<p><strong>验收</strong>：坏代理连续 3 轮"冷却→探针失败"后，冷却时长依次为 3s、6s、12s；
+期间其他出口承担全部流量。</p>
+<hr>
+<h2 id="5">练习 5（挑战）：用真实代理做一次端到端</h2>
+<p>在你能控制的机器上起一个真实代理（squid / tinyproxy / 3proxy 任一），
+用 <code>HTTP_PROXY</code> 之外的<strong>显式</strong>配置跑 20 个请求，记录：</p>
+<ul>
+<li>每出口请求数、成功率、p50/p95；</li>
+<li>杀掉代理进程后，池子多久发现（健康检查间隔 + 超时）；</li>
+<li>把代理限速到 1 req/s 后，令牌桶是否真的把速率压住（用靶站计数验证）。</li>
+</ul>
+<p><strong>产出</strong>：一张 <code>exports/metrics.json</code> + 一段 200 字以内的结论。
+<strong>要求</strong>：必须贴真实数字与命令，不接受"应该会"。</p></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>

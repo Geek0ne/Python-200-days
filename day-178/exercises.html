@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 178 · 练习与清单</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<header class="lhead">
+  <a class="back" href="index.html">← 返回 Day 178 正文</a>
+  <h1>Day 178 · 练习与清单</h1>
+</header>
+<div class="lwrap"><main class="lbody"><h1 id="day-178">Day 178 练习题清单</h1>
+<blockquote>
+<p>目标：亲手跑通「声明期望 → 调和收敛 → 服务发现 → 滚动更新」这条主链路，
+并亲眼看见<strong>删 Pod 自愈</strong>。
+<strong>前置</strong>：<code>kubectl</code> 可用 + 一个能折腾的集群（minikube / kind / k3d 任选，装一个即可）。
+没有集群也能完成练习 1 的 YAML 部分（<code>--dry-run=client</code> 不碰集群）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、动手题（必做）</h2>
+<h3 id="1-kubectl-python-10">练习 1 — kubectl 基础与 Python 封装（10 分钟）</h3>
+<p>先用裸 kubectl 摸清对象，再跑 <code>code/01-basic-usage.py</code> 感受封装：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">kubectl<span class="w"> </span>get<span class="w"> </span>nodes<span class="w">                          </span><span class="c1"># 集群里有哪些节点</span>
+kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-A<span class="w">                        </span><span class="c1"># 所有命名空间的 Pod</span>
+python3<span class="w"> </span>code/01-basic-usage.py<span class="w">             </span><span class="c1"># 走一遍封装好的部署流程</span>
+</code></pre></div>
+<ul>
+<li>[ ] 能说出 <code>get</code> 和 <code>describe</code> 的输出差别（一个看列表，一个看事件与详情）</li>
+<li>[ ] 找到 <code>code/01-basic-usage.py</code> 里 <code>run_kubectl_command()</code> 的异常处理位置，说说它为什么必须存在</li>
+<li>[ ] 预习：<code>kubectl apply</code> 成功后马上 <code>kubectl get pods</code>，为什么可能一个 Pod 都没有？</li>
+</ul>
+<details>
+<summary>参考答案</summary>
+<ol>
+<li><code>get</code> 是资源列表/状态摘要；<code>describe</code> 包含 Events——排障 80% 靠它（镜像拉取失败、调度失败都写在那）。</li>
+<li><code>subprocess</code> 调 kubectl 任何一步都可能失败（集群不可达、YAML 非法），不捕获就直接抛栈崩掉。</li>
+<li><code>apply</code> 只是把<strong>期望状态</strong>写进 etcd（见 diagrams/README.md 图 2），Pod 由 controller/kubelet 异步创建，有秒级延迟。</li>
+</ol>
+</details>
+<h3 id="2-15">练习 2 — 副本调和与自愈（15 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">kubectl<span class="w"> </span>create<span class="w"> </span>deployment<span class="w"> </span>nginx<span class="w"> </span>--image<span class="o">=</span>nginx:1.14.2<span class="w"> </span>--replicas<span class="o">=</span><span class="m">3</span>
+kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-w<span class="w">                      </span><span class="c1"># 另开终端盯住</span>
+kubectl<span class="w"> </span>delete<span class="w"> </span>pod<span class="w"> </span>&lt;任意一个<span class="w"> </span>pod<span class="w"> </span>名&gt;<span class="w">     </span><span class="c1"># 故意杀一个</span>
+</code></pre></div>
+<ul>
+<li>[ ] 记录被删 Pod 的名字，等 30 秒，看新 Pod 名字是否不同</li>
+<li>[ ] <code>kubectl scale deployment nginx --replicas=5</code>，观察 Pod 数量变化的节奏</li>
+<li>[ ] 用 diagrams/README.md 图 3 解释：为什么你<strong>不需要</strong>再发一条「补一个 Pod」的命令？</li>
+</ul>
+<details>
+<summary>参考答案</summary>
+<p>被删的 Pod 不会被「复活」，而是 ReplicaSet 调和发现 2≠3 后<strong>新建</strong>一个（名字后缀不同）。
+控制器只对比期望与实际，不关心你删没删——这就是 level-triggered 调和循环的自愈。</p>
+</details>
+<h3 id="3-service-15">练习 3 — Service 与服务发现（15 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">kubectl<span class="w"> </span>expose<span class="w"> </span>deployment<span class="w"> </span>nginx<span class="w"> </span>--port<span class="o">=</span><span class="m">80</span><span class="w"> </span>--target-port<span class="o">=</span><span class="m">80</span><span class="w"> </span>--type<span class="o">=</span>NodePort
+kubectl<span class="w"> </span>get<span class="w"> </span>svc<span class="w"> </span>nginx<span class="w">                    </span><span class="c1"># 记下 ClusterIP 和 NodePort</span>
+kubectl<span class="w"> </span>get<span class="w"> </span>endpoints<span class="w"> </span>nginx<span class="w">              </span><span class="c1"># 看 selector 找到了哪些 Pod IP</span>
+</code></pre></div>
+<ul>
+<li>[ ] 对照 <code>kubectl get pods -o wide</code>，确认 Endpoints 里的 IP 就是 Pod IP</li>
+<li>[ ] 删掉一个 Pod，再次 <code>kubectl get endpoints</code>，30 秒后有什么变化？</li>
+<li>[ ] 思考：为什么集群内应该用 <code>nginx.default.svc.cluster.local</code> 而不是 Pod IP？</li>
+</ul>
+<details>
+<summary>参考答案</summary>
+<p>Endpoints 由 Service 的 selector 匹配 Pod 标签自动生成；Pod 重建后 IP 必变，
+Endpoints 跟着更新，而 Service 的 ClusterIP 和 DNS 名<strong>永远不变</strong>——所以只能用服务名。</p>
+</details>
+<h3 id="4-configmap-10">练习 4 — ConfigMap 注入配置（10 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">kubectl<span class="w"> </span>create<span class="w"> </span>configmap<span class="w"> </span>app-config<span class="w"> </span>--from-literal<span class="o">=</span><span class="nv">APP_ENV</span><span class="o">=</span>production<span class="w"> </span>--from-literal<span class="o">=</span><span class="nv">LOG_LEVEL</span><span class="o">=</span>info
+kubectl<span class="w"> </span>get<span class="w"> </span>cm<span class="w"> </span>app-config<span class="w"> </span>-o<span class="w"> </span>yaml
+kubectl<span class="w"> </span><span class="nb">set</span><span class="w"> </span>env<span class="w"> </span>deployment/nginx<span class="w"> </span>--from<span class="o">=</span>configmap/app-config<span class="w">   </span><span class="c1"># 注入为环境变量</span>
+kubectl<span class="w"> </span>describe<span class="w"> </span>pod<span class="w"> </span>-l<span class="w"> </span><span class="nv">app</span><span class="o">=</span>nginx<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-A3<span class="w"> </span>Environment
+</code></pre></div>
+<ul>
+<li>[ ] 说说 ConfigMap 的两种消费方式（env 注入 vs volume 挂载）各自适合什么场景</li>
+<li>[ ] 把 Secret 和 ConfigMap 对比：Secret 多了什么、又<strong>没</strong>多什么？（看 README「敏感数据」一节）</li>
+</ul>
+<details>
+<summary>参考答案</summary>
+<p>env 适合启动时读一次的配置；volume 挂载适合会被更新的配置文件。
+Secret 只是 base64 编码 + 可走加密存储（etcd encryption at rest），<strong>默认并不加密</strong>——
+能用 ConfigMap 的别用 Secret，真敏感的还要额外开启静态加密。</p>
+</details>
+<h3 id="5-15">练习 5 — 滚动更新与回滚（15 分钟）</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">kubectl<span class="w"> </span><span class="nb">set</span><span class="w"> </span>image<span class="w"> </span>deployment/nginx<span class="w"> </span><span class="nv">nginx</span><span class="o">=</span>nginx:1.15.0
+kubectl<span class="w"> </span>rollout<span class="w"> </span>status<span class="w"> </span>deployment/nginx<span class="w">          </span><span class="c1"># 盯着滚完</span>
+kubectl<span class="w"> </span>rollout<span class="w"> </span><span class="nb">history</span><span class="w"> </span>deployment/nginx<span class="w">         </span><span class="c1"># 有 2 个版本了</span>
+kubectl<span class="w"> </span>rollout<span class="w"> </span>undo<span class="w"> </span>deployment/nginx<span class="w">            </span><span class="c1"># 回滚到 1.14.2</span>
+kubectl<span class="w"> </span>get<span class="w"> </span>pods<span class="w"> </span>-o<span class="w"> </span><span class="nv">jsonpath</span><span class="o">=</span><span class="s1">'{.items[*].spec.containers[*].image}'</span>
+</code></pre></div>
+<ul>
+<li>[ ] <code>rollout status</code> 输出里 ReplicaSet 数量变化和 diagrams/README.md 图 5 对上</li>
+<li>[ ] 回滚后再 <code>rollout history</code>，为什么 revision 号不是回到 1 而是新增了 3？</li>
+</ul>
+<details>
+<summary>参考答案</summary>
+<p>回滚不是撤销，而是把期望状态指向旧模板、再新建一次调和（图 5 要点）。
+所以历史里多了一条新 revision，内容等于旧版本——head 永远在 +1。</p>
+</details>
+<hr>
+<h2 id="_2">二、思考题（建议全做）</h2>
+<ol>
+<li><strong>Pod 为什么是「不可预测的」？</strong> 结合 README「Pod 的设计原理」和练习 2 的现象作答。</li>
+<li><strong>scheduler 只做绑定，不创建 Pod</strong>——那么「创建 Pod」这四个字到底是谁执行的？</li>
+<li>Service 的 <code>targetPort</code> 和 <code>port</code> 为什么可以不一样？各是什么的端口？</li>
+<li>如果把 <code>replicas: 3</code> 的 Deployment 改成 <code>replicas: 3</code>（一字不差重新 apply），集群里会发生什么？为什么这是个好性质？</li>
+</ol>
+<details>
+<summary>参考答案要点</summary>
+<ol>
+<li>Pod 随时可能被重建（自愈、驱逐、滚动更新），名字和 IP 都会变，所以一切依赖 Pod 身份的设计都是错的。</li>
+<li>目标节点上的 kubelet（经 containerd）；scheduler 只是把 Pod「指派」到节点。</li>
+<li><code>port</code> 是 Service 虚拟 IP 暴露的端口，<code>targetPort</code> 是容器实际监听的端口，中间由 kube-proxy 转发。</li>
+<li>什么都不会发生（调和循环发现实际=期望）。声明式 + 幂等 = 可以放心重复执行，这是 GitOps 的根基。</li>
+</ol>
+</details>
+<hr>
+<h2 id="_3">三、自查清单</h2>
+<ul>
+<li>[ ] 能画出 kubectl apply 之后到容器运行的 7 步链路（图 2）</li>
+<li>[ ] 能解释「删 Pod 自愈」为什么不需要额外命令（图 3）</li>
+<li>[ ] 知道 ClusterIP / NodePort / LoadBalancer 三层关系（图 4）</li>
+<li>[ ] 独立完成一次 set image → rollout status → rollout undo（图 5）</li>
+<li>[ ] 能说出 ConfigMap 两种消费方式和 Secret 的真实安全边界</li>
+</ul></main></div>
+<script src="../assets/mermaid.min.js"></script>
+<script>if (window.mermaid) { mermaid.initialize({ startOnLoad: true, securityLevel: 'loose' }); }</script>
+</body>
+</html>
