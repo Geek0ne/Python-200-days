@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1473-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
+![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1477-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
 
 [🌐 在线学习站](https://python.geek0ne.com/) · [📖 路线图](ROADMAP.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -20,11 +20,33 @@
 
 **核心理念：** 每天动手写代码，用提交记录衡量进步，用项目实战巩固知识。
 
+**毕业交付：** 收官阶段端到端交付两个完整项目 —— 企业资产监控系统（Day 186–190）与 AI 赋能反爬数据平台（Day 191–195），覆盖架构设计、数据管道、告警闭环到容器化部署与回滚的全链路。
+
 ### 适合人群
 
 - 🧑‍💻 **零基础转行** — 从 Hello World 开始，系统化学习
 - 📚 **自学巩固** — 查漏补缺，构建完整的 Python 知识树
 - 🚀 **进阶提升** — 覆盖网络安全、爬虫、自动化、数据分析、AI 等方向
+
+---
+
+## ✨ 特色亮点
+
+### 🌐 在线学习站 · 打开即学
+
+[python.geek0ne.com](https://python.geek0ne.com/) 由 CI 从本仓库自动构建部署：首页按阶段分组、支持按天数与关键词过滤；课程页提供本页目录、语法高亮、500+ 张 mermaid 图在线渲染，以及「下载本课代码 / 练习与清单 / 图解 / GitHub 源文件」一键入口。
+
+![在线学习站 Day 172 课程页：本页目录、四件套入口与真机实测笔记](docs/images/site-preview.png)
+
+*上图：Day 172 课程页 —— 左侧本页目录、顶部四件套下载入口、笔记开头的「真机执行捕获」声明。*
+
+### 📦 每课四件套 · 缺一不可
+
+每天目录统一交付四件：**笔记**（`README.md`）、**可运行代码**（`code/`）、**图解**（`diagrams/`）、**练习与清单**（`exercises/checklist.md`）。笔记讲原理、代码真机验证、图解建立直觉、清单闭环验收 —— 现已累计 766 个代码文件、500+ 张 mermaid 图。
+
+### 🔬 真机实测 · 连翻车也复盘
+
+笔记中所有命令输出均为本机真机执行捕获，每课开头声明运行环境；失败实验原样保留为「翻车实验」（如 Day 172 监听 `127.0.0.1` 造成的「容器内 200、容器外 000」、Day 060 Windows 下并行加速比 < 1），并附复盘与避坑清单 —— 不只给正确答案，也给你踩坑的现场。
 
 ---
 
@@ -64,9 +86,9 @@
 | 指标 | 数据 |
 |:----|:----:|
 | 📅 已完成天数 | **199 天** |
-| 📝 总提交次数 | **1,473 commits** |
+| 📝 总提交次数 | **1,477 commits** |
 | 📄 总代码行数 | **207,555 行** |
-| 📂 总文件数 | **1,449 个** |
+| 📂 总文件数 | **1,450 个** |
 | 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 199/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
@@ -356,7 +378,9 @@
 │   ├── day-002-变量与数据类型/
 │   ├── ...
 │   └── day-199-技术写作/
-├── 📁 docs/                    # 补充文档
+├── 🌐 site/                    # 在线学习站：构建脚本与静态资源（build.py / md2html.py）
+├── 📁 docs/                    # 补充文档与 README 展示图
+├── ⚙️ .github/                 # CI、Pages 部署工作流与打卡 Issue 模板
 ├── 📄 ROADMAP.md               # 完整学习路线图
 ├── 📄 CONTRIBUTING.md          # 贡献指南
 ├── 📄 .gitignore
@@ -382,16 +406,19 @@ python3 code/01-log-parser.py --self-test
 cat ROADMAP.md
 ```
 
+多数脚本支持 `--self-test` **离线自测**：不联网、不启动真实服务，克隆后即可跑内置断言（练习清单中也会标明哪些实验可离线自测）；CI 另在 Python 3.12 上做全量语法编译，保证代码无语法坑。
+
 ---
 
 ## 🎯 学习方式
 
 1. **每天一课** — 跟随 `days/` 目录按序号学习
 2. **动手实践** — 每个知识点都有代码示例 + 练习
-3. **提交记录** — 用 Git 提交衡量学习进度
+3. **提交记录** — 用 Git 提交衡量学习进度；仓库另提供打卡 Issue 模板（`.github/ISSUE_TEMPLATE/checkin.yml`），一键记录当日完成度与复盘
 4. **阶段项目** — 每完成一个阶段有小项目巩固
 5. **笔记同步** — 代码 + 注释 + 文档三位一体
 6. **螺旋递进** — 项目阶段先速览工具（Day 076–090），深入阶段再系统精讲（如 NumPy：Day 079 速览 → Day 101 精讲），重复是刻意设计
+7. **合规底线** — 安全章只对本机/授权目标做只读探测与离线分析（Day 161 范围门禁），爬虫章含 robots 解析与礼貌爬虫（Day 142）：教技术，也教边界
 
 ---
 
@@ -419,6 +446,40 @@ cat ROADMAP.md
 ## ⭐ Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=Geek0ne/Python-200-days&type=Date)](https://star-history.com/#Geek0ne/Python-200-days&Date)
+
+---
+
+## ❓ FAQ
+
+<details>
+<summary><b>零基础可以跟吗？</b></summary>
+
+可以。Phase 1 从环境搭建与 Hello World 起步，每课配练习与完成清单；建议每天预留 1–2 小时动手时间，跟完清单再进入下一课。
+</details>
+
+<details>
+<summary><b>跑代码必须装一堆依赖吗？</b></summary>
+
+不一定。多数脚本支持 `--self-test` 离线自测，不联网、不启动真实服务即可跑内置断言；确需第三方服务的实验（Docker、MySQL 等），笔记与练习清单会标明依赖和清理步骤。
+</details>
+
+<details>
+<summary><b>在线站和 GitHub 仓库有什么区别？</b></summary>
+
+同源不同分工：站点由 CI 从仓库自动构建部署，适合浏览、过滤搜索与看渲染后的图解；仓库适合克隆后动手跑代码、用提交与打卡 Issue 衡量进度。
+</details>
+
+<details>
+<summary><b>跟不上每天一课的节奏怎么办？</b></summary>
+
+路线是螺旋递进的：项目阶段先速览工具、深入阶段再系统精讲（如 NumPy Day 079 速览 → Day 101 精讲）。落下了可以从阶段项目切入反向查漏补缺，打卡模板只记录你自己的节奏。
+</details>
+
+<details>
+<summary><b>安全与爬虫章节的演示合规吗？</b></summary>
+
+全部演示面向本机或明确授权的环境：渗透框架带范围门禁与审计留痕（Day 161），爬虫含 robots 解析与合规检查器（Day 142），漏洞检测只做只读探测与离线分析。
+</details>
 
 ---
 
