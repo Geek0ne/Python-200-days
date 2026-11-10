@@ -84,6 +84,14 @@ def cpu_bound_loop(n):
     return total
 
 
+def cpu_bound_chunk(numbers):
+    """对一片数据做 CPU 密集计算（并行分片用，与 cpu_bound_loop 同工作量口径）"""
+    total = 0
+    for x in numbers:
+        total += math.sqrt(x)
+    return total
+
+
 def cpu_bound_numpy(n):
     """NumPy 向量化"""
     arr = np.arange(n, dtype=np.float64)
@@ -153,7 +161,6 @@ def verify_amdahl():
 
     # 任务：计算 100 万个数的平方根
     n = 1_000_000
-    chunk_size = n // 4  # 4 个 chunk
 
     # 串行时间
     data = list(range(n))
@@ -165,10 +172,12 @@ def verify_amdahl():
     print("-" * 45)
 
     for workers in [1, 2, 4]:
+        # 每个 worker 分 n//workers 个数，保证各轮都算全量 n，与串行可比
+        chunk_size = n // workers
         chunks = [list(range(i * chunk_size, (i + 1) * chunk_size))
                   for i in range(workers)]
 
-        total_time, _ = parallel_benchmark(cpu_bound_loop, chunks, workers)
+        total_time, _ = parallel_benchmark(cpu_bound_chunk, chunks, workers)
 
         # 理论加速比（假设 90% 可并行）
         P = 0.9
@@ -217,7 +226,7 @@ def main():
         chunk_size = n // workers
         chunks = [list(range(i * chunk_size, (i + 1) * chunk_size))
                   for i in range(workers)]
-        total_time, _ = parallel_benchmark(cpu_bound_loop, chunks, workers)
+        total_time, _ = parallel_benchmark(cpu_bound_chunk, chunks, workers)
         parallel_ms = total_time * 1000
         speedup = serial.mean_ms / parallel_ms
         print(f"并行({workers}w): {parallel_ms:.2f}ms (加速 {speedup:.2f}x)")

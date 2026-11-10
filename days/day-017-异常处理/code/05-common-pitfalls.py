@@ -86,12 +86,22 @@ def pitfall_finally_return():
     print("🚩 陷阱 3：finally 中的 return 覆盖异常")
     print(SEP)
 
-    def bad_example():
-        """❌ finally return 吞掉异常"""
-        try:
-            raise ValueError("原始错误")
-        finally:
-            return 42  # ← 覆盖了 ValueError！
+    # Python 3.14 起 finally 中的 return 触发 SyntaxWarning（PEP 765），
+    # 反例放进字符串延迟编译，保证本文件在 3.14+ 下仍能编译运行。
+    import warnings
+    ns = {}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        exec(
+            "def bad_example():\n"
+            '    """❌ finally return 吞掉异常"""\n'
+            "    try:\n"
+            '        raise ValueError("原始错误")\n'
+            "    finally:\n"
+            "        return 42  # ← 覆盖了 ValueError！\n",
+            ns,
+        )
+    bad_example = ns["bad_example"]
 
     def also_bad():
         """❌ finally raise 也覆盖原异常"""

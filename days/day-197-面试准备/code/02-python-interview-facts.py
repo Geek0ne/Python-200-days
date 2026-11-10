@@ -227,11 +227,19 @@ class D(B, C):
 # ---------------------------------------------------------------------------
 
 
-def finally_swallows() -> str:
-    try:
-        raise RuntimeError("boom")
-    finally:
-        return "finally wins"  # 不要在生产代码里这样写
+# Python 3.14 起 finally 中的 return 触发 SyntaxWarning（PEP 765），
+# 反例放进字符串延迟编译，保证本文件在 3.14+ 下仍能编译运行。
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", SyntaxWarning)
+    exec(
+        "def finally_swallows() -> str:\n"
+        "    try:\n"
+        '        raise RuntimeError("boom")\n'
+        "    finally:\n"
+        '        return "finally wins"  # 不要在生产代码里这样写\n'
+    )
 
 
 def exception_facts() -> Dict[str, object]:

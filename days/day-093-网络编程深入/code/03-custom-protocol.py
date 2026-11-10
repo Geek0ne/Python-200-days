@@ -9,6 +9,7 @@ Day 093 - 网络编程深入
   - 实战：远程命令执行服务器
 """
 
+import ast
 import asyncio
 import json
 import struct
@@ -47,6 +48,22 @@ MSG_REQUEST = 0x01
 MSG_RESPONSE = 0x02
 MSG_HEARTBEAT = 0x03
 MSG_ERROR = 0x04
+
+# calc 命令的 AST 白名单：只放行数字与四则运算，拒绝变量/调用/属性访问。
+# 不放行 **，避免 9**9**9 这类表达式耗尽 CPU。
+_CALC_NODES = (
+    ast.Expression, ast.Constant, ast.BinOp, ast.UnaryOp,
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod,
+    ast.USub, ast.UAdd,
+)
+
+
+def safe_calc(expression: str):
+    """网络输入不可信：先做 AST 白名单校验，再在受限命名空间求值。"""
+    tree = ast.parse(expression, mode="eval")
+    if not all(isinstance(node, _CALC_NODES) for node in ast.walk(tree)):
+        raise ValueError("仅支持数字四则运算")
+    return eval(compile(tree, "<calc>", "eval"), {"__builtins__": {}}, {})
 
 
 class ProtocolCodec:
@@ -197,12 +214,10 @@ class ProtocolServer:
             }
         
         elif command == 'calc':
-            # 简单计算器（仅用于演示，生产环境需安全处理）
+            # 简单计算器：表达式来自网络客户端，必须走 safe_calc 白名单校验
             expression = payload.get('expression', '0')
             try:
-                # 注意：生产环境中绝对不要用 eval()！
-                # 这里仅作为协议演示
-                result = eval(expression)
+                result = safe_calc(expression)
                 return {"command": "calc", "result": result}
             except Exception as e:
                 return {"command": "calc", "error": str(e)}
