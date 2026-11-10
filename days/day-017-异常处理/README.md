@@ -645,4 +645,4 @@ def fetch_data():
 
 ---
 
-> **下一课：[Day 018 —— 标准库入门](..%2Fday-018-standard-library%2F)**
+> **下一课：[Day 018 —— 推导式](../day-018-推导式/)**

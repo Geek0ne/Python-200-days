@@ -498,7 +498,7 @@ sequenceDiagram
 ```
 
 更完整的图解（ECB 对比、RSA 数学直觉、选型决策树）见
-[`diagrams/README.md`](../diagrams/README.md)。
+[`diagrams/README.md`](diagrams/README.md)。
 
 ## 六、实战代码案例
 
