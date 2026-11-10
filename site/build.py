@@ -135,7 +135,9 @@ def parse_day(day_dir: Path) -> Day | None:
         has_exercises=(day_dir / "exercises" / "checklist.md").exists(),
         has_diagrams=(day_dir / "diagrams" / "README.md").exists(),
         readme_lines=len(readme.read_text(encoding="utf-8").splitlines()) if readme.exists() else 0,
-        code_files=len([p for p in code_dir.glob("*.py")]) if code_dir.is_dir() else 0,
+        code_files=len([p for p in code_dir.rglob("*")
+                        if p.is_file() and "__pycache__" not in p.parts
+                        and p.suffix != ".pyc"]) if code_dir.is_dir() else 0,
     )
 
 
@@ -460,25 +462,47 @@ def build_lessons(repo: Path, out: Path, days: list[Day]) -> dict:
             except Exception as e:
                 stats["errors"].append(f"{day.slug}/{sub} 渲染失败: {type(e).__name__}: {e}")
 
-        # 代码拷进站点，可直接下载
+        # 代码拷进站点，可直接下载（含嵌套目录与非 .py 文件，如 Dockerfile/requirements）
         cdir = src / "code"
         if cdir.is_dir():
             target = dst / "code"
             target.mkdir(exist_ok=True)
-            used: set = set()
+            used: dict[str, set] = {}
+            dir_used: dict[str, set] = {}
+            dir_map: dict[tuple, str] = {}
             listing = []
-            for py in sorted(cdir.glob("*.py")):
+            for f in sorted(cdir.rglob("*")):
+                if not f.is_file() or "__pycache__" in f.parts or f.suffix == ".pyc":
+                    continue
+                rel = f.relative_to(cdir)
                 try:
-                    ascii_nm = ascii_name(py.name, used)
-                    text = py.read_text(encoding="utf-8")
-                    if ascii_nm != py.name:
-                        # 原始中文名写进文件头，信息不丢
-                        text = f"# 原文件名：{py.name}\n{text}"
-                    (target / ascii_nm).write_text(text, encoding="utf-8")
+                    # 逐段转 ASCII。目录名单独注册一次并复用（否则每个文件都会
+                    # 让同名目录"撞名"加序号）；目录与文件用各自的冲突集合，
+                    # 避免 broken/ 与 broken.py 这类合法共存被误判。
+                    ascii_parts = []
+                    for comp in rel.parts[:-1]:
+                        key = ("/".join(ascii_parts), comp)
+                        if key not in dir_map:
+                            dir_map[key] = ascii_name(
+                                comp, dir_used.setdefault("/".join(ascii_parts), set()))
+                        ascii_parts.append(dir_map[key])
+                    ascii_parts.append(
+                        ascii_name(rel.name, used.setdefault("/".join(ascii_parts), set())))
+                    ascii_rel = Path(*ascii_parts)
+                    dest = target / ascii_rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    if f.suffix == ".py":
+                        text = f.read_text(encoding="utf-8")
+                        if ascii_rel.name != f.name:
+                            # 原始中文名写进文件头，信息不丢
+                            text = f"# 原文件名：{f.name}\n{text}"
+                        dest.write_text(text, encoding="utf-8")
+                    else:
+                        shutil.copy2(f, dest)
                     stats["code_files"] += 1
-                    listing.append((ascii_nm, py.name))
+                    listing.append((ascii_rel.as_posix(), rel.as_posix()))
                 except Exception as e:
-                    stats["errors"].append(f"{day.slug}/{py.name} 拷贝失败: {e}")
+                    stats["errors"].append(f"{day.slug}/{rel.as_posix()} 拷贝失败: {e}")
             if listing:
                 rows = "".join(
                     f'<li><a href="{a}">{a}</a>'
@@ -521,6 +545,10 @@ def build(repo: Path, out: Path) -> dict:
     lesson_stats = {"pages": 0, "code_files": 0, "subpages": 0, "mermaid": 0, "errors": []}
     if days and not (out / ".index-only").exists():
         lesson_stats = build_lessons(repo, out, days)
+    if lesson_stats["errors"]:
+        for err in lesson_stats["errors"]:
+            print(f"❌ {err}", file=sys.stderr)
+        raise SystemExit(f"站点构建失败：{len(lesson_stats['errors'])} 个渲染/拷贝错误")
 
     (out / "index.html").write_text(render_index_html(days, phases, prog, info), encoding="utf-8")
 
@@ -558,6 +586,8 @@ def build(repo: Path, out: Path) -> dict:
 
 
 def main() -> int:
+    # Windows 控制台默认 GBK，emoji/中文打印会抛 UnicodeEncodeError
+    sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description="生成 Python-200-days 静态站")
     ap.add_argument("--out", default=str(OUT_DEFAULT))
     args = ap.parse_args()
