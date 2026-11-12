@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-199%2F200-blue) ![Commits](https://img.shields.io/badge/Commits-1478-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
+![Progress](https://img.shields.io/badge/Progress-200%2F200-brightgreen) ![Commits](https://img.shields.io/badge/Commits-1479-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
 
 [🌐 在线学习站](https://python.geek0ne.com/) · [📖 路线图](ROADMAP.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -42,7 +42,7 @@
 
 ### 📦 每课四件套 · 缺一不可
 
-每天目录统一交付四件：**笔记**（`README.md`）、**可运行代码**（`code/`）、**图解**（`diagrams/`）、**练习与清单**（`exercises/checklist.md`）。笔记讲原理、代码真机验证、图解建立直觉、清单闭环验收 —— 现已累计 766 个代码文件、500+ 张 mermaid 图。
+每天目录统一交付四件：**笔记**（`README.md`）、**可运行代码**（`code/`）、**图解**（`diagrams/`）、**练习与清单**（`exercises/checklist.md`）。笔记讲原理、代码真机验证、图解建立直觉、清单闭环验收 —— 200 课四件套完整度 **200/200**，累计 772 个代码文件、528 张 mermaid 图。
 
 ### 🔬 真机实测 · 连翻车也复盘
 
@@ -65,21 +65,21 @@
 | **Phase 9** | 🕷️ 爬虫与反爬对抗 | Day 126–145 | ✅ 已完成 |
 | **Phase 10** | 🛡️ 网络安全开发 | Day 146–165 | ✅ 已完成 |
 | **Phase 11** | 🚀 自动化运维与 DevOps | Day 166–185 | ✅ 已完成 |
-| **Phase 12** | 🏆 综合实战 | Day 186–200 | **进行中** |
+| **Phase 12** | 🏆 综合实战 | Day 186–200 | ✅ 已完成 |
 
 ---
 
 ## 📊 当前进度
 
-> **Day 199 / 200** · 进度的 99.5% · 当前：Phase 12 综合实战（进行中，已完成 Day 186–190 企业资产监控系统、Day 191–195 AI 赋能反爬数据平台，Day 196–200 总复习：知识地图 ✅ → 面试准备 ✅ → 开源贡献 ✅ → 技术写作 ✅ → 成长路径）
+> **Day 200 / 200** · 进度的 100% · 🎓 **200 课全部交付完成**：Phase 12 综合实战（Day 186–190 企业资产监控系统、Day 191–195 AI 赋能反爬数据平台，Day 196–200 总复习：知识地图 ✅ → 面试准备 ✅ → 开源贡献 ✅ → 技术写作 ✅ → 成长路径 ✅）
 
 | 指标 | 数据 |
 |:----|:----:|
-| 📅 已完成天数 | **199 天** |
-| 📝 总提交次数 | **1,478 commits** |
-| 📄 总代码行数 | **207,555 行** |
-| 📂 总文件数 | **1,450 个** |
-| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（进行中，Day 199/200） |
+| 📅 已完成天数 | **200 天** |
+| 📝 总提交次数 | **1,479 commits** |
+| 📄 总代码行数 | **209,416 行** |
+| 📂 总文件数 | **1,459 个** |
+| 🏗️ 当前阶段 | **Phase 12 — 综合实战**（✅ 已完成，Day 200/200） |
 
 > 统计口径：本次提交的 Git 跟踪文件；代码行数仅计 `.py`。教材交付进度不等于读者练习完成。
 
@@ -336,8 +336,8 @@
 
 </details>
 
-<details open>
-<summary><b>Phase 12：综合实战（Day 186–200）— 🚧 进行中</b></summary>
+<details>
+<summary><b>Phase 12：综合实战（Day 186–200）— ✅ 已完成</b></summary>
 
 - ✅ Day 186 — 项目架构与子域名收集（五层资产模型 / 并发 DNS 枚举 / SQLite 快照差分）
 - ✅ Day 187 — 端口扫描与指纹识别（errno 分类 / banner 指纹置信度 / nmap 对账）
@@ -353,6 +353,7 @@
 - ✅ Day 197 — 面试准备（算法模板 / Python 八股实测 / 面试题评分器）
 - ✅ Day 198 — 开源贡献（fork 工作流 / patch 体检 / CPython 真实贡献演练）
 - ✅ Day 199 — 技术写作（可复现性契约 / 稿件体检器 / 静态站构建）
+- ✅ Day 200 — 持续成长路径（证据阶梯自评 / 学习回路体检 / 技术雷达 / 缺口驱动的 90 天路线图）
 
 </details>
 
@@ -363,11 +364,11 @@
 
 ```
 📁 Python-200-days/
-├── 📓 days/                    # 每日学习内容（day-001 ~ day-199，共 199 个主题）
+├── 📓 days/                    # 每日学习内容（day-001 ~ day-200，共 200 个主题）
 │   ├── day-001-你好-python/
 │   ├── day-002-变量与数据类型/
 │   ├── ...
-│   └── day-199-技术写作/
+│   └── day-200-持续成长路径/
 ├── 🌐 site/                    # 在线学习站：构建脚本与静态资源（build.py / md2html.py）
 ├── 📁 docs/                    # 补充文档与 README 展示图
 ├── ⚙️ .github/                 # CI、Pages 部署工作流与打卡 Issue 模板
