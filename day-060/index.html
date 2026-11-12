@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 60 — 阶段项目：高性能计算</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 60 — 阶段项目：高性能计算</h1>
+  <div class="lmeta">
+    <span class="badge">Python高阶特性</span>
+    <span class="badge">939 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-060-阶段项目-高性能计算" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="📋 今日学习目标">📋 今日学习目标</a>
+<a class="toc-l2" href="#_2" title="一、项目概述">一、项目概述</a>
+<a class="toc-l3" href="#1" title="项目 1：并发数据爬虫">项目 1：并发数据爬虫</a>
+<a class="toc-l3" href="#2" title="项目 2：高性能图像处理">项目 2：高性能图像处理</a>
+<a class="toc-l2" href="#1_1" title="二、项目 1：并发数据采集器">二、项目 1：并发数据采集器</a>
+<a class="toc-l3" href="#_3" title="架构设计">架构设计</a>
+<a class="toc-l3" href="#_4" title="完整实现">完整实现</a>
+<a class="toc-l2" href="#2_1" title="三、项目 2：高性能图像处理管道">三、项目 2：高性能图像处理管道</a>
+<a class="toc-l3" href="#_5" title="架构设计">架构设计</a>
+<a class="toc-l3" href="#_6" title="完整实现">完整实现</a>
+<a class="toc-l2" href="#_7" title="四、生产级最佳实践">四、生产级最佳实践</a>
+<a class="toc-l3" href="#1_2" title="1. 错误处理">1. 错误处理</a>
+<a class="toc-l3" href="#2_2" title="2. 进程间通信">2. 进程间通信</a>
+<a class="toc-l3" href="#3" title="3. 内存管理">3. 内存管理</a>
+<a class="toc-l3" href="#4" title="4. 监控与日志">4. 监控与日志</a>
+<a class="toc-l2" href="#_8" title="五、性能评估框架">五、性能评估框架</a>
+<a class="toc-l3" href="#_9" title="基准测试方法">基准测试方法</a>
+<a class="toc-l3" href="#amdahl" title="Amdahl 定律">Amdahl 定律</a>
+<a class="toc-l2" href="#_10" title="六、思考题">六、思考题</a>
+<a class="toc-l2" href="#_11" title="📚 扩展阅读">📚 扩展阅读</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-060">Day 060 — 阶段项目：高性能计算</h1>
+<blockquote>
+<p>综合运用 Phase 4 知识，用并发 + C 扩展解决真实计算问题</p>
+</blockquote>
+<h2 id="_1">📋 今日学习目标</h2>
+<ol>
+<li>综合运用多线程、多进程、异步编程解决实际问题</li>
+<li>实现并发数据采集 + 高性能图像处理管道</li>
+<li>掌握生产级高性能计算的最佳实践</li>
+<li>理解如何评估和优化计算密集型任务</li>
+</ol>
+<hr>
+<h2 id="_2">一、项目概述</h2>
+<h3 id="1">项目 1：并发数据爬虫</h3>
+<p>用多进程 + asyncio 实现高效数据采集：</p>
+<pre class="plain"><code>┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  URL 队列    │───→│  Worker 进程 │───→│  结果聚合    │
+│  (共享)      │    │  (多个)     │    │  (去重存储)  │
+└─────────────┘    └─────────────┘    └─────────────┘
+      │                   │
+      │            ┌──────▼──────┐
+      └───────────→│  asyncio    │
+                   │  (每个进程  │
+                   │  内部并发)  │
+                   └─────────────┘</code></pre>
+<h3 id="2">项目 2：高性能图像处理</h3>
+<p>用 Numba + 多进程实现图像批处理管道：</p>
+<pre class="plain"><code>原图 → [灰度转换] → [高斯模糊] → [边缘检测] → [保存结果]
+         Numba        Numba       Numba      多进程并行</code></pre>
+<hr>
+<h2 id="1_1">二、项目 1：并发数据采集器</h2>
+<h3 id="_3">架构设计</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">"""</span>
+<span class="sd">并发数据采集器架构：</span>
+
+<span class="sd">主进程 (Coordinator)</span>
+<span class="sd">├── 管理 URL 队列</span>
+<span class="sd">├── 分发任务给 Worker</span>
+<span class="sd">└── 聚合结果</span>
+
+<span class="sd">Worker 进程 (multiprocessing.Pool)</span>
+<span class="sd">├── 每个进程内部用 asyncio 并发</span>
+<span class="sd">├── aiohttp 做 HTTP 请求</span>
+<span class="sd">└── 返回结构化结果</span>
+<span class="sd">"""</span>
+</code></pre></div>
+<h3 id="_4">完整实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">"""</span>
+<span class="sd">文件: 01-concurrent-crawler.py</span>
+<span class="sd">并发数据采集器 — 多进程 + asyncio 混合架构</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">multiprocessing</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">multiprocessing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Queue</span><span class="p">,</span> <span class="n">Manager</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">asdict</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">urllib.parse</span><span class="w"> </span><span class="kn">import</span> <span class="n">urlparse</span>
+
+<span class="c1"># ─── 数据模型 ───</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">CrawlResult</span><span class="p">:</span>
+    <span class="n">url</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">content_length</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span>
+    <span class="n">fetch_time_ms</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">error</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_success</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">error</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">and</span> <span class="mi">200</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">status</span> <span class="o">&lt;</span> <span class="mi">400</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">domain</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">urlparse</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">netloc</span>
+
+
+<span class="c1"># ─── Worker 进程 ───</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">crawl_worker</span><span class="p">(</span><span class="n">urls</span><span class="p">:</span> <span class="nb">list</span><span class="p">,</span> <span class="n">worker_id</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">timeout</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">10.0</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    单个 Worker 进程：用 asyncio 并发抓取多个 URL</span>
+<span class="sd">    每个进程有自己的事件循环，避免 GIL 竞争</span>
+<span class="sd">    """</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch_one</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">,</span> <span class="n">timeout</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""抓取单个 URL"""</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">async</span> <span class="k">with</span> <span class="n">session</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">timeout</span><span class="p">)</span> <span class="k">as</span> <span class="n">resp</span><span class="p">:</span>
+                <span class="n">content</span> <span class="o">=</span> <span class="k">await</span> <span class="n">resp</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+                <span class="n">text</span> <span class="o">=</span> <span class="k">await</span> <span class="n">resp</span><span class="o">.</span><span class="n">text</span><span class="p">()</span>
+                <span class="c1"># 简单提取 title</span>
+                <span class="n">title</span> <span class="o">=</span> <span class="s2">""</span>
+                <span class="k">if</span> <span class="s2">"&lt;title&gt;"</span> <span class="ow">in</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+                    <span class="n">start_idx</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s2">"&lt;title&gt;"</span><span class="p">)</span> <span class="o">+</span> <span class="mi">7</span>
+                    <span class="n">end_idx</span> <span class="o">=</span> <span class="n">text</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s2">"&lt;/title&gt;"</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">end_idx</span> <span class="o">&gt;</span> <span class="n">start_idx</span><span class="p">:</span>
+                        <span class="n">title</span> <span class="o">=</span> <span class="n">text</span><span class="p">[</span><span class="n">start_idx</span><span class="p">:</span><span class="n">end_idx</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">()[:</span><span class="mi">100</span><span class="p">]</span>
+
+                <span class="n">elapsed</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+                <span class="k">return</span> <span class="n">CrawlResult</span><span class="p">(</span>
+                    <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span>
+                    <span class="n">status</span><span class="o">=</span><span class="n">resp</span><span class="o">.</span><span class="n">status</span><span class="p">,</span>
+                    <span class="n">content_length</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">content</span><span class="p">),</span>
+                    <span class="n">title</span><span class="o">=</span><span class="n">title</span><span class="p">,</span>
+                    <span class="n">fetch_time_ms</span><span class="o">=</span><span class="n">elapsed</span><span class="p">,</span>
+                <span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">elapsed</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+            <span class="k">return</span> <span class="n">CrawlResult</span><span class="p">(</span>
+                <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span>
+                <span class="n">status</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                <span class="n">content_length</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                <span class="n">fetch_time_ms</span><span class="o">=</span><span class="n">elapsed</span><span class="p">,</span>
+                <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)[:</span><span class="mi">200</span><span class="p">],</span>
+            <span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">crawl_all</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""并发抓取所有 URL"""</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="kn">import</span><span class="w"> </span><span class="nn">aiohttp</span>
+        <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+            <span class="c1"># 降级到 urllib</span>
+            <span class="k">return</span> <span class="n">crawl_with_urllib</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span>
+
+        <span class="n">connector</span> <span class="o">=</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">TCPConnector</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">20</span><span class="p">,</span> <span class="n">limit_per_host</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+        <span class="n">timeout_config</span> <span class="o">=</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientTimeout</span><span class="p">(</span><span class="n">total</span><span class="o">=</span><span class="n">timeout</span><span class="p">)</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">async</span> <span class="k">with</span> <span class="n">aiohttp</span><span class="o">.</span><span class="n">ClientSession</span><span class="p">(</span><span class="n">connector</span><span class="o">=</span><span class="n">connector</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">timeout_config</span><span class="p">)</span> <span class="k">as</span> <span class="n">session</span><span class="p">:</span>
+            <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span><span class="n">fetch_one</span><span class="p">(</span><span class="n">session</span><span class="p">,</span> <span class="n">url</span><span class="p">,</span> <span class="n">timeout</span><span class="p">)</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">]</span>
+            <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="n">tasks</span><span class="p">,</span> <span class="n">return_exceptions</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="p">[</span><span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">r</span><span class="p">,</span> <span class="n">CrawlResult</span><span class="p">)]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">crawl_with_urllib</span><span class="p">(</span><span class="n">urls</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""降级方案：用标准库 urllib"""</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">urllib.request</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">urllib.error</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+            <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">req</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">Request</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">"User-Agent"</span><span class="p">:</span> <span class="s2">"LearnPython/1.0"</span><span class="p">})</span>
+                <span class="k">with</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlopen</span><span class="p">(</span><span class="n">req</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">timeout</span><span class="p">)</span> <span class="k">as</span> <span class="n">resp</span><span class="p">:</span>
+                    <span class="n">content</span> <span class="o">=</span> <span class="n">resp</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+                    <span class="n">elapsed</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+                    <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">CrawlResult</span><span class="p">(</span>
+                        <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span>
+                        <span class="n">status</span><span class="o">=</span><span class="n">resp</span><span class="o">.</span><span class="n">status</span><span class="p">,</span>
+                        <span class="n">content_length</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">content</span><span class="p">),</span>
+                        <span class="n">fetch_time_ms</span><span class="o">=</span><span class="n">elapsed</span><span class="p">,</span>
+                    <span class="p">))</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">elapsed</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+                <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">CrawlResult</span><span class="p">(</span>
+                    <span class="n">url</span><span class="o">=</span><span class="n">url</span><span class="p">,</span> <span class="n">status</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">content_length</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                    <span class="n">fetch_time_ms</span><span class="o">=</span><span class="n">elapsed</span><span class="p">,</span> <span class="n">error</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)[:</span><span class="mi">200</span><span class="p">],</span>
+                <span class="p">))</span>
+        <span class="k">return</span> <span class="n">results</span>
+
+    <span class="c1"># 执行抓取</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  [Worker-</span><span class="si">{</span><span class="n">worker_id</span><span class="si">}</span><span class="s2">] 开始抓取 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个 URL"</span><span class="p">)</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">crawl_all</span><span class="p">(</span><span class="n">urls</span><span class="p">))</span>
+    <span class="n">success</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">is_success</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  [Worker-</span><span class="si">{</span><span class="n">worker_id</span><span class="si">}</span><span class="s2">] 完成: </span><span class="si">{</span><span class="n">success</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span><span class="si">}</span><span class="s2"> 成功"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">results</span>
+
+
+<span class="c1"># ─── 主协调器 ───</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ConcurrentCrawler</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""多进程并发爬虫协调器"""</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">max_workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span> <span class="n">urls_per_batch</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">10</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span> <span class="o">=</span> <span class="n">max_workers</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">urls_per_batch</span> <span class="o">=</span> <span class="n">urls_per_batch</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">domain_stats</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">crawl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">urls</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">CrawlResult</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""主入口：分配 URL 给多个 Worker 进程"""</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"🕷️  开始并发抓取: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span><span class="si">}</span><span class="s2"> 个 URL, </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span><span class="si">}</span><span class="s2"> 个 Worker"</span><span class="p">)</span>
+
+        <span class="c1"># 按域名分组，避免对同一域名施加过大压力</span>
+        <span class="n">batches</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_distribute_urls</span><span class="p">(</span><span class="n">urls</span><span class="p">)</span>
+
+        <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+
+        <span class="c1"># 多进程并行</span>
+        <span class="k">with</span> <span class="n">mp</span><span class="o">.</span><span class="n">Pool</span><span class="p">(</span><span class="n">processes</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+            <span class="n">tasks</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">worker_id</span><span class="p">,</span> <span class="n">batch</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">batches</span><span class="p">):</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">apply_async</span><span class="p">(</span><span class="n">crawl_worker</span><span class="p">,</span> <span class="p">(</span><span class="n">batch</span><span class="p">,</span> <span class="n">worker_id</span><span class="p">))</span>
+                <span class="n">tasks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+
+            <span class="c1"># 收集结果</span>
+            <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="n">tasks</span><span class="p">:</span>
+                <span class="n">worker_results</span> <span class="o">=</span> <span class="n">task</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">results</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">worker_results</span><span class="p">)</span>
+
+        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_compute_stats</span><span class="p">()</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">📊 抓取完成: </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_print_stats</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">results</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_distribute_urls</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">urls</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""将 URL 分配到多个批次"""</span>
+        <span class="c1"># 按域名分组</span>
+        <span class="n">domain_groups</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">:</span>
+            <span class="n">domain</span> <span class="o">=</span> <span class="n">urlparse</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">netloc</span>
+            <span class="n">domain_groups</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">domain</span><span class="p">,</span> <span class="p">[])</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+
+        <span class="c1"># 轮询分配到 Worker</span>
+        <span class="n">batches</span> <span class="o">=</span> <span class="p">[[]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span><span class="p">)]</span>
+        <span class="k">for</span> <span class="n">domain_urls</span> <span class="ow">in</span> <span class="n">domain_groups</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">url</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">domain_urls</span><span class="p">):</span>
+                <span class="n">batches</span><span class="p">[</span><span class="n">i</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+
+        <span class="c1"># 如果某些 Worker 没有任务，从其他 Worker 借</span>
+        <span class="n">all_urls</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">b</span> <span class="ow">in</span> <span class="n">batches</span><span class="p">:</span>
+            <span class="n">all_urls</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">b</span><span class="p">)</span>
+
+        <span class="c1"># 重新均匀分配</span>
+        <span class="n">batches</span> <span class="o">=</span> <span class="p">[[]</span> <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span><span class="p">)]</span>
+        <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">url</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">all_urls</span><span class="p">):</span>
+            <span class="n">batches</span><span class="p">[</span><span class="n">i</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">max_workers</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">url</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">batches</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_compute_stats</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""计算统计信息"""</span>
+        <span class="k">for</span> <span class="n">result</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">results</span><span class="p">:</span>
+            <span class="n">domain</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">domain</span>
+            <span class="k">if</span> <span class="n">domain</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain_stats</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">domain_stats</span><span class="p">[</span><span class="n">domain</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="s2">"total"</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"success"</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                    <span class="s2">"total_bytes"</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span> <span class="s2">"total_time_ms"</span><span class="p">:</span> <span class="mi">0</span><span class="p">,</span>
+                <span class="p">}</span>
+            <span class="n">stats</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">domain_stats</span><span class="p">[</span><span class="n">domain</span><span class="p">]</span>
+            <span class="n">stats</span><span class="p">[</span><span class="s2">"total"</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">result</span><span class="o">.</span><span class="n">is_success</span><span class="p">:</span>
+                <span class="n">stats</span><span class="p">[</span><span class="s2">"success"</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="n">stats</span><span class="p">[</span><span class="s2">"total_bytes"</span><span class="p">]</span> <span class="o">+=</span> <span class="n">result</span><span class="o">.</span><span class="n">content_length</span>
+            <span class="n">stats</span><span class="p">[</span><span class="s2">"total_time_ms"</span><span class="p">]</span> <span class="o">+=</span> <span class="n">result</span><span class="o">.</span><span class="n">fetch_time_ms</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_print_stats</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""打印统计报告"""</span>
+        <span class="n">total</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">results</span><span class="p">)</span>
+        <span class="n">success</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="mi">1</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">results</span> <span class="k">if</span> <span class="n">r</span><span class="o">.</span><span class="n">is_success</span><span class="p">)</span>
+        <span class="n">total_bytes</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">content_length</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">results</span><span class="p">)</span>
+        <span class="n">avg_time</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">fetch_time_ms</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">results</span><span class="p">)</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">total</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  总请求数:   </span><span class="si">{</span><span class="n">total</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  成功数:     </span><span class="si">{</span><span class="n">success</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">success</span><span class="o">/</span><span class="nb">max</span><span class="p">(</span><span class="n">total</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%)"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  总数据量:   </span><span class="si">{</span><span class="n">total_bytes</span><span class="o">/</span><span class="mi">1024</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> KB"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  平均耗时:   </span><span class="si">{</span><span class="n">avg_time</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> ms/请求"</span><span class="p">)</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">  按域名统计:"</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">domain</span><span class="p">,</span> <span class="n">stats</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">domain_stats</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"    </span><span class="si">{</span><span class="n">domain</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">stats</span><span class="p">[</span><span class="s1">'success'</span><span class="p">]</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="n">stats</span><span class="p">[</span><span class="s1">'total'</span><span class="p">]</span><span class="si">}</span><span class="s2"> "</span>
+                  <span class="sa">f</span><span class="s2">"(</span><span class="si">{</span><span class="n">stats</span><span class="p">[</span><span class="s1">'total_bytes'</span><span class="p">]</span><span class="o">/</span><span class="mi">1024</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">KB, "</span>
+                  <span class="sa">f</span><span class="s2">"avg </span><span class="si">{</span><span class="n">stats</span><span class="p">[</span><span class="s1">'total_time_ms'</span><span class="p">]</span><span class="o">/</span><span class="nb">max</span><span class="p">(</span><span class="n">stats</span><span class="p">[</span><span class="s1">'total'</span><span class="p">],</span><span class="mi">1</span><span class="p">)</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">ms)"</span><span class="p">)</span>
+
+
+<span class="c1"># ─── 演示 ───</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">demo</span><span class="p">():</span>
+    <span class="c1"># 模拟 URL 列表（实际使用时替换为真实 URL）</span>
+    <span class="n">demo_urls</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="s2">"https://httpbin.org/get"</span><span class="p">,</span>
+        <span class="s2">"https://httpbin.org/delay/1"</span><span class="p">,</span>
+        <span class="s2">"https://httpbin.org/status/200"</span><span class="p">,</span>
+        <span class="s2">"https://httpbin.org/status/404"</span><span class="p">,</span>
+        <span class="s2">"https://httpbin.org/bytes/1024"</span><span class="p">,</span>
+    <span class="p">]</span> <span class="o">*</span> <span class="mi">3</span>  <span class="c1"># 重复 3 次模拟 15 个请求</span>
+
+    <span class="n">crawler</span> <span class="o">=</span> <span class="n">ConcurrentCrawler</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">urls_per_batch</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="n">crawler</span><span class="o">.</span><span class="n">crawl</span><span class="p">(</span><span class="n">demo_urls</span><span class="p">)</span>
+
+    <span class="c1"># 保存结果</span>
+    <span class="n">output</span> <span class="o">=</span> <span class="p">[</span><span class="n">asdict</span><span class="p">(</span><span class="n">r</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">前 3 条结果:"</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">output</span><span class="p">[:</span><span class="mi">3</span><span class="p">]:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">'url'</span><span class="p">][:</span><span class="mi">50</span><span class="p">]</span><span class="si">}</span><span class="s2">... → </span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">'status'</span><span class="p">]</span><span class="si">}</span><span class="s2"> (</span><span class="si">{</span><span class="n">r</span><span class="p">[</span><span class="s1">'fetch_time_ms'</span><span class="p">]</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">ms)"</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="n">demo</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="2_1">三、项目 2：高性能图像处理管道</h2>
+<h3 id="_5">架构设计</h3>
+<pre class="plain"><code>┌──────────────────────────────────────────────────────┐
+│                   图像处理管道                         │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  输入图像                                             │
+│     │                                                │
+│     ▼                                                │
+│  ┌──────────────┐                                    │
+│  │ Numba: 灰度  │  @jit(nopython=True, parallel=True)│
+│  └──────┬───────┘                                    │
+│         ▼                                            │
+│  ┌──────────────┐                                    │
+│  │ Numba: 模糊  │  高斯核卷积                          │
+│  └──────┬───────┘                                    │
+│         ▼                                            │
+│  ┌──────────────┐                                    │
+│  │ Numba: 边缘  │  Sobel 算子                        │
+│  └──────┬───────┘                                    │
+│         ▼                                            │
+│  ┌──────────────┐                                    │
+│  │ 多进程: 并行  │  多张图同时处理                      │
+│  └──────┬───────┘                                    │
+│         ▼                                            │
+│  输出结果                                             │
+│                                                      │
+└──────────────────────────────────────────────────────┘</code></pre>
+<h3 id="_6">完整实现</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="sd">"""</span>
+<span class="sd">文件: 02-image-pipeline.py</span>
+<span class="sd">高性能图像处理管道 — Numba 加速 + 多进程并行</span>
+<span class="sd">"""</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">multiprocessing</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">mp</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Tuple</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="c1"># ─── 尝试导入 Numba（可选）───</span>
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">numba</span><span class="w"> </span><span class="kn">import</span> <span class="n">jit</span><span class="p">,</span> <span class="n">prange</span>
+    <span class="n">HAS_NUMBA</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">HAS_NUMBA</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"⚠️  Numba 未安装，使用纯 NumPy 版本"</span><span class="p">)</span>
+
+
+<span class="c1"># ─── 图像处理函数 ───</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">to_grayscale</span><span class="p">(</span><span class="n">pixels</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""RGB → 灰度 (ITU-R BT.601)"""</span>
+    <span class="k">if</span> <span class="n">HAS_NUMBA</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_grayscale_numba</span><span class="p">(</span><span class="n">pixels</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_grayscale_numpy</span><span class="p">(</span><span class="n">pixels</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_grayscale_numpy</span><span class="p">(</span><span class="n">pixels</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">(</span><span class="mf">0.299</span> <span class="o">*</span> <span class="n">pixels</span><span class="p">[:,</span> <span class="p">:,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span>
+            <span class="mf">0.587</span> <span class="o">*</span> <span class="n">pixels</span><span class="p">[:,</span> <span class="p">:,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+</span>
+            <span class="mf">0.114</span> <span class="o">*</span> <span class="n">pixels</span><span class="p">[:,</span> <span class="p">:,</span> <span class="mi">2</span><span class="p">])</span>
+
+
+<span class="k">if</span> <span class="n">HAS_NUMBA</span><span class="p">:</span>
+    <span class="nd">@jit</span><span class="p">(</span><span class="n">nopython</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">parallel</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_grayscale_numba</span><span class="p">(</span><span class="n">pixels</span><span class="p">):</span>
+        <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">pixels</span><span class="o">.</span><span class="n">shape</span><span class="p">[:</span><span class="mi">2</span><span class="p">]</span>
+        <span class="n">gray</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">empty</span><span class="p">((</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">prange</span><span class="p">(</span><span class="n">h</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">w</span><span class="p">):</span>
+                <span class="n">gray</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mf">0.299</span> <span class="o">*</span> <span class="n">pixels</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="mi">0</span><span class="p">]</span> <span class="o">+</span>
+                              <span class="mf">0.587</span> <span class="o">*</span> <span class="n">pixels</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span> <span class="o">+</span>
+                              <span class="mf">0.114</span> <span class="o">*</span> <span class="n">pixels</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="mi">2</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">gray</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">gaussian_blur</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">kernel_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">5</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""高斯模糊"""</span>
+    <span class="k">if</span> <span class="n">HAS_NUMBA</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_blur_numba</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">kernel_size</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_blur_numpy</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">kernel_size</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_blur_numpy</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">kernel_size</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""NumPy 卷积模糊"""</span>
+    <span class="c1"># 生成高斯核</span>
+    <span class="n">ax</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">kernel_size</span><span class="p">)</span> <span class="o">-</span> <span class="n">kernel_size</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">xx</span><span class="p">,</span> <span class="n">yy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="n">ax</span><span class="p">,</span> <span class="n">ax</span><span class="p">)</span>
+    <span class="n">kernel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="p">(</span><span class="n">xx</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">yy</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="p">(</span><span class="n">kernel_size</span><span class="o">/</span><span class="mi">3</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">))</span>
+    <span class="n">kernel</span> <span class="o">/=</span> <span class="n">kernel</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+    <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">pad</span> <span class="o">=</span> <span class="n">kernel_size</span> <span class="o">//</span> <span class="mi">2</span>
+    <span class="n">padded</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">pad</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">pad</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s1">'reflect'</span><span class="p">)</span>
+
+    <span class="n">result</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">h</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">w</span><span class="p">):</span>
+            <span class="n">result</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">padded</span><span class="p">[</span><span class="n">i</span><span class="p">:</span><span class="n">i</span><span class="o">+</span><span class="n">kernel_size</span><span class="p">,</span> <span class="n">j</span><span class="p">:</span><span class="n">j</span><span class="o">+</span><span class="n">kernel_size</span><span class="p">]</span> <span class="o">*</span> <span class="n">kernel</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">result</span>
+
+
+<span class="k">if</span> <span class="n">HAS_NUMBA</span><span class="p">:</span>
+    <span class="nd">@jit</span><span class="p">(</span><span class="n">nopython</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">parallel</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_blur_numba</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">kernel_size</span><span class="p">):</span>
+        <span class="n">ax</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">kernel_size</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="o">-</span> <span class="n">kernel_size</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="n">kernel</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">kernel_size</span><span class="p">,</span> <span class="n">kernel_size</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">sigma</span> <span class="o">=</span> <span class="n">kernel_size</span> <span class="o">/</span> <span class="mf">3.0</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">kernel_size</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">kernel_size</span><span class="p">):</span>
+                <span class="n">kernel</span><span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="o">-</span><span class="p">(</span><span class="n">ax</span><span class="p">[</span><span class="n">i</span><span class="p">]</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">ax</span><span class="p">[</span><span class="n">j</span><span class="p">]</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="mi">2</span> <span class="o">*</span> <span class="n">sigma</span><span class="o">**</span><span class="mi">2</span><span class="p">))</span>
+        <span class="n">kernel</span> <span class="o">/=</span> <span class="n">kernel</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+        <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">pad</span> <span class="o">=</span> <span class="n">kernel_size</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">prange</span><span class="p">(</span><span class="n">h</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">w</span><span class="p">):</span>
+                <span class="n">s</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="k">for</span> <span class="n">ky</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">kernel_size</span><span class="p">):</span>
+                    <span class="k">for</span> <span class="n">kx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">kernel_size</span><span class="p">):</span>
+                        <span class="n">s</span> <span class="o">+=</span> <span class="n">image</span><span class="p">[</span><span class="n">y</span> <span class="o">+</span> <span class="n">ky</span><span class="p">,</span> <span class="n">x</span> <span class="o">+</span> <span class="n">kx</span><span class="p">]</span> <span class="o">*</span> <span class="n">kernel</span><span class="p">[</span><span class="n">ky</span><span class="p">,</span> <span class="n">kx</span><span class="p">]</span>
+                <span class="n">result</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">]</span> <span class="o">=</span> <span class="n">s</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">edge_detect</span><span class="p">(</span><span class="n">image</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""Sobel 边缘检测"""</span>
+    <span class="k">if</span> <span class="n">HAS_NUMBA</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_edge_numba</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_edge_numpy</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_edge_numpy</span><span class="p">(</span><span class="n">image</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""NumPy Sobel 边缘检测"""</span>
+    <span class="n">sobel_x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span> <span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+    <span class="n">sobel_y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+    <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span>
+    <span class="n">gx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+    <span class="n">gy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">y</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">h</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">w</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="n">patch</span> <span class="o">=</span> <span class="n">image</span><span class="p">[</span><span class="n">y</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">y</span><span class="o">+</span><span class="mi">2</span><span class="p">,</span> <span class="n">x</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="n">x</span><span class="o">+</span><span class="mi">2</span><span class="p">]</span>
+            <span class="n">gx</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">patch</span> <span class="o">*</span> <span class="n">sobel_x</span><span class="p">)</span>
+            <span class="n">gy</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">patch</span> <span class="o">*</span> <span class="n">sobel_y</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">gx</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">gy</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="n">HAS_NUMBA</span><span class="p">:</span>
+    <span class="nd">@jit</span><span class="p">(</span><span class="n">nopython</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">parallel</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_edge_numba</span><span class="p">(</span><span class="n">image</span><span class="p">):</span>
+        <span class="n">sobel_x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">],</span> <span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">2</span><span class="p">],</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">sobel_y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">2</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="p">[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">1</span><span class="p">]],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+        <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="o">=</span> <span class="n">image</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">gx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+        <span class="n">gy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros_like</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">y</span> <span class="ow">in</span> <span class="n">prange</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">h</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">w</span> <span class="o">-</span> <span class="mi">1</span><span class="p">):</span>
+                <span class="n">s_x</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="n">s_y</span> <span class="o">=</span> <span class="mf">0.0</span>
+                <span class="k">for</span> <span class="n">ky</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+                    <span class="k">for</span> <span class="n">kx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+                        <span class="n">s_x</span> <span class="o">+=</span> <span class="n">image</span><span class="p">[</span><span class="n">y</span> <span class="o">+</span> <span class="n">ky</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">x</span> <span class="o">+</span> <span class="n">kx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">sobel_x</span><span class="p">[</span><span class="n">ky</span><span class="p">,</span> <span class="n">kx</span><span class="p">]</span>
+                        <span class="n">s_y</span> <span class="o">+=</span> <span class="n">image</span><span class="p">[</span><span class="n">y</span> <span class="o">+</span> <span class="n">ky</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">x</span> <span class="o">+</span> <span class="n">kx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">]</span> <span class="o">*</span> <span class="n">sobel_y</span><span class="p">[</span><span class="n">ky</span><span class="p">,</span> <span class="n">kx</span><span class="p">]</span>
+                <span class="n">gx</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">]</span> <span class="o">=</span> <span class="n">s_x</span>
+                <span class="n">gy</span><span class="p">[</span><span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">]</span> <span class="o">=</span> <span class="n">s_y</span>
+
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">gx</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">gy</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+
+
+<span class="c1"># ─── 处理管道 ───</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ImageTask</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""单张图像的处理任务"""</span>
+    <span class="n">task_id</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">pixels</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span>  <span class="c1"># shape (H, W, 3)</span>
+    <span class="n">output_dir</span><span class="p">:</span> <span class="nb">str</span>
+
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">ImageResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""处理结果"""</span>
+    <span class="n">task_id</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">original_shape</span><span class="p">:</span> <span class="nb">tuple</span>
+    <span class="n">processed_shape</span><span class="p">:</span> <span class="nb">tuple</span>
+    <span class="n">process_time_ms</span><span class="p">:</span> <span class="nb">float</span>
+    <span class="n">output_files</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">process_single_image</span><span class="p">(</span><span class="n">task</span><span class="p">:</span> <span class="n">ImageTask</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ImageResult</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""</span>
+<span class="sd">    处理单张图像的完整管道</span>
+<span class="sd">    grayscale → blur → edge_detect</span>
+<span class="sd">    """</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+
+    <span class="c1"># 管道处理</span>
+    <span class="n">gray</span> <span class="o">=</span> <span class="n">to_grayscale</span><span class="p">(</span><span class="n">task</span><span class="o">.</span><span class="n">pixels</span><span class="p">)</span>
+    <span class="n">blurred</span> <span class="o">=</span> <span class="n">gaussian_blur</span><span class="p">(</span><span class="n">gray</span><span class="p">,</span> <span class="n">kernel_size</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+    <span class="n">edges</span> <span class="o">=</span> <span class="n">edge_detect</span><span class="p">(</span><span class="n">blurred</span><span class="p">)</span>
+
+    <span class="n">elapsed</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+
+    <span class="k">return</span> <span class="n">ImageResult</span><span class="p">(</span>
+        <span class="n">task_id</span><span class="o">=</span><span class="n">task</span><span class="o">.</span><span class="n">task_id</span><span class="p">,</span>
+        <span class="n">original_shape</span><span class="o">=</span><span class="n">task</span><span class="o">.</span><span class="n">pixels</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+        <span class="n">processed_shape</span><span class="o">=</span><span class="n">edges</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span>
+        <span class="n">process_time_ms</span><span class="o">=</span><span class="n">elapsed</span><span class="p">,</span>
+        <span class="n">output_files</span><span class="o">=</span><span class="p">[],</span>  <span class="c1"># 实际项目中会保存文件</span>
+    <span class="p">)</span>
+
+
+<span class="c1"># ─── 多进程批处理 ───</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ImageProcessor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""高性能图像批处理器"""</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">num_workers</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">num_workers</span> <span class="o">=</span> <span class="n">num_workers</span> <span class="ow">or</span> <span class="n">mp</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"🖼️  图像处理器: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">num_workers</span><span class="si">}</span><span class="s2"> 个 Worker"</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process_batch</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images</span><span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">],</span> <span class="n">output_dir</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"/tmp"</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">ImageResult</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""批量处理图像"""</span>
+        <span class="n">tasks</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">ImageTask</span><span class="p">(</span><span class="n">task_id</span><span class="o">=</span><span class="n">i</span><span class="p">,</span> <span class="n">pixels</span><span class="o">=</span><span class="n">img</span><span class="p">,</span> <span class="n">output_dir</span><span class="o">=</span><span class="n">output_dir</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">img</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">images</span><span class="p">)</span>
+        <span class="p">]</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  处理 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">tasks</span><span class="p">)</span><span class="si">}</span><span class="s2"> 张图像..."</span><span class="p">)</span>
+
+        <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+
+        <span class="c1"># 多进程并行</span>
+        <span class="k">with</span> <span class="n">mp</span><span class="o">.</span><span class="n">Pool</span><span class="p">(</span><span class="n">processes</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">num_workers</span><span class="p">)</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+            <span class="n">results</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">process_single_image</span><span class="p">,</span> <span class="n">tasks</span><span class="p">)</span>
+
+        <span class="n">total_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+        <span class="n">total_proc</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">process_time_ms</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">)</span>
+
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  总耗时: </span><span class="si">{</span><span class="n">total_time</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  处理时间之和: </span><span class="si">{</span><span class="n">total_proc</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">ms"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  并行加速比: </span><span class="si">{</span><span class="n">total_proc</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="n">total_time</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1000</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">x"</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">results</span>
+
+
+<span class="c1"># ─── 性能基准测试 ───</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">benchmark</span><span class="p">():</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"="</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"高性能图像处理管道 — 性能测试"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"="</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+
+    <span class="c1"># 生成模拟图像</span>
+    <span class="n">sizes</span> <span class="o">=</span> <span class="p">[(</span><span class="mi">256</span><span class="p">,</span> <span class="mi">256</span><span class="p">),</span> <span class="p">(</span><span class="mi">512</span><span class="p">,</span> <span class="mi">512</span><span class="p">),</span> <span class="p">(</span><span class="mi">1024</span><span class="p">,</span> <span class="mi">1024</span><span class="p">)]</span>
+    <span class="n">num_images</span> <span class="o">=</span> <span class="mi">4</span>
+
+    <span class="k">for</span> <span class="n">h</span><span class="p">,</span> <span class="n">w</span> <span class="ow">in</span> <span class="n">sizes</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">--- 图像尺寸: </span><span class="si">{</span><span class="n">h</span><span class="si">}</span><span class="s2">×</span><span class="si">{</span><span class="n">w</span><span class="si">}</span><span class="s2">, 数量: </span><span class="si">{</span><span class="n">num_images</span><span class="si">}</span><span class="s2"> ---"</span><span class="p">)</span>
+
+        <span class="n">images</span> <span class="o">=</span> <span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">randint</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">256</span><span class="p">,</span> <span class="p">(</span><span class="n">h</span><span class="p">,</span> <span class="n">w</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+                  <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">num_images</span><span class="p">)]</span>
+
+        <span class="c1"># 预热（Numba 首次编译）</span>
+        <span class="k">if</span> <span class="n">HAS_NUMBA</span><span class="p">:</span>
+            <span class="n">_</span> <span class="o">=</span> <span class="n">process_single_image</span><span class="p">(</span><span class="n">ImageTask</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">images</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="s2">"/tmp"</span><span class="p">))</span>
+
+        <span class="n">processor</span> <span class="o">=</span> <span class="n">ImageProcessor</span><span class="p">(</span><span class="n">num_workers</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">processor</span><span class="o">.</span><span class="n">process_batch</span><span class="p">(</span><span class="n">images</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">results</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  Image </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">task_id</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">r</span><span class="o">.</span><span class="n">process_time_ms</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">ms"</span><span class="p">)</span>
+
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="n">benchmark</span><span class="p">()</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">✅ 图像处理管道测试完成！"</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="_7">四、生产级最佳实践</h2>
+<h3 id="1_2">1. 错误处理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProcessPoolExecutor</span><span class="p">,</span> <span class="n">as_completed</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">robust_crawl</span><span class="p">(</span><span class="n">urls</span><span class="p">,</span> <span class="n">max_workers</span><span class="o">=</span><span class="mi">4</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""健壮的并发爬虫"""</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="n">errors</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">with</span> <span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="n">max_workers</span><span class="p">)</span> <span class="k">as</span> <span class="n">executor</span><span class="p">:</span>
+        <span class="n">future_to_url</span> <span class="o">=</span> <span class="p">{</span><span class="n">executor</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">crawl_one</span><span class="p">,</span> <span class="n">url</span><span class="p">):</span> <span class="n">url</span> <span class="k">for</span> <span class="n">url</span> <span class="ow">in</span> <span class="n">urls</span><span class="p">}</span>
+
+        <span class="k">for</span> <span class="n">future</span> <span class="ow">in</span> <span class="n">as_completed</span><span class="p">(</span><span class="n">future_to_url</span><span class="p">):</span>
+            <span class="n">url</span> <span class="o">=</span> <span class="n">future_to_url</span><span class="p">[</span><span class="n">future</span><span class="p">]</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">result</span> <span class="o">=</span> <span class="n">future</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+                <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="n">errors</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"url"</span><span class="p">:</span> <span class="n">url</span><span class="p">,</span> <span class="s2">"error"</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)})</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"成功: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">results</span><span class="p">)</span><span class="si">}</span><span class="s2">, 失败: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">errors</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">results</span><span class="p">,</span> <span class="n">errors</span>
+</code></pre></div>
+<h3 id="2_2">2. 进程间通信</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span><span class="w"> </span><span class="nn">multiprocessing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Queue</span><span class="p">,</span> <span class="n">Process</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">producer</span><span class="p">(</span><span class="n">queue</span><span class="p">,</span> <span class="n">items</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""生产者：生成任务"""</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">items</span><span class="p">:</span>
+        <span class="n">queue</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+    <span class="n">queue</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>  <span class="c1"># 哨兵值</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">consumer</span><span class="p">(</span><span class="n">queue</span><span class="p">,</span> <span class="n">results</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""消费者：处理任务"""</span>
+    <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+        <span class="n">item</span> <span class="o">=</span> <span class="n">queue</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">item</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">break</span>
+        <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">process</span><span class="p">(</span><span class="n">item</span><span class="p">))</span>
+</code></pre></div>
+<h3 id="3">3. 内存管理</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 避免：大量数据在进程间复制</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">bad_example</span><span class="p">():</span>
+    <span class="n">big_data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">10_000_000</span><span class="p">)</span>  <span class="c1"># ~80MB</span>
+    <span class="k">with</span> <span class="n">ProcessPoolExecutor</span><span class="p">()</span> <span class="k">as</span> <span class="n">pool</span><span class="p">:</span>
+        <span class="c1"># 每个 Worker 都会复制一份 big_data！</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="n">pool</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">process</span><span class="p">,</span> <span class="p">[</span><span class="n">big_data</span><span class="p">]</span> <span class="o">*</span> <span class="mi">10</span><span class="p">)</span>
+
+<span class="c1"># ✅ 正确：用共享内存</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">multiprocessing</span><span class="w"> </span><span class="kn">import</span> <span class="n">shared_memory</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">good_example</span><span class="p">():</span>
+    <span class="n">big_data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">10_000_000</span><span class="p">)</span>
+    <span class="n">shm</span> <span class="o">=</span> <span class="n">shared_memory</span><span class="o">.</span><span class="n">SharedMemory</span><span class="p">(</span><span class="n">create</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">big_data</span><span class="o">.</span><span class="n">nbytes</span><span class="p">)</span>
+    <span class="n">shared_array</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">(</span><span class="n">big_data</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">big_data</span><span class="o">.</span><span class="n">dtype</span><span class="p">,</span> <span class="n">buffer</span><span class="o">=</span><span class="n">shm</span><span class="o">.</span><span class="n">buf</span><span class="p">)</span>
+    <span class="n">shared_array</span><span class="p">[:]</span> <span class="o">=</span> <span class="n">big_data</span><span class="p">[:]</span>
+    <span class="c1"># 共享内存，不会复制</span>
+</code></pre></div>
+<h3 id="4">4. 监控与日志</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+
+<span class="n">logging</span><span class="o">.</span><span class="n">basicConfig</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">)</span>
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s2">"hpc"</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">monitored_task</span><span class="p">(</span><span class="n">task_id</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""带监控的任务"""</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Task </span><span class="si">{</span><span class="n">task_id</span><span class="si">}</span><span class="s2"> 开始: </span><span class="si">{</span><span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">process</span><span class="p">(</span><span class="n">task_id</span><span class="p">)</span>
+        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Task </span><span class="si">{</span><span class="n">task_id</span><span class="si">}</span><span class="s2"> 完成: </span><span class="si">{</span><span class="n">elapsed</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Task </span><span class="si">{</span><span class="n">task_id</span><span class="si">}</span><span class="s2"> 失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="k">raise</span>
+</code></pre></div>
+<hr>
+<h2 id="_8">五、性能评估框架</h2>
+<h3 id="_9">基准测试方法</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span><span class="w"> </span><span class="nf">benchmark_function</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">n_runs</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="mi">2</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""通用基准测试"""</span>
+    <span class="c1"># 预热</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">warmup</span><span class="p">):</span>
+        <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+
+    <span class="c1"># 正式测试</span>
+    <span class="n">times</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_runs</span><span class="p">):</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">start</span>
+        <span class="n">times</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">elapsed</span><span class="p">)</span>
+
+    <span class="n">times</span><span class="o">.</span><span class="n">sort</span><span class="p">()</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s2">"mean"</span><span class="p">:</span> <span class="nb">sum</span><span class="p">(</span><span class="n">times</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">times</span><span class="p">),</span>
+        <span class="s2">"median"</span><span class="p">:</span> <span class="n">times</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">times</span><span class="p">)</span> <span class="o">//</span> <span class="mi">2</span><span class="p">],</span>
+        <span class="s2">"min"</span><span class="p">:</span> <span class="n">times</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span>
+        <span class="s2">"max"</span><span class="p">:</span> <span class="n">times</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span>
+        <span class="s2">"p95"</span><span class="p">:</span> <span class="n">times</span><span class="p">[</span><span class="nb">int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">times</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.95</span><span class="p">)],</span>
+    <span class="p">}</span>
+</code></pre></div>
+<h3 id="amdahl">Amdahl 定律</h3>
+<pre class="plain"><code>加速比 = 1 / ((1 - P) + P/N)
+
+P = 可并行化的比例
+N = 处理器数量
+
+例：90% 可并行，4 个 CPU
+加速比 = 1 / (0.1 + 0.9/4) = 1 / 0.325 ≈ 3.08x
+
+上限：即使 100 个 CPU，加速比也只有 1/0.1 = 10x</code></pre>
+<hr>
+<h2 id="_10">六、思考题</h2>
+<ol>
+<li><strong>架构题</strong>：在并发爬虫中，为什么选择「多进程 + 进程内 asyncio」而不是「纯 asyncio」或「纯多进程」？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>先解释两个术语：<strong>GIL（全局解释器锁）</strong>是 CPython 的一把锁，同一时刻只允许一个线程执行 Python 字节码，所以多线程对「CPU 密集」任务几乎没有加速；<strong>协程（coroutine）</strong>是一种能在等待时主动让出、由「事件循环」统一调度的轻量函数，切换开销远小于线程/进程。</p>
+<p>爬虫的负载是「I/O 密集为主、夹带少量 CPU」：大部分时间在等网络响应（I/O），但解析 HTML、提取 title、TLS 加解密、结果序列化也要吃 CPU。三种方案的取舍：</p>
+<ul>
+<li><strong>纯 asyncio（单进程）</strong>：一个事件循环就能并发成千上万个连接，I/O 效率极高；但所有 CPU 工作都挤在一个核上，核数再多也用不上，且任何一处阻塞调用会卡住整个循环。URL 多、解析重时，单核成为瓶颈。</li>
+<li><strong>纯多进程（每进程同步阻塞抓取）</strong>：能真正吃满多核，但进程内若串行抓 URL，「并发连接数 ≈ 进程数」。要维持几千个并发连接就得开几千个进程，创建/切换/内存开销巨大，不现实。</li>
+<li><strong>多进程 + 进程内 asyncio（本项目）</strong>：用「≈CPU 核数」个进程吃满多核做 CPU 部分，每个进程内再用 asyncio + aiohttp 维持大量并发连接做 I/O 部分。两层并发叠加：进程级「并行」利用多核，协程级「并发」利用 I/O 等待，既绕开 GIL，又避免进程爆炸。</li>
+</ul>
+<p>下面用标准库模拟「进程内 asyncio 并发 I/O」的效果（5 个各等待 0.1s 的任务，总耗时接近 0.1s 而非 0.5s）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">fetch</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
+    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.1</span><span class="p">)</span>   <span class="c1"># 模拟一次网络等待（I/O）</span>
+    <span class="k">return</span> <span class="n">i</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="n">start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="n">results</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="o">*</span><span class="p">(</span><span class="n">fetch</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">5</span><span class="p">)))</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"结果:"</span><span class="p">,</span> <span class="n">results</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"5 个各 0.1s 的任务，总耗时约 </span><span class="si">{</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span><span class="o">-</span><span class="n">start</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">s"</span><span class="p">)</span>
+
+<span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
+</code></pre></div>
+<p>预期输出：<code>结果: [0, 1, 2, 3, 4]</code>，总耗时约 <code>0.1s</code>（因机器/版本而异）。这说明协程在等待 I/O 时互相让出，单进程内就能把多个网络请求「叠」在一起；而要吃满多核做解析，仍需外层多进程。</p>
+<p>⚠️ 注意：进程内 asyncio 只解决 I/O 并发，不解决 CPU 并行；CPU 密集部分必须靠多进程。Windows/macOS 默认用 spawn 启动子进程，worker 函数要可被 pickle 且调用放在 <code>if __name__ == "__main__":</code> 保护下。</p>
+<ol start="2">
+<li><strong>性能题</strong>：图像处理管道中，灰度转换用 Numba 并行，但高斯模糊用串行。分析这种设计的合理性。</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>⚠️ 注意：先澄清一个与代码不符的前提。本 README 给出的 <code>_grayscale_numba</code>、<code>_blur_numba</code>、<code>_edge_numba</code> 三个内核其实都用了 <code>@jit(nopython=True, parallel=True)</code> + <code>prange</code>，都是并行的。所以「模糊用串行」并不符合现有代码；下面按「如果把模糊改成串行，是否合理」来分析，这也是本题真正想考的点。</p>
+<p>把内层模糊设为串行，在「外层已经多进程并行」时往往是对的，原因：</p>
+<ul>
+<li><strong>避免嵌套并行 / 超额订阅（oversubscription）</strong>：外层已用 <code>mp.Pool(num_workers)</code> 按「图像之间」并行。若每张图内部的模糊再用 Numba 开满线程，总线程数 ≈ <code>num_workers × CPU 核数</code>，远超物理核数，线程互相争抢、频繁上下文切换、缓存失效，反而更慢。让并行只发生在「图像之间」这一层、内层串行，是常见且合理的做法。</li>
+<li><strong>模糊是访存密集（memory-bound）</strong>：每个输出像素要读 <code>kernel_size²</code> 个输入像素，算术量小、访存量大。多核一起跑时大家抢同一条内存带宽，并行收益有限；灰度转换计算更简单、更易向量化，并行的性价比相对更高。</li>
+<li><strong>粒度与开销</strong>：卷积输出像素之间其实相互独立（读输入邻域、写各自输出），本质可并行；但小图上 <code>prange</code> 的线程启动/调度开销可能超过收益，串行更简单也不易在边界处理上出错。</li>
+</ul>
+<p>结论：是否串行取决于「外层是否已并行」和「图像大小」。本项目外层已多进程并行，内层模糊串行可避免超额订阅，是合理选择；若改成单进程处理一张大图，则模糊并行更能吃满多核。</p>
+<p>💡 提示：Numba 的 <code>parallel=True</code> 只对使用 <code>prange</code> 的循环真正生效，把 <code>prange</code> 换成 <code>range</code> 即退回串行；可用环境变量 <code>NUMBA_NUM_THREADS</code> 限制内层线程数，避免与外层进程数相乘导致超额订阅。</p>
+<ol start="3">
+<li><strong>扩展题</strong>：如果要处理 10 万张图像（每张 4K 分辨率），如何设计内存管理策略？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>先估算量级：4K ≈ 3840×2160 ≈ 830 万像素，×3 通道 ≈ 2500 万个值。用 <code>uint8</code> 存约 25MB/张，用 <code>float64</code> 约 200MB/张。10 万张就是 2.5TB（uint8）到 20TB（float64）——绝不可能一次性载入内存（数字因分辨率/编码而异）。核心思路是「让内存占用只和并发数有关，与总张数无关」：</p>
+<ul>
+<li><strong>流式 / 惰性加载</strong>：用生成器一次只读一张（或一小批），处理完立即释放，绝不写 <code>images = [load(p) for p in 全部路径]</code>。</li>
+<li><strong>分批 + 有界队列（背压）</strong>：用 <code>Pool.imap(func, 生成器, chunksize=...)</code> 惰性消费，或限制 <code>ProcessPoolExecutor</code> 的在途任务数，避免生产者把 10 万个大数组一次性塞进队列撑爆内存。</li>
+<li><strong>选对 dtype</strong>：原始像素用 <code>uint8</code>（0–255）而非 <code>float64</code>，内存差 8 倍；只在必要的中间步骤临时转 float，算完转回或释放。</li>
+<li><strong>共享内存 / 内存映射</strong>：大数组用 <code>multiprocessing.shared_memory</code> 或 <code>np.memmap</code>（内存映射文件）让多进程零拷贝共享；进程间传「文件路径 / 共享内存名」而不是数组本身，避免 pickle 复制。</li>
+<li><strong>及时释放 + 限制并发 + 结果落盘</strong>：worker 数 ≈ CPU 核数；用 <code>maxtasksperchild</code>（Pool）/ <code>max_tasks_per_child</code>（Executor，3.11+）定期重启 worker 回收内存；边缘图等结果直接写磁盘，内存里只留统计量。</li>
+</ul>
+<p>下面用标准库演示「流式处理」的核心（生成器惰性产出，内存里同一时刻只有一张）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span><span class="w"> </span><span class="nf">load_one</span><span class="p">(</span><span class="n">i</span><span class="p">):</span>
+    <span class="c1"># 模拟加载一张 4K 图（真实用图像库/np.load），这里只返回一个小标记</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s2">"image_</span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2">"</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="n">img</span><span class="p">):</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">img</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">image_stream</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="k">yield</span> <span class="n">load_one</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>      <span class="c1"># 关键：yield 惰性产出，不建列表</span>
+
+<span class="c1"># 流式处理 10 万张：内存里同一时刻只有 1 张</span>
+<span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+<span class="k">for</span> <span class="n">img</span> <span class="ow">in</span> <span class="n">image_stream</span><span class="p">(</span><span class="mi">100_000</span><span class="p">):</span>
+    <span class="n">total</span> <span class="o">+=</span> <span class="n">process</span><span class="p">(</span><span class="n">img</span><span class="p">)</span>
+    <span class="c1"># img 离开本次循环后即可被回收</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"处理张数累计长度:"</span><span class="p">,</span> <span class="n">total</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出：<code>处理张数累计长度: 1088890</code>。无论处理 10 万还是 100 万张，内存峰值都只取决于「同时驻留的图像数」，而不是总量；真实项目把 <code>for</code> 循环换成 <code>pool.imap(process, image_stream(N), chunksize=8)</code> 即可在保持低内存的同时并行。</p>
+<p>⚠️ 注意：4K 单张 float64 约 200MB，若 <code>num_workers=8</code> 且每个 worker 同时持有多张，峰值可达数 GB；务必 uint8 + 流式 + 限制在途任务数。示例数字因机器/分辨率而异。</p>
+<ol start="4">
+<li><strong>对比题</strong>：<code>multiprocessing.Pool</code> 和 <code>concurrent.futures.ProcessPoolExecutor</code> 在这个场景下有什么区别？选哪个？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>两者都能多进程并行，区别在 API 风格与控制粒度：</p>
+<ul>
+<li><strong>接口风格</strong>：<code>Pool</code> 是老牌低级 API，用 <code>map / imap / imap_unordered / apply_async</code>；<code>ProcessPoolExecutor</code> 是更现代的高级 API，与 <code>ThreadPoolExecutor</code> 统一，<code>submit</code> 返回 <strong>Future（代表「将来才有结果」的对象）</strong>，配合 <code>as_completed</code> 按完成顺序取结果。</li>
+<li><strong>超时与逐任务异常</strong>：Executor 的 <code>future.result(timeout=...)</code> 可单独设超时、单独 try/except，一个 URL 失败不影响其它——本项目「健壮爬虫」正是用它；<code>Pool.map</code> 则会把整批异常一起抛出。</li>
+<li><strong>惰性流式</strong>：<code>Pool.imap</code> 能惰性消费生成器、配合 chunksize 控制内存，适合 10 万张图那种流式场景；Executor 的 <code>map</code> 也支持 chunksize，但一次性提交大量任务时更占内存。</li>
+<li><strong>worker 回收</strong>：<code>Pool</code> 早就有 <code>maxtasksperchild</code>（每个 worker 处理 N 个任务后重启，防内存累积）；Executor 直到 Python 3.11+ 才有 <code>max_tasks_per_child</code>。</li>
+<li><strong>崩溃处理</strong>：worker 崩溃时 Executor 抛 <code>BrokenProcessPool</code> 且整池不可用；两者都支持 <code>with</code> 上下文管理，Executor 另有 <code>shutdown(cancel_futures=...)</code>（3.9+）。</li>
+</ul>
+<p>怎么选（本项目两种都用了）：图像批处理用 <code>Pool.map</code>（整齐一批、要 <code>maxtasksperchild</code> 回收内存）；健壮爬虫用 <code>ProcessPoolExecutor + as_completed</code>（要逐 URL 超时/异常、按完成顺序聚合）。经验法则：要细粒度 Future/超时/逐个异常 → Executor；要惰性 imap、旧版本上的 worker 回收、简单 map → Pool。</p>
+<p>下面演示 Executor「按完成顺序取结果 + 逐任务超时/异常」：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span><span class="w"> </span><span class="nn">concurrent.futures</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProcessPoolExecutor</span><span class="p">,</span> <span class="n">as_completed</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">work</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.05</span> <span class="o">*</span> <span class="p">(</span><span class="mi">3</span> <span class="o">-</span> <span class="n">n</span><span class="p">))</span>   <span class="c1"># 故意让不同任务耗时不同</span>
+    <span class="k">return</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">ProcessPoolExecutor</span><span class="p">(</span><span class="n">max_workers</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span> <span class="k">as</span> <span class="n">ex</span><span class="p">:</span>
+        <span class="n">futures</span> <span class="o">=</span> <span class="p">{</span><span class="n">ex</span><span class="o">.</span><span class="n">submit</span><span class="p">(</span><span class="n">work</span><span class="p">,</span> <span class="n">n</span><span class="p">):</span> <span class="n">n</span> <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">)}</span>
+        <span class="k">for</span> <span class="n">fut</span> <span class="ow">in</span> <span class="n">as_completed</span><span class="p">(</span><span class="n">futures</span><span class="p">):</span>   <span class="c1"># 谁先完成先拿谁</span>
+            <span class="n">n</span> <span class="o">=</span> <span class="n">futures</span><span class="p">[</span><span class="n">fut</span><span class="p">]</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"任务 </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> 结果 = </span><span class="si">{</span><span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"任务 </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> 失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出（按完成先后，而非提交顺序）：<code>任务 2 结果 = 4</code>、<code>任务 1 结果 = 1</code>、<code>任务 0 结果 = 0</code>。耗时短的先返回，这正是 <code>as_completed</code> 相对 <code>Pool.map</code>（保持输入顺序）的优势。</p>
+<p>⚠️ 注意：Windows/macOS 默认 spawn，worker 函数必须在模块顶层定义（可 pickle），调用放在 <code>if __name__ == "__main__":</code> 下，否则子进程重复导入主模块会报错；<code>max_tasks_per_child</code> 需 Python 3.11+。</p>
+<ol start="5">
+<li><strong>优化题</strong>：Amdahl 定律告诉我们并行有上限。在这个项目中，并行化比例大约是多少？瓶颈在哪里？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>Amdahl 定律：<code>加速比 = 1 / ((1-P) + P/N)</code>，P 是「可并行比例」，N 是核数；当 N→∞，上限 = <code>1/(1-P)</code>。也就是说，哪怕只有一小块串行，也会把加速比死死卡住。</p>
+<ul>
+<li><strong>图像管道</strong>：灰度/模糊/边缘都是逐像素、天然可并行，P 很高（约 0.9–0.99，因实现而异）。串行部分 (1-P) 主要是：进程池启动、Numba 首次 JIT 编译、读原图/写结果、进程间 pickle 大数组、主进程聚合统计。举例 P=0.95 时，4 核≈3.48x、8 核≈5.93x，上限 20x（数字因机器/版本而异）。</li>
+<li><strong>爬虫</strong>：网络等待几乎可完全并发，P 也很高；但真正的上限常常不是 CPU 核数，而是「网络带宽 / 对方服务器限流 / 同域名限速」，再加上单核上的解析、TLS 与结果去重聚合。</li>
+</ul>
+<p>瓶颈通常落在这几处（按影响排序，需实测确认）：</p>
+<ol>
+<li><strong>内存带宽</strong>：模糊/边缘访存密集，多核抢带宽，实际 P 打折。</li>
+<li><strong>进程间拷贝 / pickle</strong>：大数组序列化是串行开销，用共享内存/传路径可缓解。</li>
+<li><strong>磁盘 I/O</strong>：读原图、写结果。</li>
+<li><strong>一次性串行成本</strong>：Numba 首次编译 + 进程池启动，需预热（warmup）后再计时。</li>
+<li><strong>结果聚合</strong>：主进程串行汇总。</li>
+<li><strong>超额订阅</strong>：外层进程数 × 内层 Numba 线程数超过物理核数。</li>
+</ol>
+<p>实践建议：先用基准测试比较串行/并行耗时反推 P，再优先优化最大的串行项（共享内存减拷贝、uint8 减带宽、预热减编译、流式降 I/O 峰值），而不是盲目加核——收益会递减。</p>
+<p>下面用标准库把 Amdahl 定律算出来，直观看到「上限」：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span><span class="w"> </span><span class="nf">amdahl</span><span class="p">(</span><span class="n">P</span><span class="p">,</span> <span class="n">N</span><span class="p">):</span>
+    <span class="k">return</span> <span class="mi">1</span> <span class="o">/</span> <span class="p">((</span><span class="mi">1</span> <span class="o">-</span> <span class="n">P</span><span class="p">)</span> <span class="o">+</span> <span class="n">P</span> <span class="o">/</span> <span class="n">N</span><span class="p">)</span>
+
+<span class="k">for</span> <span class="n">P</span> <span class="ow">in</span> <span class="p">(</span><span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.9</span><span class="p">,</span> <span class="mf">0.95</span><span class="p">,</span> <span class="mf">0.99</span><span class="p">):</span>
+    <span class="n">row</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">amdahl</span><span class="p">(</span><span class="n">P</span><span class="p">,</span><span class="w"> </span><span class="n">N</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">x"</span> <span class="k">for</span> <span class="n">N</span> <span class="ow">in</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">4</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="mi">64</span><span class="p">)]</span>
+    <span class="n">limit</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="p">(</span><span class="mi">1</span> <span class="o">-</span> <span class="n">P</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"P=</span><span class="si">{</span><span class="n">P</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">  N=1/2/4/8/64 -&gt; </span><span class="si">{</span><span class="n">row</span><span class="si">}</span><span class="s2">  上限=</span><span class="si">{</span><span class="n">limit</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">x"</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出：</p>
+<pre class="plain"><code>P=0.50  N=1/2/4/8/64 -&gt; [&#x27;1.00x&#x27;, &#x27;1.33x&#x27;, &#x27;1.60x&#x27;, &#x27;1.78x&#x27;, &#x27;1.97x&#x27;]  上限=2.0x
+P=0.90  N=1/2/4/8/64 -&gt; [&#x27;1.00x&#x27;, &#x27;1.82x&#x27;, &#x27;3.08x&#x27;, &#x27;4.71x&#x27;, &#x27;8.77x&#x27;]  上限=10.0x
+P=0.95  N=1/2/4/8/64 -&gt; [&#x27;1.00x&#x27;, &#x27;1.90x&#x27;, &#x27;3.48x&#x27;, &#x27;5.93x&#x27;, &#x27;15.42x&#x27;]  上限=20.0x
+P=0.99  N=1/2/4/8/64 -&gt; [&#x27;1.00x&#x27;, &#x27;1.98x&#x27;, &#x27;3.88x&#x27;, &#x27;7.48x&#x27;, &#x27;39.26x&#x27;]  上限=100.0x</code></pre>
+<p>可见 P=0.9 时即便 64 核也只有 8.77x（上限 10x）；把 P 从 0.9 提到 0.99，上限就从 10x 跳到 100x——优化串行部分比堆核更划算。</p>
+<p>💡 提示：P 不是固定常数，随图像大小、是否预热、dtype、是否共享内存而变；上面都是示例值，应在目标机器上实测。</p>
+<hr>
+<h2 id="_11">📚 扩展阅读</h2>
+<ul>
+<li><a href="https://docs.python.org/3/library/multiprocessing.html">Python multiprocessing 官方文档</a></li>
+<li><a href="https://en.wikipedia.org/wiki/Amdahl%27s_law">Amdahl's Law — Wikipedia</a></li>
+<li><a href="https://numba.pydata.org/numba-doc/latest/user/performance-tips.html">Numba 官方性能技巧</a></li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-059/index.html">← Day 59 C 扩展与性能优化</a><a class="nav-next" href="../day-061/index.html">Day 61 文件与路径操作 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

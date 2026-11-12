@@ -1,0 +1,115 @@
+---
+- name: 部署爬虫集群（Day 175 实战）
+  hosts: crawler_nodes
+  become: yes
+  gather_facts: yes
+  strategy: linear   # 线性策略，一条一条执行，避免依赖冲突
+
+  vars:
+    crawler_repo: "https://github.com/geek0ne/crawler.git"
+    crawler_branch: "main"
+    crawler_version: "3.8.0"
+    redis_host: "{{ redis_host }}"
+    redis_port: "{{ redis_port }}"
+    project_dir: "/opt/crawler"
+    log_dir: "/var/log/crawler"
+    data_dir: "/var/lib/crawler"
+
+  tasks:
+    # ===== 环境准备 =====
+    - name: 创建项目目录结构
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "{{ project_dir }}"
+        - "{{ log_dir }}"
+        - "{{ data_dir }}"
+
+    - name: 更新 apt 包索引（仅 Debian 系）
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: 安装 Python 运行依赖
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - git
+          - sshpass
+        state: present
+      when: ansible_os_family == "Debian"
+      register: apt_result
+
+    # ===== 代码部署 =====
+    - name: 克隆爬虫代码仓库
+      git:
+        repo: "{{ crawler_repo }}"
+        dest: "{{ project_dir }}"
+        version: "{{ crawler_branch }}"
+        force: no
+      register: git_result
+      ignore_errors: yes
+
+    - name: 创建 Python 虚拟环境
+      pip:
+        virtualenv: "{{ project_dir }}/venv"
+        virtualenv_python: python3
+        state: present
+      when: (git_result is succeeded) or (git_result is failed and git_result.rc != 0)
+
+    - name: 安装 Python 依赖
+      pip:
+        virtualenv: "{{ project_dir }}/venv"
+        requirements: "{{ project_dir }}/requirements.txt"
+        state: present
+      when: virtualenv is defined
+      ignore_errors: yes
+
+    # ===== 服务配置 =====
+    - name: 渲染 systemd 服务文件
+      template:
+        src: crawler.service.j2
+        dest: /etc/systemd/system/crawler.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify: 重启爬虫服务
+
+    # ===== 服务管理 =====
+    - name: 重载 systemd 配置
+      systemd:
+        daemon_reload: yes
+
+    - name: 启动并启用爬虫服务
+      systemd:
+        name: crawler
+        state: started
+        enabled: yes
+
+    # ===== 验证 =====
+    - name: 检查爬虫服务状态
+      systemd:
+        name: crawler
+      register: service_status
+
+    - name: 输出最终状态
+      debug:
+        msg: "服务 {{ inventory_hostname }}: {{ service_status.status.ActiveState }}"
+      when: service_status.status is defined
+
+  handlers:
+    - name: 重载 systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: 重启爬虫服务
+      systemd:
+        name: crawler
+        state: restarted

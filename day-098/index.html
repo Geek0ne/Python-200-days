@@ -1,0 +1,1130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 98 — Python 内部机制</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 98 — Python 内部机制</h1>
+  <div class="lmeta">
+    <span class="badge">Python进阶与性能优化</span>
+    <span class="badge">1005 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-098-python-内部机制" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="📋 今日学习目标">📋 今日学习目标</a>
+<a class="toc-l2" href="#1-python-dis" title="1. Python 字节码（dis 模块）">1. Python 字节码（dis 模块）</a>
+<a class="toc-l3" href="#11" title="1.1 什么是字节码？">1.1 什么是字节码？</a>
+<a class="toc-l3" href="#12-pyc" title="1.2 什么是 pyc 文件？">1.2 什么是 pyc 文件？</a>
+<a class="toc-l3" href="#13-dis" title="1.3 使用 dis 模块反汇编">1.3 使用 dis 模块反汇编</a>
+<a class="toc-l3" href="#14" title="1.4 字节码指令详解">1.4 字节码指令详解</a>
+<a class="toc-l3" href="#15-if-else" title="1.5 实战：分析 if-else 的字节码">1.5 实战：分析 if-else 的字节码</a>
+<a class="toc-l3" href="#16-for" title="1.6 实战：分析 for 循环的字节码">1.6 实战：分析 for 循环的字节码</a>
+<a class="toc-l3" href="#17" title="1.7 实战：分析列表推导式的字节码">1.7 实战：分析列表推导式的字节码</a>
+<a class="toc-l2" href="#2-cpython" title="2. CPython 虚拟机结构">2. CPython 虚拟机结构</a>
+<a class="toc-l3" href="#21-cpython" title="2.1 CPython 执行模型">2.1 CPython 执行模型</a>
+<a class="toc-l3" href="#22-frame" title="2.2 栈帧（Frame）结构">2.2 栈帧（Frame）结构</a>
+<a class="toc-l3" href="#23-code-object" title="2.3 Code Object（代码对象）">2.3 Code Object（代码对象）</a>
+<a class="toc-l3" href="#24-value-stack" title="2.4 值栈（Value Stack）执行模型">2.4 值栈（Value Stack）执行模型</a>
+<a class="toc-l3" href="#25-python-311" title="2.5 Python 3.11+ 的自适应解释器">2.5 Python 3.11+ 的自适应解释器</a>
+<a class="toc-l3" href="#26-gil" title="2.6 GIL 与线程执行">2.6 GIL 与线程执行</a>
+<a class="toc-l2" href="#3-pyobject" title="3. PyObject 与类型系统">3. PyObject 与类型系统</a>
+<a class="toc-l3" href="#31" title="3.1 万物皆对象">3.1 万物皆对象</a>
+<a class="toc-l3" href="#32" title="3.2 引用计数机制">3.2 引用计数机制</a>
+<a class="toc-l3" href="#33" title="3.3 循环引用与垃圾回收">3.3 循环引用与垃圾回收</a>
+<a class="toc-l3" href="#34" title="3.4 类型对象与类型层次">3.4 类型对象与类型层次</a>
+<a class="toc-l3" href="#35" title="3.5 内存分配器">3.5 内存分配器</a>
+<a class="toc-l3" href="#36" title="3.6 内置类型实现">3.6 内置类型实现</a>
+<a class="toc-l2" href="#4" title="4. 实战：字节码分析器">4. 实战：字节码分析器</a>
+<a class="toc-l3" href="#41" title="4.1 项目结构">4.1 项目结构</a>
+<a class="toc-l3" href="#42" title="4.2 字节码分析器功能">4.2 字节码分析器功能</a>
+<a class="toc-l2" href="#5" title="5. 思考题">5. 思考题</a>
+<a class="toc-l3" href="#_2" title="基础题">基础题</a>
+<a class="toc-l3" href="#_3" title="进阶题">进阶题</a>
+<a class="toc-l3" href="#_4" title="挑战题">挑战题</a>
+<a class="toc-l2" href="#6" title="6. 本日小结">6. 本日小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-098-python">Day 098 — Python 内部机制</h1>
+<blockquote>
+<p><strong>阶段 7：进阶与性能优化</strong> | <strong>主题：Python 内部机制</strong> | <strong>难度：⭐⭐⭐⭐⭐</strong></p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 今日学习目标</h2>
+<ol>
+<li>理解 Python 字节码的生成与执行原理</li>
+<li>掌握 <code>dis</code> 模块分析字节码的方法</li>
+<li>深入理解 CPython 虚拟机的执行模型</li>
+<li>理解 PyObject 与 Python 类型系统的底层实现</li>
+<li>实战：构建一个字节码分析器</li>
+</ol>
+<hr>
+<h2 id="1-python-dis">1. Python 字节码（dis 模块）</h2>
+<h3 id="11">1.1 什么是字节码？</h3>
+<p>Python 是一种<strong>解释型语言</strong>，但并不是逐行解释执行的。Python 源代码首先被编译为<strong>字节码（Bytecode）</strong>，然后由 Python 虚拟机（PVM）执行字节码。</p>
+<pre class="plain"><code>源代码 (.py)
+    ↓  编译（compile）
+字节码 (.pyc / 内存)
+    ↓  执行
+CPython 虚拟机 (PVM)</code></pre>
+<p><strong>为什么需要字节码？</strong></p>
+<ul>
+<li><strong>性能优化</strong>：字节码比源代码更紧凑，执行更快</li>
+<li><strong>跨平台</strong>：字节码是平台无关的（在同版本 Python 内）</li>
+<li><strong>缓存机制</strong>：<code>.pyc</code> 文件缓存编译结果，避免重复编译</li>
+<li><strong>安全性</strong>：字节码比源代码更难逆向工程</li>
+</ul>
+<h3 id="12-pyc">1.2 什么是 pyc 文件？</h3>
+<p><code>.pyc</code> 文件是 Python 编译后的字节码缓存文件，存储在 <code>__pycache__/</code> 目录下：</p>
+<pre class="plain"><code>my_module.py
+__pycache__/
+    my_module.cpython-312.pyc   ← Python 3.12 编译的字节码</code></pre>
+<p><strong>pyc 文件结构：</strong></p>
+<pre class="plain"><code>┌─────────────────────────────┐
+│  Magic Number (4 bytes)     │  ← 标识 Python 版本
+│  Flags (4 bytes)            │  ← 编译标志
+│  Source timestamp (4 bytes) │  ← 源文件修改时间
+│  Source size (4 bytes)      │  ← 源文件大小
+│  Code Object                │  ← 实际的字节码
+└─────────────────────────────┘</code></pre>
+<h3 id="13-dis">1.3 使用 dis 模块反汇编</h3>
+<p><code>dis</code>（disassembler）模块是 Python 内置的字节码反汇编工具：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+
+<span class="c1"># 反汇编函数</span>
+<span class="n">dis</span><span class="o">.</span><span class="n">dis</span><span class="p">(</span><span class="n">add</span><span class="p">)</span>
+</code></pre></div>
+<p>输出示例：</p>
+<pre class="plain"><code>  2           0 LOAD_FAST                0 (a)
+              2 LOAD_FAST                1 (b)
+              4 BINARY_ADD
+              6 RETURN_VALUE</code></pre>
+<p><strong>每条指令的含义：</strong></p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>行号</td>
+<td>源代码行号（2）</td>
+</tr>
+<tr>
+<td>偏移量</td>
+<td>字节码中的位置（0, 2, 4, 6）</td>
+</tr>
+<tr>
+<td>操作码</td>
+<td>指令名称（LOAD_FAST, BINARY_ADD 等）</td>
+</tr>
+<tr>
+<td>操作数</td>
+<td>指令参数（0, 1 等）</td>
+</tr>
+<tr>
+<td>注释</td>
+<td>可读的名称（a, b 等）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14">1.4 字节码指令详解</h3>
+<p>Python 字节码有数百条指令，以下是最常用的几类：</p>
+<p><strong>加载/存储指令：</strong></p>
+<table>
+<thead>
+<tr>
+<th>指令</th>
+<th>说明</th>
+<th>示例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LOAD_CONST</code></td>
+<td>加载常量</td>
+<td><code>x = 1</code> → 加载 1</td>
+</tr>
+<tr>
+<td><code>LOAD_FAST</code></td>
+<td>加载局部变量</td>
+<td>函数参数、局部变量</td>
+</tr>
+<tr>
+<td><code>STORE_FAST</code></td>
+<td>存储局部变量</td>
+<td><code>x = 1</code> → 存储到 x</td>
+</tr>
+<tr>
+<td><code>LOAD_GLOBAL</code></td>
+<td>加载全局变量</td>
+<td>访问全局变量或内置函数</td>
+</tr>
+<tr>
+<td><code>LOAD_ATTR</code></td>
+<td>加载属性</td>
+<td><code>obj.attr</code></td>
+</tr>
+<tr>
+<td><code>LOAD_METHOD</code></td>
+<td>加载方法</td>
+<td><code>obj.method()</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>运算指令：</strong></p>
+<table>
+<thead>
+<tr>
+<th>指令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BINARY_ADD</code></td>
+<td>加法 <code>a + b</code></td>
+</tr>
+<tr>
+<td><code>BINARY_SUBTRACT</code></td>
+<td>减法 <code>a - b</code></td>
+</tr>
+<tr>
+<td><code>BINARY_MULTIPLY</code></td>
+<td>乘法 <code>a * b</code></td>
+</tr>
+<tr>
+<td><code>BINARY_TRUE_DIVIDE</code></td>
+<td>真除法 <code>a / b</code></td>
+</tr>
+<tr>
+<td><code>BINARY_FLOOR_DIVIDE</code></td>
+<td>整除 <code>a // b</code></td>
+</tr>
+<tr>
+<td><code>BINARY_MODULO</code></td>
+<td>取模 <code>a % b</code></td>
+</tr>
+<tr>
+<td><code>BINARY_POWER</code></td>
+<td>幂运算 <code>a ** b</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>控制流指令：</strong></p>
+<table>
+<thead>
+<tr>
+<th>指令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POP_JUMP_IF_FALSE</code></td>
+<td>条件为假时跳转</td>
+</tr>
+<tr>
+<td><code>POP_JUMP_IF_TRUE</code></td>
+<td>条件为真时跳转</td>
+</tr>
+<tr>
+<td><code>JUMP_ABSOLUTE</code></td>
+<td>无条件绝对跳转</td>
+</tr>
+<tr>
+<td><code>FOR_ITER</code></td>
+<td>for 循环迭代</td>
+</tr>
+<tr>
+<td><code>GET_ITER</code></td>
+<td>获取迭代器</td>
+</tr>
+<tr>
+<td><code>CALL_FUNCTION</code></td>
+<td>调用函数</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Python 3.11+ 的新指令：</strong></p>
+<table>
+<thead>
+<tr>
+<th>指令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>RESUME</code></td>
+<td>恢复执行（替代 NOP）</td>
+</tr>
+<tr>
+<td><code>PRECALL</code></td>
+<td>预调用（3.11）</td>
+</tr>
+<tr>
+<td><code>CALL</code></td>
+<td>统一调用指令（3.11+）</td>
+</tr>
+<tr>
+<td><code>PUSH_NULL</code></td>
+<td>推送 NULL（3.11+）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="15-if-else">1.5 实战：分析 if-else 的字节码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">check_positive</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">x</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"正数"</span>
+    <span class="k">elif</span> <span class="n">x</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"零"</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"负数"</span>
+
+<span class="n">dis</span><span class="o">.</span><span class="n">dis</span><span class="p">(</span><span class="n">check_positive</span><span class="p">)</span>
+</code></pre></div>
+<p>输出：</p>
+<pre class="plain"><code>  2           0 LOAD_FAST                0 (x)
+              2 LOAD_CONST               1 (0)
+              4 COMPARE_OP               4 (&gt;)
+              6 POP_JUMP_IF_FALSE       12
+
+  3           8 LOAD_CONST               2 (&#x27;正数&#x27;)
+             10 RETURN_VALUE
+
+  4     &gt;&gt;   12 LOAD_FAST                0 (x)
+             14 LOAD_CONST               1 (0)
+             16 COMPARE_OP               2 (==)
+             18 POP_JUMP_IF_FALSE       24
+
+  5          20 LOAD_CONST               3 (&#x27;零&#x27;)
+             22 RETURN_VALUE
+
+  7     &gt;&gt;   24 LOAD_CONST               4 (&#x27;负数&#x27;)
+             26 RETURN_VALUE</code></pre>
+<p><strong>分析流程：</strong></p>
+<pre class="plain"><code>开始
+  ↓
+LOAD_FAST x → LOAD_CONST 0 → COMPARE_OP &gt;
+  ↓
+POP_JUMP_IF_FALSE → 跳到偏移 12（elif 检查）
+  ↓ (如果 x &gt; 0)
+LOAD_CONST &#x27;正数&#x27; → RETURN_VALUE</code></pre>
+<h3 id="16-for">1.6 实战：分析 for 循环的字节码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sum_list</span><span class="p">(</span><span class="n">lst</span><span class="p">):</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">lst</span><span class="p">:</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">item</span>
+    <span class="k">return</span> <span class="n">total</span>
+
+<span class="n">dis</span><span class="o">.</span><span class="n">dis</span><span class="p">(</span><span class="n">sum_list</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>for 循环的字节码结构：</strong></p>
+<pre class="plain"><code>GET_ITER          ← 获取迭代器
+&gt;&gt; FOR_ITER       ← 取下一个元素（失败则跳转到循环后）
+  STORE_FAST      ← 存储循环变量
+  [循环体字节码]    ← 循环体操作
+  JUMP_ABSOLUTE   ← 跳回 FOR_ITER
+&gt;&gt; [循环后的代码]   ← 循环结束</code></pre>
+<h3 id="17">1.7 实战：分析列表推导式的字节码</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">list_comprehension</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">[</span><span class="n">x</span><span class="o">**</span><span class="mi">2</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">)</span> <span class="k">if</span> <span class="n">x</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span><span class="p">]</span>
+
+<span class="n">dis</span><span class="o">.</span><span class="n">dis</span><span class="p">(</span><span class="n">list_comprehension</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>列表推导式的字节码特点：</strong></p>
+<ul>
+<li>使用 <code>LIST_APPEND</code> 指令而非 <code>append()</code> 方法调用</li>
+<li>比普通 for 循环 + append 更高效</li>
+<li>内部仍然是迭代器模式</li>
+</ul>
+<hr>
+<h2 id="2-cpython">2. CPython 虚拟机结构</h2>
+<h3 id="21-cpython">2.1 CPython 执行模型</h3>
+<p>CPython 的执行过程可以分为三个阶段：</p>
+<pre class="plain"><code>┌──────────────────────────────────────────────┐
+│                    CPython                    │
+│                                              │
+│  源代码 ──→ 编译器 ──→ 字节码 ──→ PVM 执行   │
+│  (.py)     (Parser)   (.pyc)    (PyEval_Eval │
+│                                  _Frame)     │
+└──────────────────────────────────────────────┘</code></pre>
+<p><strong>三个核心组件：</strong></p>
+<ol>
+<li><strong>编译器（Compiler）</strong>：将源代码转换为字节码</li>
+<li><strong>字节码（Bytecode）</strong>：紧凑的指令序列</li>
+<li><strong>虚拟机（PVM）</strong>：解释执行字节码</li>
+</ol>
+<h3 id="22-frame">2.2 栈帧（Frame）结构</h3>
+<p>每次函数调用都会创建一个<strong>栈帧（Frame）</strong>，它是执行的上下文：</p>
+<pre class="plain"><code>┌─────────────────────────────────┐
+│           Frame Object          │
+├─────────────────────────────────┤
+│ f_code        → Code Object     │  ← 要执行的代码
+│ f_back        → 上一级 Frame    │  ← 调用栈链接
+│ f_locals      → 局部变量字典    │  ← locals() 返回的
+│ f_lineno      → 当前行号       │  ← 当前执行到哪行
+│ f_lasti       → 最后执行指令    │  ← 字节码偏移量
+│ f_valuestack  → 值栈           │  ← 运算操作数
+│ f_blockstack  → 块栈           │  ← try/with 块
+└─────────────────────────────────┘</code></pre>
+<h3 id="23-code-object">2.3 Code Object（代码对象）</h3>
+<p>每个函数、模块、类的编译结果都是一个 Code Object：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">example</span><span class="p">():</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">y</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="n">y</span>
+
+<span class="n">code</span> <span class="o">=</span> <span class="n">example</span><span class="o">.</span><span class="vm">__code__</span>
+
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"代码对象: </span><span class="si">{</span><span class="n">code</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"常量池: </span><span class="si">{</span><span class="n">code</span><span class="o">.</span><span class="n">co_consts</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"变量名: </span><span class="si">{</span><span class="n">code</span><span class="o">.</span><span class="n">co_varnames</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"字节码: </span><span class="si">{</span><span class="n">code</span><span class="o">.</span><span class="n">co_code</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"行号表: </span><span class="si">{</span><span class="n">code</span><span class="o">.</span><span class="n">co_lnotab</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>Code Object 的关键属性：</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>co_code</code></td>
+<td>字节码指令（字节串）</td>
+</tr>
+<tr>
+<td><code>co_consts</code></td>
+<td>常量池（元组）</td>
+</tr>
+<tr>
+<td><code>co_varnames</code></td>
+<td>局部变量名（元组）</td>
+</tr>
+<tr>
+<td><code>co_names</code></td>
+<td>全局/属性名（元组）</td>
+</tr>
+<tr>
+<td><code>co_stacksize</code></td>
+<td>栈大小</td>
+</tr>
+<tr>
+<td><code>co_argcount</code></td>
+<td>参数个数</td>
+</tr>
+<tr>
+<td><code>co_kwonlyargcount</code></td>
+<td>关键字参数个数</td>
+</tr>
+<tr>
+<td><code>co_nlocals</code></td>
+<td>局部变量数</td>
+</tr>
+<tr>
+<td><code>co_flags</code></td>
+<td>标志位</td>
+</tr>
+<tr>
+<td><code>co_filename</code></td>
+<td>源文件名</td>
+</tr>
+<tr>
+<td><code>co_firstlineno</code></td>
+<td>第一行行号</td>
+</tr>
+<tr>
+<td><code>co_lnotab</code></td>
+<td>行号与字节码偏移的映射表</td>
+</tr>
+</tbody>
+</table>
+<h3 id="24-value-stack">2.4 值栈（Value Stack）执行模型</h3>
+<p>CPython 使用<strong>基于栈的虚拟机</strong>，所有操作都在栈上进行：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">compute</span><span class="p">():</span>
+    <span class="n">x</span> <span class="o">=</span> <span class="mi">3</span> <span class="o">+</span> <span class="mi">4</span> <span class="o">*</span> <span class="mi">5</span>  <span class="c1"># 运算符优先级</span>
+    
+<span class="n">dis</span><span class="o">.</span><span class="n">dis</span><span class="p">(</span><span class="n">compute</span><span class="p">)</span>
+</code></pre></div>
+<p>输出：</p>
+<pre class="plain"><code>  2           0 LOAD_CONST               0 (3)
+              2 LOAD_CONST               1 (4)
+              4 LOAD_CONST               2 (5)
+              6 BINARY_MULTIPLY
+              8 BINARY_ADD
+             10 STORE_FAST               0 (x)</code></pre>
+<p><strong>值栈执行过程：</strong></p>
+<pre class="plain"><code>指令           栈状态
+─────────────────────────
+LOAD_CONST 3   [3]
+LOAD_CONST 4   [3, 4]
+LOAD_CONST 5   [3, 4, 5]
+BINARY_MULTIPLY [3, 20]     ← 4 * 5 = 20
+BINARY_ADD     [23]          ← 3 + 20 = 23
+STORE_FAST x   []            ← x = 23</code></pre>
+<h3 id="25-python-311">2.5 Python 3.11+ 的自适应解释器</h3>
+<p>Python 3.11 引入了<strong>自适应解释器（Adaptive Interpreter）</strong>，也叫 <strong>Faster CPython</strong> 项目：</p>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│         自适应解释器工作流程                   │
+│                                             │
+│  字节码 ──→ 普通执行 ──→ 热点检测            │
+│                           ↓                  │
+│                    特化（Specialize）         │
+│                           ↓                  │
+│                    特化指令执行               │
+│                    (更快的版本)              │
+└─────────────────────────────────────────────┘</code></pre>
+<p><strong>特化指令示例：</strong></p>
+<table>
+<thead>
+<tr>
+<th>原始指令</th>
+<th>特化指令</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LOAD_ATTR</code></td>
+<td><code>LOAD_ATTR_INSTANCE_VALUE</code></td>
+<td>从实例 <strong>dict</strong> 加载</td>
+</tr>
+<tr>
+<td><code>LOAD_ATTR</code></td>
+<td><code>LOAD_ATTR_SLOT</code></td>
+<td>从 slot 加载</td>
+</tr>
+<tr>
+<td><code>BINARY_OP</code></td>
+<td><code>BINARY_OP_ADD_INT</code></td>
+<td>整数加法专用</td>
+</tr>
+<tr>
+<td><code>CALL</code></td>
+<td><code>CALL_PY_EXACT_ARGS</code></td>
+<td>Python 函数精确调用</td>
+</tr>
+</tbody>
+</table>
+<h3 id="26-gil">2.6 GIL 与线程执行</h3>
+<p><strong>全局解释器锁（GIL）</strong>确保同一时刻只有一个线程执行 Python 字节码：</p>
+<pre class="plain"><code>┌──────────┬──────────┬──────────┐
+│ 线程 A   │ 线程 B   │ 线程 C   │
+├──────────┼──────────┼──────────┤
+│ 执行中   │ 等待     │ 等待     │  ← 时间片 1
+│ 等待     │ 执行中   │ 等待     │  ← 时间片 2
+│ 等待     │ 等待     │ 执行中   │  ← 时间片 3
+└──────────┴──────────┴──────────┘
+              ↓
+    通过 time-slicing 模拟并发</code></pre>
+<p><strong>GIL 的影响：</strong></p>
+<ul>
+<li>CPU 密集型任务无法利用多核</li>
+<li>I/O 操作时会释放 GIL（文件读写、网络请求等）</li>
+<li>Python 3.12+ 开始逐步移除 GIL（PEP 703）</li>
+</ul>
+<hr>
+<h2 id="3-pyobject">3. PyObject 与类型系统</h2>
+<h3 id="31">3.1 万物皆对象</h3>
+<p>在 CPython 中，<strong>所有数据都是对象</strong>，包括整数、函数、类、模块等。每个对象在 C 层面都是一个 <code>PyObject</code>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">c</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1">// CPython 源码 (object.h)</span>
+<span class="k">typedef</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="nc">_object</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="n">Py_ssize_t</span><span class="w"> </span><span class="n">ob_refcnt</span><span class="p">;</span><span class="w">    </span><span class="c1">// 引用计数</span>
+<span class="w">    </span><span class="n">PyTypeObject</span><span class="w"> </span><span class="o">*</span><span class="n">ob_type</span><span class="p">;</span><span class="w">    </span><span class="c1">// 类型指针</span>
+<span class="p">}</span><span class="w"> </span><span class="n">PyObject</span><span class="p">;</span>
+</code></pre></div>
+<p><strong>内存布局：</strong></p>
+<pre class="plain"><code>┌──────────────────────┐
+│     PyObject         │
+├──────────────────────┤
+│  ob_refcnt (8 bytes) │  ← 引用计数
+│  ob_type (8 bytes)   │  ← 指向类型对象
+├──────────────────────┤
+│     对象数据          │  ← 类型特定的数据
+└──────────────────────┘</code></pre>
+<h3 id="32">3.2 引用计数机制</h3>
+<p>CPython 使用<strong>引用计数</strong>作为主要的内存管理机制：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="n">a</span> <span class="o">=</span> <span class="p">[]</span>              <span class="c1"># 引用计数 = 1</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getrefcount</span><span class="p">(</span><span class="n">a</span><span class="p">))</span>  <span class="c1"># 引用计数 = 2（参数本身也引用了一次）</span>
+
+<span class="n">b</span> <span class="o">=</span> <span class="n">a</span>               <span class="c1"># 引用计数 = 3</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">a</span>               <span class="c1"># 引用计数 = 4</span>
+
+<span class="k">del</span> <span class="n">b</span>               <span class="c1"># 引用计数 = 3</span>
+<span class="k">del</span> <span class="n">c</span>               <span class="c1"># 引用计数 = 2</span>
+</code></pre></div>
+<p><strong>引用计数增减规则：</strong></p>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>引用计数变化</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>a = b</code></td>
+<td>+1（b 的引用计数）</td>
+</tr>
+<tr>
+<td><code>del a</code></td>
+<td>-1（a 的引用计数）</td>
+</tr>
+<tr>
+<td>函数传参</td>
+<td>+1</td>
+</tr>
+<tr>
+<td>函数返回</td>
+<td>-1</td>
+</tr>
+<tr>
+<td>加入容器</td>
+<td>+1</td>
+</tr>
+<tr>
+<td>从容器移除</td>
+<td>-1</td>
+</tr>
+</tbody>
+</table>
+<p><strong>引用计数为 0 时，对象立即被回收：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Tracker</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"创建: </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__del__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"销毁: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+<span class="n">t1</span> <span class="o">=</span> <span class="n">Tracker</span><span class="p">(</span><span class="s2">"A"</span><span class="p">)</span>  <span class="c1"># 创建: A</span>
+<span class="n">t2</span> <span class="o">=</span> <span class="n">Tracker</span><span class="p">(</span><span class="s2">"B"</span><span class="p">)</span>  <span class="c1"># 创建: B</span>
+<span class="k">del</span> <span class="n">t1</span>              <span class="c1"># 销毁: A（引用计数为 0）</span>
+<span class="k">del</span> <span class="n">t2</span>              <span class="c1"># 销毁: B（引用计数为 0）</span>
+</code></pre></div>
+<h3 id="33">3.3 循环引用与垃圾回收</h3>
+<p>引用计数无法处理<strong>循环引用</strong>：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">gc</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Node</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ref</span> <span class="o">=</span> <span class="kc">None</span>
+
+<span class="n">a</span> <span class="o">=</span> <span class="n">Node</span><span class="p">()</span>
+<span class="n">b</span> <span class="o">=</span> <span class="n">Node</span><span class="p">()</span>
+<span class="n">a</span><span class="o">.</span><span class="n">ref</span> <span class="o">=</span> <span class="n">b</span>   <span class="c1"># a → b</span>
+<span class="n">b</span><span class="o">.</span><span class="n">ref</span> <span class="o">=</span> <span class="n">a</span>   <span class="c1"># b → a  （循环引用）</span>
+
+<span class="k">del</span> <span class="n">a</span>
+<span class="k">del</span> <span class="n">b</span>
+<span class="c1"># 对象仍然存在！引用计数不为 0，但已经无法访问</span>
+</code></pre></div>
+<p><strong>分代垃圾回收（Generational GC）：</strong></p>
+<pre class="plain"><code>┌─────────────────────────────────────────┐
+│            分代垃圾回收                   │
+├─────────┬──────────┬──────────┬─────────┤
+│  Generation 0 │ Generation 1 │ Generation 2 │
+│  新创建的对象  │  存活一次的   │  长期存活的   │
+│  频繁回收      │  较少回收     │  很少回收     │
+└─────────┴──────────┴──────────┴─────────┘</code></pre>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">gc</span>
+
+<span class="c1"># 查看 GC 统计</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">gc</span><span class="o">.</span><span class="n">get_stats</span><span class="p">())</span>
+
+<span class="c1"># 手动触发 GC</span>
+<span class="n">gc</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+
+<span class="c1"># 查看不可回收的对象</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">gc</span><span class="o">.</span><span class="n">garbage</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="34">3.4 类型对象与类型层次</h3>
+<p>在 CPython 中，类型本身也是对象：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 所有类型都是 type 的实例</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="nb">int</span><span class="p">))</span>      <span class="c1"># &lt;class 'type'&gt;</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="nb">str</span><span class="p">))</span>      <span class="c1"># &lt;class 'type'&gt;</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="nb">list</span><span class="p">))</span>     <span class="c1"># &lt;class 'type'&gt;</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="nb">type</span><span class="p">))</span>     <span class="c1"># &lt;class 'type'&gt;  ← type 是自身的实例！</span>
+
+<span class="c1"># 类型层次</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">int</span><span class="o">.</span><span class="vm">__bases__</span><span class="p">)</span>    <span class="c1"># (&lt;class 'object'&gt;,)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">str</span><span class="o">.</span><span class="vm">__bases__</span><span class="p">)</span>    <span class="c1"># (&lt;class 'object'&gt;,)</span>
+<span class="nb">print</span><span class="p">(</span><span class="nb">type</span><span class="o">.</span><span class="vm">__bases__</span><span class="p">)</span>   <span class="c1"># (&lt;class 'object'&gt;,)</span>
+</code></pre></div>
+<p><strong>类型层次图：</strong></p>
+<pre class="plain"><code>                    object
+                      ↑
+          ┌───────────┼───────────┐
+          ↑           ↑           ↑
+       type        int          str
+         ↑
+    ┌────┼────┐
+    ↑    ↑    ↑
+  bool  int  float</code></pre>
+<h3 id="35">3.5 内存分配器</h3>
+<p>CPython 使用三级内存分配器：</p>
+<pre class="plain"><code>┌─────────────────────────────────────┐
+│  第三层：Python 内存分配器           │
+│  (pymalloc)                         │
+│  管理小于 512 字节的对象            │
+├─────────────────────────────────────┤
+│  第二层：通用内存分配器              │
+│  (pymalloc raw)                     │
+│  管理 512B ~ 1MB 的分配             │
+├─────────────────────────────────────┤
+│  第一层：系统内存分配器              │
+│  (malloc/free)                      │
+│  管理大于 1MB 的分配                │
+└─────────────────────────────────────┘</code></pre>
+<p><strong>pymalloc 的内存池：</strong></p>
+<pre class="plain"><code>Arena (256 KB)
+├── Pool 1 (4 KB)
+│   ├── Block (8 bytes) × N
+│   ├── Block (16 bytes) × N
+│   ├── Block (32 bytes) × N
+│   └── Block (64 bytes) × N
+├── Pool 2 (4 KB)
+│   └── ...
+└── Pool 64 (4 KB)
+    └── ...</code></pre>
+<h3 id="36">3.6 内置类型实现</h3>
+<p>不同内置类型的内存布局各不相同：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+
+<span class="c1"># 整数的内存</span>
+<span class="n">x</span> <span class="o">=</span> <span class="mi">42</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">x</span><span class="p">))</span>  <span class="c1"># 28 bytes (Python 3.12)</span>
+
+<span class="c1"># 列表的内存</span>
+<span class="n">lst</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">lst</span><span class="p">))</span>  <span class="c1"># 88 bytes（列表对象本身）</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">lst</span><span class="p">)</span> <span class="o">+</span> <span class="nb">sum</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">lst</span><span class="p">))</span>  <span class="c1"># 包含元素</span>
+
+<span class="c1"># 字典的内存</span>
+<span class="n">d</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"a"</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span> <span class="s2">"b"</span><span class="p">:</span> <span class="mi">2</span><span class="p">}</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">d</span><span class="p">))</span>  <span class="c1"># 232 bytes</span>
+
+<span class="c1"># 字符串的内存</span>
+<span class="n">s</span> <span class="o">=</span> <span class="s2">"hello"</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">getsizeof</span><span class="p">(</span><span class="n">s</span><span class="p">))</span>  <span class="c1"># 54 bytes</span>
+</code></pre></div>
+<p><strong>整数的内存布局（小整数缓存）：</strong></p>
+<pre class="plain"><code>Python 缓存了 -5 到 256 的整数对象：
+┌──────────────────────┐
+│   小整数缓存池        │
+│   [-5, -4, ..., 255] │
+│   同一个对象被复用！   │
+└──────────────────────┘
+
+a = 256
+b = 256
+print(a is b)  # True ← 同一个对象
+
+a = 257
+b = 257
+print(a is b)  # False ← 不同对象（在交互式环境中）</code></pre>
+<hr>
+<h2 id="4">4. 实战：字节码分析器</h2>
+<h3 id="41">4.1 项目结构</h3>
+<pre class="plain"><code>day-098-python-内部机制/
+├── README.md
+├── code/
+│   ├── 01-bytecode-basics.py
+│   ├── 02-vm-internals.py
+│   └── 03-bytecode-analyzer.py
+├── diagrams/
+│   └── README.md
+└── exercises/
+    └── checklist.md</code></pre>
+<h3 id="42">4.2 字节码分析器功能</h3>
+<p>完整的字节码分析器将包含以下功能：</p>
+<ol>
+<li><strong>反汇编函数</strong>：显示字节码指令和注释</li>
+<li><strong>统计分析</strong>：指令频率、操作数分布</li>
+<li><strong>调用图分析</strong>：函数调用关系</li>
+<li><strong>常量池分析</strong>：常量的类型和值</li>
+<li><strong>性能评估</strong>：识别潜在的性能问题</li>
+</ol>
+<hr>
+<h2 id="5">5. 思考题</h2>
+<h3 id="_2">基础题</h3>
+<ol>
+<li><strong>为什么 Python 使用字节码而不是直接解释源代码？</strong><br>
+   - 提示：考虑编译时间、执行效率、缓存机制</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>直接解释源代码意味着每次执行都要重新做词法分析、语法分析、生成语法树——这些「理解代码」的工作非常昂贵，而且每次结果都一样。字节码把这部分工作<strong>一次性做完并固化</strong>：</p>
+<ul>
+<li><strong>执行效率</strong>：字节码是紧凑的指令序列，虚拟机只需「取指令 → 执行」的简单循环，不用再解析文本。比如 <code>a + b</code> 已经变成 <code>LOAD_FAST a / LOAD_FAST b / BINARY_OP +</code> 三条指令，省去了所有语法分析开销。</li>
+<li><strong>缓存机制</strong>：编译结果可以存成 <code>.pyc</code> 文件。下次导入同一模块时，只要源文件没改（对比时间戳和大小），直接加载字节码，跳过整个编译阶段，显著加快启动速度。</li>
+<li><strong>编译与执行解耦</strong>：编译只做一次，执行可以无数次；还便于在执行层做优化（如 3.11 的指令特化），而不用动编译器。</li>
+</ul>
+<p>打个比方：源代码是「菜谱原文」，字节码是「备好的半成品菜」——厨师（虚拟机）直接下锅翻炒，不必每次从洗菜切菜开始。</p>
+<ol start="2">
+<li><strong>引用计数和垃圾回收各有什么优缺点？</strong><br>
+   - 提示：考虑实时性、循环引用、性能开销</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>两者是互补关系，CPython 以引用计数为主、分代 GC 为辅。</p>
+<p><strong>引用计数</strong>：每个对象记录「有多少引用指向我」，计数归零立即回收。<br>
+- 优点：<strong>实时性好</strong>——对象一没人用就马上释放，内存占用平稳，回收时机可预测；实现简单，不需要暂停整个程序去扫描。<br>
+- 缺点：<strong>无法处理循环引用</strong>（a 引用 b、b 引用 a，即使外部都不用了，计数也不为 0）；每次赋值、传参、容器操作都要维护计数，有持续的运行时开销，多线程下还需加锁保护。</p>
+<p><strong>分代垃圾回收（追踪式 GC）</strong>：定期从根对象出发扫描，找出「不可达」的对象回收。<br>
+- 优点：能发现循环引用这类「计数不为 0 但实际已死」的对象；按代分层（新对象频繁查、老对象很少查），利用了「大多数对象朝生夕死」的规律，摊薄成本。<br>
+- 缺点：回收时机不确定，触发时可能产生停顿；扫描本身有开销，且无法像引用计数那样即时释放。</p>
+<p>小例子：两个互相引用的 Node 对象 <code>del</code> 之后，引用计数各剩 1 不会释放，只有 <code>gc.collect()</code> 扫描发现它们不可达才回收——这就是为什么需要两套机制配合。</p>
+<ol start="3">
+<li><strong><code>.pyc</code> 文件的 Magic Number 有什么作用？</strong><br>
+   - 提示：考虑版本兼容性</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>Magic Number（魔数）是 <code>.pyc</code> 文件开头的 4 个字节，本质是<strong>字节码格式的版本号</strong>。不同 Python 版本的字节码指令集不同（比如 3.11 新增了 <code>RESUME</code>、<code>CALL</code>，删除了旧指令），同一份字节码在别的版本上可能根本无法执行。</p>
+<p>加载 <code>.pyc</code> 时，解释器先比对文件里的魔数和自己当前的魔数：</p>
+<ul>
+<li><strong>一致</strong> → 字节码格式兼容，继续检查源文件时间戳/大小，决定是否直接加载缓存；</li>
+<li><strong>不一致</strong> → 缓存作废，忽略该 <code>.pyc</code>，重新从 <code>.py</code> 源码编译。</li>
+</ul>
+<p>这就是为什么升级 Python 后旧的 <code>__pycache__</code> 不会导致崩溃——魔数让解释器能一眼识别「这是别的版本编译的，不能用」。例如 Python 3.11 和 3.12 的魔数不同；甚至同一小版本的不同补丁版本之间，魔数也可能更新（可用 <code>importlib.util.MAGIC_NUMBER</code> 查看当前解释器的魔数）。</p>
+<p>💡 提示：魔数只保证「字节码格式」兼容，不保证业务逻辑兼容；<code>.pyc</code> 也容易被反编译，不要把它当作代码保护手段。</p>
+<h3 id="_3">进阶题</h3>
+<ol start="4">
+<li><strong>如何在不修改源代码的情况下，给函数添加性能监控？</strong><br>
+   - 提示：考虑字节码修改、sys.settrace</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>最实用的方案是 <strong><code>sys.settrace</code></strong>：它允许注册一个回调函数，解释器在每次函数调用（<code>call</code>）、每行执行（<code>line</code>）、返回（<code>return</code>）时都会通知你——完全不用改业务代码。下面是一个统计「调用次数 + 累计耗时」的监控器：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+
+<span class="n">call_count</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>      <span class="c1"># 函数名 -&gt; 调用次数</span>
+<span class="n">total_time</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">float</span><span class="p">)</span>    <span class="c1"># 函数名 -&gt; 累计耗时（秒）</span>
+<span class="n">_start_stack</span> <span class="o">=</span> <span class="p">[]</span>                  <span class="c1"># 记录每层调用的开始时间</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">profiler</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">arg</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">frame</span><span class="o">.</span><span class="n">f_code</span><span class="o">.</span><span class="n">co_name</span>
+    <span class="k">if</span> <span class="n">event</span> <span class="o">==</span> <span class="s1">'call'</span><span class="p">:</span>
+        <span class="n">call_count</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="n">_start_stack</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">name</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()))</span>
+    <span class="k">elif</span> <span class="n">event</span> <span class="o">==</span> <span class="s1">'return'</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">_start_stack</span><span class="p">:</span>
+            <span class="n">key</span><span class="p">,</span> <span class="n">t0</span> <span class="o">=</span> <span class="n">_start_stack</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+            <span class="n">total_time</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">+=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span>
+    <span class="k">return</span> <span class="n">profiler</span>                <span class="c1"># 返回自身，继续跟踪函数内部的行事件</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">slow_add</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">s</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">s</span> <span class="o">+=</span> <span class="n">i</span>
+    <span class="k">return</span> <span class="n">s</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">work</span><span class="p">():</span>
+    <span class="n">slow_add</span><span class="p">(</span><span class="mi">10000</span><span class="p">)</span>
+    <span class="n">slow_add</span><span class="p">(</span><span class="mi">20000</span><span class="p">)</span>
+
+
+<span class="n">sys</span><span class="o">.</span><span class="n">settrace</span><span class="p">(</span><span class="n">profiler</span><span class="p">)</span>   <span class="c1"># 开启跟踪（不改任何业务代码）</span>
+<span class="n">work</span><span class="p">()</span>
+<span class="n">sys</span><span class="o">.</span><span class="n">settrace</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>       <span class="c1"># 关闭跟踪</span>
+
+<span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">call_count</span><span class="p">:</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: 调用 </span><span class="si">{</span><span class="n">call_count</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="si">}</span><span class="s2"> 次, "</span>
+          <span class="sa">f</span><span class="s2">"累计耗时 </span><span class="si">{</span><span class="n">total_time</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1000</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> ms"</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出（耗时因机器/版本而异）：</p>
+<pre class="plain"><code>work: 调用 1 次, 累计耗时 7.32 ms
+slow_add: 调用 2 次, 累计耗时 7.31 ms</code></pre>
+<p>原理：<code>call</code> 事件时把开始时间压栈，<code>return</code> 事件时弹栈并累加时间差，栈结构天然支持嵌套调用。其他不改源码的思路还有：外部用装饰器包一层（<code>work = monitor(work)</code>）、用 <code>cProfile</code> 直接跑、或在字节码层面插桩（改写 Code Object，难度高，一般不推荐）。</p>
+<p>⚠️ 注意：<code>sys.settrace</code> 本身开销很大（每行都回调），测出的耗时包含跟踪开销，只适合定位相对热点，不适合精确计时；且它只跟踪当前线程。</p>
+<ol start="5">
+<li><strong>Python 3.11 的自适应解释器是如何提升性能的？</strong><br>
+   - 提示：考虑热点检测、特化指令</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>核心思想是「<strong>让常用路径走捷径</strong>」，分三步：</p>
+<ol>
+<li><strong>热点检测</strong>：解释器给指令附带计数器，统计每条指令被执行了多少次。反复执行的「热点」指令会被标记出来。</li>
+<li><strong>特化（Specialization）</strong>：把通用指令替换成针对具体类型的专用版本。例如 <code>BINARY_OP</code> 发现两边总是 int，就换成 <code>BINARY_OP_ADD_INT</code>——跳过类型判断、直接做整数加法；<code>LOAD_ATTR</code> 发现属性总在实例 <code>__dict__</code> 的固定位置，就换成 <code>LOAD_ATTR_INSTANCE_VALUE</code>，跳过完整的属性查找流程。</li>
+<li><strong>去优化（Deoptimization）</strong>：特化版本附带「守卫条件」，一旦类型假设被打破（比如突然传进来一个字符串），自动退回通用指令，保证正确性。</li>
+</ol>
+<p>打个比方：通用指令像「人工收费站」，每辆车都要停车问车型；特化指令像「ETC 专用道」，识别过车型后直接抬杆放行。</p>
+<p>效果：官方基准测试中 3.11 比 3.10 平均快约 25%（因 workload 和机器而异）。这一切发生在运行时、对开发者完全透明——你不需要改任何代码。</p>
+<ol start="6">
+<li><strong>为什么 <code>a = 257; b = 257; a is b</code> 在交互式环境中为 False，但在脚本中为 True？</strong><br>
+   - 提示：考虑编译器优化、常量折叠</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>关键在<strong>编译单位</strong>不同，导致常量能否被合并：</p>
+<ul>
+<li><strong>脚本中</strong>：整个文件被一次性编译成一个 Code Object。编译器做常量折叠/合并时发现两个 <code>257</code> 是相等的常量，就让它们共用常量池里的<strong>同一个对象</strong>——两条 <code>LOAD_CONST</code> 指向同一地址，所以 <code>a is b</code> 为 True。</li>
+<li><strong>交互式环境中</strong>：每输入一行就单独编译一次。<code>a = 257</code> 和 <code>b = 257</code> 属于两个不同的 Code Object，各自创建了一个新的 257 对象（257 超出 -5~256 的小整数缓存范围），所以 <code>a is b</code> 为 False。</li>
+</ul>
+<p>用 <code>compile()</code> 可以精确复现这两种情况：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+
+<span class="c1"># 场景 1：整段脚本一次编译（相当于 .py 文件）</span>
+<span class="n">src</span> <span class="o">=</span> <span class="s2">"a = 257; b = 257; result = a is b"</span>
+<span class="n">ns</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">exec</span><span class="p">(</span><span class="nb">compile</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="s2">"&lt;script&gt;"</span><span class="p">,</span> <span class="s2">"exec"</span><span class="p">),</span> <span class="n">ns</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"脚本中 a is b:"</span><span class="p">,</span> <span class="n">ns</span><span class="p">[</span><span class="s2">"result"</span><span class="p">])</span>
+
+<span class="c1"># 查看字节码：两条 LOAD_CONST 指向常量池里的同一个对象</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"--- 脚本字节码 ---"</span><span class="p">)</span>
+<span class="n">dis</span><span class="o">.</span><span class="n">dis</span><span class="p">(</span><span class="nb">compile</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="s2">"&lt;script&gt;"</span><span class="p">,</span> <span class="s2">"exec"</span><span class="p">))</span>
+
+<span class="c1"># 场景 2：模拟交互式环境，每条语句单独编译</span>
+<span class="n">g</span> <span class="o">=</span> <span class="p">{}</span>
+<span class="n">exec</span><span class="p">(</span><span class="nb">compile</span><span class="p">(</span><span class="s2">"a = 257"</span><span class="p">,</span> <span class="s2">"&lt;stdin&gt;"</span><span class="p">,</span> <span class="s2">"exec"</span><span class="p">),</span> <span class="n">g</span><span class="p">)</span>
+<span class="n">exec</span><span class="p">(</span><span class="nb">compile</span><span class="p">(</span><span class="s2">"b = 257"</span><span class="p">,</span> <span class="s2">"&lt;stdin&gt;"</span><span class="p">,</span> <span class="s2">"exec"</span><span class="p">),</span> <span class="n">g</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="s2">"逐条编译 a is b:"</span><span class="p">,</span> <span class="n">g</span><span class="p">[</span><span class="s2">"a"</span><span class="p">]</span> <span class="ow">is</span> <span class="n">g</span><span class="p">[</span><span class="s2">"b"</span><span class="p">])</span>
+</code></pre></div>
+<p>预期输出（字节码细节因版本而异，此处为 3.12）：</p>
+<pre class="plain"><code>脚本中 a is b: True
+--- 脚本字节码 ---
+  0           0 RESUME                   0
+  1           2 LOAD_CONST               0 (257)
+              4 STORE_NAME               0 (a)
+              6 LOAD_CONST               0 (257)
+              ...
+逐条编译 a is b: False</code></pre>
+<p>注意两条 <code>LOAD_CONST</code> 的参数都是 <code>0 (257)</code>——同一个常量池条目，这就是 True 的直接证据。</p>
+<p>⚠️ 注意：这是 CPython 的实现细节，不是语言保证。比较整数的值永远用 <code>==</code>，<code>is</code> 只用于判断「是否同一个对象」（如 <code>x is None</code>）。</p>
+<h3 id="_4">挑战题</h3>
+<ol start="7">
+<li><strong>设计一个字节码级别的性能分析工具，能检测函数中的性能热点。</strong><br>
+   - 提示：考虑指令频率、循环深度、函数调用开销</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>设计思路是「<strong>静态 + 动态</strong>」两条腿走路：</p>
+<ul>
+<li><strong>静态</strong>：用 <code>dis.get_instructions()</code> 分析字节码——统计指令频率（<code>LOAD_GLOBAL</code>/<code>LOAD_ATTR</code> 多说明查找开销大）、找向后跳转（跳转目标偏移小于当前偏移 = 循环体）。</li>
+<li><strong>动态</strong>：用 <code>sys.settrace</code> 统计每行的实际执行次数——执行次数最多的行就是热点，再结合静态信息判断它是否在循环里。</li>
+</ul>
+<p>完整实现（仅标准库）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span><span class="p">,</span> <span class="n">defaultdict</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">hotspots</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""静态字节码分析 + 动态行计数，找出函数热点"""</span>
+    <span class="n">code</span> <span class="o">=</span> <span class="n">func</span><span class="o">.</span><span class="vm">__code__</span>
+
+    <span class="c1"># ── 静态分析：统计指令频率、检测循环 ──</span>
+    <span class="n">instructions</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">dis</span><span class="o">.</span><span class="n">get_instructions</span><span class="p">(</span><span class="n">code</span><span class="p">))</span>
+    <span class="n">freq</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">ins</span><span class="o">.</span><span class="n">opname</span> <span class="k">for</span> <span class="n">ins</span> <span class="ow">in</span> <span class="n">instructions</span><span class="p">)</span>
+    <span class="c1"># 跳转目标偏移 &lt; 当前偏移 → 向后跳转 → 说明存在循环</span>
+    <span class="n">loops</span> <span class="o">=</span> <span class="p">[</span><span class="n">ins</span> <span class="k">for</span> <span class="n">ins</span> <span class="ow">in</span> <span class="n">instructions</span>
+             <span class="k">if</span> <span class="s1">'JUMP'</span> <span class="ow">in</span> <span class="n">ins</span><span class="o">.</span><span class="n">opname</span>
+             <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ins</span><span class="o">.</span><span class="n">argval</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span>
+             <span class="ow">and</span> <span class="n">ins</span><span class="o">.</span><span class="n">argval</span> <span class="o">&lt;</span> <span class="n">ins</span><span class="o">.</span><span class="n">offset</span><span class="p">]</span>
+
+    <span class="c1"># ── 动态分析：用 sys.settrace 统计每行执行次数 ──</span>
+    <span class="n">hits</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">tracer</span><span class="p">(</span><span class="n">frame</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">arg</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">frame</span><span class="o">.</span><span class="n">f_code</span> <span class="ow">is</span> <span class="n">code</span> <span class="ow">and</span> <span class="n">event</span> <span class="o">==</span> <span class="s1">'line'</span><span class="p">:</span>
+            <span class="n">hits</span><span class="p">[</span><span class="n">frame</span><span class="o">.</span><span class="n">f_lineno</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">tracer</span>
+
+    <span class="n">old_trace</span> <span class="o">=</span> <span class="n">sys</span><span class="o">.</span><span class="n">gettrace</span><span class="p">()</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">settrace</span><span class="p">(</span><span class="n">tracer</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">settrace</span><span class="p">(</span><span class="n">old_trace</span><span class="p">)</span>   <span class="c1"># 恢复原跟踪器，避免影响其他代码</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"函数 </span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2"> 指令频率 TOP5: </span><span class="si">{</span><span class="n">freq</span><span class="o">.</span><span class="n">most_common</span><span class="p">(</span><span class="mi">5</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"检测到 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">loops</span><span class="p">)</span><span class="si">}</span><span class="s2"> 处向后跳转（循环体）"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"热点行（执行次数最多）:"</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">lineno</span><span class="p">,</span> <span class="n">n</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">hits</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span> <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">kv</span><span class="p">:</span> <span class="o">-</span><span class="n">kv</span><span class="p">[</span><span class="mi">1</span><span class="p">])[:</span><span class="mi">3</span><span class="p">]:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  第 </span><span class="si">{</span><span class="n">lineno</span><span class="si">}</span><span class="s2"> 行: 执行 </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> 次"</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">result</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">sum_squares</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+    <span class="n">total</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
+        <span class="n">total</span> <span class="o">+=</span> <span class="n">i</span> <span class="o">*</span> <span class="n">i</span>
+    <span class="k">return</span> <span class="n">total</span>
+
+
+<span class="n">hotspots</span><span class="p">(</span><span class="n">sum_squares</span><span class="p">,</span> <span class="mi">10000</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出（行号取决于代码在文件中的位置，指令名因 Python 版本而异）：</p>
+<pre class="plain"><code>函数 sum_squares 指令频率 TOP5: [(&#x27;LOAD_FAST&#x27;, 5), (&#x27;STORE_FAST&#x27;, 3), (&#x27;BINARY_OP&#x27;, 2), (&#x27;RESUME&#x27;, 1), (&#x27;LOAD_CONST&#x27;, 1)]
+检测到 1 处向后跳转（循环体）
+热点行（执行次数最多）:
+  第 45 行: 执行 10001 次
+  第 46 行: 执行 10000 次
+  第 44 行: 执行 1 次</code></pre>
+<p>解释：<code>for</code> 行执行 n+1 次（最后一次判断迭代结束）、循环体行执行 n 次、初始化行 1 次——执行次数与循环深度直接对应，最热的行就是优化目标（比如把循环换成 <code>sum(i * i for i in range(n))</code> 或向量化计算）。</p>
+<p>💡 提示：这是教学版工具。生产环境请用 <code>cProfile</code>（函数级）或 <code>py-spy</code>/<code>scalene</code>（行级、低开销），它们基于采样而非逐行回调，开销小得多。</p>
+<ol start="8">
+<li><strong>如何用 <code>sys.settrace</code> 实现一个简单的代码覆盖率工具？</strong><br>
+   - 提示：跟踪行号执行情况</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>原理分两步：<strong>记录执行过的行</strong>（trace 回调里收集 <code>frame.f_lineno</code>）+ <strong>求出所有可执行的行</strong>（用 <code>dis.findlinestarts</code> 从字节码反推行号），两者相除就是覆盖率。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">dis</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">classify</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">x</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"正数"</span>
+    <span class="k">elif</span> <span class="n">x</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"零"</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s2">"负数"</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">LineCoverage</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""基于 sys.settrace 的行覆盖率工具"""</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">hit</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>          <span class="c1"># 记录 (文件名, 行号)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_tracer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">frame</span><span class="p">,</span> <span class="n">event</span><span class="p">,</span> <span class="n">arg</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">event</span> <span class="o">==</span> <span class="s1">'line'</span><span class="p">:</span>       <span class="c1"># 每执行一行就触发一次</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">hit</span><span class="o">.</span><span class="n">add</span><span class="p">((</span><span class="n">frame</span><span class="o">.</span><span class="n">f_code</span><span class="o">.</span><span class="n">co_filename</span><span class="p">,</span> <span class="n">frame</span><span class="o">.</span><span class="n">f_lineno</span><span class="p">))</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tracer</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">settrace</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tracer</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">settrace</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>    <span class="c1"># 用完必须关闭，否则严重拖慢程序</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">report</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">func</span><span class="p">):</span>
+        <span class="n">code</span> <span class="o">=</span> <span class="n">func</span><span class="o">.</span><span class="vm">__code__</span>
+        <span class="c1"># findlinestarts 给出字节码对应的所有可执行行号</span>
+        <span class="c1"># 排除 def 所在行（函数定义在导入时执行，不属于函数体）</span>
+        <span class="n">all_lines</span> <span class="o">=</span> <span class="p">{</span><span class="n">ln</span> <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">ln</span> <span class="ow">in</span> <span class="n">dis</span><span class="o">.</span><span class="n">findlinestarts</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>
+                     <span class="k">if</span> <span class="n">ln</span> <span class="o">!=</span> <span class="n">code</span><span class="o">.</span><span class="n">co_firstlineno</span><span class="p">}</span>
+        <span class="n">hit_lines</span> <span class="o">=</span> <span class="p">{</span><span class="n">ln</span> <span class="k">for</span> <span class="n">fn</span><span class="p">,</span> <span class="n">ln</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">hit</span> <span class="k">if</span> <span class="n">fn</span> <span class="o">==</span> <span class="n">code</span><span class="o">.</span><span class="n">co_filename</span><span class="p">}</span>
+        <span class="n">covered</span> <span class="o">=</span> <span class="n">all_lines</span> <span class="o">&amp;</span> <span class="n">hit_lines</span>
+        <span class="n">missed</span> <span class="o">=</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">all_lines</span> <span class="o">-</span> <span class="n">hit_lines</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: 覆盖 </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">covered</span><span class="p">)</span><span class="si">}</span><span class="s2">/</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">all_lines</span><span class="p">)</span><span class="si">}</span><span class="s2"> 行"</span>
+              <span class="sa">f</span><span class="s2">" = </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">covered</span><span class="p">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="nb">len</span><span class="p">(</span><span class="n">all_lines</span><span class="p">)</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"未覆盖的行号: </span><span class="si">{</span><span class="n">missed</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+
+
+<span class="n">cov</span> <span class="o">=</span> <span class="n">LineCoverage</span><span class="p">()</span>
+<span class="n">cov</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">classify</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>     <span class="c1"># 只走「正数」分支</span>
+<span class="n">cov</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">classify</span><span class="p">,</span> <span class="o">-</span><span class="mi">3</span><span class="p">)</span>    <span class="c1"># 只走「负数」分支</span>
+<span class="n">cov</span><span class="o">.</span><span class="n">report</span><span class="p">(</span><span class="n">classify</span><span class="p">)</span>     <span class="c1"># 「零」分支没测到 → 覆盖率不是 100%</span>
+</code></pre></div>
+<p>预期输出（行号以本段代码为准，<code>return "零"</code> 在第 9 行）：</p>
+<pre class="plain"><code>classify: 覆盖 4/5 行 = 80%
+未覆盖的行号: [9]</code></pre>
+<p>解释：函数体共 5 个可执行行（<code>if</code>、正数 <code>return</code>、<code>elif</code>、零 <code>return</code>、负数 <code>return</code>），测试只走了正数和负数分支，<code>return "零"</code> 没执行到，所以覆盖率 80%，工具准确指出了遗漏的行。这正是 <code>coverage.py</code> 的核心原理（它额外处理了分支覆盖、多文件汇总等）。</p>
+<p>⚠️ 注意：<code>else:</code> 这类纯跳转行没有对应字节码，不计入可执行行；<code>sys.settrace</code> 只跟踪当前线程，多线程程序需要给每个线程单独设置。</p>
+<hr>
+<h2 id="6">6. 本日小结</h2>
+<table>
+<thead>
+<tr>
+<th>主题</th>
+<th>关键要点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>字节码</td>
+<td>Python 编译的中间表示，比源代码更紧凑高效</td>
+</tr>
+<tr>
+<td>dis 模块</td>
+<td>内置的字节码反汇编工具</td>
+</tr>
+<tr>
+<td>Code Object</td>
+<td>存储编译结果的数据结构</td>
+</tr>
+<tr>
+<td>栈帧</td>
+<td>函数调用的执行上下文</td>
+</tr>
+<tr>
+<td>PyObject</td>
+<td>所有对象的 C 层基础结构</td>
+</tr>
+<tr>
+<td>引用计数</td>
+<td>主要的内存管理机制</td>
+</tr>
+<tr>
+<td>分代 GC</td>
+<td>处理循环引用的补充机制</td>
+</tr>
+<tr>
+<td>pymalloc</td>
+<td>高效的内存分配器</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<blockquote>
+<p><strong>明日预告</strong>：Day 099 — 扩展 Python（Cython、Pybind11、混合编程）</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-097/index.html">← Day 97 领域特定语言（DSL）</a><a class="nav-next" href="../day-099/index.html">Day 99 扩展 Python：Cython、Pybind11 与 C++ 混合编程 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

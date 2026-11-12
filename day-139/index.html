@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 139 — 数据存储管道（Data Storage Pipelines）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 139 — 数据存储管道（Data Storage Pipelines）</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">281 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-139-数据存储管道" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="一、概念解释">一、概念解释</a>
+<a class="toc-l3" href="#11" title="1.1 为什么&quot;管道&quot;很重要？">1.1 为什么&quot;管道&quot;很重要？</a>
+<a class="toc-l3" href="#12-scrapy-item-pipeline" title="1.2 Scrapy Item 与 Pipeline 机制">1.2 Scrapy Item 与 Pipeline 机制</a>
+<a class="toc-l3" href="#13" title="1.3 存储选型速查">1.3 存储选型速查</a>
+<a class="toc-l2" href="#_2" title="二、原理深入">二、原理深入</a>
+<a class="toc-l3" href="#21" title="2.1 数据管道分层架构">2.1 数据管道分层架构</a>
+<a class="toc-l3" href="#22" title="2.2 批量写入：为什么必须缓冲？">2.2 批量写入：为什么必须缓冲？</a>
+<a class="toc-l3" href="#23-on-duplicate-key-update" title="2.3 幂等入库：ON DUPLICATE KEY UPDATE">2.3 幂等入库：ON DUPLICATE KEY UPDATE</a>
+<a class="toc-l3" href="#24" title="2.4 数据质量控制四指标">2.4 数据质量控制四指标</a>
+<a class="toc-l2" href="#api" title="三、定义与方法（API 速查）">三、定义与方法（API 速查）</a>
+<a class="toc-l3" href="#31-item" title="3.1 Item 定义">3.1 Item 定义</a>
+<a class="toc-l3" href="#32-pipeline" title="3.2 Pipeline 骨架">3.2 Pipeline 骨架</a>
+<a class="toc-l3" href="#33-api" title="3.3 常用 API 速查表">3.3 常用 API 速查表</a>
+<a class="toc-l2" href="#_3" title="四、图解">四、图解</a>
+<a class="toc-l2" href="#_4" title="五、实战代码案例">五、实战代码案例</a>
+<a class="toc-l2" href="#_5" title="六、思考题">六、思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-139-data-storage-pipelines">Day 139 — 数据存储管道（Data Storage Pipelines）</h1>
+<blockquote>
+<p>阶段：Phase 7 - 进阶与性能优化 | 主题：实战</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11">1.1 为什么"管道"很重要？</h3>
+<p>爬虫的价值不在"爬到"，而在"存对"。脏数据入库 = 后续所有分析失真。数据管道要回答三个问题：</p>
+<ol>
+<li><strong>清洗</strong>：数据进库前怎么去噪、标准化？</li>
+<li><strong>选型</strong>：MySQL / MongoDB / Redis 各适合存什么？</li>
+<li><strong>质量</strong>：如何保证不重复、不丢、可追溯？</li>
+</ol>
+<h3 id="12-scrapy-item-pipeline">1.2 Scrapy Item 与 Pipeline 机制</h3>
+<ul>
+<li><strong>Item</strong> 是结构化数据的容器（类似 ORM 的 model），定义字段 + 校验规则。</li>
+<li><strong>Item Pipeline</strong> 是流水线：每个 Pipeline 类实现 <code>process_item(item, spider)</code>，返回 item 传给下一级，抛 <code>DropItem</code> 则丢弃。</li>
+</ul>
+<p>Pipeline 的四个常用钩子：</p>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>时机</th>
+<th>典型用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>open_spider(spider)</code></td>
+<td>爬虫启动</td>
+<td>建连接、建表</td>
+</tr>
+<tr>
+<td><code>close_spider(spider)</code></td>
+<td>爬虫关闭</td>
+<td>关连接、批量 flush</td>
+</tr>
+<tr>
+<td><code>process_item(item, spider)</code></td>
+<td>每条数据</td>
+<td>清洗、去重、入库</td>
+</tr>
+<tr>
+<td><code>from_crawler(cls, crawler)</code></td>
+<td>实例化</td>
+<td>读 settings、注入依赖</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13">1.3 存储选型速查</h3>
+<table>
+<thead>
+<tr>
+<th>存储</th>
+<th>数据模型</th>
+<th>适用场景</th>
+<th>不适用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MySQL</td>
+<td>关系表</td>
+<td>结构稳定、需要 JOIN/事务/报表</td>
+<td>字段经常变化的半结构化数据</td>
+</tr>
+<tr>
+<td>MongoDB</td>
+<td>文档(BSON)</td>
+<td>字段多变、嵌套深（如整页 JSON）</td>
+<td>强事务、复杂关联查询</td>
+</tr>
+<tr>
+<td>Redis</td>
+<td>KV/内存</td>
+<td>去重缓存、增量队列、热数据、计数</td>
+<td>大容量冷数据（内存贵）</td>
+</tr>
+</tbody>
+</table>
+<p>经验法则：<strong>爬虫原始层存 MongoDB（保留灵活性），分析层 ETL 到 MySQL（结构化报表），去重/状态用 Redis。</strong></p>
+<hr>
+<h2 id="_2">二、原理深入</h2>
+<h3 id="21">2.1 数据管道分层架构</h3>
+<pre class="plain"><code> Spider yield item
+      │
+      ▼
+ [P1 清洗层]  去空白/类型转换/默认值  -&gt; 不合格 DropItem
+      │
+      ▼
+ [P2 去重层]  Redis SADD 唯一键      -&gt; 重复 DropItem
+      │
+      ▼
+ [P3 入库层]  批量缓冲 + 事务写入 MySQL/MongoDB
+      │
+      ▼
+ [P4 监控层]  统计计数、报警指标</code></pre>
+<p>为什么要分层？<strong>单一职责</strong>：清洗规则变化不影响入库逻辑，新增存储后端只需追加一层。</p>
+<h3 id="22">2.2 批量写入：为什么必须缓冲？</h3>
+<p>逐条 INSERT 的问题：每条一次网络往返 + 一次事务提交，吞吐约几百条/秒。改成攒 N 条（如 100）或 T 秒批量 <code>executemany</code> / <code>insert_many</code>，吞吐可提升 10~50 倍。</p>
+<p>代价：<strong>缓冲在内存，进程崩溃会丢最后一批</strong>。生产上用 <code>close_spider</code> 兜底 flush + 定时器双保险。</p>
+<h3 id="23-on-duplicate-key-update">2.3 幂等入库：ON DUPLICATE KEY UPDATE</h3>
+<p>爬虫重跑是常态。MySQL 侧靠唯一索引 + <code>INSERT ... ON DUPLICATE KEY UPDATE</code> 实现幂等；MongoDB 侧靠唯一索引 + <code>ReplaceOne(upsert=True)</code>；Redis 侧天然幂等（SET 覆盖）。<strong>没有唯一键的表不允许爬虫直接写入</strong>——这是数据质量的第一道红线。</p>
+<h3 id="24">2.4 数据质量控制四指标</h3>
+<ul>
+<li><strong>完整性</strong>：必填字段非空率（schema 校验，可用 <code>itemadapter</code> + pydantic）</li>
+<li><strong>唯一性</strong>：业务主键去重率</li>
+<li><strong>时效性</strong>：数据从抓取到可查询的延迟</li>
+<li><strong>可追溯性</strong>：每条数据记录 <code>source_url</code>、<code>crawl_time</code>、<code>spider_name</code>，出问题能回溯重爬</li>
+</ul>
+<hr>
+<h2 id="api">三、定义与方法（API 速查）</h2>
+<h3 id="31-item">3.1 Item 定义</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">scrapy</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">BookItem</span><span class="p">(</span><span class="n">scrapy</span><span class="o">.</span><span class="n">Item</span><span class="p">):</span>
+    <span class="n">title</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>          <span class="c1"># 必填</span>
+    <span class="n">price</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>          <span class="c1"># 会被清洗成 float</span>
+    <span class="n">source_url</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>     <span class="c1"># 溯源字段（强烈建议所有 Item 都有）</span>
+    <span class="n">crawled_at</span> <span class="o">=</span> <span class="n">scrapy</span><span class="o">.</span><span class="n">Field</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="32-pipeline">3.2 Pipeline 骨架</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span><span class="w"> </span><span class="nc">MySQLPipeline</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">open_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">buf_size</span> <span class="o">=</span> <span class="p">[],</span> <span class="mi">100</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">dict</span><span class="p">(</span><span class="n">item</span><span class="p">))</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">buf_size</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_flush</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">item</span>          <span class="c1"># 一定要 return，否则后续管道收不到</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">close_spider</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spider</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_flush</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_flush</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="c1"># executemany + ON DUPLICATE KEY UPDATE</span>
+        <span class="o">...</span>
+</code></pre></div>
+<h3 id="33-api">3.3 常用 API 速查表</h3>
+<table>
+<thead>
+<tr>
+<th>操作</th>
+<th>MySQL</th>
+<th>MongoDB</th>
+<th>Redis</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>幂等写</td>
+<td><code>INSERT ... ON DUPLICATE KEY UPDATE</code></td>
+<td><code>replace_one(f, d, upsert=True)</code></td>
+<td><code>SET</code> / <code>SADD</code></td>
+</tr>
+<tr>
+<td>批量写</td>
+<td><code>executemany</code></td>
+<td><code>insert_many(ordered=False)</code></td>
+<td>pipeline 批量命令</td>
+</tr>
+<tr>
+<td>唯一约束</td>
+<td><code>UNIQUE KEY(url)</code></td>
+<td><code>create_index(url, unique=True)</code></td>
+<td>set 天然唯一</td>
+</tr>
+<tr>
+<td>连接库</td>
+<td>PyMySQL / mysqlclient</td>
+<td>pymongo</td>
+<td>redis-py</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">四、图解</h2>
+<div class="mermaid-wrap"><div class="mermaid">flowchart TD
+    A[Spider yield item] --&gt; B{清洗层}
+    B -- 不合格 --&gt; X[DropItem + 计数]
+    B -- 合格 --&gt; C{Redis 去重 SADD}
+    C -- 已存在 --&gt; Y[DropItem]
+    C -- 新数据 --&gt; D[批量缓冲区 buffer=100]
+    D --&gt; E[(MongoDB 原始层)]
+    D --&gt; F[(MySQL 结构层)]
+    E --&gt; G[ETL 分析/报表]
+    F --&gt; G</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart TD
+    A[Spider yield item] --&gt; B{清洗层}
+    B -- 不合格 --&gt; X[DropItem + 计数]
+    B -- 合格 --&gt; C{Redis 去重 SADD}
+    C -- 已存在 --&gt; Y[DropItem]
+    C -- 新数据 --&gt; D[批量缓冲区 buffer=100]
+    D --&gt; E[(MongoDB 原始层)]
+    D --&gt; F[(MySQL 结构层)]
+    E --&gt; G[ETL 分析/报表]
+    F --&gt; G</code></pre></div>
+<pre class="plain"><code>数据生命周期：
+  抓取(parse) -&gt; 校验 -&gt; 去重 -&gt; 缓冲 -&gt; 落库 -&gt; 可查询
+  T+0s          T+0s    T+0s    T+~30s   T+~30s   T+~30s
+                          ↑ 崩溃窗口：缓冲未 flush 的数据会丢（需 close_spider 兜底）</code></pre>
+<hr>
+<h2 id="_4">五、实战代码案例</h2>
+<p>见 <code>code/</code>：</p>
+<ul>
+<li><code>01-cleaning-pipeline.py</code> -- 清洗 + 校验 + DropItem（基础）</li>
+<li><code>02-multi-backend-pipeline.py</code> -- Redis 去重 + MySQL/MongoDB 双写 + 批量缓冲（进阶避坑）</li>
+<li><code>03-full-data-pipeline.py</code> -- 完整管道：清洗→去重→双库→质量报表（实战）</li>
+</ul>
+<hr>
+<h2 id="_5">六、思考题</h2>
+<ol>
+<li>批量缓冲 100 条 vs 1000 条，各有什么代价？怎么选择缓冲大小的实验方法？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<ul>
+<li><strong>缓冲 100 条</strong>：崩溃丢失窗口小（最多丢 100 条）、数据延迟低（更快可查询）、内存占用小；但批次提交更频繁，吞吐提升有限。</li>
+<li><strong>缓冲 1000 条</strong>：吞吐更高（网络往返和事务提交次数更少）；但崩溃最多丢 1000 条、数据滞后更久、单事务更大（锁时间长、回滚成本高，可能撞数据库包大小上限）。</li>
+</ul>
+<p><strong>实验方法</strong>：固定其他条件，对 buffer = 50/100/500/1000 分别压测吞吐（条/秒）、P99 延迟、内存占用，找到"吞吐不再显著提升"的拐点；再结合业务可容忍的丢失窗口和延迟要求，取较小值。通常 100~500 是甜点区。</p>
+<p>另外务必加<strong>定时 flush</strong>（如每 5 秒强制刷一次），防止低流量时数据一直卡在缓冲区。</p>
+<p>小例子：实测 100→500 吞吐翻倍，500→1000 只提升 10%，那就选 500。<br>
+2. 为什么推荐"原始层 MongoDB + 分析层 MySQL"而不是直接写 MySQL？</p>
+<p><strong>参考答案</strong></p>
+<p>因为爬下来的数据是<strong>半结构化</strong>的：字段随站点/页面变化、嵌套深、经常增减。MySQL 要求固定 schema，加字段要 <code>ALTER TABLE</code>，嵌套结构只能序列化成 JSON 字符串（失去查询能力）；MongoDB 的文档模型天然契合，先存下来不丢信息。</p>
+<p>更关键的是<strong>可重处理性</strong>：原始层保留"原始快照"，当解析规则有 bug 时，可以从原始层重新 ETL，而不必重新爬取（重爬有风控成本）。如果直接写 MySQL，清洗错了数据就丢了。</p>
+<p>分析层需要 JOIN、事务、报表、BI 工具，MySQL/关系库更强；从 MongoDB ETL 到 MySQL，schema 稳定后再结构化。</p>
+<p>一句话：MongoDB 买"灵活性与可重处理"，MySQL 买"查询与分析能力"，各司其职。</p>
+<p>小例子：商品页今天 30 个字段、明天多 5 个，MongoDB 直接存，MySQL 得先改表。<br>
+3. 如果爬虫在凌晨 3 点崩溃，怎么保证缓冲区里没 flush 的数据不丢？（提示：本地 WAL 文件 / 缩短定时 flush / 消息队列）</p>
+<p><strong>参考答案</strong></p>
+<p>三种思路：① <strong>本地 WAL（预写日志）</strong>——每条数据先追加写磁盘文件（fsync）再进缓冲，写库成功后才删日志，重启时重放未完成的日志；② <strong>缩短定时 flush + close_spider 兜底</strong>——只能防"正常退出"，防不了 kill -9/断电，丢失窗口 = flush 间隔；③ <strong>消息队列（Kafka/Redis Stream）</strong>——item 先入队再消费写库，队列自身持久化，天然不丢。</p>
+<p>下面用标准库演示最小 WAL（崩溃后自动恢复）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">tempfile</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">WalBuffer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""先写 WAL（预写日志）再进内存缓冲；崩溃重启后重放 WAL 找回数据"""</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">wal_path</span><span class="p">,</span> <span class="n">db</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">3</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">wal_path</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">db</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">batch</span> <span class="o">=</span> <span class="n">wal_path</span><span class="p">,</span> <span class="n">db</span><span class="p">,</span> <span class="n">batch</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_replay</span><span class="p">()</span>                      <span class="c1"># 启动时先恢复上次崩溃遗留的数据</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_replay</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wal_path</span><span class="p">):</span>
+            <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wal_path</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">f</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">line</span><span class="p">))</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wal_path</span><span class="p">)</span>        <span class="c1"># 生产上还要按唯一键去重，防止重复入库</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">):</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wal_path</span><span class="p">,</span> <span class="s2">"a"</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">item</span><span class="p">,</span> <span class="n">ensure_ascii</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="o">+</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
+            <span class="n">f</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">fsync</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">fileno</span><span class="p">())</span>            <span class="c1"># 强制落盘，断电也不丢</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">batch</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">flush</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span>         <span class="c1"># 模拟批量写库</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">wal_path</span><span class="p">)</span>            <span class="c1"># 写库成功后才删 WAL</span>
+
+<span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">()</span> <span class="k">as</span> <span class="n">tmp</span><span class="p">:</span>
+    <span class="n">wal</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span> <span class="s2">"spider.wal"</span><span class="p">)</span>
+    <span class="n">db</span> <span class="o">=</span> <span class="p">[]</span>                                 <span class="c1"># 用列表模拟数据库</span>
+    <span class="n">p1</span> <span class="o">=</span> <span class="n">WalBuffer</span><span class="p">(</span><span class="n">wal</span><span class="p">,</span> <span class="n">db</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+    <span class="n">p1</span><span class="o">.</span><span class="n">add</span><span class="p">({</span><span class="s2">"title"</span><span class="p">:</span> <span class="s2">"数据1"</span><span class="p">})</span>
+    <span class="n">p1</span><span class="o">.</span><span class="n">add</span><span class="p">({</span><span class="s2">"title"</span><span class="p">:</span> <span class="s2">"数据2"</span><span class="p">})</span>              <span class="c1"># 只有 2 条，没到批量阈值，还在缓冲区</span>
+    <span class="c1"># --- 模拟进程崩溃：p1 直接丢弃，没来得及 flush ---</span>
+    <span class="n">p2</span> <span class="o">=</span> <span class="n">WalBuffer</span><span class="p">(</span><span class="n">wal</span><span class="p">,</span> <span class="n">db</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>        <span class="c1"># 重启：新实例自动重放 WAL</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"重启后数据库里的数据:"</span><span class="p">,</span> <span class="n">db</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出：</p>
+<pre class="plain"><code>重启后数据库里的数据: [{&#x27;title&#x27;: &#x27;数据1&#x27;}, {&#x27;title&#x27;: &#x27;数据2&#x27;}]</code></pre>
+<p>两条还在缓冲区的数据，因为先写了 WAL，重启后被完整找回。</p>
+<p>⚠️ 注意："写库成功但 WAL 未删"的崩溃窗口会导致重放重复，所以写库必须幂等（唯一键 + upsert）；WAL 要放在与数据库同等或更可靠的磁盘上。<br>
+4. <code>insert_many(ordered=False)</code> 和默认 True 的区别是什么？部分文档主键冲突时行为有何不同？</p>
+<p><strong>参考答案</strong></p>
+<ul>
+<li><strong><code>ordered=True</code>（默认）</strong>：按顺序插入，一旦遇到错误（如主键冲突）就<strong>立即停止</strong>，后面的文档不再插入，抛出 <code>BulkWriteError</code>。</li>
+<li><strong><code>ordered=False</code></strong>：即使部分文档失败，也<strong>继续插入剩余文档</strong>，最后统一报告所有错误；成功的已经写入。</li>
+</ul>
+<p>部分主键冲突时：<code>True</code> 只插到冲突点之前，"前半截入库、后半截丢失"；<code>False</code> 会把所有不冲突的都插进去，冲突的跳过（并报错）。爬虫批量入库通常用 <code>False</code>——一条脏数据不该阻塞整批。</p>
+<p>小例子：100 条里第 3 条冲突，<code>True</code> 只插入前 2 条，<code>False</code> 插入其余 99 条。</p>
+<p>⚠️ 注意：<code>False</code> 不是事务，"部分成功"是常态，要处理 <code>BulkWriteError.details</code> 里的失败文档（重试或记录）；它服务端可并行，通常也更快。<br>
+5. 如何设计一套"数据质量日报"，用哪些指标衡量昨天爬虫产出数据的质量？</p>
+<p><strong>参考答案</strong></p>
+<p>按四个维度设计指标，并落到"每天每爬虫"的粒度：</p>
+<ol>
+<li><strong>完整性</strong>：各必填字段非空率、schema 校验失败率；</li>
+<li><strong>唯一性</strong>：重复率（去重命中数/总数）、主键冲突数；</li>
+<li><strong>时效性</strong>：抓取到入库延迟 P50/P99、今日产出量 vs 近 7 日均值（骤降 &gt;30% 告警）；</li>
+<li><strong>准确/可追溯</strong>：类型转换失败数、值域异常（如价格 ≤ 0）、<code>source_url</code> 覆盖率。</li>
+</ol>
+<p>实现：Pipeline 监控层对每条数据计数（成功/丢弃/重复/字段缺失），按天 + spider 写入统计表；定时任务每早汇总昨日数据生成报表（Markdown/HTML）推送钉钉/企微，红项自动告警。</p>
+<p>关键：报表要有<strong>对比基线</strong>（环比/同比），单个数字看不出好坏；保留每爬虫每站点粒度，方便定位是哪个爬虫出了问题。</p>
+<p>小例子：报表显示"price 非空率从 99.9% 掉到 70%"，立刻知道是价格选择器失效，而不是模糊的"数据好像少了"。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-138/index.html">← Day 138 Scrapy 分布式（Scrapy-Redis）</a><a class="nav-next" href="../day-140/index.html">Day 140 App 爬虫基础 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

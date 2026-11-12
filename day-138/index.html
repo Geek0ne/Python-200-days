@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 138 — Scrapy 分布式（Scrapy-Redis）</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 138 — Scrapy 分布式（Scrapy-Redis）</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">314 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-138-scrapy-分布式" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="一、概念解释">一、概念解释</a>
+<a class="toc-l3" href="#11" title="1.1 为什么需要分布式爬虫？">1.1 为什么需要分布式爬虫？</a>
+<a class="toc-l3" href="#12-scrapy-redis" title="1.2 什么是 Scrapy-Redis？">1.2 什么是 Scrapy-Redis？</a>
+<a class="toc-l3" href="#13-vs" title="1.3 主从 vs 去中心化">1.3 主从 vs 去中心化</a>
+<a class="toc-l2" href="#_2" title="二、原理深入">二、原理深入</a>
+<a class="toc-l3" href="#21-scrapy" title="2.1 Scrapy 原生架构回顾">2.1 Scrapy 原生架构回顾</a>
+<a class="toc-l3" href="#22-scrapy-redis" title="2.2 Scrapy-Redis 替换后的架构">2.2 Scrapy-Redis 替换后的架构</a>
+<a class="toc-l3" href="#23-zset-list" title="2.3 调度队列为什么用 zset 而不是 list？">2.3 调度队列为什么用 zset 而不是 list？</a>
+<a class="toc-l3" href="#24" title="2.4 分布式爬取节奏：不要打爆目标站">2.4 分布式爬取节奏：不要打爆目标站</a>
+<a class="toc-l3" href="#25-item-redis" title="2.5 ITEM 不落 Redis？">2.5 ITEM 不落 Redis？</a>
+<a class="toc-l2" href="#api" title="三、定义与方法（API 速查）">三、定义与方法（API 速查）</a>
+<a class="toc-l3" href="#31-settingspy" title="3.1 settings.py 必备配置">3.1 settings.py 必备配置</a>
+<a class="toc-l3" href="#32-redisspider-rediscrawlspider" title="3.2 RedisSpider / RedisCrawlSpider">3.2 RedisSpider / RedisCrawlSpider</a>
+<a class="toc-l3" href="#33-redis-key" title="3.3 常用 Redis key 一览">3.3 常用 Redis key 一览</a>
+<a class="toc-l2" href="#_3" title="四、图解">四、图解</a>
+<a class="toc-l3" href="#41-mermaid" title="4.1 分布式整体流程（Mermaid）">4.1 分布式整体流程（Mermaid）</a>
+<a class="toc-l3" href="#42-ascii" title="4.2 单请求生命周期（ASCII）">4.2 单请求生命周期（ASCII）</a>
+<a class="toc-l2" href="#_4" title="五、实战代码案例">五、实战代码案例</a>
+<a class="toc-l2" href="#_5" title="六、思考题">六、思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-138-scrapy-scrapy-redis">Day 138 — Scrapy 分布式（Scrapy-Redis）</h1>
+<blockquote>
+<p>阶段：Phase 7 - 进阶与性能优化 | 主题：实战</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11">1.1 为什么需要分布式爬虫？</h3>
+<p>单机 Scrapy 的瓶颈：</p>
+<table>
+<thead>
+<tr>
+<th>瓶颈</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单机带宽</td>
+<td>下载受限于单台机器的上/下行带宽</td>
+</tr>
+<tr>
+<td>单机 CPU</td>
+<td>解析、渲染消耗 CPU，多进程难以突破单机核数</td>
+</tr>
+<tr>
+<td>调度队列在内存</td>
+<td>Scrapy 默认调度器把请求放在内存里，进程一挂全部丢失</td>
+</tr>
+<tr>
+<td>去重集合在内存</td>
+<td><code>dupefilter</code> 基于 内存 set，重启后去重状态清零</td>
+</tr>
+<tr>
+<td>无法横向扩展</td>
+<td>两个 Scrapy 进程各自爬，互相不知道对方爬了什么</td>
+</tr>
+</tbody>
+</table>
+<p>分布式爬虫的核心思想：<strong>把"状态"从爬虫进程里抽出来，放到所有节点共享的地方（Redis）</strong>。</p>
+<h3 id="12-scrapy-redis">1.2 什么是 Scrapy-Redis？</h3>
+<p><code>scrapy-redis</code> 是一个替换 Scrapy 关键组件的扩展包，它做了三件事：</p>
+<ol>
+<li><strong>共享调度队列</strong>：把默认的内存调度器换成 Redis 中的有序集合（<code>SCHEDULER = "scrapy_redis.scheduler.Scheduler"</code>），所有爬虫节点从同一个队列取请求。</li>
+<li><strong>共享去重集合</strong>：把 <code>RFPDupeFilter</code> 换成基于 Redis 的指纹集合（<code>DUPEFILTER_CLASS = "scrapy_redis.dupefilter.RFPDupeFilter"</code>），任何节点爬过的 URL 其他节点不会再爬。</li>
+<li><strong>持久化</strong>：请求队列和指纹都存 Redis，进程崩溃重启后从断点继续（配合 <code>SCHEDULER_PERSIST = True</code>）。</li>
+</ol>
+<h3 id="13-vs">1.3 主从 vs 去中心化</h3>
+<ul>
+<li><strong>老式主从架构</strong>：一台 Master 分发 URL 给多台 Slave 执行。Master 是单点。</li>
+<li><strong>Scrapy-Redis 去中心化架构</strong>：所有节点对等，都从 Redis 队列竞争取任务（POP），也都把新请求推回队列（PUSH）。Redis 本身是唯一中心，可用哨兵/集群保证高可用。</li>
+</ul>
+<hr>
+<h2 id="_2">二、原理深入</h2>
+<h3 id="21-scrapy">2.1 Scrapy 原生架构回顾</h3>
+<pre class="plain"><code>                     ┌─────────────┐
+   Engine ──────────▶│  Scheduler  │  (内存队列 + 内存去重 set)
+     ▲   │           └─────────────┘
+     │   ▼
+ Downloader ──▶ Spider ──▶ Item Pipeline</code></pre>
+<p>关键点：<strong>Scheduler 持有所有待处理请求和指纹</strong>——这就是不能分布式的根因。</p>
+<h3 id="22-scrapy-redis">2.2 Scrapy-Redis 替换后的架构</h3>
+<pre class="plain"><code>   Node A (Scrapy) ─┐
+   Node B (Scrapy) ─┼──▶ Redis（共享队列 + 共享指纹 + pending 表）
+   Node C (Scrapy) ─┘         ▲
+        │  ┌───────────────────┘
+        └──┤ 所有节点 PUSH 新请求 / ZADD 指纹
+           ┤ 所有节点 POP 请求（竞争消费）</code></pre>
+<p><strong>请求指纹是怎么算的？</strong></p>
+<p><code>scrapy.utils.request.request_fingerprint()</code> 把 request 的 method、url、body 做 MD5（默认 sha1 变体），得到一个 40 位十六进制字符串。Scrapy-Redis 把它 <code>SADD</code> 到 Redis 的 set（key 通常是 <code>&lt;spider&gt;:dupefilter</code>）：</p>
+<ul>
+<li><code>SADD</code> 返回 1 → 新请求，入队</li>
+<li><code>SADD</code> 返回 0 → 已爬过，丢弃</li>
+</ul>
+<p>这就是<strong>分布式去重</strong>的全部秘密：把"是否见过"这个判断交给 Redis 原子操作。</p>
+<h3 id="23-zset-list">2.3 调度队列为什么用 zset 而不是 list？</h3>
+<p>Scrapy-Redis 的 Scheduler 维护三种队列（<code>SCHEDULER_QUEUE_CLASS</code> 可选）：</p>
+<table>
+<thead>
+<tr>
+<th>队列类</th>
+<th>Redis 结构</th>
+<th>特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SpiderQueue</code>（默认）</td>
+<td>zset（score=priority 取负）</td>
+<td>优先级调度，但 zpop 没有"阻塞弹出"，需轮询</td>
+</tr>
+<tr>
+<td><code>SpiderStack</code></td>
+<td>list (lpush/lpop)</td>
+<td>LIFO，深度优先</td>
+</tr>
+<tr>
+<td><code>SpiderPriorityQueue</code></td>
+<td>zset</td>
+<td>同 SpiderQueue，历史命名</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>⚠️ 默认队列使用非阻塞 ZRANGE+ZREM 实现"弹出"，多节点竞争时存在轻微竞争开销，但 ZREM 是原子的，不会重复消费。</p>
+</blockquote>
+<h3 id="24">2.4 分布式爬取节奏：不要打爆目标站</h3>
+<p>节点数翻倍 ≈ 请求速率翻倍。务必配合：</p>
+<ul>
+<li>每节点 <code>CONCURRENT_REQUESTS</code>、<code>DOWNLOAD_DELAY</code> 限速</li>
+<li>Redis 侧用 <code>scrapy-redis</code> 的 <code>RedisCrawlSpider</code> 时注意：起始 URL 也应通过 <code>redis_key</code> 推入，而不是 <code>start_urls</code></li>
+</ul>
+<h3 id="25-item-redis">2.5 ITEM 不落 Redis？</h3>
+<p>默认情况下 Item 直接走本机 Pipeline 落盘/落库。若想让 Item 也统一收集，可启用 <code>scrapy_redis.pipelines.RedisPipeline</code>——但更推荐各节点自己写库（减少 Redis 压力和单点风险）。</p>
+<hr>
+<h2 id="api">三、定义与方法（API 速查）</h2>
+<h3 id="31-settingspy">3.1 settings.py 必备配置</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ===== Scrapy-Redis 核心配置 =====</span>
+<span class="c1"># 1. 换调度器</span>
+<span class="n">SCHEDULER</span> <span class="o">=</span> <span class="s2">"scrapy_redis.scheduler.Scheduler"</span>
+
+<span class="c1"># 2. 换去重组件</span>
+<span class="n">DUPEFILTER_CLASS</span> <span class="o">=</span> <span class="s2">"scrapy_redis.dupefilter.RFPDupeFilter"</span>
+
+<span class="c1"># 3. Redis 连接</span>
+<span class="n">REDIS_URL</span> <span class="o">=</span> <span class="s2">"redis://:password@192.168.1.10:6379/0"</span>
+<span class="c1"># 或者分开写：</span>
+<span class="c1"># REDIS_HOST = "192.168.1.10"</span>
+<span class="c1"># REDIS_PORT = 6379</span>
+
+<span class="c1"># 4. 断点续爬（重启不清空队列和指纹）</span>
+<span class="n">SCHEDULER_PERSIST</span> <span class="o">=</span> <span class="kc">True</span>
+
+<span class="c1"># 5. 队列类型（默认即它）</span>
+<span class="n">SCHEDULER_QUEUE_CLASS</span> <span class="o">=</span> <span class="s2">"scrapy_redis.queue.SpiderQueue"</span>
+
+<span class="c1"># 6.（可选）Item 也进 Redis</span>
+<span class="c1"># ITEM_PIPELINES = {"scrapy_redis.pipelines.RedisPipeline": 300}</span>
+
+<span class="c1"># 7. 调度器空闲等待秒数（爬虫不自动关闭，等新任务）</span>
+<span class="n">SCHEDULER_IDLE_BEFORE_CLOSE</span> <span class="o">=</span> <span class="mi">10</span>
+</code></pre></div>
+<h3 id="32-redisspider-rediscrawlspider">3.2 RedisSpider / RedisCrawlSpider</h3>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>redis_key</code></td>
+<td>该爬虫在 Redis 中的起始请求队列名（如 <code>myspider:start_urls</code>）</td>
+</tr>
+<tr>
+<td><code>start_urls</code></td>
+<td>不再使用；改为 <code>lpush &lt;redis_key&gt; &lt;url&gt;</code> 注入种子</td>
+</tr>
+<tr>
+<td><code>next_requests()</code></td>
+<td>从 redis_key 批量取种子的钩子，可重写做鉴权/过滤</td>
+</tr>
+</tbody>
+</table>
+<p>启动种子：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">redis-cli<span class="w"> </span>-h<span class="w"> </span><span class="m">192</span>.168.1.10<span class="w"> </span>lpush<span class="w"> </span>myspider:start_urls<span class="w"> </span><span class="s2">"https://example.com/page/1"</span>
+</code></pre></div>
+<h3 id="33-redis-key">3.3 常用 Redis key 一览</h3>
+<table>
+<thead>
+<tr>
+<th>Key 模式</th>
+<th>内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;name&gt;:requests</code></td>
+<td>待处理请求队列（zset）</td>
+</tr>
+<tr>
+<td><code>&lt;name&gt;:dupefilter</code></td>
+<td>已见指纹集合（set）</td>
+</tr>
+<tr>
+<td><code>&lt;name&gt;:items</code></td>
+<td>RedisPipeline 收集的 item（list，仅启用时）</td>
+</tr>
+<tr>
+<td><code>&lt;name&gt;</code>（redis_key）</td>
+<td>种子 URL 队列（list）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">四、图解</h2>
+<h3 id="41-mermaid">4.1 分布式整体流程（Mermaid）</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    subgraph Nodes
+        A[Node A Scrapy]
+        B[Node B Scrapy]
+        C[Node C Scrapy]
+    end
+    subgraph Redis
+        Q[requests 队列 zset]
+        D[dupefilter 指纹 set]
+        S[redis_key 种子 list]
+    end
+    S --&gt; A
+    A -- ZADD 指纹 --&gt; D
+    B -- ZADD 指纹 --&gt; D
+    C -- ZADD 指纹 --&gt; D
+    A -- PUSH 新请求 --&gt; Q
+    B -- POP 取请求 --&gt; Q
+    C -- POP 取请求 --&gt; Q
+    A --&gt; DB[(MySQL / MongoDB)]</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    subgraph Nodes
+        A[Node A Scrapy]
+        B[Node B Scrapy]
+        C[Node C Scrapy]
+    end
+    subgraph Redis
+        Q[requests 队列 zset]
+        D[dupefilter 指纹 set]
+        S[redis_key 种子 list]
+    end
+    S --&gt; A
+    A -- ZADD 指纹 --&gt; D
+    B -- ZADD 指纹 --&gt; D
+    C -- ZADD 指纹 --&gt; D
+    A -- PUSH 新请求 --&gt; Q
+    B -- POP 取请求 --&gt; Q
+    C -- POP 取请求 --&gt; Q
+    A --&gt; DB[(MySQL / MongoDB)]</code></pre></div>
+<h3 id="42-ascii">4.2 单请求生命周期（ASCII）</h3>
+<pre class="plain"><code> Spider yield Request
+        │
+        ▼
+ Scheduler.enqueue_request()
+        │
+        ▼
+ RFPDupeFilter.request_seen()  ──SADD fingerprint──▶ Redis dupefilter
+        │ 返回 0（没见过）
+        ▼
+ SpiderQueue.push(request)     ──ZADD -priority────▶ Redis requests
+        │
+        ▼ （某个空闲节点）
+ Scheduler.next_request()      ──ZRANGE + ZREM────▶ 取出 Request
+        │
+        ▼
+ Downloader 下载 → Spider 解析 → yield 新 Request（回到顶部）/ Item</code></pre>
+<hr>
+<h2 id="_4">五、实战代码案例</h2>
+<p>完整可运行项目见 <code>code/</code> 目录：</p>
+<ul>
+<li><code>01-basic-redis-spider.py</code> —— 最小可用的 RedisSpider，演示配置与启动</li>
+<li><code>02-distributed-crawl.py</code> —— RedisCrawlSpider + 去重控制 + 优先级队列（进阶/避坑）</li>
+<li><code>03-cluster-launcher.py</code> —— 多进程模拟集群 + 生产部署要点（实战）</li>
+</ul>
+<hr>
+<h2 id="_5">六、思考题</h2>
+<ol>
+<li>Scrapy-Redis 用 zset 做队列、用 set 做去重。如果请求量达到 5000 万，指纹 set 会占用多少内存？有哪些省内存的替代方案（提示：Bloom Filter、RedisBloom 模块）？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>先粗估内存：每条指纹是 40 位十六进制字符串，在 Redis set 里除了字符串本身（SDS），还有 dictEntry、哈希桶指针等开销。用标准库算一笔账：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">math</span>
+
+<span class="n">n</span> <span class="o">=</span> <span class="mi">50_000_000</span>            <span class="c1"># 5000 万条请求指纹</span>
+<span class="n">fp_len</span> <span class="o">=</span> <span class="mi">40</span>               <span class="c1"># 指纹是 40 位十六进制字符串（SHA1）</span>
+
+<span class="c1"># --- Redis set 内存粗估（64 位系统，按 jemalloc 对齐）---</span>
+<span class="n">sds</span> <span class="o">=</span> <span class="mi">48</span>                  <span class="c1"># 40 字符 + SDS 头 + 结束符，对齐到 48 字节</span>
+<span class="n">dict_entry</span> <span class="o">=</span> <span class="mi">32</span>           <span class="c1"># dictEntry 3 个指针（24B），对齐到 32 字节</span>
+<span class="n">bucket</span> <span class="o">=</span> <span class="mi">8</span>                <span class="c1"># 哈希桶指针，按负载因子摊到每成员约 8 字节</span>
+<span class="n">per_member</span> <span class="o">=</span> <span class="n">sds</span> <span class="o">+</span> <span class="n">dict_entry</span> <span class="o">+</span> <span class="n">bucket</span>
+<span class="n">total_gb</span> <span class="o">=</span> <span class="n">n</span> <span class="o">*</span> <span class="n">per_member</span> <span class="o">/</span> <span class="mi">1024</span> <span class="o">**</span> <span class="mi">3</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"每条指纹约 </span><span class="si">{</span><span class="n">per_member</span><span class="si">}</span><span class="s2"> 字节，5000 万条约 </span><span class="si">{</span><span class="n">total_gb</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2"> GB"</span><span class="p">)</span>
+
+<span class="c1"># --- 布隆过滤器：位数 m = -n*ln(p) / (ln2)^2 ---</span>
+<span class="n">p</span> <span class="o">=</span> <span class="mf">0.01</span>                  <span class="c1"># 可接受误判率 1%</span>
+<span class="n">m</span> <span class="o">=</span> <span class="o">-</span><span class="n">n</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span><span class="p">)</span>
+<span class="n">k</span> <span class="o">=</span> <span class="n">m</span> <span class="o">/</span> <span class="n">n</span> <span class="o">*</span> <span class="n">math</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>   <span class="c1"># 最优哈希函数个数</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"布隆过滤器约需 </span><span class="si">{</span><span class="n">m</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">8</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">1024</span><span class="w"> </span><span class="o">**</span><span class="w"> </span><span class="mi">2</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> MB，最优哈希个数 k≈</span><span class="si">{</span><span class="n">k</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">（取 7）"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"内存节省约 </span><span class="si">{</span><span class="n">n</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">per_member</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="n">m</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2"> 倍"</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出：</p>
+<pre class="plain"><code>每条指纹约 88 字节，5000 万条约 4.1 GB
+布隆过滤器约需 57 MB，最优哈希个数 k≈6.6（取 7）
+内存节省约 73 倍</code></pre>
+<p>可见 set 约需 4GB+（算上碎片/副本会更多），而布隆过滤器只要约 57MB。替代方案：</p>
+<ul>
+<li><strong>布隆过滤器 / RedisBloom 模块</strong>：<code>BF.RESERVE key 0.01 50000000</code>，省内存约 70 倍；代价是<strong>误判</strong>（把新 URL 当成已爬 → 漏爬），但不会重复爬，且不支持删除。爬虫去重通常能容忍少量漏爬，这是标准方案。</li>
+<li><strong>截断指纹</strong>：只存 64 位整数而非 40 字符字符串，碰撞概率仍很低。</li>
+<li><strong>冷热分层</strong>：热指纹放 Redis，冷指纹落磁盘（如 RocksDB），或定期归档旧指纹。</li>
+</ul>
+<p>⚠️ 注意：以上是粗估，实际 Redis 内存还含碎片、副本、过期键等开销；布隆误判率随插入量上升，要按最终规模预留容量。<br>
+2. <code>SCHEDULER_PERSIST = False</code> 时重启爬虫会怎样？什么场景应该用 False？</p>
+<p><strong>参考答案</strong></p>
+<p><code>False</code> 时，爬虫关闭（含正常结束和重启）会<strong>清空 Redis 里的请求队列和去重指纹</strong>。重启后等于完全从头爬，之前爬过的 URL 会再爬一遍。<code>True</code> 则保留队列和指纹，重启后断点续爬、爬过的不再爬。</p>
+<p>适合用 <code>False</code> 的场景：</p>
+<ol>
+<li><strong>一次性全量任务</strong>，每次都想全新开始；</li>
+<li><strong>内容频繁更新、需要定期全量重爬</strong>（如每天抓一次价格快照）；</li>
+<li><strong>开发调试</strong>，不想被旧指纹挡住；</li>
+<li>改了清洗/解析逻辑后想重爬验证。</li>
+</ol>
+<p>小例子：每天凌晨全量抓商品价格，用 <code>False</code> 保证每天都是完整快照，而不是只抓"新增"。</p>
+<p>⚠️ 注意：<code>False</code> 时若多节点共享同一 Redis key，一个节点结束会清空队列，影响其他还在跑的节点——分布式场景通常用 <code>True</code> + 手动清理。<br>
+3. 为什么 Scrapy-Redis 的所有节点都"既是生产者又是消费者"？这种对等架构比 Master/Slave 好在哪、坏在哪？</p>
+<p><strong>参考答案</strong></p>
+<p>因为每个节点解析页面时会产生新请求（生产者，PUSH 回 Redis），同时又从 Redis 取请求来下载（消费者，POP）。任务的产生和执行都在同一节点上，不需要中央分发。</p>
+<p><strong>好处</strong>：① 无 Master 单点，任一节点挂掉不影响整体；② 横向扩展只需加节点，无需改配置；③ 天然负载均衡——快节点多取、慢节点少取（竞争消费）；④ 架构简单，Redis 是唯一共享状态。</p>
+<p><strong>坏处</strong>：① Redis 成为新的单点/瓶颈（需哨兵/集群）；② 缺乏全局视角，难做"全局优先级、按域名限速"——每节点只限自己，总速率 = 节点数之和，容易打爆目标站；③ 去重只保证请求不重复，不保证已下载页面不被重复解析；④ 任务分布可能不均（某节点抢走某域名的全部种子）。</p>
+<p>小例子：3 个节点各设 <code>CONCURRENT_REQUESTS=16</code>，总并发就是 48，若目标站只扛得住 20，就得调小每节点配置。<br>
+4. 如果 Redis 宕机，整个集群会怎样？如何设计高可用（哨兵/Cluster/本地降级队列）？</p>
+<p><strong>参考答案</strong></p>
+<p>宕机后果：所有节点取不到新请求、无法去重、无法入队，整个集群"瘫痪"（不是崩溃，而是空转/报错）；若 Redis 数据丢失，断点状态也没了。</p>
+<p>高可用设计：</p>
+<ol>
+<li><strong>Redis 哨兵（Sentinel）</strong>：主从 + 自动故障转移，scrapy-redis 支持 <code>REDIS_SENTINELS</code> 配置；</li>
+<li><strong>Redis Cluster</strong>：分片提供更高吞吐与可用性；</li>
+<li><strong>持久化（AOF everysec）</strong>：减少宕机时的数据丢失；</li>
+<li><strong>客户端降级</strong>：Redis 不可用时，用本地内存/磁盘队列暂存新请求，恢复后回灌（需自定义调度器）；</li>
+<li><strong>监控告警</strong>：把 Redis 连通性纳入健康检查，宕机立即告警。</li>
+</ol>
+<p>权衡：哨兵解决"宕机自动切换"，Cluster 解决"容量与吞吐"，本地降级解决"切换期间继续爬"，按规模选用。</p>
+<p>小例子：中小集群用"哨兵 + AOF"即可；超大规模再上 Cluster，并配本地降级队列兜底。<br>
+5. 分布式去重基于请求指纹而不是 URL 字符串，为什么？（提示：GET 参数顺序、POST body）</p>
+<p><strong>参考答案</strong></p>
+<p>因为"同一个请求"可能有不同的 URL 字符串写法，而"不同请求"可能共享同一个 URL：</p>
+<ul>
+<li><strong>GET 参数顺序/编码差异</strong>：<code>?a=1&amp;b=2</code> 与 <code>?b=2&amp;a=1</code>、<code>%7E</code> 与 <code>~</code>、末尾斜杠、默认端口等，字符串比较会把同一请求判成不同，导致重复爬；</li>
+<li><strong>POST 请求</strong>：URL 相同但 body 不同其实是完全不同的请求，只按 URL 去重会误杀。</li>
+</ul>
+<p><code>request_fingerprint()</code> 把 method、url（含参数排序归一化）、body 一起规范化后哈希，让"语义相同的请求"得到相同指纹、不同的得到不同指纹。</p>
+<p>小例子：<code>?b=2&amp;a=1</code> 和 <code>?a=1&amp;b=2</code> 规范化后指纹相同，只爬一次；POST <code>/api</code> 带 <code>{"page":1}</code> 和 <code>{"page":2}</code> 指纹不同，都保留。</p>
+<p>💡 提示：若业务上认为"同 URL 不同跟踪参数"是同一页（如 <code>utm_source</code>），需自定义指纹函数先剔除无关参数。</p>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-137/index.html">← Day 137 浏览器指纹规避</a><a class="nav-next" href="../day-139/index.html">Day 139 数据存储管道（Data Storage Pipelines） →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

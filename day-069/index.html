@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 69 — MySQL 基础：pymysql、SQL 进阶与备份恢复</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 69 — MySQL 基础：pymysql、SQL 进阶与备份恢复</h1>
+  <div class="lmeta">
+    <span class="badge">Python标准库与生态系统</span>
+    <span class="badge">256 行</span>
+    <span class="badge">5 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（5 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-069-MySQL" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="概述">概述</a>
+<a class="toc-l2" href="#_2" title="学习目标">学习目标</a>
+<a class="toc-l2" href="#1" title="1. 环境准备">1. 环境准备</a>
+<a class="toc-l2" href="#2-pymysql-crud" title="2. pymysql 连接与 CRUD">2. pymysql 连接与 CRUD</a>
+<a class="toc-l2" href="#3" title="3. 连接池">3. 连接池</a>
+<a class="toc-l2" href="#4-sql" title="4. SQL 进阶：连接查询、子查询、索引与执行计划">4. SQL 进阶：连接查询、子查询、索引与执行计划</a>
+<a class="toc-l2" href="#5" title="5. 备份与恢复">5. 备份与恢复</a>
+<a class="toc-l2" href="#6" title="6. 常见陷阱（实测）">6. 常见陷阱（实测）</a>
+<a class="toc-l2" href="#7" title="7. 实战：订单库设计与查询优化">7. 实战：订单库设计与查询优化</a>
+<a class="toc-l2" href="#8" title="8. 思考题">8. 思考题</a>
+<a class="toc-l2" href="#_3" title="小结">小结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-069-mysql-pymysqlsql">Day 069 — MySQL 基础：pymysql、SQL 进阶与备份恢复</h1>
+<blockquote>
+<p>🎯 <strong>今日目标</strong>：把最流行的开源关系库装进工具箱——pymysql 的连接与 CRUD、连接池的原理与实现、SQL 进阶（连接查询 / 子查询 / 索引与执行计划）、备份与恢复，最后用一个订单库实战完成建模与查询优化。</p>
+</blockquote>
+<h2 id="_1">概述</h2>
+<p>Day 068 用 SQLite 走通了 SQL 的基本功，今天换到真正的服务端数据库 MySQL。核心差异有三点：<strong>网络连接</strong>（需要连接池）、<strong>存储引擎与索引</strong>（查询优化的主战场）、<strong>运维职责</strong>（备份恢复、权限）。SQL 语法本身 90% 通用，所以今天把重点放在"服务端数据库才有"的部分。</p>
+<blockquote>
+<p>💡 本日代码设计为<strong>双后端可运行</strong>：安装了 <code>pymysql</code> 并有 MySQL 环境时走真库；没有环境时用 <code>--self-test</code> 在 SQLite 内存库上离线自检（SQL 逻辑通用，连接层差异在代码里显式标注）。</p>
+</blockquote>
+<h2 id="_2">学习目标</h2>
+<ul>
+<li>掌握 pymysql 的连接、CRUD 与事务</li>
+<li>理解连接池解决什么问题，能手写一个简易连接池</li>
+<li>会用 EXPLAIN 分析查询、用索引优化慢查询</li>
+<li>会用 mysqldump 做逻辑备份与恢复</li>
+<li>能独立完成订单库的建模与查询优化</li>
+</ul>
+<hr>
+<h2 id="1">1. 环境准备</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># Docker 一行起（开发用）</span>
+docker<span class="w"> </span>run<span class="w"> </span>-d<span class="w"> </span>--name<span class="w"> </span>mysql-dev<span class="w"> </span>-e<span class="w"> </span><span class="nv">MYSQL_ROOT_PASSWORD</span><span class="o">=</span>dev123456<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-p<span class="w"> </span><span class="m">3306</span>:3306<span class="w"> </span>mysql:8
+
+<span class="c1"># 安装驱动</span>
+pip<span class="w"> </span>install<span class="w"> </span>pymysql
+</code></pre></div>
+<p>连接参数建议全部走环境变量，别写死在代码里：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">pymysql</span>
+
+<span class="n">conn</span> <span class="o">=</span> <span class="n">pymysql</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span>
+    <span class="n">host</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"MYSQL_HOST"</span><span class="p">,</span> <span class="s2">"127.0.0.1"</span><span class="p">),</span>
+    <span class="n">port</span><span class="o">=</span><span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"MYSQL_PORT"</span><span class="p">,</span> <span class="mi">3306</span><span class="p">)),</span>
+    <span class="n">user</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"MYSQL_USER"</span><span class="p">,</span> <span class="s2">"root"</span><span class="p">),</span>
+    <span class="n">password</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"MYSQL_PASSWORD"</span><span class="p">,</span> <span class="s2">""</span><span class="p">),</span>
+    <span class="n">database</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s2">"MYSQL_DB"</span><span class="p">,</span> <span class="s2">"testdb"</span><span class="p">),</span>
+    <span class="n">charset</span><span class="o">=</span><span class="s2">"utf8mb4"</span><span class="p">,</span>          <span class="c1"># 支持 emoji，别用 utf8</span>
+    <span class="n">autocommit</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>            <span class="c1"># 显式事务更安全</span>
+<span class="p">)</span>
+</code></pre></div>
+<h2 id="2-pymysql-crud">2. pymysql 连接与 CRUD</h2>
+<p>完整代码见 <code>code/01-mysql-crud.py</code>。要点：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">with</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span> <span class="k">as</span> <span class="n">cur</span><span class="p">:</span>
+    <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+        <span class="s2">"INSERT INTO users (name, email) VALUES (</span><span class="si">%s</span><span class="s2">, </span><span class="si">%s</span><span class="s2">)"</span><span class="p">,</span>   <span class="c1"># 占位符是 %s</span>
+        <span class="p">(</span><span class="s2">"alice"</span><span class="p">,</span> <span class="s2">"alice@example.com"</span><span class="p">),</span>
+    <span class="p">)</span>
+    <span class="n">user_id</span> <span class="o">=</span> <span class="n">cur</span><span class="o">.</span><span class="n">lastrowid</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>   <span class="c1"># 或 conn.rollback()</span>
+</code></pre></div>
+<p><strong>事务的正确姿势</strong>：提交失败必须回滚，否则连接处于未决状态。</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">try</span><span class="p">:</span>
+    <span class="k">with</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span> <span class="k">as</span> <span class="n">cur</span><span class="p">:</span>
+        <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"UPDATE accounts SET balance = balance - </span><span class="si">%s</span><span class="s2"> WHERE id = </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">cur</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"UPDATE accounts SET balance = balance + </span><span class="si">%s</span><span class="s2"> WHERE id = </span><span class="si">%s</span><span class="s2">"</span><span class="p">,</span> <span class="p">(</span><span class="mi">100</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+<span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">rollback</span><span class="p">()</span>
+    <span class="k">raise</span>
+</code></pre></div>
+<h2 id="3">3. 连接池</h2>
+<p>每次请求都 <code>connect()</code> 意味着一次 TCP 握手 + 认证（毫秒级开销，高并发下成为瓶颈）。连接池<strong>预先建立、循环复用</strong>一组连接：</p>
+<pre class="plain"><code>请求 → 从池中借出连接 → 执行 SQL → 归还连接 → 响应
+              ↓ 池空且未达上限
+           新建连接</code></pre>
+<p><code>code/02-connection-pool.py</code> 用 <code>queue.Queue</code> 实现了一个约 60 行的线程安全连接池（借出 / 归还 / 超时 / 无效连接剔除）。生产环境直接用成熟方案：</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SQLAlchemy QueuePool</td>
+<td>ORM 项目的默认选择</td>
+</tr>
+<tr>
+<td>DBUtils PooledDB</td>
+<td>裸 pymysql 场景的轻量选择</td>
+</tr>
+<tr>
+<td>云厂商 ProxySQL / RDS 连接代理</td>
+<td>架构层解决</td>
+</tr>
+</tbody>
+</table>
+<h2 id="4-sql">4. SQL 进阶：连接查询、子查询、索引与执行计划</h2>
+<p>完整示例见 <code>code/03-sql-advanced.py</code>。</p>
+<p><strong>连接查询</strong>——四种 JOIN 的语义差异是面试高频题：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">sql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">SELECT</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">id</span><span class="p">,</span><span class="w"> </span><span class="n">u</span><span class="p">.</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">amount</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="n">o</span>
+<span class="k">INNER</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="n">u</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">user_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">u</span><span class="p">.</span><span class="n">id</span><span class="p">;</span><span class="w">      </span><span class="c1">-- 只保留两边都匹配的行</span>
+
+<span class="k">SELECT</span><span class="w"> </span><span class="n">u</span><span class="p">.</span><span class="n">name</span><span class="p">,</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">amount</span>
+<span class="k">FROM</span><span class="w"> </span><span class="n">users</span><span class="w"> </span><span class="n">u</span>
+<span class="k">LEFT</span><span class="w"> </span><span class="k">JOIN</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="n">o</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">u</span><span class="p">.</span><span class="n">id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">o</span><span class="p">.</span><span class="n">user_id</span><span class="p">;</span><span class="w">      </span><span class="c1">-- 左表全保留，右表可 NULL</span>
+</code></pre></div>
+<p><strong>子查询</strong>——先想 JOIN 再想子查询（多数情况下 JOIN 更易优化）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">sql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1">-- 消费超过平均值的用户</span>
+<span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span>
+<span class="k">WHERE</span><span class="w"> </span><span class="n">amount</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="p">(</span><span class="k">SELECT</span><span class="w"> </span><span class="k">AVG</span><span class="p">(</span><span class="n">amount</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="p">);</span>
+</code></pre></div>
+<p><strong>索引与执行计划</strong>——优化的第一步永远是看 EXPLAIN：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">sql</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">EXPLAIN</span><span class="w"> </span><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">orders</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">user_id</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">42</span><span class="p">;</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>关键列</th>
+<th>怎么看</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>type</td>
+<td><code>ALL</code>（全表扫描）→ 危险；<code>ref</code>/<code>range</code> → 可接受</td>
+</tr>
+<tr>
+<td>key</td>
+<td>实际命中的索引，<code>NULL</code> = 没走索引</td>
+</tr>
+<tr>
+<td>rows</td>
+<td>预估扫描行数，数量级比精确值重要</td>
+</tr>
+<tr>
+<td>Extra</td>
+<td><code>Using filesort</code> / <code>Using temporary</code> → 考虑加索引</td>
+</tr>
+</tbody>
+</table>
+<p><strong>索引设计三原则</strong>：最左前缀匹配、覆盖索引减少回表、选择性低的列（如性别）不适合单独建索引。</p>
+<h2 id="5">5. 备份与恢复</h2>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 逻辑备份（结构 + 数据）</span>
+mysqldump<span class="w"> </span>-h127.0.0.1<span class="w"> </span>-uroot<span class="w"> </span>-p<span class="w"> </span>testdb<span class="w"> </span>&gt;<span class="w"> </span>backup.sql
+
+<span class="c1"># 恢复</span>
+mysql<span class="w"> </span>-h127.0.0.1<span class="w"> </span>-uroot<span class="w"> </span>-p<span class="w"> </span>testdb<span class="w"> </span>&lt;<span class="w"> </span>backup.sql
+
+<span class="c1"># 只备份结构 / 只备份数据</span>
+mysqldump<span class="w"> </span>-uroot<span class="w"> </span>-p<span class="w"> </span>--no-data<span class="w"> </span>testdb<span class="w"> </span>&gt;<span class="w"> </span>schema.sql
+mysqldump<span class="w"> </span>-uroot<span class="w"> </span>-p<span class="w"> </span>--no-create-info<span class="w"> </span>testdb<span class="w"> </span>&gt;<span class="w"> </span>data.sql
+</code></pre></div>
+<p><code>code/04-backup-restore.py</code> 演示了备份归档、恢复与保留 N 份的完整流程（MySQL 用 mysqldump，SQLite 用 backup API 等价复现）。生产备份三铁律：<strong>定时执行、异地存放、定期演练恢复</strong>——没演练过的备份等于没有备份。</p>
+<h2 id="6">6. 常见陷阱（实测）</h2>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>陷阱</th>
+<th>后果</th>
+<th>正确做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>charset="utf8"</code></td>
+<td>emoji 存成乱码</td>
+<td>用 <code>utf8mb4</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>拼接 SQL</td>
+<td>注入（见 Day 072）</td>
+<td><code>%s</code> 占位符</td>
+</tr>
+<tr>
+<td>3</td>
+<td>长事务不提交</td>
+<td>锁等待、回滚段膨胀</td>
+<td>尽快 commit/rollback</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>SELECT *</code> 大表</td>
+<td>内存/带宽爆炸</td>
+<td>按需取列，善用覆盖索引</td>
+</tr>
+<tr>
+<td>5</td>
+<td>索引列上用函数</td>
+<td>索引失效</td>
+<td><code>WHERE created_at &gt;= ?</code> 而非 <code>DATE(created_at) = ?</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td>忽略 EXPLAIN</td>
+<td>慢查询上线才发现</td>
+<td>上线前对核心查询跑 EXPLAIN</td>
+</tr>
+<tr>
+<td>7</td>
+<td>root 账号跑业务</td>
+<td>误操作无法兜底</td>
+<td>建最小权限业务账号</td>
+</tr>
+<tr>
+<td>8</td>
+<td>不设连接超时</td>
+<td>僵尸连接占满池</td>
+<td><code>connect_timeout</code> + 池的失效检测</td>
+</tr>
+<tr>
+<td>9</td>
+<td>备份只写本地磁盘</td>
+<td>磁盘损坏即全丢</td>
+<td>异地 / 对象存储备份</td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>LIMIT 1000000, 10</code> 深分页</td>
+<td>越翻越慢</td>
+<td>延迟关联或游标分页</td>
+</tr>
+</tbody>
+</table>
+<h2 id="7">7. 实战：订单库设计与查询优化</h2>
+<p><code>code/05-order-db-project.py</code> 完整走一遍：</p>
+<ol>
+<li><strong>建模</strong>：users / products / orders / order_items 四张表，外键 + 合理字段类型</li>
+<li><strong>灌数</strong>：批量插入 1 万笔订单</li>
+<li><strong>慢查询</strong>："查某用户最近 30 天订单及商品名"的初始写法（子查询 + <code>SELECT *</code>）</li>
+<li><strong>优化</strong>：EXPLAIN 定位全表扫描 → 加联合索引 <code>(user_id, created_at)</code> → 延迟关联改写</li>
+<li><strong>验收</strong>：对比优化前后扫描行数与耗时</li>
+</ol>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">python<span class="w"> </span>code/05-order-db-project.py<span class="w"> </span>--self-test<span class="w">   </span><span class="c1"># SQLite 离线跑全流程</span>
+python<span class="w"> </span>code/05-order-db-project.py<span class="w">               </span><span class="c1"># MySQL 环境实测</span>
+</code></pre></div>
+<h2 id="8">8. 思考题</h2>
+<ol>
+<li><strong>占位符与 SQL 注入</strong>：<code>cur.execute("SELECT * FROM users WHERE name = '%s'" % name)</code> 与 <code>cur.execute("SELECT * FROM users WHERE name = %s", (name,))</code> 有什么本质区别？为什么本日反复强调 <code>charset="utf8mb4"</code>？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>第一种是 <strong>Python 字符串格式化</strong>：先把用户输入拼进 SQL 文本，再整条发给数据库。数据库无法区分哪部分是「指令」、哪部分是「数据」。如果 <code>name</code> 是 <code>' OR '1'='1</code>，最终 SQL 变成 <code>WHERE name = '' OR '1'='1'</code>，条件恒真，整张用户表就被拖走了——这就是 SQL 注入。</p>
+<p>第二种把 <strong>SQL 模板与参数分开</strong>交给驱动：参数只会被当成「值」处理（驱动负责转义或走预编译），里面的引号、分号不会改变语句结构，注入自然失效。</p>
+<p>⚠️ 注意：pymysql 的 <code>%s</code> 是 DB-API 占位符，<strong>不是</strong> Python 的 <code>%</code> 格式化，千万别写成 <code>cur.execute(sql % params)</code>。占位符只能替代「值」，表名、列名、<code>ORDER BY</code> 方向都不能用它，这类需求要用白名单校验。</p>
+<p><code>utf8mb4</code> 的原因：MySQL 里的 <code>utf8</code> 其实是 <code>utf8mb3</code>，每字符最多 3 字节，而 emoji 是 4 字节，存进去会报错或变乱码。<code>utf8mb4</code> 才是完整的 UTF-8，建库、建表、连接三处都要统一。</p>
+<ol start="2">
+<li><strong>事务与回滚（代码）</strong>：转账要执行两条 UPDATE，若第一条成功、第二条失败会发生什么？请给出可离线运行的最小示例，并说明 pymysql 中的等价写法。</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 依赖：仅标准库 sqlite3（本日「双后端」设计的离线版；真库需自行准备 MySQL 并 pip install pymysql）</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sqlite3</span>
+
+<span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="s2">":memory:"</span><span class="p">)</span>     <span class="c1"># 内存库，进程结束即消失，不留文件</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)"</span><span class="p">)</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">"INSERT INTO accounts VALUES (?, ?)"</span><span class="p">,</span> <span class="p">[(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">500</span><span class="p">),</span> <span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">500</span><span class="p">)])</span>
+<span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">transfer</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">dst</span><span class="p">,</span> <span class="n">amount</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""转账：两条 UPDATE 必须同生共死"""</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">with</span> <span class="n">conn</span><span class="p">:</span>                     <span class="c1"># 正常结束自动 commit，抛异常自动 rollback</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"UPDATE accounts SET balance = balance - ? WHERE id = ?"</span><span class="p">,</span>
+                         <span class="p">(</span><span class="n">amount</span><span class="p">,</span> <span class="n">src</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">1000</span><span class="p">:</span>          <span class="c1"># 模拟业务校验失败（此时钱已扣掉一半）</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"单笔限额 1000"</span><span class="p">)</span>
+            <span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"UPDATE accounts SET balance = balance + ? WHERE id = ?"</span><span class="p">,</span>
+                         <span class="p">(</span><span class="n">amount</span><span class="p">,</span> <span class="n">dst</span><span class="p">))</span>
+    <span class="k">except</span> <span class="ne">ValueError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">"已回滚:"</span><span class="p">,</span> <span class="n">e</span><span class="p">)</span>
+
+<span class="n">transfer</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">100</span><span class="p">)</span>              <span class="c1"># 成功：1 号 -100，2 号 +100</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"SELECT * FROM accounts"</span><span class="p">)</span><span class="o">.</span><span class="n">fetchall</span><span class="p">())</span>
+
+<span class="n">transfer</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="mi">5000</span><span class="p">)</span>             <span class="c1"># 失败：第一条 UPDATE 也要撤销</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"SELECT * FROM accounts"</span><span class="p">)</span><span class="o">.</span><span class="n">fetchall</span><span class="p">())</span>
+</code></pre></div>
+<p>预期输出：</p>
+<pre class="plain"><code>[(1, 400), (2, 600)]
+已回滚: 单笔限额 1000
+[(1, 400), (2, 600)]</code></pre>
+<p>关键在于<strong>事务的原子性</strong>：两条 UPDATE 属于同一个事务，要么一起生效，要么一起作废。示例中第二次转账在扣款之后抛错，<code>with conn:</code> 触发回滚，余额回到 <code>(400, 600)</code>，钱不会凭空消失。如果没有回滚（或中途误提交），就会出现「A 扣了钱、B 没收到」的脏账。</p>
+<p>换到 pymysql：把 <code>?</code> 换成 <code>%s</code>，把 <code>with conn:</code> 换成本日第 2 节的显式写法——<code>try: ... conn.commit()</code> / <code>except Exception: conn.rollback(); raise</code>。连接时保持 <code>autocommit=False</code>，让事务边界由自己掌控。</p>
+<p>💡 提示：长事务不提交会一直持锁、撑大回滚段，务必尽快 commit/rollback；连接归还连接池之前，也要确认事务已经结束，否则下一个借用者会继承你的未决事务。</p>
+<ol start="3">
+<li><strong>索引与执行计划</strong>：为什么 <code>WHERE DATE(created_at) = '2026-11-11'</code> 用不上索引，改成范围查询就可以？联合索引 <code>(user_id, created_at)</code> 的「最左前缀」是什么意思？<code>LIMIT 1000000, 10</code> 为什么越翻越慢？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>索引（InnoDB 的 B+ 树）里存的是<strong>列的原始值</strong>，靠有序性快速定位。一旦在索引列上套函数 <code>DATE(created_at)</code>，比较的对象变成了「函数计算结果」，树的有序性用不上了，只能逐行算一遍——EXPLAIN 里表现为 <code>type=ALL</code>、<code>key=NULL</code>（全表扫描）。改写成 <code>created_at &gt;= '2026-11-11 00:00:00' AND created_at &lt; '2026-11-12 00:00:00'</code>，列保持「裸露」，就能走 <code>range</code>。</p>
+<p><strong>最左前缀</strong>：联合索引 <code>(user_id, created_at)</code> 是先按 <code>user_id</code> 排序、<code>user_id</code> 相同再按 <code>created_at</code> 排序。所以 <code>WHERE user_id = ? AND created_at &gt;= ?</code> 能用整条索引；<code>WHERE user_id = ?</code> 能用前一半；而只给 <code>created_at</code> 的条件，因为数据在全局上并不是按时间有序的，通常用不上这条索引。建索引时要把「最常用来等值过滤的列」放左边。</p>
+<p><strong>深分页</strong>：<code>LIMIT 1000000, 10</code> 的语义是「扫描并丢弃前 100 万行，再取 10 行」，偏移越大越慢。两种改法：延迟关联（先用覆盖索引取出这 10 行的主键，再 JOIN 回原表取完整列）；游标分页（记住上一页最后的 <code>id</code>，用 <code>WHERE id &gt; ? ORDER BY id LIMIT 10</code>，每页成本恒定）。</p>
+<p>⚠️ 注意：索引不是越多越好，每次写入都要维护索引；选择性低的列（如性别）单独建索引几乎没收益。<code>EXPLAIN</code> 是 MySQL 语法，SQLite 对应的是 <code>EXPLAIN QUERY PLAN</code>，输出含义不同；上面的执行计划验证需自行准备 MySQL 环境。</p>
+<h2 id="_3">小结</h2>
+<ul>
+<li>pymysql：<code>%s</code> 占位符 + 显式事务 + 必须回滚兜底</li>
+<li>连接池是服务端数据库的标配，别让 TCP 握手成为瓶颈</li>
+<li>优化慢查询的固定动作：EXPLAIN → 看 type/key/rows → 设计索引 → 验证</li>
+<li>备份的价值在恢复，定期演练</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-068/index.html">← Day 68 数据库基础：SQLite 与 SQL</a><a class="nav-next" href="../day-070/index.html">Day 70 Redis 基础：缓存、队列与分布式锁 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

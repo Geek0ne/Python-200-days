@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 89 — 游戏循环与事件</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 89 — 游戏循环与事件</h1>
+  <div class="lmeta">
+    <span class="badge">Python实战项目</span>
+    <span class="badge">474 行</span>
+    <span class="badge">7 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（7 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-089-游戏循环与事件" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="📚 本日目标">📚 本日目标</a>
+<a class="toc-l2" href="#1-game-loop" title="1. 游戏循环（Game Loop）">1. 游戏循环（Game Loop）</a>
+<a class="toc-l3" href="#11" title="1.1 什么是游戏循环？">1.1 什么是游戏循环？</a>
+<a class="toc-l3" href="#12" title="1.2 最基本的游戏循环">1.2 最基本的游戏循环</a>
+<a class="toc-l3" href="#13-clock" title="1.3 为什么需要 Clock？">1.3 为什么需要 Clock？</a>
+<a class="toc-l3" href="#14-vs" title="1.4 固定时间步长 vs 可变时间步长">1.4 固定时间步长 vs 可变时间步长</a>
+<a class="toc-l2" href="#2-event-system" title="2. 事件系统（Event System）">2. 事件系统（Event System）</a>
+<a class="toc-l3" href="#21-pygame" title="2.1 Pygame 事件队列">2.1 Pygame 事件队列</a>
+<a class="toc-l3" href="#22" title="2.2 事件类型一览">2.2 事件类型一览</a>
+<a class="toc-l3" href="#23" title="2.3 事件处理模式">2.3 事件处理模式</a>
+<a class="toc-l3" href="#24" title="2.4 自定义事件">2.4 自定义事件</a>
+<a class="toc-l2" href="#3" title="3. 时间管理">3. 时间管理</a>
+<a class="toc-l3" href="#31-pygame" title="3.1 Pygame 时间工具">3.1 Pygame 时间工具</a>
+<a class="toc-l3" href="#32" title="3.2 定时器的使用">3.2 定时器的使用</a>
+<a class="toc-l2" href="#4" title="4. 游戏循环优化">4. 游戏循环优化</a>
+<a class="toc-l3" href="#41" title="4.1 分离逻辑与渲染">4.1 分离逻辑与渲染</a>
+<a class="toc-l3" href="#42" title="4.2 避免在事件循环中做重活">4.2 避免在事件循环中做重活</a>
+<a class="toc-l3" href="#43-dirty-rectangle" title="4.3 脏矩形渲染（Dirty Rectangle）">4.3 脏矩形渲染（Dirty Rectangle）</a>
+<a class="toc-l2" href="#5" title="5. 完整游戏循环架构">5. 完整游戏循环架构</a>
+<a class="toc-l2" href="#6" title="6. 实战代码">6. 实战代码</a>
+<a class="toc-l2" href="#7" title="7. 思考题">7. 思考题</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-089">Day 089 — 游戏循环与事件</h1>
+<blockquote>
+<p><strong>阶段</strong>：Phase 6 — 实战项目<br>
+<strong>主题</strong>：游戏循环与事件系统<br>
+<strong>前置</strong>：Day 088 — Pygame 框架入门</p>
+</blockquote>
+<hr>
+<h2 id="_1">📚 本日目标</h2>
+<p>掌握游戏开发的核心——<strong>游戏循环</strong>和<strong>事件处理系统</strong>。理解游戏如何响应用户输入、处理时间节奏、管理帧率，以及如何构建一个完整的游戏主循环。</p>
+<hr>
+<h2 id="1-game-loop">1. 游戏循环（Game Loop）</h2>
+<h3 id="11">1.1 什么是游戏循环？</h3>
+<p>游戏循环是游戏运行的"心脏"。几乎所有游戏都遵循同一个模式：</p>
+<pre class="plain"><code>初始化 → [处理输入 → 更新状态 → 渲染画面] × N → 退出</code></pre>
+<p><strong>为什么需要游戏循环？</strong></p>
+<ul>
+<li>游戏不像普通程序那样"执行完就结束"</li>
+<li>游戏需要<strong>持续运行</strong>，不断响应输入、更新画面</li>
+<li>游戏循环决定了游戏的<strong>流畅度</strong>和<strong>响应速度</strong></li>
+</ul>
+<h3 id="12">1.2 最基本的游戏循环</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">pygame</span>
+
+<span class="n">pygame</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+<span class="n">screen</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">display</span><span class="o">.</span><span class="n">set_mode</span><span class="p">((</span><span class="mi">800</span><span class="p">,</span> <span class="mi">600</span><span class="p">))</span>
+<span class="n">clock</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">Clock</span><span class="p">()</span>
+<span class="n">running</span> <span class="o">=</span> <span class="kc">True</span>
+
+<span class="k">while</span> <span class="n">running</span><span class="p">:</span>
+    <span class="c1"># 1. 处理事件（输入）</span>
+    <span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">pygame</span><span class="o">.</span><span class="n">event</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">pygame</span><span class="o">.</span><span class="n">QUIT</span><span class="p">:</span>
+            <span class="n">running</span> <span class="o">=</span> <span class="kc">False</span>
+    
+    <span class="c1"># 2. 更新游戏状态</span>
+    <span class="c1"># （移动物体、检查碰撞等）</span>
+    
+    <span class="c1"># 3. 渲染画面</span>
+    <span class="n">screen</span><span class="o">.</span><span class="n">fill</span><span class="p">((</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">))</span>
+    <span class="n">pygame</span><span class="o">.</span><span class="n">display</span><span class="o">.</span><span class="n">flip</span><span class="p">()</span>
+    
+    <span class="c1"># 4. 控制帧率</span>
+    <span class="n">clock</span><span class="o">.</span><span class="n">tick</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span>
+
+<span class="n">pygame</span><span class="o">.</span><span class="n">quit</span><span class="p">()</span>
+</code></pre></div>
+<h3 id="13-clock">1.3 为什么需要 Clock？</h3>
+<p><code>Clock.tick(fps)</code> 做了两件关键的事：</p>
+<ol>
+<li><strong>控制帧率</strong>：确保游戏以固定速度运行（如 60 FPS）</li>
+<li><strong>提供时间间隔</strong>：<code>clock.get_time()</code> 返回上一帧花费的时间（毫秒）</li>
+</ol>
+<p><strong>为什么帧率控制很重要？</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 不控制帧率：不同电脑速度不同，游戏快慢不一</span>
+<span class="k">while</span> <span class="n">running</span><span class="p">:</span>
+    <span class="c1"># ...游戏逻辑...</span>
+    <span class="c1"># 在快电脑上可能跑 200 FPS，在慢电脑上只有 30 FPS</span>
+
+<span class="c1"># ✅ 控制帧率：游戏体验一致</span>
+<span class="k">while</span> <span class="n">running</span><span class="p">:</span>
+    <span class="c1"># ...游戏逻辑...</span>
+    <span class="n">clock</span><span class="o">.</span><span class="n">tick</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span>  <span class="c1"># 所有电脑都限制在 60 FPS</span>
+</code></pre></div>
+<h3 id="14-vs">1.4 固定时间步长 vs 可变时间步长</h3>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>原理</th>
+<th>优点</th>
+<th>缺点</th>
+<th>适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>固定时间步长</td>
+<td>每帧更新固定时间量</td>
+<td>物理模拟稳定、可复现</td>
+<td>慢电脑可能卡顿</td>
+<td>物理引擎、竞技游戏</td>
+</tr>
+<tr>
+<td>可变时间步长</td>
+<td>根据实际耗时更新</td>
+<td>帧率无关、流畅</td>
+<td>物理可能不稳定</td>
+<td>大多数休闲游戏</td>
+</tr>
+</tbody>
+</table>
+<p><strong>固定时间步长示例：</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">FIXED_DT</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="mi">60</span>  <span class="c1"># 固定 60 FPS 的时间步长</span>
+<span class="n">accumulator</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+<span class="k">while</span> <span class="n">running</span><span class="p">:</span>
+    <span class="n">dt</span> <span class="o">=</span> <span class="n">clock</span><span class="o">.</span><span class="n">get_time</span><span class="p">()</span> <span class="o">/</span> <span class="mf">1000.0</span>  <span class="c1"># 转为秒</span>
+    <span class="n">accumulator</span> <span class="o">+=</span> <span class="n">dt</span>
+    
+    <span class="k">while</span> <span class="n">accumulator</span> <span class="o">&gt;=</span> <span class="n">FIXED_DT</span><span class="p">:</span>
+        <span class="n">update</span><span class="p">(</span><span class="n">FIXED_DT</span><span class="p">)</span>  <span class="c1"># 用固定时间步长更新</span>
+        <span class="n">accumulator</span> <span class="o">-=</span> <span class="n">FIXED_DT</span>
+    
+    <span class="n">render</span><span class="p">()</span>
+    <span class="n">clock</span><span class="o">.</span><span class="n">tick</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="2-event-system">2. 事件系统（Event System）</h2>
+<h3 id="21-pygame">2.1 Pygame 事件队列</h3>
+<p>Pygame 使用<strong>事件队列</strong>来管理所有输入和系统事件：</p>
+<pre class="plain"><code>用户按下键盘 → 事件入队 → game loop 读取 → 做出响应
+鼠标移动     → 事件入队 → game loop 读取 → 做出响应
+窗口关闭     → 事件入队 → game loop 读取 → 退出游戏</code></pre>
+<p><strong>为什么用队列而不是直接回调？</strong></p>
+<ul>
+<li>游戏循环需要<strong>按顺序</strong>处理每一帧的事件</li>
+<li>事件队列保证<strong>不丢失</strong>任何输入</li>
+<li>可以在游戏的<strong>固定时间点</strong>统一处理，而不是随时被中断</li>
+</ul>
+<h3 id="22">2.2 事件类型一览</h3>
+<table>
+<thead>
+<tr>
+<th>事件类型</th>
+<th>常用属性</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>QUIT</code></td>
+<td>—</td>
+<td>窗口关闭按钮</td>
+</tr>
+<tr>
+<td><code>KEYDOWN</code></td>
+<td><code>key</code>, <code>mod</code></td>
+<td>按键按下</td>
+</tr>
+<tr>
+<td><code>KEYUP</code></td>
+<td><code>key</code>, <code>mod</code></td>
+<td>按键松开</td>
+</tr>
+<tr>
+<td><code>MOUSEMOTION</code></td>
+<td><code>pos</code>, <code>rel</code>, <code>buttons</code></td>
+<td>鼠标移动</td>
+</tr>
+<tr>
+<td><code>MOUSEBUTTONDOWN</code></td>
+<td><code>pos</code>, <code>button</code></td>
+<td>鼠标按下</td>
+</tr>
+<tr>
+<td><code>MOUSEBUTTONUP</code></td>
+<td><code>pos</code>, <code>button</code></td>
+<td>鼠标松开</td>
+</tr>
+<tr>
+<td><code>USEREVENT</code></td>
+<td>自定义</td>
+<td>用户自定义事件</td>
+</tr>
+</tbody>
+</table>
+<h3 id="23">2.3 事件处理模式</h3>
+<h4 id="_2">模式一：逐事件处理（推荐用于精确响应）</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">pygame</span><span class="o">.</span><span class="n">event</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">pygame</span><span class="o">.</span><span class="n">QUIT</span><span class="p">:</span>
+        <span class="n">running</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="k">elif</span> <span class="n">event</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">pygame</span><span class="o">.</span><span class="n">KEYDOWN</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">pygame</span><span class="o">.</span><span class="n">K_SPACE</span><span class="p">:</span>
+            <span class="n">player</span><span class="o">.</span><span class="n">jump</span><span class="p">()</span>       <span class="c1"># 精确响应：按下瞬间触发</span>
+        <span class="k">elif</span> <span class="n">event</span><span class="o">.</span><span class="n">key</span> <span class="o">==</span> <span class="n">pygame</span><span class="o">.</span><span class="n">K_LEFT</span><span class="p">:</span>
+            <span class="n">player</span><span class="o">.</span><span class="n">move_left</span><span class="p">()</span>  <span class="c1"># 按下瞬间触发一次</span>
+</code></pre></div>
+<h4 id="_3">模式二：按键状态轮询（推荐用于持续移动）</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="n">keys</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">key</span><span class="o">.</span><span class="n">get_pressed</span><span class="p">()</span>
+<span class="k">if</span> <span class="n">keys</span><span class="p">[</span><span class="n">pygame</span><span class="o">.</span><span class="n">K_LEFT</span><span class="p">]:</span>
+    <span class="n">player</span><span class="o">.</span><span class="n">x</span> <span class="o">-=</span> <span class="mi">5</span>    <span class="c1"># 只要按住就持续移动</span>
+<span class="k">if</span> <span class="n">keys</span><span class="p">[</span><span class="n">pygame</span><span class="o">.</span><span class="n">K_RIGHT</span><span class="p">]:</span>
+    <span class="n">player</span><span class="o">.</span><span class="n">x</span> <span class="o">+=</span> <span class="mi">5</span>
+</code></pre></div>
+<p><strong>两种模式的区别：</strong></p>
+<pre class="plain"><code>按键时间线：
+  按下 ──────── 持续 ──────── 松开
+  │                           │
+  ▼ KEYDOWN 事件               ▼ KEYUP 事件
+
+KEYDOWN: 按下瞬间触发一次（跳转）
+get_pressed: 持续按住期间每帧都为 True（移动）</code></pre>
+<h3 id="24">2.4 自定义事件</h3>
+<p>当内置事件不够用时，可以创建自定义事件：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 定义自定义事件</span>
+<span class="n">SPAWN_ENEMY</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">USEREVENT</span> <span class="o">+</span> <span class="mi">1</span>
+<span class="n">WEAPON_READY</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">USEREVENT</span> <span class="o">+</span> <span class="mi">2</span>
+
+<span class="c1"># 定时触发</span>
+<span class="n">pygame</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">set_timer</span><span class="p">(</span><span class="n">SPAWN_ENEMY</span><span class="p">,</span> <span class="mi">2000</span><span class="p">)</span>  <span class="c1"># 每 2 秒生成敌人</span>
+
+<span class="c1"># 在事件循环中处理</span>
+<span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">pygame</span><span class="o">.</span><span class="n">event</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">SPAWN_ENEMY</span><span class="p">:</span>
+        <span class="n">spawn_enemy</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="3">3. 时间管理</h2>
+<h3 id="31-pygame">3.1 Pygame 时间工具</h3>
+<table>
+<thead>
+<tr>
+<th>工具</th>
+<th>用途</th>
+<th>精度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Clock.tick(fps)</code></td>
+<td>控制帧率</td>
+<td>毫秒级</td>
+</tr>
+<tr>
+<td><code>Clock.get_time()</code></td>
+<td>上一帧耗时</td>
+<td>毫秒</td>
+</tr>
+<tr>
+<td><code>Clock.get_fps()</code></td>
+<td>当前实际 FPS</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>pygame.time.get_ticks()</code></td>
+<td>游戏启动至今毫秒数</td>
+<td>毫秒</td>
+</tr>
+<tr>
+<td><code>pygame.time.set_timer()</code></td>
+<td>定时触发事件</td>
+<td>毫秒</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32">3.2 定时器的使用</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 创建定时器：每 1000 毫秒（1秒）触发一次</span>
+<span class="n">TIMER_EVENT</span> <span class="o">=</span> <span class="n">pygame</span><span class="o">.</span><span class="n">USEREVENT</span> <span class="o">+</span> <span class="mi">1</span>
+<span class="n">pygame</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">set_timer</span><span class="p">(</span><span class="n">TIMER_EVENT</span><span class="p">,</span> <span class="mi">1000</span><span class="p">)</span>
+
+<span class="c1"># 在事件循环中</span>
+<span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">pygame</span><span class="o">.</span><span class="n">event</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">TIMER_EVENT</span><span class="p">:</span>
+        <span class="n">update_score</span><span class="p">()</span>  <span class="c1"># 每秒更新一次分数</span>
+</code></pre></div>
+<p><strong>⚠️ 避坑：set_timer 会覆盖</strong></p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 同一个事件类型只能有一个定时器</span>
+<span class="n">pygame</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">set_timer</span><span class="p">(</span><span class="n">MY_EVENT</span><span class="p">,</span> <span class="mi">1000</span><span class="p">)</span>
+<span class="n">pygame</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">set_timer</span><span class="p">(</span><span class="n">MY_EVENT</span><span class="p">,</span> <span class="mi">2000</span><span class="p">)</span>  <span class="c1"># 覆盖了上面的 1000ms</span>
+
+<span class="c1"># ✅ 用不同的事件类型</span>
+<span class="n">pygame</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">set_timer</span><span class="p">(</span><span class="n">EVENT_A</span><span class="p">,</span> <span class="mi">1000</span><span class="p">)</span>
+<span class="n">pygame</span><span class="o">.</span><span class="n">time</span><span class="o">.</span><span class="n">set_timer</span><span class="p">(</span><span class="n">EVENT_B</span><span class="p">,</span> <span class="mi">2000</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 游戏循环优化</h2>
+<h3 id="41">4.1 分离逻辑与渲染</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 所有逻辑和渲染混在一起</span>
+<span class="k">while</span> <span class="n">running</span><span class="p">:</span>
+    <span class="n">handle_events</span><span class="p">()</span>
+    <span class="n">move_player</span><span class="p">()</span>        <span class="c1"># 逻辑</span>
+    <span class="n">check_collisions</span><span class="p">()</span>   <span class="c1"># 逻辑</span>
+    <span class="n">draw_background</span><span class="p">()</span>    <span class="c1"># 渲染</span>
+    <span class="n">draw_player</span><span class="p">()</span>        <span class="c1"># 渲染</span>
+    <span class="n">pygame</span><span class="o">.</span><span class="n">display</span><span class="o">.</span><span class="n">flip</span><span class="p">()</span> <span class="c1"># 渲染</span>
+
+<span class="c1"># ✅ 清晰分离</span>
+<span class="k">while</span> <span class="n">running</span><span class="p">:</span>
+    <span class="n">handle_events</span><span class="p">()</span>      <span class="c1"># 输入阶段</span>
+    <span class="n">update</span><span class="p">(</span><span class="n">dt</span><span class="p">)</span>           <span class="c1"># 逻辑阶段（用时间步长）</span>
+    <span class="n">render</span><span class="p">(</span><span class="n">screen</span><span class="p">)</span>       <span class="c1"># 渲染阶段</span>
+    <span class="n">clock</span><span class="o">.</span><span class="n">tick</span><span class="p">(</span><span class="mi">60</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="42">4.2 避免在事件循环中做重活</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># ❌ 在事件处理中做复杂计算</span>
+<span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">pygame</span><span class="o">.</span><span class="n">event</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">pygame</span><span class="o">.</span><span class="n">KEYDOWN</span><span class="p">:</span>
+        <span class="n">recalculate_pathfinding</span><span class="p">()</span>  <span class="c1"># 耗时操作会卡顿！</span>
+
+<span class="c1"># ✅ 事件只做标记，实际处理放在 update 阶段</span>
+<span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">pygame</span><span class="o">.</span><span class="n">event</span><span class="o">.</span><span class="n">get</span><span class="p">():</span>
+    <span class="k">if</span> <span class="n">event</span><span class="o">.</span><span class="n">type</span> <span class="o">==</span> <span class="n">pygame</span><span class="o">.</span><span class="n">KEYDOWN</span><span class="p">:</span>
+        <span class="n">player</span><span class="o">.</span><span class="n">wants_to_move</span> <span class="o">=</span> <span class="kc">True</span>  <span class="c1"># 只做标记</span>
+
+<span class="n">update</span><span class="p">(</span><span class="n">dt</span><span class="p">)</span>  <span class="c1"># 在这里处理移动逻辑</span>
+</code></pre></div>
+<h3 id="43-dirty-rectangle">4.3 脏矩形渲染（Dirty Rectangle）</h3>
+<p>只重绘变化的部分，而非整个屏幕：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 每帧只重绘变化的区域</span>
+<span class="n">changed_rects</span> <span class="o">=</span> <span class="p">[]</span>
+
+<span class="c1"># 更新时记录变化区域</span>
+<span class="n">old_rect</span> <span class="o">=</span> <span class="n">player</span><span class="o">.</span><span class="n">rect</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+<span class="n">player</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+<span class="n">changed_rects</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">old_rect</span><span class="p">)</span>
+<span class="n">changed_rects</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">player</span><span class="o">.</span><span class="n">rect</span><span class="p">)</span>
+
+<span class="c1"># 只更新变化的部分</span>
+<span class="n">pygame</span><span class="o">.</span><span class="n">display</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">changed_rects</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 完整游戏循环架构</h2>
+<pre class="plain"><code>┌─────────────────────────────────────────┐
+│              游戏初始化                   │
+│  pygame.init() → 创建窗口 → 加载资源     │
+└──────────────────┬──────────────────────┘
+                   ▼
+         ┌─────────────────┐
+         │    主循环开始     │◄────────────┐
+         └────────┬────────┘             │
+                  ▼                      │
+         ┌─────────────────┐             │
+         │  1. 处理事件     │             │
+         │  (用户输入/系统)  │             │
+         └────────┬────────┘             │
+                  ▼                      │
+         ┌─────────────────┐             │
+         │  2. 更新状态     │             │
+         │  (移动/碰撞/AI)  │             │
+         └────────┬────────┘             │
+                  ▼                      │
+         ┌─────────────────┐             │
+         │  3. 渲染画面     │             │
+         │  (绘制/翻转显示)  │             │
+         └────────┬────────┘             │
+                  ▼                      │
+         ┌─────────────────┐             │
+         │  4. 帧率控制     │             │
+         │  clock.tick(60) │             │
+         └────────┬────────┘             │
+                  │                      │
+                  ├── running=True ──────┘
+                  │
+                  ▼
+         ┌─────────────────┐
+         │    游戏退出      │
+         │  pygame.quit()   │
+         └─────────────────┘</code></pre>
+<hr>
+<h2 id="6">6. 实战代码</h2>
+<p>见 <code>code/</code> 目录：</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>内容</th>
+<th>难度</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>01-game-loop-basics.py</code></td>
+<td>基础游戏循环演示</td>
+<td>⭐</td>
+</tr>
+<tr>
+<td><code>02-event-handling.py</code></td>
+<td>完整事件处理系统</td>
+<td>⭐⭐</td>
+</tr>
+<tr>
+<td><code>03-real-game-example.py</code></td>
+<td>实战：贪吃蛇游戏</td>
+<td>⭐⭐⭐</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="7">7. 思考题</h2>
+<ol>
+<li><strong>为什么游戏循环要用 <code>while running</code> 而不是 <code>for</code> 循环？</strong><br>
+   提示：思考游戏运行的不确定性——玩家什么时候退出？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>因为<strong>游戏要运行多久是不确定的</strong>——玩家可能玩 10 秒，也可能玩 2 小时，退出时机完全由用户决定。<code>for</code> 循环适合「已知次数」或「遍历一个集合」，而游戏主循环是「事件驱动、无限期持续」的，事先根本不知道要循环多少次。</p>
+<p><code>while running</code> 用一个<strong>布尔开关</strong>表达「一直跑，直到该退出」：每帧处理输入、更新、渲染，一旦收到退出事件（点关闭按钮 <code>QUIT</code>、按 <code>ESC</code>）就把 <code>running = False</code>，循环自然结束。这正好匹配「运行时长不可预知」的需求。</p>
+<ul>
+<li>小例子：<code>running = True</code> → <code>while running:</code> 每帧 <code>for event in pygame.event.get(): if event.type == pygame.QUIT: running = False</code>。</li>
+<li>硬要用 <code>for</code> 也得写成 <code>for _ in iter(int, 1)</code> 这类「无限迭代」，本质还是无限循环，反而更绕。</li>
+</ul>
+<p>💡 提示：也可以写 <code>while True:</code> 配合 <code>break</code> 退出，但 <code>while running</code> 把「退出条件」显式化，更易读，也方便在多个地方（暂停、游戏结束、退出）统一置 <code>False</code>。</p>
+<ol start="2">
+<li><strong>如果不用 <code>Clock.tick(60)</code>，在一台能跑 200 FPS 的电脑和一台只能跑 30 FPS 的电脑上，同一个游戏会有什么区别？</strong></li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>如果逻辑是「每帧推进固定量」（比如每帧 <code>x += 5</code>），那么<strong>游戏速度直接正比于帧率</strong>。在 200 FPS 的电脑上物体每秒移动 <code>200 × 5 = 1000</code> 像素，在 30 FPS 的电脑上每秒只移动 <code>30 × 5 = 150</code> 像素——相差约 6.7 倍。</p>
+<p>后果：</p>
+<ul>
+<li>快机器上游戏飞快、难以操控，物理失稳（一帧位移过大甚至穿墙）；慢机器上慢如蜗牛。</li>
+<li>体验不一致、对玩家不公平（竞技游戏尤其致命）；基于帧数的计时/动画也会错乱。</li>
+<li>快机器不限帧还会 CPU/GPU 满载、发热耗电。</li>
+</ul>
+<p>解决办法有两层：① 用 <code>clock.tick(60)</code> 把两台机器都<strong>限制到 ≤60 FPS</strong>，缩小差距；② 更根本的是让逻辑<strong>与帧率解耦</strong>——按真实时间 <code>dt</code> 更新（<code>x += speed * dt</code>）或用固定时间步长累积器，这样无论帧率高低，物体每秒移动的距离都一致。</p>
+<ul>
+<li>小例子：每帧 <code>x += 5</code> → 200FPS 是 1000px/s、30FPS 是 150px/s；改成 <code>x += 300 * dt</code> → 两台机器都是 300px/s。</li>
+</ul>
+<p>⚠️ 注意：<code>tick</code> 只能限速不能提速，慢机器一帧超过 16.7ms 时仍会低于 60 FPS，必须靠 dt / 固定步长兜底。</p>
+<ol start="3">
+<li><strong>KEYDOWN 事件和 <code>get_pressed()</code> 分别适合什么场景？为什么移动用 <code>get_pressed</code>，跳跃用 <code>KEYDOWN</code>？</strong></li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>关键在于两种输入的「触发模型」不同，正好对应两类动作：</p>
+<ul>
+<li><strong>移动是「持续状态」</strong>：按住方向键期间，希望物体每帧都往前挪一点。<code>get_pressed()</code> 是电平触发——只要按住，每帧查询都为 <code>True</code>，天然表达「持续」。而 <code>KEYDOWN</code> 只在按下瞬间给一次事件，无法表达「按住一直走」。</li>
+<li><strong>跳跃是「瞬时动作」</strong>：按一次空格只该跳一次。<code>KEYDOWN</code> 是边沿触发——按下瞬间触发一次，正好匹配。若用 <code>get_pressed()</code> 做跳跃，按住空格会<strong>每帧都触发跳跃</strong>，变成连跳/飞天。</li>
+</ul>
+<p>所以：移动用 <code>get_pressed</code>（要持续），跳跃用 <code>KEYDOWN</code>（要一次性）。</p>
+<ul>
+<li>小例子：移动 <code>if keys[pygame.K_LEFT]: x -= 5</code>；跳跃 <code>if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE and on_ground: jump()</code>。</li>
+</ul>
+<p>💡 提示：跳跃通常再配合一个 <code>on_ground</code>（是否在地面）标志，避免在空中重复起跳；落地后重置该标志。</p>
+<ol start="4">
+<li><strong>自定义事件 <code>USEREVENT + N</code> 中的 N 有什么限制？如果定义了太多自定义事件会怎样？</strong></li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>pygame 的事件类型是<strong>整数编号</strong>，系统预留了前面一段（<code>0 .. USEREVENT-1</code>），用户自定义事件必须落在 <code>[USEREVENT, NUMEVENTS)</code> 这个区间里。在 pygame 2.x 中 <code>USEREVENT = 24</code>、<code>NUMEVENTS = 32</code>，也就是说大约只有 <strong>8 个</strong>可用编号（<code>USEREVENT+0</code> 到 <code>USEREVENT+7</code>）。</p>
+<p>所以 N 的限制是：<code>USEREVENT + N</code> 不能 ≥ <code>NUMEVENTS</code>（越界），也不能和系统事件或别的自定义事件<strong>撞号</strong>。</p>
+<p>如果定义太多自定义事件：</p>
+<ul>
+<li><strong>可用编号耗尽</strong>：多个定时器/事件被迫共用同一编号，<code>pygame.time.set_timer</code> 会<strong>互相覆盖</strong>（同一事件类型只保留最后一个定时器）。</li>
+<li><strong>无法区分来源</strong>：收到一个事件却分不清是谁触发的，逻辑错乱。</li>
+<li><strong>越界无效</strong>：超出合法范围的事件编号会被忽略或行为异常。</li>
+</ul>
+<p>应对办法：复用少量事件类型，在事件里附带「子类型/数据」字段来区分；或用新版 pygame 的 <code>pygame.event.custom_type()</code> 动态分配空闲编号；提前规划好编号用途。</p>
+<ul>
+<li>小例子：只有 8 个槽位，却定义 10 个 <code>USEREVENT+N</code>，后两个要么越界、要么与前面冲突。</li>
+</ul>
+<p>⚠️ 注意：<code>USEREVENT</code>、<code>NUMEVENTS</code> 的具体值随 pygame 版本变化，应直接用 <code>pygame.USEREVENT</code>、<code>pygame.NUMEVENTS</code> 查询，不要硬编码数字。</p>
+<ol start="5">
+<li><strong>固定时间步长的"累积器"模式为什么需要内部 <code>while</code> 循环而不是 <code>if</code>？</strong><br>
+   提示：考虑帧率突然下降的情况。</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>累积器（accumulator）把「真实经过的时间」攒起来，每攒够一个 <code>FIXED_DT</code> 就推进一个物理步。当某帧<strong>突然耗时很长</strong>（掉帧）时，这一帧往累积器里倒进了「好几个步长」的时间。</p>
+<ul>
+<li>用 <strong><code>while</code></strong>：能在本帧把「欠下的步数」<strong>一次性全部补走</strong>，让模拟时间追上真实时间，物理保持稳定、可复现。</li>
+<li>用 <strong><code>if</code></strong>：每帧最多只走一步，欠下的步数永远补不完，模拟越来越滞后于真实时间——游戏变成「慢动作」，物理与时间脱节。</li>
+</ul>
+<p>下面用纯标准库模拟「帧率突然下降」（无需 pygame，已验证）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="c1"># 固定时间步长累积器：对比内部用 while 与 if 的区别（纯标准库模拟，无需 pygame）</span>
+<span class="n">FIXED_DT</span> <span class="o">=</span> <span class="mi">1</span> <span class="o">/</span> <span class="mi">60</span>          <span class="c1"># 每个物理步长固定 1/60 秒</span>
+<span class="n">TOTAL_TIME</span> <span class="o">=</span> <span class="mf">1.0</span>           <span class="c1"># 模拟真实世界经过 1 秒</span>
+
+<span class="c1"># 模拟「帧率突然下降」：每帧耗时忽大忽小（秒），合计 1.0 秒，其中两帧严重超时</span>
+<span class="n">frame_times</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.4</span><span class="p">,</span> <span class="mf">0.016</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">0.084</span><span class="p">]</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="n">use_while</span><span class="p">):</span>
+    <span class="n">accumulator</span> <span class="o">=</span> <span class="mf">0.0</span>
+    <span class="n">steps</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">dt</span> <span class="ow">in</span> <span class="n">frame_times</span><span class="p">:</span>
+        <span class="n">accumulator</span> <span class="o">+=</span> <span class="n">dt</span>
+        <span class="k">if</span> <span class="n">use_while</span><span class="p">:</span>
+            <span class="k">while</span> <span class="n">accumulator</span> <span class="o">&gt;=</span> <span class="n">FIXED_DT</span><span class="p">:</span>   <span class="c1"># 把欠下的步数一次补齐</span>
+                <span class="n">accumulator</span> <span class="o">-=</span> <span class="n">FIXED_DT</span>
+                <span class="n">steps</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">accumulator</span> <span class="o">&gt;=</span> <span class="n">FIXED_DT</span><span class="p">:</span>      <span class="c1"># 每帧最多只走一步</span>
+                <span class="n">accumulator</span> <span class="o">-=</span> <span class="n">FIXED_DT</span>
+                <span class="n">steps</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="n">steps</span>
+
+
+<span class="n">while_steps</span> <span class="o">=</span> <span class="n">run</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">if_steps</span> <span class="o">=</span> <span class="n">run</span><span class="p">(</span><span class="kc">False</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"真实经过时间: </span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="n">frame_times</span><span class="p">)</span><span class="si">:</span><span class="s2">.3f</span><span class="si">}</span><span class="s2"> 秒，应走 </span><span class="si">{</span><span class="nb">round</span><span class="p">(</span><span class="n">TOTAL_TIME</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">FIXED_DT</span><span class="p">)</span><span class="si">}</span><span class="s2"> 步"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"内部用 while: 实际走了 </span><span class="si">{</span><span class="n">while_steps</span><span class="si">}</span><span class="s2"> 步（追上真实时间）"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"内部用 if   : 实际走了 </span><span class="si">{</span><span class="n">if_steps</span><span class="si">}</span><span class="s2"> 步（严重滞后，游戏变慢动作）"</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出：</p>
+<pre class="plain"><code>真实经过时间: 1.000 秒，应走 60 步
+内部用 while: 实际走了 60 步（追上真实时间）
+内部用 if   : 实际走了 4 步（严重滞后，游戏变慢动作）</code></pre>
+<p>1 秒里只来了 4 帧（其中两帧严重超时），本应推进 60 个物理步：<code>while</code> 补满了 60 步，<code>if</code> 只走了 4 步——差距一目了然。</p>
+<p>⚠️ 注意：极端掉帧时 <code>while</code> 可能一次补非常多步，导致「越补越卡」的死亡螺旋。实践中要给单帧步数或累积器设上限（clamp），超出就丢弃部分时间，宁可短暂慢一点也不要卡死。</p>
+<hr>
+<blockquote>
+<p><strong>下一步</strong>：Day 090 — 碰撞检测与动画</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-088/index.html">← Day 88 Pygame 框架入门</a><a class="nav-next" href="../day-090/index.html">Day 90 碰撞检测与动画 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

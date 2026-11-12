@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 143 — 反爬项目实战（上）：代理池 + 浏览器模拟 + JS 解析</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 143 — 反爬项目实战（上）：代理池 + 浏览器模拟 + JS 解析</h1>
+  <div class="lmeta">
+    <span class="badge">爬虫与反爬对抗</span>
+    <span class="badge">211 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-143-反爬项目实战-上" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="一、概念解释">一、概念解释</a>
+<a class="toc-l3" href="#11" title="1.1 项目整体架构">1.1 项目整体架构</a>
+<a class="toc-l3" href="#12-proxy-pool" title="1.2 代理池（Proxy Pool）">1.2 代理池（Proxy Pool）</a>
+<a class="toc-l3" href="#13-headless-browser" title="1.3 浏览器模拟（Headless Browser）">1.3 浏览器模拟（Headless Browser）</a>
+<a class="toc-l3" href="#14-js" title="1.4 JS 解析的两种路线">1.4 JS 解析的两种路线</a>
+<a class="toc-l2" href="#_2" title="二、原理解析">二、原理解析</a>
+<a class="toc-l3" href="#21" title="2.1 代理池评分模型">2.1 代理池评分模型</a>
+<a class="toc-l3" href="#22" title="2.2 无头浏览器为什么会被识别">2.2 无头浏览器为什么会被识别</a>
+<a class="toc-l3" href="#23" title="2.3 今日系统数据流">2.3 今日系统数据流</a>
+<a class="toc-l2" href="#api" title="三、API 速查">三、API 速查</a>
+<a class="toc-l3" href="#httpx" title="httpx 代理">httpx 代理</a>
+<a class="toc-l3" href="#playwright" title="Playwright 核心">Playwright 核心</a>
+<a class="toc-l2" href="#_3" title="四、实战代码">四、实战代码</a>
+<a class="toc-l2" href="#_4" title="五、思考题">五、思考题</a>
+<a class="toc-l2" href="#_5" title="六、今日总结">六、今日总结</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-143-js">Day 143 — 反爬项目实战（上）：代理池 + 浏览器模拟 + JS 解析</h1>
+<blockquote>
+<p>阶段：Phase 7 — 进阶与性能优化<br>
+主题：全栈反爬突破系统（上）—— 架构设计 / 代理池 / 浏览器模拟 / JS 动态内容解析</p>
+<p>⚠️ <strong>合规提醒</strong>：本项目仅用于学习反爬技术原理与防御性测试，请只对自己拥有/授权的测试站点练习（见 Day 142）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">一、概念解释</h2>
+<h3 id="11">1.1 项目整体架构</h3>
+<p>"全栈反爬突破系统"分三天搭建，今天负责<strong>取数层</strong>：</p>
+<pre class="plain"><code>Day 143: 代理池 + 浏览器模拟 + JS 解析   → 解决&quot;请求被识别/页面是动态渲染&quot;
+Day 144: 验证码处理 + 数据清洗 + 调度告警 + 容器化 → 解决&quot;人机验证&quot;与&quot;工程化运行&quot;</code></pre>
+<h3 id="12-proxy-pool">1.2 代理池（Proxy Pool）</h3>
+<p>代理池是一个<strong>自动维护可用代理列表的服务</strong>：</p>
+<ul>
+<li><strong>采集</strong>：从免费/付费代理 API 抓取代理</li>
+<li><strong>验证</strong>：定时用目标（或通用）URL 测试代理的可用性与延迟</li>
+<li><strong>打分/淘汰</strong>：连续失败的代理降分直至移除</li>
+<li><strong>供给</strong>：爬虫按策略（轮询/随机/按成功率加权）取用</li>
+</ul>
+<p><strong>为什么要代理池？</strong> 目标站点按 IP 维度限频/封禁。单一 IP 高频请求必然触发风控；代理池把请求分散到大量出口 IP 上，使每个 IP 的请求频率降到阈值以下。</p>
+<h3 id="13-headless-browser">1.3 浏览器模拟（Headless Browser）</h3>
+<p>requests 拿到的 HTML 是"生面团"，很多站点的数据由 JS 在浏览器里执行后才"烤熟"（DOM 渲染、XHR 补数据）。浏览器模拟的思路：<strong>不再猜接口，直接跑一个真浏览器</strong>（Playwright/Selenium），等 JS 执行完再取 DOM。</p>
+<table>
+<thead>
+<tr>
+<th>方案</th>
+<th>原理</th>
+<th>成本</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>requests/httpx</td>
+<td>直接发 HTTP</td>
+<td>极低，但拿不到渲染结果</td>
+</tr>
+<tr>
+<td>requests + 逆向 JS 接口</td>
+<td>分析 XHR 直接调 API</td>
+<td>中（逆向难），效率最高</td>
+</tr>
+<tr>
+<td>Playwright(无头)</td>
+<td>真浏览器内核执行 JS</td>
+<td>高（内存/CPU），最通用</td>
+</tr>
+<tr>
+<td>Playwright + stealth</td>
+<td>补齐无头特征指纹</td>
+<td>高，绕过基本无头检测</td>
+</tr>
+</tbody>
+</table>
+<h3 id="14-js">1.4 JS 解析的两种路线</h3>
+<ol>
+<li><strong>DOM 路线</strong>：等页面 <code>networkidle</code>，用选择器取渲染后的 DOM（简单但慢）</li>
+<li><strong>接口路线</strong>：拦截页面的 XHR/fetch 请求，直接请求返回 JSON 的数据接口（快，且数据最干净）</li>
+</ol>
+<hr>
+<h2 id="_2">二、原理解析</h2>
+<h3 id="21">2.1 代理池评分模型</h3>
+<p>每个代理维护滑动窗口成功率，取用时按权重随机：</p>
+<pre class="plain"><code>score = 连续成功次数 / (连续成功次数 + 连续失败次数)
+取用概率 ∝ score（加权随机，避免&quot;最好用&quot;的代理被打死）</code></pre>
+<h3 id="22">2.2 无头浏览器为什么会被识别</h3>
+<p>无头 Chrome 与真浏览器的差异点（Day 137 的指纹知识回收利用）：</p>
+<ul>
+<li><code>navigator.webdriver = true</code></li>
+<li>UA 中含 <code>HeadlessChrome</code></li>
+<li>缺失插件/字体/WebGL 渲染特征</li>
+<li>鼠标轨迹为空、事件节奏机械</li>
+</ul>
+<p>Playwright 的 <code>playwright-stealth</code>（或手工注入 init script）可抹平大部分特征。</p>
+<h3 id="23">2.3 今日系统数据流</h3>
+<div class="mermaid-wrap"><div class="mermaid">flowchart LR
+    A[调度器&lt;br&gt;待抓 URL 队列] --&gt; B[代理池&lt;br&gt;加权取用]
+    A --&gt; C{页面类型判断}
+    C -- 静态 HTML --&gt; D[httpx 直取]
+    C -- JS 渲染 --&gt; E[Playwright 无头]
+    E --&gt; F[网络拦截: 优先抓 XHR JSON]
+    D --&gt; G[解析器]
+    F --&gt; G
+    G --&gt; H[(原始数据落地 JSONL)]</div><button class="mermaid-raw" type="button" onclick="this.parentNode.classList.toggle('show-raw')">查看源码</button><pre class="mermaid-src"><code>flowchart LR
+    A[调度器&lt;br&gt;待抓 URL 队列] --&gt; B[代理池&lt;br&gt;加权取用]
+    A --&gt; C{页面类型判断}
+    C -- 静态 HTML --&gt; D[httpx 直取]
+    C -- JS 渲染 --&gt; E[Playwright 无头]
+    E --&gt; F[网络拦截: 优先抓 XHR JSON]
+    D --&gt; G[解析器]
+    F --&gt; G
+    G --&gt; H[(原始数据落地 JSONL)]</code></pre></div>
+<hr>
+<h2 id="api">三、API 速查</h2>
+<h3 id="httpx">httpx 代理</h3>
+<table>
+<thead>
+<tr>
+<th>用法</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>httpx.Client(proxy="http://u:p@host:port")</code></td>
+<td>全局走代理</td>
+</tr>
+<tr>
+<td><code>httpx.get(url, proxy=...)</code></td>
+<td>单次代理</td>
+</tr>
+<tr>
+<td><code>client.get(url, timeout=10)</code></td>
+<td>务必设超时</td>
+</tr>
+</tbody>
+</table>
+<h3 id="playwright">Playwright 核心</h3>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>sync_playwright().start()</code></td>
+<td>同步模式入口</td>
+</tr>
+<tr>
+<td><code>browser.new_page(...)</code></td>
+<td>新页面</td>
+</tr>
+<tr>
+<td><code>page.goto(url, wait_until="networkidle")</code></td>
+<td>等 JS 静默</td>
+</tr>
+<tr>
+<td><code>page.content()</code> / <code>page.query_selector_all(sel)</code></td>
+<td>取 DOM</td>
+</tr>
+<tr>
+<td><code>page.on("response", cb)</code></td>
+<td>拦截网络响应</td>
+</tr>
+<tr>
+<td><code>page.add_init_script(js)</code></td>
+<td>页面加载前注入 JS（抹指纹）</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="_3">四、实战代码</h2>
+<p>见 <code>code/</code>：</p>
+<ol>
+<li><code>01-proxy-pool.py</code> — 基础：带评分与后台校验的代理池</li>
+<li><code>02-browser-render.py</code> — 进阶：Playwright 渲染 + XHR 接口拦截 + 无头检测规避（需 <code>pip install playwright &amp;&amp; playwright install chromium</code>）</li>
+<li><code>03-fetch-pipeline.py</code> — 实战：静态/动态自动分流 + 代理池联动的取数管线</li>
+</ol>
+<hr>
+<h2 id="_4">五、思考题</h2>
+<ol>
+<li>加权随机取代理为什么比"永远取分数最高的"更健壮？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>"永远取最高分"会让全部流量集中到一个代理上：它的出口 IP 最快被目标站限频/封禁，分数掉下来后流量又整体切到下一个、再把它打死——"轮流烧代理"，池子迅速枯竭；而且单代理负载过高、延迟上升。</p>
+<p>加权随机让高分代理多干活但不独占，流量分散到多个 IP，每个 IP 的频率都压在阈值以下；低分代理也有小流量，有机会恢复分数。用标准库模拟对比：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">random</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">Counter</span>
+
+<span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="n">scores</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"代理A"</span><span class="p">:</span> <span class="mf">0.95</span><span class="p">,</span> <span class="s2">"代理B"</span><span class="p">:</span> <span class="mf">0.90</span><span class="p">,</span> <span class="s2">"代理C"</span><span class="p">:</span> <span class="mf">0.80</span><span class="p">,</span> <span class="s2">"代理D"</span><span class="p">:</span> <span class="mf">0.60</span><span class="p">}</span>
+<span class="n">proxies</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">scores</span><span class="p">)</span>
+<span class="n">weights</span> <span class="o">=</span> <span class="p">[</span><span class="n">scores</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">proxies</span><span class="p">]</span>
+
+<span class="n">n</span> <span class="o">=</span> <span class="mi">10000</span>
+<span class="c1"># 策略1：永远取分数最高的代理</span>
+<span class="n">best</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">scores</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">scores</span><span class="o">.</span><span class="n">get</span><span class="p">)</span>
+<span class="n">c1</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">({</span><span class="n">best</span><span class="p">:</span> <span class="n">n</span><span class="p">})</span>
+<span class="c1"># 策略2：按分数加权随机</span>
+<span class="n">c2</span> <span class="o">=</span> <span class="n">Counter</span><span class="p">(</span><span class="n">random</span><span class="o">.</span><span class="n">choices</span><span class="p">(</span><span class="n">proxies</span><span class="p">,</span> <span class="n">weights</span><span class="o">=</span><span class="n">weights</span><span class="p">,</span> <span class="n">k</span><span class="o">=</span><span class="n">n</span><span class="p">))</span>
+
+<span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">c</span> <span class="ow">in</span> <span class="p">[(</span><span class="s2">"永远取最高分"</span><span class="p">,</span> <span class="n">c1</span><span class="p">),</span> <span class="p">(</span><span class="s2">"加权随机"</span><span class="p">,</span> <span class="n">c2</span><span class="p">)]:</span>
+    <span class="n">top</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">most_common</span><span class="p">(</span><span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">: '</span><span class="si">{</span><span class="n">top</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">}</span><span class="s2">' 承担 </span><span class="si">{</span><span class="n">top</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="n">n</span><span class="si">:</span><span class="s2">.0%</span><span class="si">}</span><span class="s2"> 请求, 分布 </span><span class="si">{</span><span class="nb">dict</span><span class="p">(</span><span class="n">c</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<p>预期输出：</p>
+<pre class="plain"><code>永远取最高分: &#x27;代理A&#x27; 承担 100% 请求, 分布 {&#x27;代理A&#x27;: 10000}
+加权随机: &#x27;代理A&#x27; 承担 29% 请求, 分布 {&#x27;代理C&#x27;: 2531, &#x27;代理A&#x27;: 2894, &#x27;代理D&#x27;: 1810, &#x27;代理B&#x27;: 2765}</code></pre>
+<p>可见"永远取最高分"把 1 万次请求全压在代理 A 上，而加权随机让 4 个代理分担，A 只占约 29%，单个出口 IP 的压力大幅降低。</p>
+<p>💡 提示：权重可用分数的平方拉开差距，但要保留非零下限，避免"一票否决"让低分代理永远没机会恢复。<br>
+2. <code>wait_until="networkidle"</code> 的缺陷是什么？什么场景应改用 <code>domcontentloaded</code> + 显式等待？</p>
+<p><strong>参考答案</strong></p>
+<p><code>networkidle</code> 指"500ms 内没有网络连接"。缺陷：① 页面有轮询/心跳/长连接（WebSocket、统计 beacon、广告轮播）时永远不"空闲"，一直等到超时；② "空闲"不等于"数据渲染完"——JS 可能还在做本地计算/DOM 插入，拿到空壳；③ 慢接口拖累整页等待，效率低；④ 500ms 窗口是经验值，不可靠。</p>
+<p>应改用 <code>domcontentloaded</code> + <strong>显式等待</strong>（<code>wait_for_selector</code> 等目标元素出现，或 <code>wait_for_response</code> 等特定 XHR 返回）：目标明确、不受无关请求干扰、又快又稳。</p>
+<p>小例子：页面每 2 秒发一次心跳请求，<code>networkidle</code> 永远超时；改成 <code>wait_for_selector(".product-price")</code> 一秒就返回。<br>
+3. 拦截 XHR 拿 JSON 与解析 DOM 相比，数据质量与稳定性差异在哪？什么时候反而必须走 DOM？</p>
+<p><strong>参考答案</strong></p>
+<p><strong>XHR 优势</strong>：① 数据干净——结构化 JSON，字段完整（含页面没展示的隐藏字段），无 HTML 解析损耗；② 稳定——接口契约比页面样式变化少，改版时选择器失效但接口往往不变；③ 快——无需渲染，可直接翻页。劣势：要逆向接口签名，可能有加密/反爬。</p>
+<p><strong>DOM 优势</strong>：通用、所见即所得、无需逆向。劣势：① 只拿到"渲染出来"的数据，隐藏字段丢失；② 选择器脆弱，改版即失效；③ 文本要清洗（空白/HTML 实体），精度损失（数字被截断、日期被格式化）。</p>
+<p><strong>必须走 DOM 的情况</strong>：① 数据只在前端计算后存在（图表聚合、本地拼接），没有独立接口；② 接口加密严重、逆向成本过高；③ 需要"页面可见状态"本身（截图、布局、A/B 测试内容）；④ WebSocket/canvas 渲染等没有 JSON 接口。</p>
+<p>小例子：价格页面显示 "¥1,234.00"，XHR 返回数值 1234.00，DOM 还得去掉货币符号和千分位再转类型。<br>
+4. 代理池的验证 URL 如果直接用目标站点，会有什么法律与工程上的问题？</p>
+<p><strong>参考答案</strong></p>
+<p><strong>法律上</strong>：① 验证也是请求，高频验证 = 对目标未经授权的高频访问，可能违反条款/robots，甚至构成"妨碍正常运行"；② 若验证还突破目标反爬（带伪造 Cookie/sign），性质升级为"突破技术措施"；③ 验证流量与业务流量混在一起，纠纷中难以自证"善意"。</p>
+<p><strong>工程上</strong>：① 验证消耗目标的限频配额，"验证"本身触发风控，把业务要用的代理封掉——自我拆台；② 目标不稳定/慢会拖累验证，把好代理误判为坏；③ 目标改版/反爬升级会让验证结果不再代表代理可用性；④ 验证与业务共用 IP 池，验证污染影响业务。</p>
+<p>正确做法：日常验证用中立检测站（如 <code>httpbin.org/ip</code> 或自建），偶尔用目标站抽样验证并严格限速。</p>
+<p>⚠️ 合规提示：高频验证练习仅限自有/授权测试站点。<br>
+5. 如果目标站使用 WebSocket 推送数据，今天的拦截方案要怎么扩展？</p>
+<p><strong>参考答案</strong></p>
+<p>Playwright 原生支持 WebSocket 事件：<code>page.on("websocket", handler)</code> 拿到 ws 对象，再 <code>ws.on("framereceived", cb)</code> / <code>ws.on("framesent", cb)</code> 捕获每一帧的 payload，相当于 XHR 的 <code>page.on("response")</code>。收集帧后按协议（JSON/Protobuf）解析即可。</p>
+<p>若想脱离浏览器直连：逆向 ws 握手（URL、子协议、鉴权 token）和消息格式，用 Python 的 <code>websockets</code>/<code>aiohttp</code> 模拟客户端订阅；难点是 token 生成（回到 JS 逆向）和心跳/重连协议。</p>
+<p>注意：① ws 是长连接，"请求—响应"模型变成"订阅—推送"，要维护连接并处理心跳；② 消息可能是二进制/加密，需按帧解析；③ 有些站用 socket.io（带 polling 降级），可优先拦截它的 HTTP polling 接口。</p>
+<p>小例子：<code>page.on("websocket", lambda ws: ws.on("framereceived", lambda payload: save(payload)))</code> 即可捕获所有推送帧。</p>
+<hr>
+<h2 id="_5">六、今日总结</h2>
+<ul>
+<li>代理池 = 采集 + 验证 + 评分 + 加权供给，核心是把单 IP 频率压到阈值下</li>
+<li>动态页面两条路：DOM 渲染路线（通用慢）与 XHR 接口路线（快但需分析）</li>
+<li>无头检测的本质是指纹差异，可用 init script 抹平基础特征</li>
+</ul>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-142/index.html">← Day 142 爬虫法律与规范</a><a class="nav-next" href="../day-144/index.html">Day 144 反爬项目实战（下）：验证码处理 + 数据清洗 + 调度告警 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>

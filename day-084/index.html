@@ -1,0 +1,1075 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day 84 — 监控告警系统</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body class="lesson">
+<a class="skip" href="#content">跳到正文</a>
+
+<header class="lhead">
+  <a class="back" href="../index.html">← 返回总目录</a>
+  <h1>Day 84 — 监控告警系统</h1>
+  <div class="lmeta">
+    <span class="badge">Python实战项目</span>
+    <span class="badge">1046 行</span>
+    <span class="badge">3 个可运行脚本</span>
+    <div class="pills"><a class="pill-link" href="code/" download>📦 下载本课代码（3 个文件）</a><a class="pill-link" href="exercises.html">✍️ 练习与清单</a><a class="pill-link" href="diagrams.html">🗺️ 图解</a><a class="pill-link" href="https://github.com/Geek0ne/Python-200-days/tree/main/days/day-084-监控告警系统" rel="noopener">📁 GitHub 源文件</a></div>
+  </div>
+</header>
+
+<div class="lwrap">
+  <nav class="toc" aria-label="目录">
+    <div class="toc-h">本页目录</div>
+    <a class="toc-l2" href="#_1" title="📋 今日学习目标">📋 今日学习目标</a>
+<a class="toc-l2" href="#1" title="1. 监控系统架构设计">1. 监控系统架构设计</a>
+<a class="toc-l3" href="#11" title="1.1 什么是监控告警系统？">1.1 什么是监控告警系统？</a>
+<a class="toc-l3" href="#12" title="1.2 设计原则">1.2 设计原则</a>
+<a class="toc-l2" href="#2" title="2. 系统指标采集">2. 系统指标采集</a>
+<a class="toc-l3" href="#21-psutil" title="2.1 psutil 模块详解">2.1 psutil 模块详解</a>
+<a class="toc-l3" href="#22" title="2.2 进程监控">2.2 进程监控</a>
+<a class="toc-l2" href="#3" title="3. 告警规则引擎">3. 告警规则引擎</a>
+<a class="toc-l3" href="#31" title="3.1 规则设计模式">3.1 规则设计模式</a>
+<a class="toc-l3" href="#32" title="3.2 规则类设计">3.2 规则类设计</a>
+<a class="toc-l3" href="#33" title="3.3 通知渠道">3.3 通知渠道</a>
+<a class="toc-l2" href="#4" title="4. 完整监控系统实现">4. 完整监控系统实现</a>
+<a class="toc-l3" href="#41" title="4.1 系统架构">4.1 系统架构</a>
+<a class="toc-l3" href="#42" title="4.2 主监控服务">4.2 主监控服务</a>
+<a class="toc-l2" href="#5" title="5. 实战：服务器巡检报告">5. 实战：服务器巡检报告</a>
+<a class="toc-l3" href="#51" title="5.1 巡检报告生成器">5.1 巡检报告生成器</a>
+<a class="toc-l3" href="#52" title="5.2 使用示例">5.2 使用示例</a>
+<a class="toc-l2" href="#6" title="6. 进阶：告警去重与聚合">6. 进阶：告警去重与聚合</a>
+<a class="toc-l3" href="#61" title="6.1 告警去重">6.1 告警去重</a>
+<a class="toc-l3" href="#62" title="6.2 告警聚合">6.2 告警聚合</a>
+<a class="toc-l2" href="#7" title="7. 思考题">7. 思考题</a>
+<a class="toc-l2" href="#_6" title="📚 参考资源">📚 参考资源</a>
+  </nav>
+  <main id="content" class="lbody">
+<h1 id="day-084">Day 084 — 监控告警系统</h1>
+<blockquote>
+<p>📅 2026-07-26 | 🎯 Phase 6: 实战项目 — 项目三：自动化运维工具（Day 3/3）</p>
+</blockquote>
+<hr>
+<h2 id="_1">📋 今日学习目标</h2>
+<ol>
+<li>理解监控系统的设计原理与架构</li>
+<li>掌握系统指标采集（CPU、内存、磁盘、网络）</li>
+<li>学会实现告警规则引擎</li>
+<li>构建完整的服务器巡检与告警系统</li>
+</ol>
+<hr>
+<h2 id="1">1. 监控系统架构设计</h2>
+<h3 id="11">1.1 什么是监控告警系统？</h3>
+<p>监控告警系统是运维自动化的<strong>眼睛和耳朵</strong>，负责：</p>
+<pre class="plain"><code>┌─────────────────────────────────────────────────────────────┐
+│                    监控告警系统架构                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   ┌──────────┐    ┌──────────┐    ┌──────────┐             │
+│   │  数据采集 │───▶│ 数据存储  │───▶│ 分析引擎 │             │
+│   │ Collector │    │  Store   │    │ Analyzer │             │
+│   └──────────┘    └──────────┘    └──────────┘             │
+│        │                               │                    │
+│        │                               ▼                    │
+│        │                        ┌──────────┐               │
+│        │                        │ 告警规则  │               │
+│        │                        │  Rules   │               │
+│        │                        └──────────┘               │
+│        │                               │                    │
+│        ▼                               ▼                    │
+│   ┌──────────┐                   ┌──────────┐              │
+│   │  指标源   │                   │  通知渠道 │              │
+│   │ (服务器)  │                   │ (邮件/钉钉)│             │
+│   └──────────┘                   └──────────┘              │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘</code></pre>
+<p><strong>核心组件：</strong></p>
+<table>
+<thead>
+<tr>
+<th>组件</th>
+<th>职责</th>
+<th>常用技术</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>数据采集 (Collector)</td>
+<td>从目标服务器收集指标</td>
+<td>psutil, subprocess</td>
+</tr>
+<tr>
+<td>数据存储 (Store)</td>
+<td>存储历史指标数据</td>
+<td>SQLite, JSON文件</td>
+</tr>
+<tr>
+<td>分析引擎 (Analyzer)</td>
+<td>对比指标与阈值</td>
+<td>自定义规则引擎</td>
+</tr>
+<tr>
+<td>告警规则 (Rules)</td>
+<td>定义告警触发条件</td>
+<td>阈值、趋势、组合</td>
+</tr>
+<tr>
+<td>通知渠道 (Notifier)</td>
+<td>发送告警通知</td>
+<td>钉钉、邮件、短信</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12">1.2 设计原则</h3>
+<ol>
+<li><strong>低侵入性</strong>：监控本身不应影响被监控系统的性能</li>
+<li><strong>可扩展性</strong>：轻松添加新的监控指标和告警规则</li>
+<li><strong>容错性</strong>：采集失败不应导致整个系统崩溃</li>
+<li><strong>实时性</strong>：关键指标需要秒级采集</li>
+</ol>
+<hr>
+<h2 id="2">2. 系统指标采集</h2>
+<h3 id="21-psutil">2.1 psutil 模块详解</h3>
+<p><code>psutil</code> 是 Python 最强大的系统监控库，提供跨平台的系统信息访问。</p>
+<h4 id="_2">安装</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">bash</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl">pip<span class="w"> </span>install<span class="w"> </span>psutil
+</code></pre></div>
+<h4 id="api">核心 API 速查表</h4>
+<table>
+<thead>
+<tr>
+<th>函数</th>
+<th>返回值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>psutil.cpu_percent(interval=1)</code></td>
+<td>float</td>
+<td>CPU 使用率 (%)</td>
+</tr>
+<tr>
+<td><code>psutil.cpu_count()</code></td>
+<td>int</td>
+<td>CPU 核心数</td>
+</tr>
+<tr>
+<td><code>psutil.cpu_freq()</code></td>
+<td>namedtuple</td>
+<td>CPU 频率信息</td>
+</tr>
+<tr>
+<td><code>psutil.virtual_memory()</code></td>
+<td>percent</td>
+<td>内存使用情况</td>
+</tr>
+<tr>
+<td><code>psutil.disk_usage('/')</code></td>
+<td>percent</td>
+<td>磁盘使用情况</td>
+</tr>
+<tr>
+<td><code>psutil.net_io_counters()</code></td>
+<td>namedtuple</td>
+<td>网络 I/O 统计</td>
+</tr>
+<tr>
+<td><code>psutil.Process(pid)</code></td>
+<td>Process</td>
+<td>进程信息</td>
+</tr>
+</tbody>
+</table>
+<h4 id="_3">内存信息详解</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">psutil</span>
+
+<span class="c1"># 完整内存信息</span>
+<span class="n">mem</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">virtual_memory</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"总量: </span><span class="si">{</span><span class="n">mem</span><span class="o">.</span><span class="n">total</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"可用: </span><span class="si">{</span><span class="n">mem</span><span class="o">.</span><span class="n">available</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"已用: </span><span class="si">{</span><span class="n">mem</span><span class="o">.</span><span class="n">used</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"使用率: </span><span class="si">{</span><span class="n">mem</span><span class="o">.</span><span class="n">percent</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+</code></pre></div>
+<p><strong>内存字段说明：</strong></p>
+<pre class="plain"><code>┌─────────────────────────────────────────┐
+│              物理内存                      │
+├─────────────────────────────────────────┤
+│  total (总量)                            │
+│  ┌──────────────────────────────────┐   │
+│  │ used (已用)  │   available (可用)  │   │
+│  │              │   ├─ free (空闲)   │   │
+│  │              │   └─ buffers/cached│   │
+│  └──────────────────────────────────┘   │
+└─────────────────────────────────────────┘</code></pre>
+<blockquote>
+<p>⚠️ <strong>常见误区</strong>：<code>available</code> ≠ <code>free</code>。Linux 会利用空闲内存做磁盘缓存，这部分在需要时可被回收，所以 <code>available</code> 才是真正可用的内存。</p>
+</blockquote>
+<h4 id="_4">磁盘信息详解</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">psutil</span>
+
+<span class="c1"># 磁盘使用情况</span>
+<span class="n">disk</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">disk_usage</span><span class="p">(</span><span class="s1">'/'</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"总量: </span><span class="si">{</span><span class="n">disk</span><span class="o">.</span><span class="n">total</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"已用: </span><span class="si">{</span><span class="n">disk</span><span class="o">.</span><span class="n">used</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"可用: </span><span class="si">{</span><span class="n">disk</span><span class="o">.</span><span class="n">free</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">3</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> GB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"使用率: </span><span class="si">{</span><span class="n">disk</span><span class="o">.</span><span class="n">percent</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+
+<span class="c1"># 磁盘 I/O 统计</span>
+<span class="n">io</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">disk_io_counters</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"读取: </span><span class="si">{</span><span class="n">io</span><span class="o">.</span><span class="n">read_bytes</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> MB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"写入: </span><span class="si">{</span><span class="n">io</span><span class="o">.</span><span class="n">write_bytes</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> MB"</span><span class="p">)</span>
+</code></pre></div>
+<h4 id="_5">网络信息详解</h4>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">psutil</span>
+
+<span class="c1"># 网络 I/O 统计</span>
+<span class="n">net</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">net_io_counters</span><span class="p">()</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"发送: </span><span class="si">{</span><span class="n">net</span><span class="o">.</span><span class="n">bytes_sent</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> MB"</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"接收: </span><span class="si">{</span><span class="n">net</span><span class="o">.</span><span class="n">bytes_recv</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="p">(</span><span class="mi">1024</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2"> MB"</span><span class="p">)</span>
+
+<span class="c1"># 网络连接</span>
+<span class="n">connections</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">net_connections</span><span class="p">()</span>
+<span class="k">for</span> <span class="n">conn</span> <span class="ow">in</span> <span class="n">connections</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">conn</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s1">'ESTABLISHED'</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"连接: </span><span class="si">{</span><span class="n">conn</span><span class="o">.</span><span class="n">laddr</span><span class="si">}</span><span class="s2"> -&gt; </span><span class="si">{</span><span class="n">conn</span><span class="o">.</span><span class="n">raddr</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="22">2.2 进程监控</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">psutil</span>
+
+<span class="c1"># 获取所有进程</span>
+<span class="k">for</span> <span class="n">proc</span> <span class="ow">in</span> <span class="n">psutil</span><span class="o">.</span><span class="n">process_iter</span><span class="p">([</span><span class="s1">'pid'</span><span class="p">,</span> <span class="s1">'name'</span><span class="p">,</span> <span class="s1">'cpu_percent'</span><span class="p">,</span> <span class="s1">'memory_percent'</span><span class="p">]):</span>
+    <span class="k">if</span> <span class="n">proc</span><span class="o">.</span><span class="n">info</span><span class="p">[</span><span class="s1">'cpu_percent'</span><span class="p">]</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">:</span>  <span class="c1"># CPU 使用率 &gt; 10%</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"高 CPU 进程: </span><span class="si">{</span><span class="n">proc</span><span class="o">.</span><span class="n">info</span><span class="p">[</span><span class="s1">'name'</span><span class="p">]</span><span class="si">}</span><span class="s2"> (PID: </span><span class="si">{</span><span class="n">proc</span><span class="o">.</span><span class="n">info</span><span class="p">[</span><span class="s1">'pid'</span><span class="p">]</span><span class="si">}</span><span class="s2">)"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  CPU: </span><span class="si">{</span><span class="n">proc</span><span class="o">.</span><span class="n">info</span><span class="p">[</span><span class="s1">'cpu_percent'</span><span class="p">]</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  内存: </span><span class="si">{</span><span class="n">proc</span><span class="o">.</span><span class="n">info</span><span class="p">[</span><span class="s1">'memory_percent'</span><span class="p">]</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="3">3. 告警规则引擎</h2>
+<h3 id="31">3.1 规则设计模式</h3>
+<p>告警规则可以分为几类：</p>
+<pre class="plain"><code>┌─────────────────────────────────────────────┐
+│              告警规则类型                      │
+├─────────────────────────────────────────────┤
+│                                             │
+│  1. 阈值规则 (Threshold)                     │
+│     CPU &gt; 90% 持续 5 分钟 → 告警             │
+│                                             │
+│  2. 趋势规则 (Trend)                         │
+│     内存使用率 1 小时内增长 &gt; 20% → 告警      │
+│                                             │
+│  3. 组合规则 (Composite)                     │
+│     CPU &gt; 80% AND 内存 &gt; 85% → 严重告警     │
+│                                             │
+│  4. 时间规则 (Time-based)                    │
+│     每天凌晨 2:00 检查磁盘空间               │
+│                                             │
+└─────────────────────────────────────────────┘</code></pre>
+<h3 id="32">3.2 规则类设计</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Any</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">Enum</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Severity</span><span class="p">(</span><span class="n">Enum</span><span class="p">):</span>
+    <span class="n">INFO</span> <span class="o">=</span> <span class="s2">"info"</span>
+    <span class="n">WARNING</span> <span class="o">=</span> <span class="s2">"warning"</span>
+    <span class="n">CRITICAL</span> <span class="o">=</span> <span class="s2">"critical"</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">AlertRule</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""告警规则定义"""</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">metric</span><span class="p">:</span> <span class="nb">str</span>           <span class="c1"># 监控指标名称</span>
+    <span class="n">condition</span><span class="p">:</span> <span class="nb">str</span>        <span class="c1"># 条件: "gt", "lt", "eq", "contains"</span>
+    <span class="n">threshold</span><span class="p">:</span> <span class="nb">float</span>      <span class="c1"># 阈值</span>
+    <span class="n">severity</span><span class="p">:</span> <span class="n">Severity</span>    <span class="c1"># 告警级别</span>
+    <span class="n">duration</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>     <span class="c1"># 持续时间（秒），0 表示立即触发</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span> <span class="c1"># 规则描述</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">RuleEngine</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""告警规则引擎"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rules</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">AlertRule</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">alert_history</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_rule</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rule</span><span class="p">:</span> <span class="n">AlertRule</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""添加告警规则"""</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rules</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">rule</span><span class="p">)</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">evaluate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rule</span><span class="p">:</span> <span class="n">AlertRule</span><span class="p">,</span> <span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""评估规则是否触发"""</span>
+        <span class="k">if</span> <span class="n">rule</span><span class="o">.</span><span class="n">condition</span> <span class="o">==</span> <span class="s2">"gt"</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="n">rule</span><span class="o">.</span><span class="n">threshold</span>
+        <span class="k">elif</span> <span class="n">rule</span><span class="o">.</span><span class="n">condition</span> <span class="o">==</span> <span class="s2">"lt"</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">value</span> <span class="o">&lt;</span> <span class="n">rule</span><span class="o">.</span><span class="n">threshold</span>
+        <span class="k">elif</span> <span class="n">rule</span><span class="o">.</span><span class="n">condition</span> <span class="o">==</span> <span class="s2">"eq"</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">value</span> <span class="o">==</span> <span class="n">rule</span><span class="o">.</span><span class="n">threshold</span>
+        <span class="k">elif</span> <span class="n">rule</span><span class="o">.</span><span class="n">condition</span> <span class="o">==</span> <span class="s2">"gte"</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">value</span> <span class="o">&gt;=</span> <span class="n">rule</span><span class="o">.</span><span class="n">threshold</span>
+        <span class="k">elif</span> <span class="n">rule</span><span class="o">.</span><span class="n">condition</span> <span class="o">==</span> <span class="s2">"lte"</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">value</span> <span class="o">&lt;=</span> <span class="n">rule</span><span class="o">.</span><span class="n">threshold</span>
+        <span class="k">return</span> <span class="kc">False</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_all_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">"""检查所有规则"""</span>
+        <span class="n">alerts</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">rules</span><span class="p">:</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="n">metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rule</span><span class="o">.</span><span class="n">metric</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">evaluate</span><span class="p">(</span><span class="n">rule</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+                <span class="n">alert</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="s2">"rule"</span><span class="p">:</span> <span class="n">rule</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                    <span class="s2">"metric"</span><span class="p">:</span> <span class="n">rule</span><span class="o">.</span><span class="n">metric</span><span class="p">,</span>
+                    <span class="s2">"value"</span><span class="p">:</span> <span class="n">value</span><span class="p">,</span>
+                    <span class="s2">"threshold"</span><span class="p">:</span> <span class="n">rule</span><span class="o">.</span><span class="n">threshold</span><span class="p">,</span>
+                    <span class="s2">"severity"</span><span class="p">:</span> <span class="n">rule</span><span class="o">.</span><span class="n">severity</span><span class="o">.</span><span class="n">value</span><span class="p">,</span>
+                    <span class="s2">"description"</span><span class="p">:</span> <span class="n">rule</span><span class="o">.</span><span class="n">description</span>
+                <span class="p">}</span>
+                <span class="n">alerts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">alert</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">alert_history</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">alert</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">alerts</span>
+</code></pre></div>
+<h3 id="33">3.3 通知渠道</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">urllib.request</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">Notifier</span><span class="p">(</span><span class="n">ABC</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""通知基类"""</span>
+    
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">send</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">alert</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""发送告警通知"""</span>
+        <span class="k">pass</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">DingTalkNotifier</span><span class="p">(</span><span class="n">Notifier</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""钉钉通知"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">webhook_url</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">webhook_url</span> <span class="o">=</span> <span class="n">webhook_url</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">send</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">alert</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""发送钉钉消息"""</span>
+        <span class="n">severity_emoji</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"info"</span><span class="p">:</span> <span class="s2">"ℹ️"</span><span class="p">,</span>
+            <span class="s2">"warning"</span><span class="p">:</span> <span class="s2">"⚠️"</span><span class="p">,</span>
+            <span class="s2">"critical"</span><span class="p">:</span> <span class="s2">"🚨"</span>
+        <span class="p">}</span>
+        
+        <span class="n">message</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">"msgtype"</span><span class="p">:</span> <span class="s2">"markdown"</span><span class="p">,</span>
+            <span class="s2">"markdown"</span><span class="p">:</span> <span class="p">{</span>
+                <span class="s2">"title"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">severity_emoji</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">alert</span><span class="p">[</span><span class="s1">'severity'</span><span class="p">],</span><span class="w"> </span><span class="s1">'📢'</span><span class="p">)</span><span class="si">}</span><span class="s2"> 服务器告警"</span><span class="p">,</span>
+                <span class="s2">"text"</span><span class="p">:</span> <span class="sa">f</span><span class="s2">"""</span>
+<span class="s2">### </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'rule'</span><span class="p">]</span><span class="si">}</span>
+
+<span class="s2">- **指标**: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'metric'</span><span class="p">]</span><span class="si">}</span>
+<span class="s2">- **当前值**: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'value'</span><span class="p">]</span><span class="si">}</span>
+<span class="s2">- **阈值**: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'threshold'</span><span class="p">]</span><span class="si">}</span>
+<span class="s2">- **级别**: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'severity'</span><span class="p">]</span><span class="si">}</span>
+<span class="s2">- **描述**: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'description'</span><span class="p">]</span><span class="si">}</span>
+<span class="s2">                """</span>
+            <span class="p">}</span>
+        <span class="p">}</span>
+        
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">message</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s1">'utf-8'</span><span class="p">)</span>
+            <span class="n">req</span> <span class="o">=</span> <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">Request</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">webhook_url</span><span class="p">,</span>
+                <span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span>
+                <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s1">'Content-Type'</span><span class="p">:</span> <span class="s1">'application/json'</span><span class="p">}</span>
+            <span class="p">)</span>
+            <span class="n">urllib</span><span class="o">.</span><span class="n">request</span><span class="o">.</span><span class="n">urlopen</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"钉钉通知失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">ConsoleNotifier</span><span class="p">(</span><span class="n">Notifier</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">"""控制台输出（开发测试用）"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">send</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">alert</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="si">{</span><span class="s1">'='</span><span class="o">*</span><span class="mi">50</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"🚨 告警: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'rule'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"   指标: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'metric'</span><span class="p">]</span><span class="si">}</span><span class="s2"> = </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'value'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"   阈值: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'threshold'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"   级别: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'severity'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="s1">'='</span><span class="o">*</span><span class="mi">50</span><span class="si">}</span><span class="se">\n</span><span class="s2">"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">True</span>
+</code></pre></div>
+<hr>
+<h2 id="4">4. 完整监控系统实现</h2>
+<h3 id="41">4.1 系统架构</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">psutil</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sqlite3</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Optional</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">queue</span><span class="w"> </span><span class="kn">import</span> <span class="n">Queue</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MetricsCollector</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""系统指标采集器"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prev_net_io</span> <span class="o">=</span> <span class="kc">None</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect_cpu</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""采集 CPU 指标"""</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"usage_percent"</span><span class="p">:</span> <span class="n">psutil</span><span class="o">.</span><span class="n">cpu_percent</span><span class="p">(</span><span class="n">interval</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+            <span class="s2">"count"</span><span class="p">:</span> <span class="n">psutil</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">(),</span>
+            <span class="s2">"freq"</span><span class="p">:</span> <span class="n">psutil</span><span class="o">.</span><span class="n">cpu_freq</span><span class="p">()</span><span class="o">.</span><span class="n">_asdict</span><span class="p">()</span> <span class="k">if</span> <span class="n">psutil</span><span class="o">.</span><span class="n">cpu_freq</span><span class="p">()</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">}</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect_memory</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""采集内存指标"""</span>
+        <span class="n">mem</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">virtual_memory</span><span class="p">()</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"total"</span><span class="p">:</span> <span class="n">mem</span><span class="o">.</span><span class="n">total</span><span class="p">,</span>
+            <span class="s2">"available"</span><span class="p">:</span> <span class="n">mem</span><span class="o">.</span><span class="n">available</span><span class="p">,</span>
+            <span class="s2">"used"</span><span class="p">:</span> <span class="n">mem</span><span class="o">.</span><span class="n">used</span><span class="p">,</span>
+            <span class="s2">"percent"</span><span class="p">:</span> <span class="n">mem</span><span class="o">.</span><span class="n">percent</span>
+        <span class="p">}</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect_disk</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">'/'</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""采集磁盘指标"""</span>
+        <span class="n">disk</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">disk_usage</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+        <span class="n">io</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">disk_io_counters</span><span class="p">()</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"total"</span><span class="p">:</span> <span class="n">disk</span><span class="o">.</span><span class="n">total</span><span class="p">,</span>
+            <span class="s2">"used"</span><span class="p">:</span> <span class="n">disk</span><span class="o">.</span><span class="n">used</span><span class="p">,</span>
+            <span class="s2">"free"</span><span class="p">:</span> <span class="n">disk</span><span class="o">.</span><span class="n">free</span><span class="p">,</span>
+            <span class="s2">"percent"</span><span class="p">:</span> <span class="n">disk</span><span class="o">.</span><span class="n">percent</span><span class="p">,</span>
+            <span class="s2">"read_bytes"</span><span class="p">:</span> <span class="n">io</span><span class="o">.</span><span class="n">read_bytes</span> <span class="k">if</span> <span class="n">io</span> <span class="k">else</span> <span class="mi">0</span><span class="p">,</span>
+            <span class="s2">"write_bytes"</span><span class="p">:</span> <span class="n">io</span><span class="o">.</span><span class="n">write_bytes</span> <span class="k">if</span> <span class="n">io</span> <span class="k">else</span> <span class="mi">0</span>
+        <span class="p">}</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect_network</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""采集网络指标"""</span>
+        <span class="n">io</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">net_io_counters</span><span class="p">()</span>
+        
+        <span class="c1"># 计算速率（需要保存上次的值）</span>
+        <span class="n">sent_rate</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">recv_rate</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prev_net_io</span><span class="p">:</span>
+            <span class="n">sent_rate</span> <span class="o">=</span> <span class="p">(</span><span class="n">io</span><span class="o">.</span><span class="n">bytes_sent</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prev_net_io</span><span class="o">.</span><span class="n">bytes_sent</span><span class="p">)</span>
+            <span class="n">recv_rate</span> <span class="o">=</span> <span class="p">(</span><span class="n">io</span><span class="o">.</span><span class="n">bytes_recv</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prev_net_io</span><span class="o">.</span><span class="n">bytes_recv</span><span class="p">)</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prev_net_io</span> <span class="o">=</span> <span class="n">io</span>
+        
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"bytes_sent"</span><span class="p">:</span> <span class="n">io</span><span class="o">.</span><span class="n">bytes_sent</span><span class="p">,</span>
+            <span class="s2">"bytes_recv"</span><span class="p">:</span> <span class="n">io</span><span class="o">.</span><span class="n">bytes_recv</span><span class="p">,</span>
+            <span class="s2">"sent_rate"</span><span class="p">:</span> <span class="n">sent_rate</span><span class="p">,</span>
+            <span class="s2">"recv_rate"</span><span class="p">:</span> <span class="n">recv_rate</span><span class="p">,</span>
+            <span class="s2">"packets_sent"</span><span class="p">:</span> <span class="n">io</span><span class="o">.</span><span class="n">packets_sent</span><span class="p">,</span>
+            <span class="s2">"packets_recv"</span><span class="p">:</span> <span class="n">io</span><span class="o">.</span><span class="n">packets_recv</span>
+        <span class="p">}</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">collect_all</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""采集所有指标"""</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s2">"timestamp"</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(),</span>
+            <span class="s2">"cpu"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">collect_cpu</span><span class="p">(),</span>
+            <span class="s2">"memory"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">collect_memory</span><span class="p">(),</span>
+            <span class="s2">"disk"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">collect_disk</span><span class="p">(),</span>
+            <span class="s2">"network"</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">collect_network</span><span class="p">()</span>
+        <span class="p">}</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MetricsStore</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""指标存储（SQLite）"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">db_path</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"metrics.db"</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db_path</span> <span class="o">=</span> <span class="n">db_path</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_init_db</span><span class="p">()</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">_init_db</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""初始化数据库"""</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db_path</span><span class="p">)</span>
+        <span class="n">cursor</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+        <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s1">'''</span>
+<span class="s1">            CREATE TABLE IF NOT EXISTS metrics (</span>
+<span class="s1">                id INTEGER PRIMARY KEY AUTOINCREMENT,</span>
+<span class="s1">                timestamp TEXT NOT NULL,</span>
+<span class="s1">                data JSON NOT NULL,</span>
+<span class="s1">                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP</span>
+<span class="s1">            )</span>
+<span class="s1">        '''</span><span class="p">)</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">save</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""保存指标数据"""</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db_path</span><span class="p">)</span>
+        <span class="n">cursor</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+        <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+            <span class="s2">"INSERT INTO metrics (timestamp, data) VALUES (?, ?)"</span><span class="p">,</span>
+            <span class="p">(</span><span class="n">metrics</span><span class="p">[</span><span class="s2">"timestamp"</span><span class="p">],</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">metrics</span><span class="p">))</span>
+        <span class="p">)</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">query</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">start_time</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">end_time</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""查询历史指标"""</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">db_path</span><span class="p">)</span>
+        <span class="n">cursor</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+        <span class="n">cursor</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+            <span class="s2">"SELECT data FROM metrics WHERE timestamp BETWEEN ? AND ?"</span><span class="p">,</span>
+            <span class="p">(</span><span class="n">start_time</span><span class="p">,</span> <span class="n">end_time</span><span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">results</span> <span class="o">=</span> <span class="p">[</span><span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">row</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">cursor</span><span class="o">.</span><span class="n">fetchall</span><span class="p">()]</span>
+        <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">results</span>
+</code></pre></div>
+<h3 id="42">4.2 主监控服务</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span><span class="w"> </span><span class="nc">MonitoringService</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""监控服务主类"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">collector</span> <span class="o">=</span> <span class="n">MetricsCollector</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">store</span> <span class="o">=</span> <span class="n">MetricsStore</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"db_path"</span><span class="p">,</span> <span class="s2">"metrics.db"</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rule_engine</span> <span class="o">=</span> <span class="n">RuleEngine</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">notifiers</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running</span> <span class="o">=</span> <span class="kc">False</span>
+        
+        <span class="c1"># 初始化规则</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_setup_rules</span><span class="p">()</span>
+        
+        <span class="c1"># 初始化通知器</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_setup_notifiers</span><span class="p">()</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">_setup_rules</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""设置告警规则"""</span>
+        <span class="n">rules</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">AlertRule</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="s2">"CPU使用率过高"</span><span class="p">,</span>
+                <span class="n">metric</span><span class="o">=</span><span class="s2">"cpu.usage_percent"</span><span class="p">,</span>
+                <span class="n">condition</span><span class="o">=</span><span class="s2">"gt"</span><span class="p">,</span>
+                <span class="n">threshold</span><span class="o">=</span><span class="mi">90</span><span class="p">,</span>
+                <span class="n">severity</span><span class="o">=</span><span class="n">Severity</span><span class="o">.</span><span class="n">CRITICAL</span><span class="p">,</span>
+                <span class="n">description</span><span class="o">=</span><span class="s2">"CPU使用率超过90%，持续5分钟可能影响服务"</span>
+            <span class="p">),</span>
+            <span class="n">AlertRule</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="s2">"内存使用率过高"</span><span class="p">,</span>
+                <span class="n">metric</span><span class="o">=</span><span class="s2">"memory.percent"</span><span class="p">,</span>
+                <span class="n">condition</span><span class="o">=</span><span class="s2">"gt"</span><span class="p">,</span>
+                <span class="n">threshold</span><span class="o">=</span><span class="mi">85</span><span class="p">,</span>
+                <span class="n">severity</span><span class="o">=</span><span class="n">Severity</span><span class="o">.</span><span class="n">WARNING</span><span class="p">,</span>
+                <span class="n">description</span><span class="o">=</span><span class="s2">"内存使用率超过85%，建议清理或扩容"</span>
+            <span class="p">),</span>
+            <span class="n">AlertRule</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="s2">"磁盘空间不足"</span><span class="p">,</span>
+                <span class="n">metric</span><span class="o">=</span><span class="s2">"disk.percent"</span><span class="p">,</span>
+                <span class="n">condition</span><span class="o">=</span><span class="s2">"gt"</span><span class="p">,</span>
+                <span class="n">threshold</span><span class="o">=</span><span class="mi">90</span><span class="p">,</span>
+                <span class="n">severity</span><span class="o">=</span><span class="n">Severity</span><span class="o">.</span><span class="n">CRITICAL</span><span class="p">,</span>
+                <span class="n">description</span><span class="o">=</span><span class="s2">"磁盘使用率超过90%，需要清理空间"</span>
+            <span class="p">),</span>
+            <span class="n">AlertRule</span><span class="p">(</span>
+                <span class="n">name</span><span class="o">=</span><span class="s2">"磁盘空间警告"</span><span class="p">,</span>
+                <span class="n">metric</span><span class="o">=</span><span class="s2">"disk.percent"</span><span class="p">,</span>
+                <span class="n">condition</span><span class="o">=</span><span class="s2">"gt"</span><span class="p">,</span>
+                <span class="n">threshold</span><span class="o">=</span><span class="mi">80</span><span class="p">,</span>
+                <span class="n">severity</span><span class="o">=</span><span class="n">Severity</span><span class="o">.</span><span class="n">WARNING</span><span class="p">,</span>
+                <span class="n">description</span><span class="o">=</span><span class="s2">"磁盘使用率超过80%，请关注"</span>
+            <span class="p">)</span>
+        <span class="p">]</span>
+        
+        <span class="k">for</span> <span class="n">rule</span> <span class="ow">in</span> <span class="n">rules</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">rule_engine</span><span class="o">.</span><span class="n">add_rule</span><span class="p">(</span><span class="n">rule</span><span class="p">)</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">_setup_notifiers</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""设置通知渠道"""</span>
+        <span class="c1"># 默认使用控制台输出</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ConsoleNotifier</span><span class="p">())</span>
+        
+        <span class="c1"># 如果配置了钉钉 webhook，添加钉钉通知</span>
+        <span class="n">webhook_url</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"dingtalk_webhook"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">webhook_url</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">notifiers</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">DingTalkNotifier</span><span class="p">(</span><span class="n">webhook_url</span><span class="p">))</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_nested_value</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""获取嵌套字典的值，如 'cpu.usage_percent'"""</span>
+        <span class="n">keys</span> <span class="o">=</span> <span class="n">key</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">'.'</span><span class="p">)</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">data</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="n">value</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">value</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_alerts</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">metrics</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""检查告警"""</span>
+        <span class="c1"># 将嵌套的 metrics 转换为扁平格式用于规则匹配</span>
+        <span class="n">flat_metrics</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">"cpu.usage_percent"</span><span class="p">,</span> <span class="s2">"memory.percent"</span><span class="p">,</span> <span class="s2">"disk.percent"</span><span class="p">]:</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_nested_value</span><span class="p">(</span><span class="n">metrics</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">flat_metrics</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">value</span>
+        
+        <span class="n">alerts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">rule_engine</span><span class="o">.</span><span class="n">check_all_rules</span><span class="p">(</span><span class="n">flat_metrics</span><span class="p">)</span>
+        
+        <span class="k">for</span> <span class="n">alert</span> <span class="ow">in</span> <span class="n">alerts</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">notifier</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">notifiers</span><span class="p">:</span>
+                <span class="n">notifier</span><span class="o">.</span><span class="n">send</span><span class="p">(</span><span class="n">alert</span><span class="p">)</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">run_once</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""执行一次采集和检查"""</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="c1"># 采集指标</span>
+            <span class="n">metrics</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">collector</span><span class="o">.</span><span class="n">collect_all</span><span class="p">()</span>
+            
+            <span class="c1"># 存储指标</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">save</span><span class="p">(</span><span class="n">metrics</span><span class="p">)</span>
+            
+            <span class="c1"># 检查告警</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">check_alerts</span><span class="p">(</span><span class="n">metrics</span><span class="p">)</span>
+            
+            <span class="k">return</span> <span class="n">metrics</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"采集失败: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">None</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">interval</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""持续运行监控"""</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"🚀 监控服务启动，采集间隔: </span><span class="si">{</span><span class="n">interval</span><span class="si">}</span><span class="s2">秒"</span><span class="p">)</span>
+        
+        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">running</span><span class="p">:</span>
+            <span class="n">metrics</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_once</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">metrics</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"✅ 采集完成: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">'timestamp'</span><span class="p">]</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+            
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">interval</span><span class="p">)</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""停止监控"""</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">running</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">"🛑 监控服务停止"</span><span class="p">)</span>
+</code></pre></div>
+<hr>
+<h2 id="5">5. 实战：服务器巡检报告</h2>
+<h3 id="51">5.1 巡检报告生成器</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span><span class="w"> </span><span class="nc">InspectionReport</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""服务器巡检报告"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">store</span><span class="p">:</span> <span class="n">MetricsStore</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">store</span> <span class="o">=</span> <span class="n">store</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">generate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hours</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">24</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""生成巡检报告"""</span>
+        <span class="n">end_time</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+        <span class="n">start_time</span> <span class="o">=</span> <span class="n">end_time</span> <span class="o">-</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="n">hours</span><span class="p">)</span>
+        
+        <span class="n">metrics_list</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">store</span><span class="o">.</span><span class="n">query</span><span class="p">(</span>
+            <span class="n">start_time</span><span class="o">.</span><span class="n">isoformat</span><span class="p">(),</span>
+            <span class="n">end_time</span><span class="o">.</span><span class="n">isoformat</span><span class="p">()</span>
+        <span class="p">)</span>
+        
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">metrics_list</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">"⚠️ 无数据可生成报告"</span>
+        
+        <span class="c1"># 统计各项指标</span>
+        <span class="n">report</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"="</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"📊 服务器巡检报告"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"时间范围: </span><span class="si">{</span><span class="n">start_time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s1">'%Y-%m-</span><span class="si">%d</span><span class="s1"> %H:%M'</span><span class="p">)</span><span class="si">}</span><span class="s2"> ~ </span><span class="si">{</span><span class="n">end_time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s1">'%Y-%m-</span><span class="si">%d</span><span class="s1"> %H:%M'</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"数据点数: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">metrics_list</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"="</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+        
+        <span class="c1"># CPU 统计</span>
+        <span class="n">cpu_values</span> <span class="o">=</span> <span class="p">[</span><span class="n">m</span><span class="p">[</span><span class="s1">'cpu'</span><span class="p">][</span><span class="s1">'usage_percent'</span><span class="p">]</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">metrics_list</span><span class="p">]</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">🖥️  CPU 统计:"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  平均使用率: </span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="n">cpu_values</span><span class="p">)</span><span class="o">/</span><span class="nb">len</span><span class="p">(</span><span class="n">cpu_values</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  最大使用率: </span><span class="si">{</span><span class="nb">max</span><span class="p">(</span><span class="n">cpu_values</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  最小使用率: </span><span class="si">{</span><span class="nb">min</span><span class="p">(</span><span class="n">cpu_values</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        
+        <span class="c1"># 内存统计</span>
+        <span class="n">mem_values</span> <span class="o">=</span> <span class="p">[</span><span class="n">m</span><span class="p">[</span><span class="s1">'memory'</span><span class="p">][</span><span class="s1">'percent'</span><span class="p">]</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">metrics_list</span><span class="p">]</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">💾 内存统计:"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  平均使用率: </span><span class="si">{</span><span class="nb">sum</span><span class="p">(</span><span class="n">mem_values</span><span class="p">)</span><span class="o">/</span><span class="nb">len</span><span class="p">(</span><span class="n">mem_values</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  最大使用率: </span><span class="si">{</span><span class="nb">max</span><span class="p">(</span><span class="n">mem_values</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        
+        <span class="c1"># 磁盘统计</span>
+        <span class="n">disk_values</span> <span class="o">=</span> <span class="p">[</span><span class="n">m</span><span class="p">[</span><span class="s1">'disk'</span><span class="p">][</span><span class="s1">'percent'</span><span class="p">]</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">metrics_list</span><span class="p">]</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">💿 磁盘统计:"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  当前使用率: </span><span class="si">{</span><span class="n">disk_values</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  最大使用率: </span><span class="si">{</span><span class="nb">max</span><span class="p">(</span><span class="n">disk_values</span><span class="p">)</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        
+        <span class="c1"># 告警统计</span>
+        <span class="n">alerts</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">metrics</span> <span class="ow">in</span> <span class="n">metrics_list</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="p">[</span><span class="s2">"cpu.usage_percent"</span><span class="p">,</span> <span class="s2">"memory.percent"</span><span class="p">,</span> <span class="s2">"disk.percent"</span><span class="p">]:</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_nested_value</span><span class="p">(</span><span class="n">metrics</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">value</span> <span class="ow">and</span> <span class="n">value</span> <span class="o">&gt;</span> <span class="mi">90</span><span class="p">:</span>
+                    <span class="n">alerts</span><span class="o">.</span><span class="n">append</span><span class="p">({</span><span class="s2">"time"</span><span class="p">:</span> <span class="n">metrics</span><span class="p">[</span><span class="s1">'timestamp'</span><span class="p">],</span> <span class="s2">"metric"</span><span class="p">:</span> <span class="n">key</span><span class="p">,</span> <span class="s2">"value"</span><span class="p">:</span> <span class="n">value</span><span class="p">})</span>
+        
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="se">\n</span><span class="s2">🚨 告警统计:"</span><span class="p">)</span>
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  总告警数: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">alerts</span><span class="p">)</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">alerts</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">alert</span> <span class="ow">in</span> <span class="n">alerts</span><span class="p">[:</span><span class="mi">5</span><span class="p">]:</span>  <span class="c1"># 只显示前5条</span>
+                <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  - </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'time'</span><span class="p">]</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'metric'</span><span class="p">]</span><span class="si">}</span><span class="s2"> = </span><span class="si">{</span><span class="n">alert</span><span class="p">[</span><span class="s1">'value'</span><span class="p">]</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        
+        <span class="n">report</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">"</span> <span class="o">+</span> <span class="s2">"="</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)</span>
+        
+        <span class="k">return</span> <span class="s2">"</span><span class="se">\n</span><span class="s2">"</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_nested_value</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""获取嵌套字典的值"""</span>
+        <span class="n">keys</span> <span class="o">=</span> <span class="n">key</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">'.'</span><span class="p">)</span>
+        <span class="n">value</span> <span class="o">=</span> <span class="n">data</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+                <span class="n">value</span> <span class="o">=</span> <span class="n">value</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">value</span>
+</code></pre></div>
+<h3 id="52">5.2 使用示例</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">():</span>
+    <span class="c1"># 配置</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s2">"db_path"</span><span class="p">:</span> <span class="s2">"server_metrics.db"</span><span class="p">,</span>
+        <span class="s2">"dingtalk_webhook"</span><span class="p">:</span> <span class="kc">None</span>  <span class="c1"># 设置钉钉 webhook URL</span>
+    <span class="p">}</span>
+    
+    <span class="c1"># 创建监控服务</span>
+    <span class="n">service</span> <span class="o">=</span> <span class="n">MonitoringService</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    
+    <span class="c1"># 执行一次巡检</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"🔍 执行服务器巡检..."</span><span class="p">)</span>
+    <span class="n">metrics</span> <span class="o">=</span> <span class="n">service</span><span class="o">.</span><span class="n">run_once</span><span class="p">()</span>
+    
+    <span class="k">if</span> <span class="n">metrics</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">"</span><span class="se">\n</span><span class="s2">📊 当前系统状态:"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  CPU: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">'cpu'</span><span class="p">][</span><span class="s1">'usage_percent'</span><span class="p">]</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  内存: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">'memory'</span><span class="p">][</span><span class="s1">'percent'</span><span class="p">]</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  磁盘: </span><span class="si">{</span><span class="n">metrics</span><span class="p">[</span><span class="s1">'disk'</span><span class="p">][</span><span class="s1">'percent'</span><span class="p">]</span><span class="si">}</span><span class="s2">%"</span><span class="p">)</span>
+    
+    <span class="c1"># 生成巡检报告</span>
+    <span class="n">report_generator</span> <span class="o">=</span> <span class="n">InspectionReport</span><span class="p">(</span><span class="n">service</span><span class="o">.</span><span class="n">store</span><span class="p">)</span>
+    <span class="n">report</span> <span class="o">=</span> <span class="n">report_generator</span><span class="o">.</span><span class="n">generate</span><span class="p">(</span><span class="n">hours</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">report</span><span class="p">)</span>
+    
+    <span class="c1"># 持续监控（每60秒采集一次）</span>
+    <span class="c1"># service.run(interval=60)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">"__main__"</span><span class="p">:</span>
+    <span class="n">main</span><span class="p">()</span>
+</code></pre></div>
+<hr>
+<h2 id="6">6. 进阶：告警去重与聚合</h2>
+<h3 id="61">6.1 告警去重</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">defaultdict</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">timedelta</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">AlertDeduplicator</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""告警去重器"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cooldown_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">300</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cooldown</span> <span class="o">=</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="n">cooldown_seconds</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">last_alerts</span> <span class="o">=</span> <span class="p">{}</span>  <span class="c1"># rule_name -&gt; last_alert_time</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">should_alert</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rule_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""判断是否应该发送告警"""</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+        <span class="n">last_time</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">last_alerts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rule_name</span><span class="p">)</span>
+        
+        <span class="k">if</span> <span class="n">last_time</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="p">(</span><span class="n">now</span> <span class="o">-</span> <span class="n">last_time</span><span class="p">)</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">cooldown</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">last_alerts</span><span class="p">[</span><span class="n">rule_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">now</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        
+        <span class="k">return</span> <span class="kc">False</span>
+</code></pre></div>
+<h3 id="62">6.2 告警聚合</h3>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span><span class="w"> </span><span class="nc">AlertAggregator</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">"""告警聚合器"""</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window_seconds</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">window</span> <span class="o">=</span> <span class="n">timedelta</span><span class="p">(</span><span class="n">seconds</span><span class="o">=</span><span class="n">window_seconds</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pending_alerts</span> <span class="o">=</span> <span class="p">[]</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_alert</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">alert</span><span class="p">:</span> <span class="nb">dict</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">"""添加告警到聚合窗口"""</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pending_alerts</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+            <span class="o">**</span><span class="n">alert</span><span class="p">,</span>
+            <span class="s2">"timestamp"</span><span class="p">:</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+        <span class="p">})</span>
+    
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_aggregated</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">"""获取聚合后的告警"""</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
+        
+        <span class="c1"># 清理过期告警</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pending_alerts</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">a</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">pending_alerts</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">now</span> <span class="o">-</span> <span class="n">a</span><span class="p">[</span><span class="s2">"timestamp"</span><span class="p">])</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">window</span>
+        <span class="p">]</span>
+        
+        <span class="c1"># 按规则分组</span>
+        <span class="n">groups</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">alert</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">pending_alerts</span><span class="p">:</span>
+            <span class="n">groups</span><span class="p">[</span><span class="n">alert</span><span class="p">[</span><span class="s2">"rule"</span><span class="p">]]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">alert</span><span class="p">)</span>
+        
+        <span class="c1"># 聚合</span>
+        <span class="n">aggregated</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">rule_name</span><span class="p">,</span> <span class="n">alerts</span> <span class="ow">in</span> <span class="n">groups</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">aggregated</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
+                <span class="s2">"rule"</span><span class="p">:</span> <span class="n">rule_name</span><span class="p">,</span>
+                <span class="s2">"count"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">alerts</span><span class="p">),</span>
+                <span class="s2">"first_occurrence"</span><span class="p">:</span> <span class="nb">min</span><span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="s2">"timestamp"</span><span class="p">]</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">alerts</span><span class="p">),</span>
+                <span class="s2">"last_occurrence"</span><span class="p">:</span> <span class="nb">max</span><span class="p">(</span><span class="n">a</span><span class="p">[</span><span class="s2">"timestamp"</span><span class="p">]</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">alerts</span><span class="p">),</span>
+                <span class="s2">"severity"</span><span class="p">:</span> <span class="n">alerts</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="s2">"severity"</span><span class="p">]</span>
+            <span class="p">})</span>
+        
+        <span class="k">return</span> <span class="n">aggregated</span>
+</code></pre></div>
+<hr>
+<h2 id="7">7. 思考题</h2>
+<ol>
+<li><strong>设计题</strong>：如何设计一个支持多服务器的分布式监控系统？需要考虑哪些问题？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>分层架构（采集 → 传输 → 处理 → 存储 → 展示/告警）：</p>
+<pre class="plain"><code>被监控服务器 × N
+  每台跑一个轻量 Agent（psutil 采集 CPU/内存/磁盘/网络）
+        │ 周期上报(push) 或 中心拉取(pull)
+        ▼
+  采集网关 / 消息队列（Kafka、Redis：削峰、解耦）
+        ▼
+  中心处理（规则引擎、聚合、去重、升级）
+        ▼
+  时序存储（InfluxDB / TimescaleDB / Prometheus，分片 + 副本）
+        ▼
+  可视化（Grafana） + 告警通知（钉钉/邮件/短信，多渠道）</code></pre>
+<p>需要考虑的问题：</p>
+<ol>
+<li><strong>采集方式</strong>：push（agent 主动上报，实时性好、适合大规模）vs pull（中心定时抓取，如 Prometheus，便于控制目标）；agent 要低开销、容错（采集失败不崩溃、断网本地缓存补传）。</li>
+<li><strong>可扩展性</strong>：采集/处理/存储都能水平扩容；按指标/租户/时间分片；服务发现（新机器自动注册，如 Consul、K8s）。</li>
+<li><strong>时间与顺序</strong>：各机器时钟同步（NTP），用统一时间戳并容忍乱序到达；统一时区与单位。</li>
+<li><strong>网络与容错</strong>：上报失败重试 + 退避 + 本地缓冲；容忍网络分区，宁可漏采也不误报；写入幂等防重复。</li>
+<li><strong>存储</strong>：时序库 + 降采样 + 保留策略（见第 2 题）；多副本防单点。</li>
+<li><strong>告警治理</strong>：去重、聚合、静默、升级（见第 4 题），避免"告警风暴"；多渠道通知保证可达。</li>
+<li><strong>安全</strong>：agent 认证（token/mTLS）、最小权限、传输加密、不采集敏感数据。</li>
+<li><strong>自监控</strong>：监控系统本身也要被监控（见第 5 题），即"元监控"。</li>
+</ol>
+<p>💡 提示：小规模用"中心 SSH 轮询 + SQLite"（本章方案）即可；上百上千台再演进到"agent + 消息队列 + 时序库"，工业级直接上 Prometheus + Grafana，别重复造轮子。</p>
+<ol start="2">
+<li><strong>优化题</strong>：当监控指标数据量很大时，如何优化存储和查询性能？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>优化方向：</p>
+<ol>
+<li><strong>用时序数据库</strong>：InfluxDB/TimescaleDB/Prometheus 专为"写多、按时间范围查"优化（列式存储、压缩、时间索引），远胜 SQLite 逐行存 JSON。</li>
+<li><strong>降采样/预聚合（rollup）</strong>：秒级原始数据只留短期（如 7 天），预先聚合成分钟/小时/天级汇总长期保存；查大时间范围直接命中汇总表，扫描行数骤减。</li>
+<li><strong>时间分区 + 索引</strong>：按天/月分区，timestamp 建索引；查询只扫相关分区（分区裁剪）。</li>
+<li><strong>批量写入</strong>：多条指标合并成一个事务/<code>executemany</code>，别逐条 commit（磁盘 fsync 是瓶颈）。</li>
+<li><strong>压缩与列存</strong>：数值指标用列式 + 编码（delta/gorilla）压缩率高，省空间省 IO。</li>
+<li><strong>保留策略（TTL）</strong>：过期数据自动删除/归档，控制总量。</li>
+<li><strong>查询侧</strong>：避免 <code>SELECT *</code>、只取需要的列；大范围聚合用近似算法；缓存热点查询结果。</li>
+</ol>
+<p>小例子（已验证，sqlite 预聚合：7 天分钟级原始数据 → 小时级 rollup，同一查询少扫 60 倍行）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">import</span><span class="w"> </span><span class="nn">sqlite3</span><span class="o">,</span><span class="w"> </span><span class="nn">time</span><span class="o">,</span><span class="w"> </span><span class="nn">tempfile</span><span class="o">,</span><span class="w"> </span><span class="nn">os</span><span class="o">,</span><span class="w"> </span><span class="nn">random</span>
+
+<span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">(</span><span class="mi">42</span><span class="p">)</span>
+<span class="k">with</span> <span class="n">tempfile</span><span class="o">.</span><span class="n">TemporaryDirectory</span><span class="p">()</span> <span class="k">as</span> <span class="n">tmp</span><span class="p">:</span>   <span class="c1"># 临时库，用完自动清理</span>
+    <span class="n">db</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tmp</span><span class="p">,</span> <span class="s2">"metrics.db"</span><span class="p">)</span>
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">sqlite3</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">db</span><span class="p">)</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">cursor</span><span class="p">()</span>
+    <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"CREATE TABLE raw(ts INTEGER, mem REAL)"</span><span class="p">)</span>
+    <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"CREATE TABLE rollup_hourly(hour INTEGER, avg_mem REAL, n INTEGER)"</span><span class="p">)</span>
+
+    <span class="c1"># 模拟 7 天分钟级数据 = 10080 个原始点</span>
+    <span class="n">rows</span> <span class="o">=</span> <span class="p">[(</span><span class="n">i</span> <span class="o">*</span> <span class="mi">60</span><span class="p">,</span> <span class="mi">50</span> <span class="o">+</span> <span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="o">-</span><span class="mi">5</span><span class="p">,</span> <span class="mi">20</span><span class="p">))</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">7</span> <span class="o">*</span> <span class="mi">24</span> <span class="o">*</span> <span class="mi">60</span><span class="p">)]</span>
+    <span class="n">c</span><span class="o">.</span><span class="n">executemany</span><span class="p">(</span><span class="s2">"INSERT INTO raw VALUES(?,?)"</span><span class="p">,</span> <span class="n">rows</span><span class="p">)</span>   <span class="c1"># 批量写入</span>
+    <span class="c1"># 预聚合：按小时汇总成 rollup（168 行）</span>
+    <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"INSERT INTO rollup_hourly SELECT ts/3600, AVG(mem), COUNT(*) FROM raw GROUP BY ts/3600"</span><span class="p">)</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">commit</span><span class="p">()</span>
+
+    <span class="n">raw_n</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"SELECT COUNT(*) FROM raw"</span><span class="p">)</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">roll_n</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"SELECT COUNT(*) FROM rollup_hourly"</span><span class="p">)</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="c1"># 查询"7 天平均内存"：原始表要扫全部行</span>
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="n">raw_val</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"SELECT AVG(mem) FROM raw"</span><span class="p">)</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">raw_t</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+    <span class="c1"># rollup 表按样本数加权平均，只扫 168 行</span>
+    <span class="n">t0</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span>
+    <span class="n">roll_val</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span><span class="s2">"SELECT SUM(avg_mem*n)/SUM(n) FROM rollup_hourly"</span><span class="p">)</span><span class="o">.</span><span class="n">fetchone</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="n">roll_t</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">perf_counter</span><span class="p">()</span> <span class="o">-</span> <span class="n">t0</span><span class="p">)</span> <span class="o">*</span> <span class="mi">1000</span>
+
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"原始表行数:"</span><span class="p">,</span> <span class="n">raw_n</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"rollup 表行数:"</span><span class="p">,</span> <span class="n">roll_n</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"原始表查询平均: </span><span class="si">{</span><span class="n">raw_val</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">（耗时 </span><span class="si">{</span><span class="n">raw_t</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">ms）"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"rollup 查询平均: </span><span class="si">{</span><span class="n">roll_val</span><span class="si">:</span><span class="s2">.4f</span><span class="si">}</span><span class="s2">（耗时 </span><span class="si">{</span><span class="n">roll_t</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">ms）"</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="s2">"结果一致:"</span><span class="p">,</span> <span class="nb">abs</span><span class="p">(</span><span class="n">raw_val</span> <span class="o">-</span> <span class="n">roll_val</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mf">1e-9</span><span class="p">)</span>
+    <span class="n">conn</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+</code></pre></div>
+<p>预期输出（耗时因机器/版本而异，下面为示例值；行数与结果一致是确定的）：</p>
+<pre class="plain"><code>原始表行数: 10080
+rollup 表行数: 168
+原始表查询平均: 57.5077（耗时 0.26ms）
+rollup 查询平均: 57.5077（耗时 0.03ms）
+结果一致: True</code></pre>
+<p>原始表 10080 行，rollup 表仅 168 行（少 60 倍）；查"7 天平均"两者结果完全一致（加权平均保证正确），但 rollup 扫描行数少得多、更快。数据量越大、查询范围越广，收益越明显。</p>
+<p>💡 提示：rollup 求总平均要按样本数加权（<code>SUM(avg*n)/SUM(n)</code>），不能直接 <code>AVG(avg)</code>——否则各小时样本数不同时会算偏。</p>
+<ol start="3">
+<li><strong>扩展题</strong>：如何添加"趋势告警"功能（如内存使用率在1小时内增长超过20%）？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>实现思路：</p>
+<ol>
+<li><strong>维护滑动窗口</strong>：用 <code>deque</code> 保存窗口内（如 1 小时）的 <code>(时间戳, 值)</code> 样本，新样本进来时把滑出窗口的旧样本丢掉。</li>
+<li><strong>计算增长率</strong>：拿最新值和窗口内最旧值比较，<code>growth = (最新 - 最旧) / 最旧</code>。</li>
+<li><strong>触发条件</strong>：<code>growth &gt; 阈值</code>（如 20%）就发趋势告警；可再要求"窗口内至少 N 个样本"，避免数据稀疏时误报。</li>
+<li><strong>工程细节</strong>：基线可选最旧值/窗口均值/昨日同时刻；分母 ≤ 0 要保护跳过；配合去重与冷却（同一趋势别反复告警）；也可与绝对阈值组合（"既高又涨得快"才告警）。</li>
+</ol>
+<p>小例子（已验证，滑动窗口检测 1 小时增长 &gt;20%）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">deque</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">TrendDetector</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">window_seconds</span><span class="o">=</span><span class="mi">3600</span><span class="p">,</span> <span class="n">growth_threshold</span><span class="o">=</span><span class="mf">0.20</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">window</span> <span class="o">=</span> <span class="n">window_seconds</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">threshold</span> <span class="o">=</span> <span class="n">growth_threshold</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">samples</span> <span class="o">=</span> <span class="n">deque</span><span class="p">()</span>   <span class="c1"># (timestamp, value)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">check</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ts</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">samples</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">ts</span><span class="p">,</span> <span class="n">value</span><span class="p">))</span>
+        <span class="c1"># 丢弃滑出窗口的旧样本</span>
+        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">samples</span> <span class="ow">and</span> <span class="n">ts</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">window</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">samples</span><span class="o">.</span><span class="n">popleft</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">samples</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">oldest_ts</span><span class="p">,</span> <span class="n">oldest_val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">samples</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">oldest_val</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="n">growth</span> <span class="o">=</span> <span class="p">(</span><span class="n">value</span> <span class="o">-</span> <span class="n">oldest_val</span><span class="p">)</span> <span class="o">/</span> <span class="n">oldest_val</span>
+        <span class="k">if</span> <span class="n">growth</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">threshold</span><span class="p">:</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">"趋势告警: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">window</span><span class="o">//</span><span class="mi">60</span><span class="si">}</span><span class="s2"> 分钟内增长 </span><span class="si">{</span><span class="n">growth</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.1f</span><span class="si">}</span><span class="s2">%（&gt;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">threshold</span><span class="o">*</span><span class="mi">100</span><span class="si">:</span><span class="s2">.0f</span><span class="si">}</span><span class="s2">%）"</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+<span class="n">d</span> <span class="o">=</span> <span class="n">TrendDetector</span><span class="p">(</span><span class="n">window_seconds</span><span class="o">=</span><span class="mi">3600</span><span class="p">,</span> <span class="n">growth_threshold</span><span class="o">=</span><span class="mf">0.20</span><span class="p">)</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mf">50.0</span><span class="p">))</span>       <span class="c1"># 第一个点，无告警</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="mi">1800</span><span class="p">,</span> <span class="mf">60.0</span><span class="p">))</span>    <span class="c1"># +20%，等于阈值不算"超过"</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="mi">3600</span><span class="p">,</span> <span class="mf">75.0</span><span class="p">))</span>    <span class="c1"># +50%，触发告警</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">d</span><span class="o">.</span><span class="n">check</span><span class="p">(</span><span class="mi">7200</span><span class="p">,</span> <span class="mf">76.0</span><span class="p">))</span>    <span class="c1"># 窗口滑动，旧增长不再触发</span>
+</code></pre></div>
+<p>预期输出：</p>
+<pre class="plain"><code>None
+None
+趋势告警: 60 分钟内增长 50.0%（&gt;20%）
+None</code></pre>
+<p>内存 1 小时内从 50% 涨到 75%（+50% &gt; 20%）触发告警；到 ts=7200 时窗口滑动，最旧样本变成 75%，增长仅约 1.3%，不再告警——体现"滑动窗口"只看最近 1 小时。</p>
+<p>💡 提示：生产里样本通常存时序库、用范围查询取窗口数据，或直接用 Prometheus 的 <code>delta()</code>/<code>predict_linear()</code> 等函数；deque 版适合单机轻量场景。</p>
+<ol start="4">
+<li><strong>实战题</strong>：如何实现告警通知的升级机制（如连续3次告警后自动升级到更高级别通知）？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>实现思路：</p>
+<ol>
+<li><strong>统计连续告警次数</strong>：为每条规则（或每个告警对象）维护一个"连续触发计数"，触发就 +1，恢复就清零。</li>
+<li><strong>级别映射</strong>：把次数映射到通知级别，如 1～3 次→邮件、4～6 次→短信、7 次以上→电话值班；可用 <code>(n-1)//3</code> 算级别索引，封顶最高级。</li>
+<li><strong>升级对象</strong>：不仅换渠道，还要换接收人（普通运维→运维主管→经理），确保有人兜底负责。</li>
+<li><strong>重置与冷却</strong>：告警恢复后计数清零；配合冷却/去重，避免抖动反复触发升级；也可加"未确认超时升级"（N 分钟没人 ack 就升级）。</li>
+<li><strong>记录审计</strong>：每次升级写日志，便于复盘。</li>
+</ol>
+<p>小例子（已验证，连续 3 次后升一级，恢复后清零）：</p>
+<div class="codeblock"><div class="cb-head"><span class="cb-lang">python</span><button class="copy" type="button" onclick="copyCode(this)">复制</button></div><pre class="hl-pre"><code class="hl"><span class="k">class</span><span class="w"> </span><span class="nc">AlertEscalation</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">escalate_after</span><span class="o">=</span><span class="mi">3</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">escalate_after</span> <span class="o">=</span> <span class="n">escalate_after</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">counts</span> <span class="o">=</span> <span class="p">{}</span>                          <span class="c1"># rule -&gt; 连续告警次数</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">levels</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"邮件"</span><span class="p">,</span> <span class="s2">"短信"</span><span class="p">,</span> <span class="s2">"电话值班"</span><span class="p">]</span>   <span class="c1"># 通知级别逐级升级</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">on_alert</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rule</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">counts</span><span class="p">[</span><span class="n">rule</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">counts</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">rule</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">counts</span><span class="p">[</span><span class="n">rule</span><span class="p">]</span>
+        <span class="c1"># 每连续 escalate_after 次升一级（封顶最高级）</span>
+        <span class="n">idx</span> <span class="o">=</span> <span class="nb">min</span><span class="p">((</span><span class="n">n</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span> <span class="o">//</span> <span class="bp">self</span><span class="o">.</span><span class="n">escalate_after</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">levels</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"第 </span><span class="si">{</span><span class="n">n</span><span class="si">}</span><span class="s2"> 次告警 [</span><span class="si">{</span><span class="n">rule</span><span class="si">}</span><span class="s2">] → 用「</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">levels</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span><span class="si">}</span><span class="s2">」通知"</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">levels</span><span class="p">[</span><span class="n">idx</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">on_resolve</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rule</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">rule</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">counts</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"[</span><span class="si">{</span><span class="n">rule</span><span class="si">}</span><span class="s2">] 已恢复，计数清零"</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">counts</span><span class="p">[</span><span class="n">rule</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+
+<span class="n">esc</span> <span class="o">=</span> <span class="n">AlertEscalation</span><span class="p">(</span><span class="n">escalate_after</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">7</span><span class="p">):</span>
+    <span class="n">esc</span><span class="o">.</span><span class="n">on_alert</span><span class="p">(</span><span class="s2">"内存过高"</span><span class="p">)</span>
+<span class="n">esc</span><span class="o">.</span><span class="n">on_resolve</span><span class="p">(</span><span class="s2">"内存过高"</span><span class="p">)</span>
+<span class="n">esc</span><span class="o">.</span><span class="n">on_alert</span><span class="p">(</span><span class="s2">"内存过高"</span><span class="p">)</span>   <span class="c1"># 恢复后重新从邮件开始</span>
+</code></pre></div>
+<p>预期输出：</p>
+<pre class="plain"><code>第 1 次告警 [内存过高] → 用「邮件」通知
+第 2 次告警 [内存过高] → 用「邮件」通知
+第 3 次告警 [内存过高] → 用「邮件」通知
+第 4 次告警 [内存过高] → 用「短信」通知
+第 5 次告警 [内存过高] → 用「短信」通知
+第 6 次告警 [内存过高] → 用「短信」通知
+第 7 次告警 [内存过高] → 用「电话值班」通知
+[内存过高] 已恢复，计数清零
+第 1 次告警 [内存过高] → 用「邮件」通知</code></pre>
+<p>前 3 次用邮件，第 4 次起升短信，第 7 次起升电话；恢复后计数清零，下次告警又从邮件开始。</p>
+<p>💡 提示：更稳妥的是"未确认（ack）超时升级"而非纯计数——告警虽频繁但已有人处理时就不必打扰更高级别；计数升级更适合无人值守场景。</p>
+<ol start="5">
+<li><strong>架构题</strong>：如何设计监控系统的高可用性，确保监控服务本身不会成为单点故障？</li>
+</ol>
+<p><strong>参考答案</strong></p>
+<p>监控系统自己不能挂，关键设计：</p>
+<ol>
+<li><strong>多实例 + 无状态</strong>：采集/处理/告警服务跑多副本，状态外置到 DB/队列，前面挂负载均衡，任一实例宕机不影响整体。</li>
+<li><strong>主选举 + 故障转移</strong>：对必须单例的有状态组件（如某些聚合任务），用 leader 选举（etcd/ZooKeeper/Redis 锁），主挂了备自动顶上。</li>
+<li><strong>存储多副本</strong>：时序库与配置存储做副本/主从（如 Prometheus + Thanos、InfluxDB 集群），防单点丢数据或不可用。</li>
+<li><strong>通知多渠道 + 降级</strong>：告警同时走多渠道（钉钉 + 邮件 + 短信），某渠道失败自动切备用；通知服务本身也多实例。</li>
+<li><strong>死人开关（dead man's switch / 心跳看门狗）</strong>：监控系统定期向一个<strong>独立的外部看门狗</strong>发"我还活着"心跳；看门狗收不到心跳就反过来告警"监控系统挂了"——这是防"监控静默失效"的关键。</li>
+<li><strong>元监控</strong>：用另一套独立、简单的监控（或云厂商监控）来监控本监控系统，形成互相监督；跨机器/跨可用区部署，避免同机架故障。</li>
+<li><strong>自保护</strong>：限流、熔断、背压，防止监控系统自己被指标洪流压垮；采集失败要降级而非崩溃。</li>
+</ol>
+<pre class="plain"><code>监控集群（多实例、跨可用区）
+   ├── 采集/处理 × N（无状态 + 负载均衡）
+   ├── 存储（多副本）
+   └── 定期心跳 ──► 独立外部看门狗
+                  （收不到心跳 → 告警&quot;监控挂了&quot;）</code></pre>
+<p>💡 提示：最容易被忽略的是"死人开关"——监控进程若卡死，它自己就发不出告警了，必须靠独立外部组件发现"它没声音了"，否则故障会被静默漏掉。</p>
+<hr>
+<h2 id="_6">📚 参考资源</h2>
+<ul>
+<li><a href="https://psutil.readthedocs.io/">psutil 官方文档</a></li>
+<li><a href="https://realpython.com/python-monitoring/">Python 监控最佳实践</a></li>
+<li><a href="https://prometheus.io/">Prometheus + Grafana</a> - 工业级监控方案</li>
+</ul>
+<hr>
+<blockquote>
+<p>🎯 <strong>今日产出</strong>：一个完整的服务器监控告警系统，支持指标采集、规则引擎、告警通知和巡检报告</p>
+</blockquote>
+  </main>
+</div>
+
+<nav class="pager">
+  <a class="nav-prev" href="../day-083/index.html">← Day 83 远程部署</a><a class="nav-next" href="../day-085/index.html">Day 85 WebSocket 通信 →</a>
+</nav>
+
+<script src="../assets/mermaid.min.js"></script>
+<script>
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: true, securityLevel: 'loose', theme: 'default' });
+}
+function copyCode(btn) {
+  var pre = btn.closest('.codeblock').querySelector('pre');
+  navigator.clipboard.writeText(pre.innerText).then(function () {
+    var o = btn.textContent; btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = o; }, 1500);
+  });
+}
+</script>
+</body>
+</html>
