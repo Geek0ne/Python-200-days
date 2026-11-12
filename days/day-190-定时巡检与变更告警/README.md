@@ -736,10 +736,76 @@ AttributeError: 'NoneType' object has no attribute '__dict__'
 ## 思考题
 
 1. 如果巡检间隔 5 分钟、单次耗时 4 分 50 秒，你会选固定延迟还是网格？grace 设多少？为什么？
+
+**参考答案**
+
+**选锚点网格**：固定延迟（上次结束后再等 5 分钟）会让实际间隔变成 4m50s + 5m = 9m50s，「每 5 分钟」的语义丢失、频率减半、漂移累积。网格锚定绝对时刻（00:00、00:05…），不受单次耗时影响。
+
+但 4m50s/5m = **97% 占用**，几乎无余量：
+
+- 用 `flock -n` 入口互斥，上一轮没跑完就**跳过本格**（不排队），接受部分 skip。
+- **grace 设得远小于间隔**（如 60s），并 `max_catchup=1`：巡检看的是「当前状态」，迟到超过一个间隔的巡检已过期，补跑无意义。
+
+💡 提示：长期 97% 占用本身危险，应加快扫描或拉长间隔，而不是靠 grace 硬撑。
+
 2. 幂等键用 scan:{date}:{target} 时，同一天手动重扫会被去重挡住。这是 bug 还是 feature？若业务要求"手动重扫必须生效"，键该怎么改？
+
+**参考答案**
+
+- **对定时任务是 feature**：同一时间格 + 同一目标 = 同一次业务操作，去重防止 cron 重试重复入库。
+- **对手动重扫是误伤**：键把「调度格」和「操作实例」混为一谈，手动重扫是新操作却被旧键挡住。
+
+若业务要求「手动重扫必须生效」，键要区分来源：
+
+- 定时：`scan:{slot}:{target}`（slot 是时间格）。
+- 手动：`manual:{request_id}:{target}`，**一次手动动作生成一个新 request_id**；同一次动作的重试复用同一 id（保重试幂等），不同动作不同 id。
+
+幂等键的本质是标识「同一次业务操作」，不是「同一份数据」。手动重扫产生新快照，流水追加。
+
 3. 令牌桶容量 5、补充速率 2/s，而 critical 每秒来 10 条。设计一个策略，保证 critical 不被限流，同时 info 仍被合并。
+
+**参考答案**
+
+**分级双桶 + 合并不丢弃**：
+
+- **critical 专用桶**：高优先级桶，容量/速率远大于 info（或不限速），与 info 桶独立，避免队头阻塞——critical 的 10/s 不被 info 的 (5, 2/s) 挡住。
+- **info 共享桶**：仍 (容量 5, 速率 2/s)，超限进 overflow，下条带「另有 N 条被合并」。
+- **critical 合并而非丢弃**：若下游真扛不住 10/s，按 1s 窗口合成一条（每条 critical 都在合并体里），**绝不静默丢**。
+- **指纹去重**：`rule+asset` 做指纹，相同告警合并；critical 升级放行。
+
+核心：限流限的是「消息条数」，不是「信息量」——critical 的信息必须送达，可以合并送达。
+
 4. depends_on: service_healthy 能消掉启动竞态，但消不掉"运行中下游挂掉"。worker 的待发队列（pending 表）应该多久重试一次？重试到什么时候放弃？
+
+**参考答案**
+
+**指数退避 + full jitter**：
+
+- 从 ~1s 起，`min(cap, base × 2^(n-1))` 封顶 60s，实际睡 `random(0, ceiling)`（full jitter 防 thundering herd）。
+- **永久错误（4xx）**：立即死信 + 告警人工，不重试。
+- **临时错误（5xx/连接重置/超时）**：重试到 `max_attempts`（8~10 次）或总时限（如 24h），然后死信 + 告警，**绝不静默丢、绝不无限重试**。
+- **租约/可见性超时**：worker 崩溃后它领的任务超时被别人接手。
+- **超保鲜期**（如 1h）：标过期入审计；critical 带延迟标注仍送达。
+
+一句话：临时错误退避重试有上限，永久错误直接死信，所有放弃都要告警留痕。
+
 5. 如果让你把本课的 SQLite 换成 PostgreSQL，哪些设计可以原样保留？哪些必须重写（提示：BEGIN IMMEDIATE、INSERT OR IGNORE、busy_timeout）？
+
+**参考答案**
+
+**可原样保留**（思想/约束）：
+
+- 锚点网格调度、幂等键 + UNIQUE 约束、至少一次 + 幂等 = 恰好一次效果、租约思想、告警漏斗指纹、full jitter、Compose 编排。
+
+**必须重写**（并发原语/SQL 方言）：
+
+- `BEGIN IMMEDIATE`（SQLite 写锁）→ `SELECT … FOR UPDATE SKIP LOCKED` 或 `UPDATE … RETURNING` 领任务。
+- `INSERT OR IGNORE` → `ON CONFLICT (idem_key) DO NOTHING`。
+- `busy_timeout` → 不需要（PostgreSQL 用 MVCC，读不阻塞写），改用行锁 + `lock_timeout`/`statement_timeout`。
+- 单写者假设消失：`flock` 可放宽为行级锁（但 cron 单实例保护仍有用）。
+- 连接方式：psycopg 连接池、自增用 `GENERATED AS IDENTITY`、删掉 WAL 相关 pragma。
+
+思想不变，变的是并发原语与 SQL 方言。
 
 ---
 

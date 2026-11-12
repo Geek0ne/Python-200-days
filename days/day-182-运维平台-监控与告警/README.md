@@ -972,26 +972,322 @@ docker ps -a --format '{{.Names}}' | grep d182 || echo "无残留容器"
 
 1. 本日 `01` 里，`/proc` 后端和 psutil 后端对同一台机器给出 `disk 38.3%` 与 `disk 36.3%`
    （差了 2 个点）。如果告警规则阈值是 37%，会发生什么？这说明「阈值」和什么必须绑在一起定？
+
+**参考答案**
+
+阈值取 37% 时，**同一台机器、同一时刻会得到两种相反的命运**：psutil 口径 38.3% > 37% 判越界，`/proc` 口径（`shutil.disk_usage`）36.3% < 37% 判正常。而且本日磁盘规则 `host_disk_high` 是 `consecutive=1`（没有毛刺过滤），psutil 口径第一个样本就直接 firing，proc 口径则永远安静。
+
+由此会出三种真实事故：
+
+- **告警「凭空出现/消失」**：psutil 被卸载或 import 失败时 `01` 自动回退 `/proc`，告警随之消失——磁盘一个字节都没变，变的只是测量口径；
+- **校准错觉**：拿 A 工具的历史数据校准阈值，再用 B 工具跑，2 个点的口径差足以让阈值骑在告警线上反复横跳；
+- 同样的道理也适用于 mem（45.2% vs 45.3%，`MemAvailable` 公式不同）和 CPU（采样窗口长短不同）。
+
+所以**阈值必须和「采集口径」绑在一起定**：哪个工具、哪个公式、哪个挂载点、多长的采样窗口，乃至 `consecutive` 与采样间隔（时间口径）。工程上的做法是：固定 backend 与版本、用快照里的 `backend` 字段做审计、用同一口径的历史数据校准阈值，并给口径差异留余量（比如定 40% 而不是 37%）。
+
+💡 提示：这正是实验 1 的结论——「不能拿 A 工具的数去配 B 工具的规则」。阈值不是绝对物理量，而是相对于测量方式的约定。
+
 2. 迟滞带宽度取 10 个点（90 / 80）。如果这台机器的指标抖动振幅是 15 个点，迟滞还管用吗？
    此时该改迟滞带，还是该改用别的手段？（提示：想想抖动判定和「连续 N 次」分别在治什么）
+
+**参考答案**
+
+**不管用了。** 迟滞的算术是「带宽 > 抖动振幅 → 吸收；带宽 < 振幅 → 每次波动都翻转」。振幅 15 个点（比如在 95↔80 之间横跳）会同时穿越进入线 90 和恢复线 80，每个来回都产生一次 firing→resolved 翻转。用复刻 `02` 状态机的代码实跑验证（consecutive=1，1 tick = 1 秒，聚焦迟滞本身）：
+
+```python
+def simulate(values, release, threshold=90.0, flap_window=300.0, flap_limit=4):
+    """复刻 02 的状态机（consecutive=1，1 tick = 1 秒），聚焦迟滞与抖动"""
+    state, transitions, events = "ok", [], []
+    for t, v in enumerate(values):
+        etype = None
+        if v > threshold:                      # 越界
+            if state != "firing":
+                state, etype = "firing", "firing"
+        elif state == "firing":
+            if v <= release:                   # 跌破恢复线才算恢复
+                state, etype = "ok", "resolved"
+            # 没到恢复线：保持 firing（迟滞）
+        if etype:
+            transitions.append(float(t))
+            transitions = [x for x in transitions if x >= t - flap_window]  # 滑动时间窗口
+            flapping = len(transitions) >= flap_limit
+            events.append((t, v, etype, flapping))
+    return state, events
+
+values = [95.0, 80.0] * 6                      # 振幅 15 个点，在 95/80 之间反复横跳
+for release in (80.0, 75.0):
+    state, events = simulate(values, release)
+    print("release=%.0f（带宽 %.0f）: 翻转 %d 次, 出现过 flapping=%s, 最终状态=%s"
+          % (release, 90.0 - release, len(events), any(e[3] for e in events), state))
+```
+
+预期输出：
+
+```
+release=80（带宽 10）: 翻转 12 次, 出现过 flapping=True, 最终状态=ok
+release=75（带宽 15）: 翻转 1 次, 出现过 flapping=False, 最终状态=firing
+```
+
+两个结论：
+
+- **加宽迟滞带（release 80→75）确实能吸收**，但代价看得见：80 不再算恢复，指标一半时间低于阈值 90 也永远 firing——恢复变得迟钝甚至「永不恢复」。带宽越宽抗抖越强、恢复越钝，这是权衡不是免费午餐。
+- **「连续 N 次」救不了真抖动**：「坏 30 秒、好 30 秒」的故障每轮都真的连续超 N 次（实验 2 的 flap 场景就是 95,95,95,60,…）。连续次数治的是「一次性毛刺」，治不了「反复横跳」。
+
+所以此时的正解是**抖动判定**：上面 release=80 的演示里，窗口内第 4 次翻转就打上 `flapping=True`，`03` 的 `flap-silenced` 路由把它降级成「只留档、不叫人」。三个工具各司其职：连续次数挡毛刺、迟滞挡边界小震荡、抖动判定挡真抖动——识别出抖动后应该去修根因（OOM 循环、网络闪断），而不是硬压通知。
+
+⚠️ 注意：加宽带时必须保持 `release <= threshold`（op='>' 时），`02` 的参数校验会拒绝写反——否则状态机卡在 firing 永远出不来。
+
 3. `02` 里抖动判定用的是「时间窗口内的翻转次数」。如果换成「总翻转次数」，
    一个稳定运行 30 天、每天抖 1 次的系统会怎样？为什么本日自检要专门断言
    「窗口 2s、采样间隔 10s 时不会误判抖动」？
+
+**参考答案**
+
+用「总翻转次数」，这个稳定系统会被**永久误判成抖动**。每天抖 1 次（firing+resolved 共 2 次翻转），第 2 天累计就到 4 次、达到 `flap_limit=4`；而且总次数只增不减，标签一旦贴上就永远摘不掉。后果：它之后所有告警——包括真正持续的故障——都被 `flap-silenced` 路由降级成只留档不叫人，**降噪机制变成了漏报机制**。实跑对比两种判定：
+
+```python
+flap_limit = 4
+window = 300.0                     # 本日默认 flap_window=300s
+total_flips = 0                    # 错误做法：累计总次数
+window_flips = []                  # 正确做法：只保留窗口内的时间戳
+for day in range(30):              # 稳定运行 30 天，每天抖 1 次
+    for k in range(2):             # 每次抖动 = firing+resolved 共 2 次翻转，间隔 10 秒
+        now = day * 86400 + k * 10
+        total_flips += 1
+        window_flips = [t for t in window_flips if now - t <= window]
+        window_flips.append(now)
+print("30 天后 总次数判定 flapping =", total_flips >= flap_limit)
+print("30 天后 时间窗口判定 flapping =", len(window_flips) >= flap_limit)
+```
+
+预期输出：
+
+```
+30 天后 总次数判定 flapping = True
+30 天后 时间窗口判定 flapping = False
+```
+
+自检专门断言「窗口 2s、采样间隔 10s 时不会误判抖动」，就是为了钉死这个语义：**抖动 = 短时间内的反复翻转，不是「历史上翻转过很多次」**。同样的 7 次翻转，每次之间平静了 10 秒，2s 窗口里任何时刻最多只有 1 次翻转，永远凑不够 4 次——那是「偶尔出事」，不是「反复横跳」。这条断言防止有人把滑动窗口「优化」成累计计数器。
+
+💡 提示：滑动窗口还有一个好处——标签会**自己消失**：旧翻转滑出窗口后 `flapping` 自动回到 False（实验 2(d) 第 13 行的 pending 就不再带抖动标签）。总次数永远做不到这一点。
+
 4. `03` 的路由链是**顺序**尝试的（webhook 失败才落 file）。如果改成**并行**
    （三个通道同时发），会带来什么运维问题？（提示：值班同学在不同地方看到不同状态）
+
+**参考答案**
+
+改成并行（三个通道同时广播）会制造至少四类运维问题：
+
+- **对账对不上**：一次故障在三个地方各留一份，不知道哪份是权威。报告里 `delivered_by` 的语义直接崩坏——到底算 webhook 还是 file？实验 4 的直接证据是 `/tmp/day182/live/platform.jsonl` **不存在**：webhook 成功了，file 就不该被写；并行模式下这条证据消失，事后无法还原「这条告警到底送达了没有」。
+- **值班同学在不同地方看到不同状态**：webhook 延迟或失败、file/console 却已有记录。看群的人以为「没人管」，看落盘的人以为「已通知」——要么没人响应，要么多人重复响应；恢复通知发出后，各渠道的状态更加不同步。
+- **分级路由失效**：路由的意义就是 warning 不碰 webhook、flapping 只留档（实验 5：warning 的链是 `file->console`）。并行广播等于每条告警全通道都发，半夜把 warning 打进值班电话——正是路由表要防的事故。
+- **失败语义与负载失控**：部分成功部分失败算成功还是失败？失败通道要不要重试？重试又会在已成功的通道里制造重复（接收端必须做幂等）。告警风暴时每条告警 × 3 通道 × attempts 放大负载，外部 IM 的限流更容易被触发，真正的 critical 反而发不出去。
+
+顺序链的本质是：**一条告警只有一个权威投递结果，降级路径清晰、可审计**（`webhook+file+console->file` 一眼看出谁失败谁成功）。
+
+💡 提示：如果业务真要多通道冗余，那是显式的「广播模式」——需要事件唯一 ID + 接收端幂等去重 + 明确的对账规则，复杂度代价远高于顺序链，不是把 `for` 改成线程就完事的。
+
 5. 本日的去重表存在进程内存里，重启就丢。重启之后同一个故障会怎样表现？
    如果这个平台跑在 Kubernetes 的两个副本上（无共享状态），用户会收到几条通知？
    怎么改？（至少给出两种方案，并说明各自代价）
+
+**参考答案**
+
+**重启之后**：状态表清零，进行中的故障再次上报时被当成「新故障」→ 再次 `notify`（重复打扰），`renotify` 的计时也从零开始。更糟的是，如果此时来了 `resolved` 而表里没有活动告警（比如上游是无状态源、或恢复事件落到另一个副本），动作是 `drop`——**用户只看到故障，永远看不到恢复**。**两个副本无共享状态**：若两个副本都完整采集同一目标，各自都走一遍「首次」→ 用户收到 **2 条**通知；若事件被负载均衡到不同副本，firing 和 resolved 可能落在不同副本上，恢复通知变孤儿。实跑验证：
+
+```python
+import hashlib, json
+
+def fingerprint(alert):
+    """与 04 同构：name + severity + labels，不含 value/status/ts"""
+    base = {"name": alert["name"], "severity": alert["severity"]}
+    base.update(alert["labels"])
+    return hashlib.sha256(json.dumps(base, sort_keys=True).encode("utf-8")).hexdigest()[:12]
+
+alert = {"name": "app_down", "severity": "critical", "labels": {"instance": "ace"}}
+fp = fingerprint(alert)
+
+# 场景1：进程重启，表清零，同一故障再次上报
+table = {}                         # 重启前这里本来有 fp 的记录（已通知过、count=3）
+print("重启后同故障 firing ->", "notify（再喊一次）" if fp not in table else "suppress")
+
+# 场景2：resolved 落到没有活动告警的表上（重启后 / 另一副本）
+table_b = {}                       # 副本B 从没通知过这条 firing
+print("副本B 收到 resolved ->", "recover" if fp in table_b else "drop（恢复通知变孤儿）")
+
+# 场景3：两个副本都完整处理同一故障
+tables = [{}, {}]
+notifies = 0
+for t in tables:
+    if fp not in t:                # 各自都认为是「首次」
+        t[fp] = 1
+        notifies += 1
+print("两副本都处理同一 firing，用户收到通知数 =", notifies)
+```
+
+预期输出：
+
+```
+重启后同故障 firing -> notify（再喊一次）
+副本B 收到 resolved -> drop（恢复通知变孤儿）
+两副本都处理同一 firing，用户收到通知数 = 2
+```
+
+改造方案（至少两种，各有代价）：
+
+- **方案一：共享外部状态存储（推荐）**——把 `AlertStore.table` 换成 Redis：`HSET fp count first last_notify` 并给 key 加 TTL（正是 README「未实测」与 checklist 改造 2 的方向）。跨副本去重、重启恢复一次解决。代价：引入外部依赖（Redis 自己也要高可用和监控）；每次判定多一次网络往返；并发写必须用原子操作（`HSETNX`/Lua），否则两个副本仍会双发；TTL 难定——太短丢状态、太长膨胀。
+- **方案二：本地持久化**——状态表落盘（JSON/SQLite），启动时加载、变更时刷盘。无外部依赖，解决单实例重启后的重复通知。代价：只救重启、救不了多副本（各写各的盘，照样双发）；要处理写盘时机与文件损坏；机器挂了状态照样丢。
+- **方案三：单活/分片**——用 K8s Lease 选主让只有一个副本工作，或按目标（instance）分片，每台机器只归一个副本判定。不需要共享存储。代价：选主/分片逻辑复杂；故障切换窗口内可能漏报或重报；分片要维护目标元数据，副本扩缩容时还要再平衡。
+
+💡 提示：还可以再加一层「接收端幂等」（通知网关按事件 ID 在时间窗内去重）兜底，但它把复杂度推给下游、要求所有通道配合，只能作补充，不能替代共享状态。
+
 6. 实验 4 里 `host_cpu_high` 全程在 pending/dropped 之间来回，一次都没 firing。
    这是「正确的冷静」还是「漏报」？如果业务方投诉「CPU 都 97% 了你们居然不报警」，
    你会怎么改规则，代价是什么？
+
+**参考答案**
+
+**对「喊人处理故障」这个契约来说，这是正确的冷静。** 这台机器 4 核、load 8+，CPU 在 87%~100% 之间反复穿越 90，但从没连续 3 次——它是「忙」，不是「持续故障」。checklist 练习 7 的结论相同：若单次越界就报，这几分钟会响 6 次，`consecutive=3` 在真实机器上救了你一次。规则的契约是「持续越界才喊人」，引擎忠实执行了契约，不是 bug。
+
+**但算不算「漏报」要看业务语义。** 如果业务 SLO 是「CPU 到 97% 哪怕几秒也会让请求超时」，那当前规则确实没覆盖这个需求——这是规则设计与业务需求不匹配，该改规则，而不是跟投诉争论。改法与代价：
+
+- **调低 consecutive（3→2 或 1）**：响应更快；代价是毛刺风暴回归（本机实测会响 6 次），值班开始无视告警。
+- **分级规则**：critical 保持 90/3 次（喊人），另加一条 warning 级 85/3 次只走 file 不打电话。代价是规则变多，warning 层也要治理噪音，否则留档爆炸。
+- **换判定口径**：用 `load1/cpu_count` 或 5 分钟滑动平均代替瞬时 CPU。代价是响应变钝，且要保存历史样本（本日引擎是纯状态机，只吃当前值）。
+- **缩短采样间隔**（30s→5s，3 次 = 15s 窗口）：不降阈值也能更快抓住真实持续高位。代价是采集/存储开销成倍增加。
+
+更根本的做法：把告警绑在**业务症状**上（`app_latency_slow`、错误率），资源指标只作辅助证据。先和业务对齐「CPU 97% 对你意味着什么」，再把折中写进规则和 SLA。
+
+⚠️ 注意：别为了安抚投诉直接降阈值——那会把「正确的冷静」变成「告警疲劳」，真故障来时反而没人看了。
+
 7. 本日 `pending` 状态**不进入告警通道**（被流水线截断）。如果业务要求
    「进入 pending 也要通知，但标注为『观察中』」，最小改动是改哪一层？会不会破坏去重？
+
+**参考答案**
+
+**最小改动在 `05` 的流水线截断处**（`Pipeline.step` 里 `if event["type"] not in ("firing","resolved"): continue`），外加 `03` 加一条低噪音路由。`02` 不用动——它本来就吐带 `breach_run`（1/3、2/3）的 `pending` 事件；`03` 的 `to_alert()` 也已经是三态映射，会把 pending 包装成 `status="pending"`、summary 为「待观察」。所以只需：放行 `pending`（加个开关），路由表里加一条匹配 `status="pending"` 的路由只走 file/console（标注「观察中」，不打 webhook），`dropped` 仍然截断。
+
+**会不会破坏去重，取决于 pending 进不进 `04` 的 `process()`。** 关键陷阱：`AlertStore.process` 只认 `firing`，**其余一律走 resolved 分支**。如果 naive 地放开截断、把 pending 直接塞进去重层，pending 会被当成恢复通知——同指纹已有活动告警时误判 `recover`、提前清掉状态，之后真正的 resolved 反而变 `drop`。实跑验证：
+
+```python
+# 复刻 AlertStore.process 的分支语义：只认 firing，其余一律走 resolved 分支
+table = {}
+fp = "f05360f106d8"                # 本日实测指纹（host_cpu_high/critical/instance=ace）
+
+def process(status):
+    if status == "firing":
+        if fp not in table:
+            table[fp] = 1
+            return "notify"
+        table[fp] += 1
+        return "suppress"
+    if fp not in table:            # resolved 分支：无活动告警 -> drop
+        return "drop"
+    del table[fp]                  # resolved 分支：匹配到 -> recover 并清状态
+    return "recover"
+
+print("firing   ->", process("firing"))     # 正常：故障通知
+print("pending  ->", process("pending"))    # 事故：被当成恢复，状态被误清
+print("resolved ->", process("resolved"))   # 事故：真正的恢复反而成了孤儿
+```
+
+预期输出：
+
+```
+firing   -> notify
+pending  -> recover
+resolved -> drop
+```
+
+所以正确姿势是：**观察通知绕过去重表**（不参与 firing/resolved 配对、不写状态），或给 `AlertStore` 增加显式的 `pending` 分支（只计数、不通知）。只要 pending 不碰 firing/resolved 的配对逻辑，去重就不会被破坏。这正是翻车复盘 1 的教训：三态不能写成二态，中间态必须显式处理。
+
+⚠️ 注意：pending 本身也会刷屏（越界 1/3、2/3 各一条，下个周期又来），观察通知同样要限流（比如同指纹一个窗口只发一条），否则只是把「一分钟 20 条」的问题搬到了另一个通道。
+
 8. `06` 的坑是「stdout 块缓冲 + SIGTERM」。如果这是一个在 K8s 里的 sidecar 容器，
    优雅退出（`preStop` + `SIGTERM` + 宽限期）会怎么改变这个现象？
+
+**参考答案**
+
+先复现现象：stdout 重定向到文件/管道时是**块缓冲**（约 8KB），而 SIGTERM 的默认处置是立即终止进程——Python 来不及跑 `finally`/`atexit`，缓冲区里的打印随进程一起消失。实跑验证（Windows 下 `terminate()` 是强杀，效果等价于 SIGTERM 的默认处置）：
+
+```python
+import os, subprocess, sys, tempfile, time
+
+def run_and_kill(extra_args, code):
+    """子进程 stdout 重定向到文件（块缓冲），1 秒后杀掉它"""
+    fd, path = tempfile.mkstemp(suffix=".log")
+    os.close(fd)
+    with open(path, "w", encoding="utf-8") as fh:
+        p = subprocess.Popen([sys.executable, *extra_args, "-c", code], stdout=fh)
+        time.sleep(1.0)            # 等子进程执行完两条 print（但还躺在缓冲区里）
+        p.terminate()              # 模拟 SIGTERM：默认处置立即终止，不刷缓冲
+        p.wait()
+    with open(path, encoding="utf-8") as fh:
+        content = fh.read()
+    os.unlink(path)
+    return content
+
+code = "import time; print('alert-1'); print('alert-2'); time.sleep(30)"
+print("默认块缓冲 + 被杀 ->", repr(run_and_kill([], code)))
+print("-u 无缓冲  + 被杀 ->", repr(run_and_kill(["-u"], code)))
+```
+
+预期输出：
+
+```
+默认块缓冲 + 被杀 -> ''
+-u 无缓冲  + 被杀 -> 'alert-1\nalert-2\n'
+```
+
+K8s 优雅退出改变的是**给进程「准备后事」的时间**：`preStop` 钩子先执行（比如 sleep 几秒、或通知进程收尾），然后 kubelet 发 SIGTERM，最多等 `terminationGracePeriodSeconds`（默认 30s）才发 SIGKILL。但注意：**宽限期本身不救缓冲**——如果进程不处理 SIGTERM（像 `06` 的默认行为），信号一到照样立刻死，宽限期白给。必须用 `signal.signal(signal.SIGTERM, ...)` 注册处理器，在处理器里 `sys.stdout.flush()`、关文件、再退出，日志才写得出来。对 sidecar，preStop 还有一个用途：等主容器把日志写完再退，避免日志尾巴被截断。
+
+所以完整答案分两层：优雅退出 + SIGTERM 处理器解决**计划内退出**的日志丢失；但 OOMKilled、节点宕机、宽限期超时后的 SIGKILL 根本不给你 flush 的机会。因此 `06` 的逐条 `sys.stdout.flush()`（或 `python3 -u` / `PYTHONUNBUFFERED=1`）仍是底线纪律——**每条立即写出去，不赌自己能死得优雅**。落盘用 `with open(...)` 每次自动 close，不受影响，这就是实验里 jsonl 有 2 条而 stdout 只剩启动行的原因。
+
+⚠️ 注意：`except KeyboardInterrupt` 只接得住 SIGINT（Ctrl-C），接不住 SIGTERM；K8s 里容器 stdout 由运行时采集到节点日志文件，同样是管道、同样块缓冲，坑在容器里一模一样。
+
 9. 如果采集本身就失败了（比如 psutil 抛异常、`/proc` 读不到），本日引擎会怎样？
    应该产生哪一类告警？（提示：想想 Prometheus 的 `up` 指标为什么是白送的——
    监控系统必须能区分「指标是 0」和「拿不到指标」）
+
+**参考答案**
+
+本日实现里有三种结局，都**不会产生「采集失败」告警**：
+
+- **探活失败不算异常**：`probe_http` 捕获一切异常，转成 `status=down` + error 原文——这是「有效的观测数据」（进程没了），走正常 `app_down` 规则；
+- **主机采集失败**：`01` 的 main 捕获 `RuntimeError` 打印「采集失败」退出码 2（psutil 抛其它异常则直接 traceback）；而 `05` 的 `real_run` 没有捕获，异常一路上抛——**整个平台进程崩掉**，监控自己先死了；
+- **残缺快照 / NaN**：`02` 的 `RuleSet.evaluate` 对 `extract` 捕获 `KeyError/IndexError/...` 后静默 `continue`；`/proc` 读不到时返回的 NaN 更隐蔽——NaN 与任何数比较都是 False，既不越界也不恢复，**状态机原地冻结**。实跑验证：
+
+```python
+def extract(snap, path):
+    """与 02 同构：按字典路径取值"""
+    cur = snap
+    for part in path.split("."):
+        cur = cur[part]            # 缺字段 -> KeyError
+    return float(cur)
+
+good = {"host_metrics": {"cpu_percent": 95.0}}
+bad = {"host_metrics": {}}                                  # 采集失败，字段没了
+nan_snap = {"host_metrics": {"cpu_percent": float("nan")}}  # /proc 读不到时返回 NaN
+
+for name, snap in (("正常  ", good), ("缺字段", bad), ("NaN   ", nan_snap)):
+    try:
+        v = extract(snap, "host_metrics.cpu_percent")
+        print(name, "-> 取到值", v, "| >90 越界判定:", v > 90)
+    except KeyError:
+        print(name, "-> KeyError 被 evaluate 捕获后 continue：无事件、无告警（静默）")
+```
+
+预期输出：
+
+```
+正常   -> 取到值 95.0 | >90 越界判定: True
+缺字段 -> KeyError 被 evaluate 捕获后 continue：无事件、无告警（静默）
+NaN    -> 取到值 nan | >90 越界判定: False
+```
+
+应该产生的是**「监控自身健康」类告警**（如 `collector_down` / `scrape_failed`，severity=critical，带错误原因），同样走连续次数 + 去重 + 路由。这正是 Prometheus 白送 `up` 指标的原因：`up=0` 表示「抓取失败」，而不是「被监控的值是 0」——**监控系统必须区分「指标是 0」和「拿不到指标」**：前者是观测（app down 映射成 0.0），后者是没有观测，没有观测绝不能静默当成「一切正常」。还要补一条**数据新鲜度规则**：连续 N 秒没有新快照 → stale 告警，覆盖进程卡死不抛异常的情况。
+
+⚠️ 注意：采集失败告警不能依赖已经失败的采集路径本身（通道要独立），否则全挂时它自己也发不出去；更大规模上要有「死人开关」——由外部 watchdog 监控监控平台，平台自己哑了就由它报警。
 
 ---
 

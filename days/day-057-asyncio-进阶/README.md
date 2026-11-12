@@ -945,13 +945,377 @@ asyncio.run(main())
 
 1. **异步上下文管理器 vs `try/finally`**：异步上下文管理器的 `__aexit__` 在异常时也会执行。如果只用 `try/finally` 能实现同样效果吗？异步上下文管理器有什么独特优势？
 
+**参考答案**
+
+能。`async with` 本质上就是「调用 `__aenter__` → 执行块 → 无论正常还是异常都调用 `__aexit__`」的语法糖，用 `try/finally` 手动调用清理逻辑，可以达到同样的「异常时也释放资源」效果。但异步上下文管理器有几点独特优势：
+
+- **封装与复用**：把「获取资源」和「释放资源」打包进一个类（或 `@asynccontextmanager` 函数），写一次就能到处用；`try/finally` 则要在每个使用点重复写获取/释放，容易漏写或写错顺序。
+- **可抑制异常**：`__aexit__` 返回 `True` 时能把块内异常「吞掉」让程序继续，这是 `try/finally` 做不到的（`finally` 只负责清理，不能阻止异常传播）。
+- **可组合**：用 `contextlib.AsyncExitStack` 能动态管理多个异步资源，退出时统一逆序释放。
+- **可读性**：`async with conn:` 一眼就能看出「这里管理着一个需要释放的资源」。
+
+```python
+import asyncio
+
+
+class AsyncConn:
+    """把“建立连接/释放连接”封装成可复用的异步上下文管理器"""
+
+    def __init__(self, name):
+        self.name = name
+        self.is_open = False
+
+    async def __aenter__(self):
+        await asyncio.sleep(0.01)      # 模拟异步建立连接
+        self.is_open = True
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await asyncio.sleep(0.01)      # 模拟异步释放连接
+        self.is_open = False
+        print(f"{self.name} 已释放（块内是否有异常: {exc_type is not None}）")
+        return False                   # False=不抑制异常，异常照常向外抛
+
+
+async def main():
+    conn = AsyncConn("数据库连接")
+    try:
+        async with conn:               # 块内抛异常，__aexit__ 依然执行
+            raise ValueError("处理出错")
+    except ValueError:
+        pass
+    print("is_open =", conn.is_open)   # False，资源已释放
+
+    # 独特优势：__aexit__ 返回 True 可“抑制”异常，try/finally 做不到
+    class Ignorer:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return True                # True=吞掉异常，程序继续往下走
+
+    async with Ignorer():
+        raise RuntimeError("这个异常会被抑制")
+    print("抑制异常后，程序继续执行")
+
+
+asyncio.run(main())
+```
+
+运行输出：
+
+```
+数据库连接 已释放（块内是否有异常: True）
+is_open = False
+抑制异常后，程序继续执行
+```
+
+可见异常发生时连接仍被释放；而 `Ignorer` 的 `__aexit__` 返回 `True` 后，`RuntimeError` 被抑制、程序继续执行——这是纯 `try/finally` 无法实现的。
+
+💡 提示：`@contextlib.asynccontextmanager` 能用「生成器 + yield」的写法快速创建异步上下文管理器，`yield` 之前相当于 `__aenter__`、之后（放在 `finally` 里）相当于 `__aexit__`。
+
 2. **异步生成器的内存优势**：假设有 100 万条数据库记录需要处理。对比列表推导式和异步生成器，分析内存使用差异和适用场景。
+
+**参考答案**
+
+两者处理的数据量相同，但内存占用天差地别：
+
+- **列表推导式** `[await fetch(i) for i in range(1_000_000)]` 会一次性把 100 万条记录全部读进内存，峰值内存随数据量线性增长（O(n)）。实测约 60 MB，真实数据库记录字段更多会更大，数据量再大就可能撑爆内存。
+- **异步生成器** `async for r in record_stream()` 是「惰性」的：取一条、处理一条、再取下一条，同一时刻内存里基本只有一条记录，峰值内存近似常数（O(1)），实测不到 1 KB。
+
+适用场景：
+
+- 用**列表**：数据量小、需要随机访问 / 多次遍历 / `len()` / 切片，或要一次性拿到全部结果。
+- 用**异步生成器**：海量数据流、分页拉取、ETL、日志处理等「边取边处理」的管道场景，尤其是内存受限、又需要在取数据时 `await` 异步 I/O 的情况。
+
+```python
+import asyncio
+import tracemalloc
+
+N = 1_000_000
+
+
+async def fetch_record(i: int) -> str:
+    """模拟从数据库异步取一条记录"""
+    return f"record-{i}"
+
+
+async def record_stream():
+    """异步生成器：取一条 yield 一条，内存里只留当前记录"""
+    for i in range(N):
+        yield await fetch_record(i)
+
+
+async def main():
+    # 方式一：列表推导式，一次性全部载入内存
+    tracemalloc.start()
+    records = [await fetch_record(i) for i in range(N)]
+    total1 = sum(len(r) for r in records)
+    _, peak1 = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    del records
+    print(f"列表推导式: 峰值内存 {peak1 / 1024 / 1024:.1f} MB")
+
+    # 方式二：异步生成器，流式处理
+    tracemalloc.start()
+    total2 = 0
+    async for r in record_stream():
+        total2 += len(r)
+    _, peak2 = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    print(f"异步生成器: 峰值内存 {peak2 / 1024:.1f} KB")
+    print(f"处理结果一致: {total1 == total2}")
+
+
+asyncio.run(main())
+```
+
+运行输出（内存数值随环境略有浮动，运行需数秒）：
+
+```
+列表推导式: 峰值内存 59.5 MB
+异步生成器: 峰值内存 0.8 KB
+处理结果一致: True
+```
+
+两者结果完全一致，但峰值内存相差约 7 万倍。
+
+⚠️ 注意：内存优势来自「惰性求值」，同步生成器同样具备；异步生成器的额外价值是能在惰性求值的同时 `await` 异步 I/O。另外异步生成器是单消费者的，若要多个消费者共享数据流，应改用 `asyncio.Queue`。
 
 3. **Semaphore vs 连接池**：在 aiohttp 中，`asyncio.Semaphore` 和 `aiohttp.TCPConnector(limit=...)` 都能限制并发，它们有什么区别？什么场景下应该同时使用两者？
 
+**参考答案**
+
+两者都能「限并发」，但作用的层次和范围不同：
+
+- **`asyncio.Semaphore(n)`** 是通用的异步同步原语，限制「同时进入某段代码」的协程数量。它是应用层逻辑，和网络无关，可以跨多个会话共享，也能限制非网络操作（如同时写文件的数量）。
+- **`aiohttp.TCPConnector(limit=n)`** 限制的是这个连接池里「同时活跃的 TCP 连接数」，属于传输层。超出的请求会排队等待空闲连接，连接支持 keep-alive 复用；还有 `limit_per_host` 可单独限制每个主机的连接数。关键：`limit` 是**每个 connector（会话）独立**的。
+
+下面在本地起一个每请求耗时 0.2s 的服务，发 10 个请求实测区别：
+
+```python
+import asyncio
+import time
+
+import aiohttp
+from aiohttp import web
+
+
+async def handler(request):
+    await asyncio.sleep(0.2)           # 每个请求耗时 0.2s
+    return web.json_response({"ok": True})
+
+
+async def fetch(session, i, sem=None):
+    if sem is not None:
+        async with sem:                # 信号量：限制同时进入这段代码的协程数
+            async with session.get("/") as resp:
+                return await resp.json()
+    async with session.get("/") as resp:
+        return await resp.json()
+
+
+async def timed(factory, n):
+    t0 = time.perf_counter()
+    await asyncio.gather(*[factory(i) for i in range(n)])
+    return time.perf_counter() - t0
+
+
+async def main():
+    # 本地起一个 aiohttp 服务器，无需外网即可实测
+    app = web.Application()
+    app.router.add_get("/", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 18766)
+    await site.start()
+    url = "http://127.0.0.1:18766"
+
+    # A：单会话 + 连接池 limit=2 → 10 个请求分 5 批，约 1.0s
+    async with aiohttp.ClientSession(
+        base_url=url, connector=aiohttp.TCPConnector(limit=2)
+    ) as s:
+        t = await timed(lambda i: fetch(s, i), 10)
+        print(f"A 单会话连接池 limit=2: {t:.2f}s")
+
+    # B：两个会话各 limit=2 → 连接池各自独立，总并发 4，约 0.6s
+    async with aiohttp.ClientSession(
+        base_url=url, connector=aiohttp.TCPConnector(limit=2)
+    ) as s1, aiohttp.ClientSession(
+        base_url=url, connector=aiohttp.TCPConnector(limit=2)
+    ) as s2:
+        t = await timed(lambda i: fetch(s1 if i % 2 == 0 else s2, i), 10)
+        print(f"B 两个会话各 limit=2: {t:.2f}s")
+
+    # C：两个会话 + 共享 Semaphore(2) → 跨会话全局并发 2，约 1.0s
+    sem = asyncio.Semaphore(2)
+    async with aiohttp.ClientSession(base_url=url) as s1, \
+            aiohttp.ClientSession(base_url=url) as s2:
+        t = await timed(lambda i: fetch(s1 if i % 2 == 0 else s2, i, sem), 10)
+        print(f"C 两个会话+共享 Semaphore(2): {t:.2f}s")
+
+    await runner.cleanup()
+
+
+asyncio.run(main())
+```
+
+运行输出（耗时随环境略有浮动）：
+
+```
+A 单会话连接池 limit=2: 1.02s
+B 两个会话各 limit=2: 0.65s
+C 两个会话+共享 Semaphore(2): 1.03s
+```
+
+B 比 A 快，说明两个会话的连接池 `limit` 各算各的（总并发变成 4）；C 用共享信号量把跨会话的总并发又压回 2。
+
+**何时同时用两者**：比如爬虫要同时访问很多站点——用共享 `Semaphore` 控制「全局总并发」保护本机资源，再用每个会话的 `TCPConnector(limit_per_host=...)` 控制「对单个站点的连接数」避免把对方打挂。一个管全局任务数、一个管单主机连接数，正好互补。
+
+💡 提示：本题代码用到当天主题库 aiohttp，需先 `pip install aiohttp`。
+
 4. **错误处理策略**：在批量 API 调用中，如果 10 个请求中有 2 个失败，应该使用 `asyncio.gather(return_exceptions=True)` 还是让整个 batch 失败？各有什么优缺点？
 
+**参考答案**
+
+两种策略对应两种语义，批量 API 调用通常推荐 `return_exceptions=True`：
+
+- **默认 `gather`（`return_exceptions=False`）**：第一个异常会立刻抛给调用方，整个 batch「失败」。优点是快速失败、代码简单，适合「必须全部成功」的场景（如事务性操作）。缺点：① 一个失败就丢掉所有已成功的结果；② 其它已启动的任务**不会自动取消**，仍在后台跑，可能浪费资源或产生「异常未被取回」的警告。
+- **`gather(return_exceptions=True)`**：异常被当作返回值（不抛出），所有任务都跑完，得到「8 个成功结果 + 2 个异常对象」。优点是保留部分成功、可对失败项单独重试/记录，适合批量爬虫、批量调用这类「尽力而为」的场景。缺点：要自己用 `isinstance(r, Exception)` 检查每个结果，容易漏判。
+
+```python
+import asyncio
+
+
+async def call_api(i: int) -> str:
+    await asyncio.sleep(0.05 * (i % 3))   # 模拟不同耗时
+    if i in (3, 7):                        # 假设第 3、7 个请求失败
+        raise ConnectionError(f"请求 {i} 失败")
+    return f"结果-{i}"
+
+
+async def main():
+    # 策略一：默认 gather —— 第一个异常直接抛出
+    try:
+        await asyncio.gather(*[call_api(i) for i in range(10)])
+    except ConnectionError as e:
+        print(f"默认 gather: 捕获 {e}")
+    await asyncio.sleep(0.3)               # 等后台剩余任务结束，避免警告
+
+    # 策略二：return_exceptions=True —— 异常作为结果返回
+    results = await asyncio.gather(
+        *[call_api(i) for i in range(10)], return_exceptions=True
+    )
+    ok = [r for r in results if not isinstance(r, BaseException)]
+    bad = [r for r in results if isinstance(r, BaseException)]
+    print(f"return_exceptions=True: 成功 {len(ok)} 个, 失败 {len(bad)} 个")
+    for e in bad:
+        print(f"  失败原因: {e}")
+
+    # 策略三（Python 3.11+）：TaskGroup —— 失败时自动取消兄弟任务
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for i in range(10):
+                tg.create_task(call_api(i))
+    except* ConnectionError as eg:
+        print(f"TaskGroup: 捕获 {len(eg.exceptions)} 个 ConnectionError，其余任务已取消")
+
+
+asyncio.run(main())
+```
+
+运行输出：
+
+```
+默认 gather: 捕获 请求 3 失败
+return_exceptions=True: 成功 8 个, 失败 2 个
+  失败原因: 请求 3 失败
+  失败原因: 请求 7 失败
+TaskGroup: 捕获 1 个 ConnectionError，其余任务已取消
+```
+
+结论：批量调用一般用 `return_exceptions=True` 保留部分成果，再统一处理失败；若确实要「一损俱损、立即止损」，用 Python 3.11+ 的 `asyncio.TaskGroup` 比默认 `gather` 更安全——它会自动取消兄弟任务，并把异常聚合成 `ExceptionGroup`（用 `except*` 捕获）。
+
+⚠️ 注意：默认 `gather` 抛异常后，剩余任务不会自动取消；要么显式 `cancel()`，要么像示例那样等它们结束，否则可能出现 "Task exception was never retrieved" 警告。
+
 5. **异步 vs 多线程**：在 I/O 密集型任务（如批量 HTTP 请求）中，asyncio 和多线程哪个性能更好？为什么？请从 GIL、上下文切换、资源消耗等角度分析。
+
+**参考答案**
+
+I/O 密集型任务里，**高并发时 asyncio 通常更好**，原因从三个角度看：
+
+- **GIL**：纯 I/O 等待（socket、`sleep`）时线程也会释放 GIL，所以线程同样能并发 I/O；但线程在 CPU 计算部分仍受 GIL 限制，且多线程有锁竞争。asyncio 单线程运行，没有 GIL 争用和线程锁开销。
+- **上下文切换**：线程切换是操作系统内核态的抢占式调度，每次切换有内核开销、可能污染缓存；协程切换是用户态协作式（只在 `await` 处让出），只需保存少量栈帧，开销小得多。
+- **资源消耗**：每个线程要独立栈（默认 MB 级虚拟内存）+ 内核任务结构，几千个线程就会吃光内存、拖垮调度器；协程只是普通 Python 对象（几百字节~KB 级），单线程就能承载几十万个。
+
+实测（200 个各耗时 0.05s 的 I/O 任务）：
+
+```python
+import asyncio
+import threading
+import time
+import tracemalloc
+from concurrent.futures import ThreadPoolExecutor
+
+N = 200
+DELAY = 0.05
+
+
+def blocking_io(i: int) -> int:
+    time.sleep(DELAY)        # 阻塞 I/O，会释放 GIL
+    return i
+
+
+async def async_io(i: int) -> int:
+    await asyncio.sleep(DELAY)
+    return i
+
+
+async def main():
+    # asyncio：200 个协程并发
+    tracemalloc.start()
+    t0 = time.perf_counter()
+    r1 = await asyncio.gather(*[async_io(i) for i in range(N)])
+    e1 = time.perf_counter() - t0
+    _, peak1 = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    print(f"asyncio 200 协程: {e1:.2f}s, Python对象峰值 {peak1/1024:.0f}KB, 线程数 {threading.active_count()}")
+
+    # 线程池：200 个线程
+    tracemalloc.start()
+    t0 = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=N) as ex:
+        r2 = list(ex.map(blocking_io, range(N)))
+        n_threads = threading.active_count()
+    e2 = time.perf_counter() - t0
+    _, peak2 = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    print(f"线程池 200 线程: {e2:.2f}s, Python对象峰值 {peak2/1024:.0f}KB, 线程数 {n_threads}")
+
+    # 线程池：只开 20 个线程 → 分 10 批串行
+    t0 = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        r3 = list(ex.map(blocking_io, range(N)))
+    e3 = time.perf_counter() - t0
+    print(f"线程池 20 线程: {e3:.2f}s (分 10 批)")
+    print(f"三种方式结果一致: {r1 == r2 == r3 == list(range(N))}")
+
+
+asyncio.run(main())
+```
+
+运行输出（耗时/内存随环境略有浮动）：
+
+```
+asyncio 200 协程: 0.06s, Python对象峰值 312KB, 线程数 1
+线程池 200 线程: 0.08s, Python对象峰值 1001KB, 线程数 201
+线程池 20 线程: 0.51s (分 10 批)
+三种方式结果一致: True
+```
+
+分析：200 并发时两者耗时接近（0.06s vs 0.08s），但协程只用 1 个线程、Python 对象峰值更小（线程栈还没被 `tracemalloc` 统计，实际差距更大）；一旦把线程数压到 20，就得分 10 批、慢一个数量级，而协程轻松全并发。并发上万时线程方案会因内存和调度开销崩溃，asyncio 仍能胜任。
+
+💡 提示：低并发（几十个）或代码库已全是阻塞库（如 `requests`、同步数据库驱动）时，线程池（或 `asyncio.to_thread`）往往比改写成异步更省事，性能差距也不大；CPU 密集型任务两者都不行，应改用多进程。
 
 ---
 

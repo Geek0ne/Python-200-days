@@ -496,10 +496,236 @@ $ ./mytool.py --help
 ## 💡 思考题
 
 1. `argparse` 的 `add_subparsers` 可以实现 git 风格的子命令（`git commit`, `git push`）。如果要实现 `tool init`, `tool config`, `tool run` 三个子命令，如何组织代码？
+
+**参考答案**
+
+组织原则是"**一个子命令 = 一个处理函数 + 一个子解析器**"：每个子命令的参数挂在自己的子解析器上，互不干扰；再用 `set_defaults(func=处理函数)` 把子命令和函数绑定，主流程只负责"解析 → 调用 `args.func(args)`"，不需要写一长串 if/elif。
+
+```python
+import argparse
+
+
+def cmd_init(args):
+    print(f"init: 在 {args.path} 初始化项目")
+
+
+def cmd_config(args):
+    print(f"config: {args.key} = {args.value}")
+
+
+def cmd_run(args):
+    print(f"run: 执行 {args.target}，verbose={args.verbose}")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog='tool', description='示例工具')
+    sub = parser.add_subparsers(dest='command', required=True)
+
+    p_init = sub.add_parser('init', help='初始化项目')
+    p_init.add_argument('path', nargs='?', default='.', help='项目路径')
+    p_init.set_defaults(func=cmd_init)
+
+    p_config = sub.add_parser('config', help='设置配置')
+    p_config.add_argument('key')
+    p_config.add_argument('value')
+    p_config.set_defaults(func=cmd_config)
+
+    p_run = sub.add_parser('run', help='运行任务')
+    p_run.add_argument('target')
+    p_run.add_argument('-v', '--verbose', action='store_true')
+    p_run.set_defaults(func=cmd_run)
+    return parser
+
+
+if __name__ == '__main__':
+    parser = build_parser()
+    # 演示：实际工具用 parser.parse_args() 读取 sys.argv
+    for argv in (['init', 'demo'], ['config', 'user', 'Alice'], ['run', 'build', '-v']):
+        args = parser.parse_args(argv)
+        args.func(args)
+```
+
+预期输出：
+
+```text
+init: 在 demo 初始化项目
+config: user = Alice
+run: 执行 build，verbose=True
+```
+
+项目变大后，把每个 `cmd_xxx` 拆到独立模块（如 `commands/init.py`），`cli.py` 只负责组装解析器——这正是正文 6.2 节"用户调用 → cli.py → 具体实现"的分层。
+
+💡 提示：`add_subparsers(required=True)` 需要 Python 3.7+；`tool --help` 和 `tool run --help` 会自动生成两级帮助，无需手写。
+
 2. 如何实现一个交互式命令行工具（类似 `redis-cli` 那种可以输入命令的 REPL）？提示：使用 `cmd` 模块或 `prompt_toolkit`。
+
+**参考答案**
+
+REPL（Read-Eval-Print Loop，读取-求值-输出循环）就是"显示提示符 → 读一行输入 → 执行对应命令 → 再显示提示符"。标准库 `cmd` 模块把这个循环封装好了：继承 `cmd.Cmd`，**每定义一个 `do_xxx` 方法就自动多一条 `xxx` 命令**，方法的 docstring 自动成为 `help xxx` 的说明；`do_xxx` 返回 `True` 时退出循环。
+
+```python
+import cmd
+
+
+class MyShell(cmd.Cmd):
+    intro = '欢迎使用 mini-shell，输入 help 查看命令，quit 退出。'
+    prompt = '(mini) '
+
+    def do_hello(self, arg):
+        """hello [名字]：打招呼"""
+        print(f'你好, {arg or "世界"}!')
+
+    def do_add(self, arg):
+        """add a b：计算两个整数之和"""
+        try:
+            a, b = map(int, arg.split())
+            print(a + b)
+        except ValueError:
+            print('用法: add <整数> <整数>')
+
+    def do_quit(self, arg):
+        """退出"""
+        print('再见')
+        return True  # 返回 True 结束循环
+
+    def emptyline(self):
+        pass  # 空行不重复上一条命令
+
+
+if __name__ == '__main__':
+    MyShell().cmdloop()
+```
+
+运行后依次输入 `hello Python`、`add 1 2`、`quit`，会话如下：
+
+```text
+欢迎使用 mini-shell，输入 help 查看命令，quit 退出。
+(mini) hello Python
+你好, Python!
+(mini) add 1 2
+3
+(mini) quit
+再见
+```
+
+`cmd` 零依赖、够用；需要历史搜索、语法高亮、自动补全等更现代的交互时，用第三方 `prompt_toolkit`（需 `pip install prompt_toolkit`）。
+
+💡 提示：`cmd.Cmd` 默认空行会重复执行上一条命令，重写 `emptyline` 为 `pass` 可避免误操作；命令参数 `arg` 是去掉命令名后的整行字符串，需要自己 split。
+
 3. 大量的文件 I/O 操作如何优化？考虑使用缓冲区、mmap 还是多线程？
+
+**参考答案**
+
+先分清瓶颈：**I/O 密集**（等磁盘/网络）还是 **CPU 密集**（处理内容），再选手段。三者不是互斥的，常常叠加使用。
+
+- **缓冲区（首选、最通用）**：`open()` 默认带缓冲；按大块读写（如每次 1MB）能大幅减少系统调用次数，避免逐字节/逐行的小 I/O。顺序读写大文件时收益最明显。
+- **mmap（内存映射）**：把文件映射进地址空间，像访问内存一样随机读写，由操作系统按页调度。适合**大文件的随机访问**（如数据库、索引）；纯顺序扫描未必比缓冲读快，还会占用地址空间。
+- **多线程**：适合**多个文件的并发 I/O**（I/O 等待时 GIL 会释放，线程能重叠等待时间）；对单个顺序读的大文件帮助不大。若瓶颈在处理内容（CPU 密集），应改用多进程。
+
+一个"加大缓冲 + 按块读"的示例（自包含，自动生成演示文件）：
+
+```python
+import os
+import tempfile
+
+# 生成一个演示文件
+fd, path = tempfile.mkstemp()
+with os.fdopen(fd, 'wb') as f:
+    f.write(b'hello world\n' * 100_000)
+
+
+def count_lines(path):
+    total = 0
+    with open(path, 'rb', buffering=1024 * 1024) as f:  # 加大缓冲
+        while chunk := f.read(1024 * 1024):  # 按块读，减少系统调用
+            total += chunk.count(b'\n')
+    return total
+
+
+print(count_lines(path))
+os.remove(path)
+```
+
+预期输出：
+
+```text
+100000
+```
+
+💡 提示：按块读二进制时，一行可能被切在两个块之间，统计换行符没问题，但"按行处理"要自己缓存半行；`while chunk := ...` 的海象运算符需要 Python 3.8+。
+
 4. 如果要支持色输出（彩色文本），如何实现跨平台兼容？（提示：`colorama` 库）
+
+**参考答案**
+
+彩色文本靠 **ANSI 转义序列**（如 `\033[31m` 表示红色、`\033[0m` 重置）。Linux/macOS 终端和 Windows 10+ 的终端都原生支持；老版 Windows cmd 不认这些序列，会打印出乱码——`colorama` 库（需 `pip install colorama`）在 Windows 上把 ANSI 序列翻译成系统调用，一行 `colorama.init()` 即可抹平差异。
+
+只用标准库也能做到基本跨平台，关键是两点：**用 ANSI 序列**，以及**输出被重定向时自动关闭颜色**（用 `sys.stdout.isatty()` 判断），否则颜色码会污染管道和文件里的数据。
+
+```python
+import sys
+
+RED = '\033[31m'
+GREEN = '\033[32m'
+RESET = '\033[0m'
+
+
+def colorize(text, color):
+    # 输出被重定向到文件/管道时不加颜色，避免污染数据
+    if not sys.stdout.isatty():
+        return text
+    return f'{color}{text}{RESET}'
+
+
+print(colorize('错误: 文件不存在', RED))
+print(colorize('成功: 已完成', GREEN))
+```
+
+在真实终端里运行会看到红色/绿色文字；重定向到文件时（`python color.py > out.txt`）输出纯文本：
+
+```text
+错误: 文件不存在
+成功: 已完成
+```
+
+💡 提示：需要兼容老 Windows 或想要更丰富的样式时，用 `colorama`（`pip install colorama`，程序开头 `colorama.init()`）；更现代的替代是 `rich` 库。另外可尊重 `NO_COLOR` 环境变量约定，让用户一键关色。
+
 5. 设计一个支持管道操作的 CLI 工具（从 stdin 读取输入，输出到 stdout），如何检测是否有管道输入？
+
+**参考答案**
+
+用 **`sys.stdin.isatty()`**：它判断标准输入是否连着交互式终端。在终端直接运行时返回 `True`；被管道（`echo ... | tool`）或重定向（`tool < file`）喂数据时返回 `False`。据此分流：有管道输入就逐行读 stdin，没有就提示用法或改读文件参数。
+
+配套纪律：**结果只写 stdout，提示和错误一律写 stderr**，这样 `tool | next_tool` 的管道里只有干净数据。
+
+```python
+import sys
+
+
+def main():
+    if not sys.stdin.isatty():
+        # 有管道/重定向输入：逐行处理 stdin
+        for line in sys.stdin:
+            sys.stdout.write(line.upper())
+    else:
+        print('用法: echo "hello" | python upper.py', file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
+```
+
+运行 `echo "hello" | python upper.py`（或 `printf 'hello\nworld\n' | python upper.py`），预期输出：
+
+```text
+HELLO
+WORLD
+```
+
+不带管道直接运行则打印用法到 stderr 并以退出码 1 结束——这也是 Unix 工具的惯例：退出码 0 表示成功，非 0 表示失败，方便脚本判断。
+
+💡 提示：逐行迭代 `for line in sys.stdin` 是流式处理，内存恒定，适合大输入；Windows 的 PowerShell/cmd 管道同样适用 `isatty()` 判断。
 
 ---
 

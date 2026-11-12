@@ -296,17 +296,146 @@ Epoch [100/100] | Loss: 0.009996 | w: 2.9923 | b: 1.0051
 1. **为什么必须调用 `w.grad.zero_()`？如果不调用会发生什么？**
    - 提示：考虑梯度累积的机制
 
+**参考答案**
+
+PyTorch 的梯度默认是**累加**的：每次 `.backward()` 把新梯度**加到** `.grad` 上，而不是覆盖。如果不清零，上一批的旧梯度会一直堆积，参数更新用的是「历史梯度之和」而非当前梯度 → 方向错误、步长失控，训练震荡甚至发散。所以每步反向传播前要 `w.grad.zero_()`（或 `optimizer.zero_grad()`）清空。
+
+为什么设计成累加？为了支持「梯度累积」（多个 micro-batch 累加后再更新，模拟大 batch）、RNN 等场景。但标准训练里必须每步清零。
+
+小例子：两步梯度分别是 g1、g2，不清零时第二步用的是 g1+g2 而不是 g2 → 冲过头。
+
+💡 提示：`optimizer.zero_grad()` 一次清所有参数；新版默认 `set_to_none=True` 更省内存。
+
 2. **`torch.no_grad()` 的作用是什么？如果去掉会怎样？**
    - 提示：考虑内存和计算图的影响
+
+**参考答案**
+
+`torch.no_grad()` 是个上下文管理器，进入后**关闭梯度追踪**：里面的运算不再构建计算图，结果 `requires_grad=False`。常用于推理/评估和手动更新参数。
+
+去掉它（在评估时）：PyTorch 仍会建图、保存中间结果 → 内存占用更大（可能近 2 倍）、速度更慢，还可能意外追踪本不需要的运算。在手动更新参数时去掉则会直接报错（见第 4 题）。
+
+小例子：`with torch.no_grad(): y = model(x)` 得到的 y 没有 `grad_fn`；不加则保留整张图，而你其实不需要反向传播。
+
+💡 提示：凡是不需要梯度的地方都用 `no_grad()`，省内存又加速。
 
 3. **如果将学习率从 0.1 改为 1.0，训练会发生什么变化？尝试实验。**
    - 提示：考虑学习率过大导致的震荡和发散
 
+**参考答案**
+
+学习率过大会**越过最优点来回震荡，甚至发散**（损失爆炸到 inf/nan）。对这个线性回归，稳定要求 lr 小于约 `2/L`（L 是损失 Hessian 的最大特征值≈`2·mean(x²)`）；x∈[0,2] 时 lr 需小于约 0.75，所以 1.0 会发散。
+
+下面实测对比（需 `pip install torch`）：
+
+```python
+import torch
+
+def train(lr, num_epochs=100):
+    torch.manual_seed(42)
+    x = 2 * torch.rand(100, 1)
+    y = 3.0 * x + 1.0 + 0.1 * torch.randn(100, 1)
+    w = torch.randn(1, requires_grad=True)
+    b = torch.zeros(1, requires_grad=True)
+    for epoch in range(num_epochs):
+        loss = ((x * w + b - y) ** 2).mean()
+        loss.backward()
+        with torch.no_grad():
+            w -= lr * w.grad
+            b -= lr * b.grad
+        w.grad.zero_(); b.grad.zero_()
+        if (epoch + 1) % 20 == 0:
+            print(f"lr={lr} Epoch {epoch+1:3d} | loss={loss.item():.3e}")
+
+train(0.1)
+train(1.0)
+```
+
+预期输出（数值因机器/版本而异）：
+
+```
+lr=0.1 Epoch  20 | loss=1.790e-01
+lr=0.1 Epoch  40 | loss=5.663e-02
+lr=0.1 Epoch  60 | loss=2.114e-02
+lr=0.1 Epoch  80 | loss=1.084e-02
+lr=0.1 Epoch 100 | loss=7.852e-03
+lr=1.0 Epoch  20 | loss=1.869e+22
+lr=1.0 Epoch  40 | loss=inf
+lr=1.0 Epoch  60 | loss=inf
+lr=1.0 Epoch  80 | loss=nan
+lr=1.0 Epoch 100 | loss=nan
+```
+
+lr=0.1 损失稳步降到 7.85e-3；lr=1.0 第 20 轮就爆到 1.87e22，随后 inf、nan——彻底发散。
+
+💡 提示：用更小学习率、学习率调度、梯度裁剪，或自适应优化器（Adam）来避免发散。
+
 4. **为什么在手动更新参数时需要 `torch.no_grad()`？**
    - 提示：参数更新本身不应该被记录到计算图中
 
+**参考答案**
+
+`w`、`b` 是 `requires_grad=True` 的**叶子张量**。更新 `w -= lr * w.grad` 是对它们的原地操作；若不放在 `no_grad()` 里，autograd 会试图追踪这次原地更新，直接抛出「a leaf Variable that requires grad is being used in an in-place operation」错误。而且从语义上，参数更新**不是损失的可微步骤**，本就不该进计算图。
+
+`no_grad()` 告诉 autograd 跳过追踪，于是更新只改变数值、不建图，既避免报错，也防止图无限增长、内存膨胀和下一轮梯度算错。
+
+小例子：不加 `no_grad` 时 `w -= lr*w.grad` 报 RuntimeError；加了就正常。
+
+💡 提示：优化器内部也是在 `no_grad` 下做更新的，所以 `optimizer.step()` 不用你手动包裹。
+
 5. **尝试将上述代码修改为批量梯度下降（每次使用全部数据）和小批量梯度下降（batch_size=32），比较训练效果。**
    - 提示：考虑随机性和收敛速度的差异
+
+**参考答案**
+
+- **全批量（batch_size=N）**：每次用全部数据算梯度，估计准、噪声小、收敛平滑；但每步开销大、每个 epoch 更新次数少，容易停在尖锐极小值。
+- **小批量（batch_size=32）**：梯度是带噪估计，每 epoch 更新多次、更快，噪声有助于跳出尖锐极小/鞍点，泛化常更好；代价是轻微震荡。
+
+下面实测（需 `pip install torch`）：
+
+```python
+import torch
+
+torch.manual_seed(42)
+x = 2 * torch.rand(100, 1)
+y = 3.0 * x + 1.0 + 0.1 * torch.randn(100, 1)
+
+def train(batch_size, lr=0.1, num_epochs=100):
+    torch.manual_seed(0)
+    w = torch.randn(1, requires_grad=True)
+    b = torch.zeros(1, requires_grad=True)
+    n = len(x)
+    for epoch in range(num_epochs):
+        perm = torch.randperm(n)            # 每个 epoch 打乱样本
+        for start in range(0, n, batch_size):
+            idx = perm[start:start + batch_size]
+            xb, yb = x[idx], y[idx]
+            loss = ((xb * w + b - yb) ** 2).mean()
+            loss.backward()
+            with torch.no_grad():
+                w -= lr * w.grad
+                b -= lr * b.grad
+            w.grad.zero_(); b.grad.zero_()
+    return w.item(), b.item()
+
+w_full, b_full = train(batch_size=100)   # 批量梯度下降：每次用全部数据
+w_mini, b_mini = train(batch_size=32)    # 小批量梯度下降
+print(f"全批量:   y = {w_full:.4f}x + {b_full:.4f}")
+print(f"小批量32: y = {w_mini:.4f}x + {b_mini:.4f}")
+print("真实关系: y = 3.0000x + 1.0000")
+```
+
+预期输出（数值因机器/版本而异）：
+
+```
+全批量:   y = 2.9734x + 1.0273
+小批量32: y = 2.9759x + 1.0271
+真实关系: y = 3.0000x + 1.0000
+```
+
+两者都收敛到接近真实的 3x+1；小批量因每 epoch 更新更多次，这里略快一点点，差异不大。
+
+💡 提示：小批量是实践默认（兼顾速度、稳定与泛化），batch_size 常取 32~256。
 
 ---
 

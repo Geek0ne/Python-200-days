@@ -358,10 +358,56 @@ process.start()
 ## ❓ 思考题
 
 1. Scrapy 为什么不用多线程也能实现高并发？它依赖的核心机制是什么？
+
+**参考答案**
+
+Scrapy 基于 Twisted 的**异步事件循环**（单线程异步 IO，协作式并发）。发起请求后它不阻塞等待响应，而是注册回调、立刻去处理下一个请求；等某个响应回来时，事件循环再调用对应回调。这样成百上千个请求的"等待时间"重叠在一起，CPU 几乎不空转，无需多线程就能高并发。
+
+核心机制：**事件循环 + 非阻塞 IO + 回调/生成器**。对比 requests 的同步阻塞——等一个响应时线程只能干瞪眼。
+
+⚠️ 注意：代价是代码必须写成回调/生成器风格，不能写 `time.sleep()`（会阻塞整个事件循环），延时要用 `DOWNLOAD_DELAY` 等机制。
 2. `yield item` 和 `yield Request` 分别流向哪个组件？如果在 `parse` 里既不 yield 也不 return，会发生什么？
+
+**参考答案**
+
+- **`yield item`**（字典/Item）：流向 **Item Pipeline**，由各 `process_item` 依次清洗、校验、入库。
+- **`yield Request`**：回到 **Engine**，再进 **Scheduler** 排队去重，之后由 Downloader 下载，响应交给指定的 callback。
+
+如果 `parse` 里既不 yield 也不 return（生成器没有任何产出），这个响应就既不产生数据、也不产生新请求——这一页"白爬了"。爬虫不会报错，但会安静地结束，输出文件是空的。
+
+小例子：`parse` 里只 `print` 不 `yield`，爬虫跑完没有任何数据落盘。
 3. Pipeline 中 `process_item` 忘记 `return item` 会怎样？如何避免？
+
+**参考答案**
+
+`process_item` 必须 `return item`（或抛 `DropItem`）。如果忘记 return（默认返回 `None`），数据流就"断"了——Scrapy 不会再把它传给后续 Pipeline，最终该 item 不被导出/入库，**数据悄悄丢失**。
+
+避免方法：
+
+- 每个 `process_item` 末尾显式 `return item`。
+- 想丢弃时用 `raise scrapy.DropItem(...)`，而不是 `return None`。
+- 写单元测试检查管道输出是否完整。
+
+小例子：清洗价格的管道忘了 return，后面的 JsonPipeline 拿到 None，JSON 文件里就少了这条数据。
 4. `allowed_domains` 有什么安全意义？如果列表页里混入了第三方域名的链接，Scrapy 会怎么处理？
+
+**参考答案**
+
+`allowed_domains` 是"安全阀"，限定爬虫只爬这些域名，由 **OffsiteMiddleware** 实现。意义在于防止爬到第三方/无关网站（"爬飞了"），避免无意义请求、法律风险和被封。
+
+如果列表页混入第三方域名的链接，Scrapy 默认会**过滤掉这些 offsite 请求**（不发出），并记一条 debug 日志，只保留允许域名内的链接继续爬。
+
+💡 提示：要爬某域名的子域名，把该域名加入 `allowed_domains` 即可；它是按域名匹配过滤 Spider 产出的请求。
 5. `DOWNLOAD_DELAY=0.5` 和 `AUTOTHROTTLE_ENABLED=True` 有什么区别？哪个对目标网站更"礼貌"？
+
+**参考答案**
+
+- **`DOWNLOAD_DELAY=0.5`**：固定延迟，同一域名两次请求之间固定等 0.5 秒，不管服务器快慢。
+- **`AUTOTHROTTLE_ENABLED=True`**：自适应限速，根据目标服务器的响应延迟和并发情况**动态调整**延迟——对方响应慢/负载高就自动加大延迟，响应快就适当减小，目标是匹配对方的承受能力。
+
+**AutoThrottle 更礼貌也更智能**：它会随对方压力自动退让，避免在对方已经吃力时还按固定速率猛打；固定延迟简单可预测，但不会"看脸色"。实务常两者结合，给 AutoThrottle 设 `START_DELAY` 和 `MAX_DELAY`。
+
+小例子：对方突然变慢，AutoThrottle 会把延迟从 0.5s 拉到几秒，固定延迟则仍 0.5s 硬撞。
 
 ---
 

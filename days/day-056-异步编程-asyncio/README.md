@@ -722,13 +722,155 @@ async def main_correct():
 
 1. **为什么 asyncio 是单线程的，却能实现高并发？** 它和多线程的本质区别是什么？
 
+**参考答案**
+
+因为「并发」不等于「并行」。asyncio 重叠的是 **I/O 等待时间**，而不是 CPU 计算：
+
+- **协作式调度**：协程在 `await` 处主动让出控制权，事件循环趁某个协程等 I/O 时去跑别的协程。成百上千个「等待」被叠在一起，单线程也能很高并发。
+- **I/O 多路复用**：底层用 epoll/kqueue/IOCP，一个线程就能高效监听海量 socket。
+- **轻量**：协程是用户态对象，创建/切换成本远低于线程，没有 OS 上下文切换，也不需要为共享数据加锁（单线程）。
+
+与多线程的本质区别：线程由 **OS 抢占式调度**、可分布到多核（但 CPython 受 GIL 限制），切换有开销、共享数据要加锁；asyncio 是**单线程协作式**，靠「主动让出」并发，专治 I/O 密集。小例子（已验证，5 个 1s 任务并发只花约 1s）：
+
+```python
+import asyncio, time
+
+async def task(i):
+    await asyncio.sleep(1)
+    return i
+
+async def main():
+    start = time.perf_counter()
+    results = await asyncio.gather(*(task(i) for i in range(5)))
+    print(len(results), f"{time.perf_counter()-start:.2f}s")   # 5 约 1.00s
+
+asyncio.run(main())
+```
+
 2. **如果一个协程中调用了 `time.sleep(5)` 而不是 `await asyncio.sleep(5)`，会发生什么？** 如何检测这类问题？
+
+**参考答案**
+
+`time.sleep(5)` 是**同步阻塞**，会霸占整个事件循环所在线程 5 秒。期间**所有其他协程都无法推进**——异步并发彻底失效，相当于把单线程卡死。
+
+- 正确做法：用 `await asyncio.sleep(5)`，它会让出控制权，其他协程照常运行。
+- 无法避免的阻塞调用（如某些同步库），用 `await loop.run_in_executor(None, func)` 丢到线程/进程池。
+
+检测方法：
+- **调试模式**：`asyncio.run(main(), debug=True)` 或设环境变量 `PYTHONASYNCIODEBUG=1`，慢回调会打印 `Executing <Task ...> took X seconds` 警告。
+- 调低 `loop.slow_callback_duration` 提高敏感度；或放一个「心跳协程」监控自己是否被按时调度。
+
+小例子（已验证，victim 本应 0.1s 完成，却被拖到约 1.1s）：
+
+```python
+import asyncio, time
+
+async def blocker():
+    time.sleep(1)             # 同步阻塞，霸占事件循环
+
+async def victim():
+    await asyncio.sleep(0.1)  # 本应 0.1s 后完成
+
+async def main():
+    start = time.perf_counter()
+    t = asyncio.create_task(victim())
+    await blocker()           # 先跑阻塞者
+    await t
+    print(f"victim 实际等待: {time.perf_counter()-start:.2f}s")  # 约 1.1s
+
+asyncio.run(main())
+```
 
 3. **`asyncio.gather()` 和 `asyncio.create_task()` + `await task` 有什么区别？** 在什么场景下选择哪个？
 
+**参考答案**
+
+两者都能并发，区别在「控制粒度」和「错误处理」：
+
+- **`gather(*coros)`**：一次性并发一批协程，按**输入顺序**返回结果列表；默认第一个异常就抛出（并取消其余），`return_exceptions=True` 则把异常当结果收集。适合「固定一组、要全部结果」的简单场景。
+- **`create_task(coro)`**：创建即被调度（不必等到 await），返回一个 **Task 句柄**，可单独 `cancel()`、`add_done_callback()`、查 `done()`，再逐个 `await`。适合需要精细控制、动态任务、提前启动、部分取消的场景。
+
+本质上 gather ≈ 为每个协程 create_task 再统一等待。选择：批量同质任务、图省事 → gather；要掌控单个任务生命周期 → create_task。小例子（已验证，create_task 创建后即并发）：
+
+```python
+import asyncio
+
+async def work(name):
+    print(f"{name} 开始")
+    await asyncio.sleep(0.1)
+    print(f"{name} 结束")
+    return name
+
+async def main():
+    t1 = asyncio.create_task(work("A"))
+    t2 = asyncio.create_task(work("B"))
+    print("任务已创建（尚未 await）")
+    r1, r2 = await t1, await t2
+    print(r1, r2)             # A B
+
+asyncio.run(main())
+```
+
 4. **如何实现一个异步的生产者-消费者模型？** 提示：使用 `asyncio.Queue`。
 
+**参考答案**
+
+用 `asyncio.Queue` 做异步缓冲：生产者 `await q.put(item)`，消费者 `await q.get()`，二者通过 `gather` 并发跑。队列空时 `get` 自动挂起、有数据再唤醒，天然协调节奏。用「哨兵值」（如 `None`）通知消费者结束，并配合 `task_done()` / `join()` 跟踪处理进度。
+
+完整示例（已验证，生产/消费 0~4 后正常结束）：
+
+```python
+import asyncio
+
+async def producer(q, n):
+    for i in range(n):
+        await q.put(i)
+        print(f"生产 {i}")
+        await asyncio.sleep(0.05)
+    await q.put(None)          # 哨兵：通知消费者结束
+
+async def consumer(q):
+    while True:
+        item = await q.get()
+        if item is None:
+            q.task_done()
+            break
+        print(f"消费 {item}")
+        q.task_done()
+
+async def main():
+    q = asyncio.Queue()
+    await asyncio.gather(producer(q, 5), consumer(q))
+
+asyncio.run(main())
+```
+
+预期输出交替打印「生产 0 / 消费 0 … 生产 4 / 消费 4」。多消费者时，给每个消费者各发一个哨兵即可。
+
 5. **事件循环在不同操作系统上使用不同的 I/O 多路复用机制（epoll/kqueue/IOCP），这些机制的本质区别是什么？**
+
+**参考答案**
+
+本质区别在于「通知的是就绪还是完成」：
+
+- **epoll（Linux）/ kqueue（macOS/BSD）——就绪通知（Reactor 模式）**：内核告诉你「某 fd 可以读/写了」，真正的读写仍由你自己发起。事件通知接近 O(1)，能撑海量连接。kqueue 更通用，还能监听文件、信号、定时器等。
+- **IOCP（Windows）——完成通知（Proactor 模式）**：你先发起一个异步读/写，内核在**操作完成后**通知你（数据已搬好）。
+- 老的 select/poll 是 O(n) 轮询、有 fd 数量上限，已被上述机制取代。
+
+asyncio 用 `selectors`（Unix）和 Proactor 事件循环（Windows）把这些差异屏蔽掉。小例子（已验证，Windows 上）：
+
+```python
+import asyncio, selectors
+
+async def main():
+    loop = asyncio.get_running_loop()
+    print(type(loop).__name__)                 # Windows: ProactorEventLoop（IOCP）
+    print(selectors.DefaultSelector.__name__)  # Windows: SelectSelector
+
+asyncio.run(main())
+```
+
+💡 提示：在 Linux 上运行会看到基于 epoll 的 `SelectorEventLoop` 与 `EpollSelector`，macOS 上是 `KqueueSelector`——同一份 asyncio 代码自动适配底层机制。
 
 ---
 

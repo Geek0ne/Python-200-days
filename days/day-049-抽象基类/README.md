@@ -704,6 +704,39 @@ print(f"  {checkbox.render()}")
 
 1. **ABC 和 Protocol 的区别是什么？** Python 3.8 引入了 `typing.Protocol`（结构化子类型），它和 ABC 有什么异同？什么场景下用哪个？
 
+**参考答案**
+
+两者都用来描述「接口」，但判定子类型的思路相反：
+
+- **ABC 是「名义子类型」（nominal subtyping）**：必须显式继承（或用 `register()` 注册）才算子类，并在**实例化时**强制检查抽象方法是否实现。它面向运行时，适合你自己掌控的类体系。
+- **Protocol 是「结构子类型」（structural subtyping，即鸭子类型的静态版）**：只要一个类「恰好」拥有协议里声明的方法/属性，就被视为匹配，无需继承。它主要面向静态类型检查器（如 mypy），适合给第三方或互不相关的类做类型标注、解耦依赖。
+- 加了 `@runtime_checkable` 的 Protocol 才能用 `isinstance()` 检查，但**只检查方法名是否存在**，不校验签名，也不强制实现。
+
+选择建议：要「强制子类必须实现某些方法」用 ABC；要「给已有鸭子类型代码补类型提示」用 Protocol。小例子（已验证）：
+
+```python
+from abc import ABC, abstractmethod
+from typing import Protocol, runtime_checkable
+
+class Speaker(ABC):
+    @abstractmethod
+    def speak(self) -> str: ...
+
+class Dog(Speaker):                 # 显式继承
+    def speak(self) -> str: return "Woof"
+
+@runtime_checkable
+class SpeakerProto(Protocol):
+    def speak(self) -> str: ...
+
+class Robot:                        # 没继承任何基类
+    def speak(self) -> str: return "Beep"
+
+print(isinstance(Dog(), Speaker))         # True
+print(isinstance(Robot(), Speaker))       # False（未继承）
+print(isinstance(Robot(), SpeakerProto))  # True（结构匹配）
+```
+
 2. **为什么 `@abstractmethod` 必须在最内层装饰器？** 以下代码为什么不能交换顺序？
 ```python
 @abstractmethod
@@ -717,11 +750,129 @@ def value(self): ...
 def value(self): ...
 ```
 
+**参考答案**
+
+装饰器是**自下而上**（从最靠近函数的那层开始）应用的，关键在于 `abstractmethod` 要作用在「原始函数」上。
+
+- **正确写法（`@property` 在外、`@abstractmethod` 在内）**：先执行 `abstractmethod(func)`，给函数打上 `__isabstractmethod__ = True` 标记；再执行 `property(func)`。`property` 会读取 `fget` 的这个标记，自动把自身的 `__isabstractmethod__` 也设为 `True`，于是 `ABCMeta` 能识别 `value` 是抽象成员，子类不实现就无法实例化。
+- **交换顺序（`@abstractmethod` 在外、`@property` 在内）**：先得到 `property` 对象，再对它调用 `abstractmethod`。`abstractmethod` 试图写 `property_obj.__isabstractmethod__ = True`，但 `property` 对象不允许写这个属性，于是在**定义类的那一刻**就抛出 `AttributeError`。
+
+验证（Python 3.12）：
+
+```python
+from abc import ABC, abstractmethod
+
+class Good(ABC):
+    @property
+    @abstractmethod
+    def value(self): ...
+
+class GoodChild(Good):
+    pass
+
+try:
+    GoodChild()
+except TypeError as e:
+    print(e)   # Can't instantiate abstract class GoodChild without an implementation for abstract method 'value'
+
+try:
+    class Bad(ABC):
+        @abstractmethod
+        @property
+        def value(self): ...
+except AttributeError as e:
+    print(e)   # attribute '__isabstractmethod__' of 'property' objects is not writable
+```
+
+⚠️ 注意：错误顺序不是「静默失效」，而是定义类时直接报 `AttributeError`；同理 `@classmethod` / `@staticmethod` 的正确顺序也是它们在外、`@abstractmethod` 在内。
+
 3. **register() 注册的虚拟子类有什么限制？** 为什么有时候 `isinstance()` 返回 True 但实际调用会报错？
+
+**参考答案**
+
+`register()` 只是「登记一个名义上的子类关系」，它**不检查、也不帮你实现任何方法**。
+
+- 注册后 `issubclass()` / `isinstance()` 会返回 `True`，因为 `ABCMeta` 把该类记进了虚拟子类表。
+- 但抽象方法是否实现完全没被校验。若被注册的类其实缺少某个方法，调用时照样抛 `AttributeError`——ABC 的「强制实现」保护对虚拟子类不生效。
+- 此外，虚拟子类不会继承 ABC 里的任何具体方法/属性，也不触发 `__init_subclass__` 等继承钩子。
+
+小例子（已验证）：
+
+```python
+from abc import ABC, abstractmethod
+
+class Drawable(ABC):
+    @abstractmethod
+    def draw(self): ...
+
+class Fake:          # 根本没实现 draw
+    pass
+
+Drawable.register(Fake)
+print(isinstance(Fake(), Drawable))  # True
+Fake().draw()                        # AttributeError: 'Fake' object has no attribute 'draw'
+```
+
+💡 提示：`register()` 适合「让已有、无法修改继承关系的类被识别为某接口」，但要自己保证它真的实现了接口；需要强制约束时仍应使用真正的继承。
 
 4. **如何用 ABC 实现 Mixin？** 抽象 Mixin 有什么好处和风险？
 
+**参考答案**
+
+Mixin 是一种「只混入部分能力、不单独实例化」的类。用 ABC 做 Mixin，可以一边提供现成的通用方法，一边用抽象方法规定「宿主类必须补齐的部分」。
+
+做法：让 Mixin 继承 `ABC`，把「依赖宿主提供的能力」声明为 `@abstractmethod`，把「可复用的通用逻辑」写成普通方法；宿主类多继承这个 Mixin 并实现抽象方法即可。
+
+- **好处**：通用逻辑只写一次、可自由组合；抽象方法把「隐含依赖」变成显式契约，宿主忘了实现会在实例化时报错，而不是运行到一半才崩。
+- **风险**：多继承让 MRO（方法解析顺序）变复杂，多个 Mixin 若有同名方法/属性容易冲突；Mixin 不应自带 `__init__` 或独立状态，否则协作初始化会很棘手。
+
+小例子（已验证）：
+
+```python
+import json
+from abc import ABC, abstractmethod
+
+class JSONSerializableMixin(ABC):
+    @abstractmethod
+    def to_dict(self) -> dict: ...        # 依赖宿主实现
+
+    def to_json(self) -> str:             # 可复用逻辑
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+class User(JSONSerializableMixin):
+    def __init__(self, name):
+        self.name = name
+    def to_dict(self):
+        return {"name": self.name}
+
+print(User("张三").to_json())   # {"name": "张三"}
+```
+
 5. **Python 标准库中哪些模块使用了 ABC？** 查看 `collections.abc`、`io`、`os` 等模块，找出使用 ABC 的例子。
+
+**参考答案**
+
+标准库大量使用 ABC，最集中的是 `collections.abc`，它把「容器协议」拆成一组抽象基类：
+
+- **基础协议**：`Iterable`（可迭代）、`Iterator`（迭代器）、`Sized`（有长度）、`Container`（支持 `in`）、`Hashable`（可哈希）、`Callable`（可调用）。
+- **容器体系**：`Sequence` / `MutableSequence`（如 `list`）、`Mapping` / `MutableMapping`（如 `dict`）、`Set` / `MutableSet`（如 `set`）。
+- **其他模块**：`io.IOBase` / `RawIOBase` / `BufferedIOBase` / `TextIOBase` 是文件流的 ABC；`os.PathLike` 是「路径对象」的 ABC（抽象方法 `__fspath__`）；`numbers` 模块的 `Number` / `Complex` / `Real` / `Rational` / `Integral` 是数值塔 ABC。
+
+小例子（已验证）：
+
+```python
+from collections.abc import Iterable, Sized, Mapping, Sequence
+import io, os
+
+print(isinstance([1, 2], Iterable))       # True
+print(isinstance([1, 2], Sequence))       # True
+print(isinstance({}, Mapping))            # True
+print(isinstance("abc", Sized))           # True
+print(issubclass(io.StringIO, io.IOBase)) # True
+print(os.PathLike.__abstractmethods__)    # frozenset({'__fspath__'})
+```
+
+💡 提示：`isinstance(x, Iterable)` 只检查有没有 `__iter__`，并不保证迭代一定成功；判断「是不是迭代器」要用 `Iterator`（需同时有 `__iter__` 和 `__next__`）。
 
 ---
 

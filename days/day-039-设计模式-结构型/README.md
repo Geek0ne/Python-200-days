@@ -431,10 +431,189 @@ class CacheProxy:
 
 1. **适配器 vs 外观模式**：适配器是改写接口，外观是简化接口。如果要封装一个复杂的子系统提供简单入口，应该用哪个？
 
+**参考答案**
+
+应该用**外观模式（Facade）**。两者的出发点不同：
+
+- **适配器**解决的是「**接口不兼容**」：客户端已经期待某个固定接口，但手头的类接口对不上，适配器做「转换」让它能 plug 进去。它通常是**一对一**的包装，目的是「匹配已有接口」，而不是让事情变简单。
+- **外观**解决的是「**子系统太复杂**」：背后有一大堆类和调用顺序，外观提供一个**新的、更简单的高层入口**，把繁琐的内部交互藏起来。它是**多对一**的简化，目的是「降低使用门槛」。
+
+题目说的是「封装复杂子系统、提供简单入口」，这正是外观的定义。比如一个「一键启动电脑」的外观，内部依次调用 CPU、内存、硬盘的初始化，调用方只需 `computer.start()` 一句。
+
+💡 提示：两者可以共存——外观内部若遇到接口不兼容的第三方组件，仍可用适配器去对接。判断口诀：**「为了匹配旧接口」用适配器，「为了简化复杂系统」用外观。**
+
 2. **缓存失效**：缓存代理在实战中最大的挑战是缓存失效策略。你会如何设计一个带 TTL（过期时间）的缓存代理？
+
+**参考答案**
+
+TTL（Time To Live，存活时间）的思路是：每条缓存除了存「值」，再存一个「过期时刻」；读取时先比较当前时间，过期了就当作未命中、重新去真实服务取。关键是用 `time.monotonic()`（单调递增时钟）而不是 `time.time()`，避免系统时间被手动调整或 NTP 校时导致过期判断错乱。
+
+```python
+import time
+
+class DataService:
+    def __init__(self):
+        self.calls = 0                  # 记录真实调用次数
+    def get_data(self, item_id):
+        self.calls += 1
+        return {"id": item_id, "data": f"数据_{item_id}"}
+
+class TTLCacheProxy:
+    def __init__(self, service, ttl=5.0):
+        self._service = service
+        self._ttl = ttl                 # 缓存存活秒数
+        self._cache = {}                # item_id -> (值, 过期时刻)
+
+    def get_data(self, item_id):
+        now = time.monotonic()          # 单调时钟，不受系统时间调整影响
+        hit = self._cache.get(item_id)
+        if hit is not None and now < hit[1]:
+            return hit[0]               # 命中且未过期，直接返回
+        value = self._service.get_data(item_id)   # 未命中/已过期：重新取
+        self._cache[item_id] = (value, now + self._ttl)
+        return value
+
+svc = DataService()
+proxy = TTLCacheProxy(svc, ttl=0.3)     # 演示用：0.3 秒过期
+proxy.get_data("u1")                    # 第一次：真实获取
+proxy.get_data("u1")                    # 立刻再取：命中缓存
+print("真实调用次数:", svc.calls)
+time.sleep(0.4)                          # 等待超过 TTL
+proxy.get_data("u1")                    # 过期后：重新获取
+print("真实调用次数:", svc.calls)
+```
+
+预期输出：
+
+```
+真实调用次数: 1
+真实调用次数: 2
+```
+
+前两次查询只触发 1 次真实调用（第二次命中缓存）；等待超过 TTL 后，缓存过期，第三次查询重新调用真实服务，计数变成 2。
+
+实战中还可在此基础上叠加：**LRU 淘汰**（容量满时删最久未用的，可用 `collections.OrderedDict`）、**主动失效**（数据更新时立即删对应缓存）、**防击穿**（过期瞬间用锁保证只有一个线程去回源）。
+
+⚠️ 注意：TTL 是「惰性过期」——只有下次访问才检查并刷新，过期条目若一直不被访问会占着内存，需要配合定期清理或容量上限。
 
 3. **多层代理**：如果既要缓存又要权限检查又要日志记录，如何组合多个代理？是链式代理还是用装饰器模式？
 
+**参考答案**
+
+「链式代理」和「装饰器模式」在结构上其实是**同一回事**：都是「每层包一个内层对象、实现相同接口、在调用前后加自己的逻辑」，一层套一层。区别只在**意图**——强调「控制访问」时叫代理，强调「叠加功能」时叫装饰器。所以这里不必二选一，**用统一接口把多个包装层叠起来即可**，关键是**顺序**。
+
+顺序原则：**越通用、越该先执行的放外层**。通常是 日志（记录所有请求，含被拒的）→ 权限（先拦截非法访问）→ 缓存（合法请求才查缓存）→ 真实服务。权限要在缓存外面，否则无权用户可能直接命中缓存拿到数据。
+
+```python
+class Service:
+    def query(self, user, key):
+        return f"{key} 的数据"
+
+class LogProxy:
+    def __init__(self, inner):
+        self._inner = inner
+    def query(self, user, key):
+        print(f"[日志] {user} 查询 {key}")
+        return self._inner.query(user, key)
+
+class AuthProxy:
+    def __init__(self, inner, allowed):
+        self._inner = inner
+        self._allowed = allowed
+    def query(self, user, key):
+        if user not in self._allowed:
+            return "拒绝：无权限"
+        return self._inner.query(user, key)
+
+class CacheProxy:
+    def __init__(self, inner):
+        self._inner = inner
+        self._cache = {}
+    def query(self, user, key):
+        if key not in self._cache:
+            self._cache[key] = self._inner.query(user, key)
+        return self._cache[key]
+
+# 从内到外组装：真实服务 → 缓存 → 权限 → 日志
+svc = CacheProxy(Service())
+svc = AuthProxy(svc, allowed={"alice"})
+svc = LogProxy(svc)
+
+print(svc.query("alice", "k1"))
+print(svc.query("bob", "k1"))
+```
+
+预期输出：
+
+```
+[日志] alice 查询 k1
+k1 的数据
+[日志] bob 查询 k1
+拒绝：无权限
+```
+
+日志层在最外，所以 alice 和 bob 的请求都被记录；bob 无权限，在权限层被拦下，根本到不了缓存和真实服务。
+
+💡 提示：如果这些「层」只是给函数加日志/缓存/计时，用 Python 的 `@decorator` 语法糖叠在方法上更简洁；若需要运行时按对象动态增减、或每层持有状态（如各自的缓存字典），用这里的对象组合更合适。
+
 4. **Python 装饰器 vs 装饰器模式**：你有一个类，需要在运行时决定是否添加日志功能，用 Python `@decorator` 还是装饰器模式？为什么？
 
+**参考答案**
+
+关键词是「**运行时决定**」，所以应该用**装饰器模式（对象组合）**。
+
+- **Python `@decorator`** 是语法糖，本质是 `func = decorator(func)`，在**函数/类定义时（导入那一刻）就绑定好了**，之后不能针对某个具体对象「临时加上」或「摘掉」。它适合「这个功能始终都要」的固定增强，比如全局计时、缓存。
+- **装饰器模式**把功能做成包装对象，`LoggingWrapper(obj)` 在**运行时**才决定要不要包、包几层，不同实例可以有不同的功能组合，甚至中途更换。这正契合「运行时决定是否加日志」的需求。
+
+举个最小对比：
+
+```python
+# 装饰器模式：运行时按需包装
+class Service:
+    def work(self):
+        return "完成"
+
+class LoggingWrapper:
+    def __init__(self, inner):
+        self._inner = inner
+    def work(self):
+        print("[日志] 开始工作")
+        return self._inner.work()
+
+base = Service()
+need_log = True                       # 运行时才确定的开关
+obj = LoggingWrapper(base) if need_log else base
+print(obj.work())
+```
+
+预期输出：
+
+```
+[日志] 开始工作
+完成
+```
+
+把 `need_log` 改成 `False`，就直接用 `base`，不打日志——这种「按实例、按运行时条件灵活增减」正是 `@decorator` 做不到的。
+
+💡 提示：如果日志是「类级别、永远开启」的固定行为，那直接 `@log` 装饰方法更省事；只有当「是否启用」要到运行时、且可能因对象而异时，才值得用装饰器模式。
+
 5. **单例代理**：代理模式中，代理对象本身是否应该是单例？什么情况下是，什么情况下不是？
+
+**参考答案**
+
+**不一定，取决于代理是否持有「应当全局共享」的状态或资源。** 代理模式和单例模式是两个独立维度，可以组合，也可以不组合。
+
+适合做成单例的情况：
+
+- **代理代表一个全局共享的资源**：如远程服务的 stub、数据库连接池、全局配置代理。整个进程共用一个就够了，多建反而浪费连接/内存。
+- **代理内部维护共享缓存**：如全局缓存代理，单例能让所有调用方命中同一份缓存，提高命中率；若每个调用方各建一个，缓存就形同虚设。
+
+不该做成单例的情况：
+
+- **代理携带「 per-请求 / per-用户」的状态**：如保护代理里存着当前用户的权限上下文，不同用户必须用不同代理实例，单例会串号、造成越权。
+- **虚拟代理对应各自的大对象**：每张图片、每个大文档各有自己的懒加载代理，它们生命周期不同，不能共用一个。
+- **需要隔离或便于测试**：单例是全局状态，会让单元测试相互污染；非单例代理可以每次注入干净的实例。
+
+一句话：**代理共享的是「资源/缓存」→ 倾向单例；代理承载的是「会话/用户/对象各自的上下文」→ 必须多实例。** 拿不准时先做成普通对象，由调用方决定要不要复用同一个实例，比硬编码成单例更灵活。
+
+⚠️ 注意：即便决定用单例，也要考虑多线程安全（见 day-038 第 1 题），共享缓存的读写在并发下可能需要加锁。

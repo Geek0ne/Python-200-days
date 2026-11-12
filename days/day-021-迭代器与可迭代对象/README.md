@@ -396,13 +396,268 @@ graph TD
 ## 📝 思考题
 
 1. 为什么迭代器遍历过一次后就不能再次遍历？设计上的考虑是什么？
+
+**参考答案**
+
+迭代器本质上是一个**有状态的"游标"**：内部记录着"读到哪儿了"，每调用一次 `__next__()` 就把游标往前挪一格，走到尽头抛出 `StopIteration`，且游标停在末尾**不会自动回退**。所以再遍历一次就什么都取不到。
+
+```python
+it = iter([1, 2, 3])
+print(list(it))   # [1, 2, 3]
+print(list(it))   # [] —— 已经耗尽，不会自动重置
+```
+
+预期输出：
+
+```text
+[1, 2, 3]
+[]
+```
+
+设计上的考虑：
+
+- **支持惰性 / 一次性数据流**：迭代器可能代表文件句柄、网络套接字、无限序列，数据根本没全部存在内存里，物理上无法"倒带"。一次性设计才能统一处理这些场景。
+- **节省内存**：不必为了"能重复遍历"而缓存所有元素。
+- **职责分离**："可重复遍历"是**可迭代对象**（容器）的事——每次 `iter(容器)` 都产生一个**全新**迭代器。所以列表能被反复 `for`，而迭代器对象本身是一次性的。
+
+💡 提示：想再遍历一次，要么重新 `iter(容器)` 拿新迭代器，要么先 `list(it)` 把结果固化成列表。
+
 2. 用自己的话说说 `__iter__()` 和 `__next__()` 方法的各自职责。
+
+**参考答案**
+
+用大白话说，两个方法分别负责"开始"和"前进"：
+
+- **`__iter__(self)`**：负责"交出迭代器"。`for` 循环和 `iter()` 内置函数会先调用它。对**迭代器**而言，约定返回它自己（`return self`）；对**可迭代对象**（如列表）而言，它返回一个新建的迭代器。它就像按下"从头播放"，拿到一个遥控器。
+- **`__next__(self)`**：负责"给我下一个元素"。每调用一次就返回当前值并把内部状态推进一步；没有元素时抛出 `StopIteration` 表示"结束"。它就像按遥控器的"下一首"。
+
+关键区别：一个对象**同时**拥有 `__iter__`（返回自身）和 `__next__` 才是**迭代器**；而**可迭代对象**只需要 `__iter__`。所以列表能被 `for`（有 `__iter__`），却不能直接 `next()`（没有 `__next__`），必须先 `iter(列表)` 拿到迭代器。
+
 3. 实现一个迭代器来生成斐波那契数列——和递归版本、迭代版本比有什么优劣势？
+
+**参考答案**
+
+```python
+class FibIterator:
+    """逐个产出斐波那契数列的迭代器（可以是无限序列）"""
+    def __init__(self, limit=None):
+        self.a, self.b = 0, 1     # 最近两项
+        self.limit = limit        # 可选：最多产出多少项
+        self.count = 0
+
+    def __iter__(self):
+        return self               # 迭代器返回自身
+
+    def __next__(self):
+        if self.limit is not None and self.count >= self.limit:
+            raise StopIteration   # 达到数量上限，结束
+        value = self.a
+        self.a, self.b = self.b, self.a + self.b   # 推进状态
+        self.count += 1
+        return value
+
+print(list(FibIterator(10)))           # 前 10 项
+fib = FibIterator()                    # 无限序列，按需取用
+print([next(fib) for _ in range(5)])
+```
+
+预期输出：
+
+```text
+[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+[0, 1, 1, 2, 3]
+```
+
+与另外两种版本对比：
+
+- **对比朴素递归**：迭代器逐项推进，O(n) 时间、O(1) 额外空间，无重复计算，也不受递归深度限制；朴素递归是 O(2ⁿ)，n 一大就栈溢出。
+- **对比迭代（返回 list 的函数）**：两者都是 O(n) 时间，但迭代器是**惰性**的——能表示无限序列，取多少算多少，内存 O(1)；而一次性建好列表的版本占 O(n) 内存，且必须先算完才能返回。
+- **代价**：迭代器一次性、不支持索引和 `len()`，代码也比普通循环稍多。
+
+💡 提示：用生成器（`yield`）写这种迭代器会更简洁，状态由解释器自动保存——这正是下一课 Day 022 的主题。
+
 4. `range()` 返回的是什么？是迭代器吗？用代码验证。
+
+**参考答案**
+
+```python
+from collections.abc import Iterable, Iterator
+
+r = range(5)
+print(type(r))                   # <class 'range'>
+print(isinstance(r, Iterable))   # True：可迭代对象
+print(isinstance(r, Iterator))   # False：但不是迭代器
+print(hasattr(r, '__next__'))    # False：没有 __next__
+
+it = iter(r)                     # iter() 之后才得到真正的迭代器
+print(type(it))                  # <class 'range_iterator'>
+print(next(it))                  # 0
+
+print(list(r), list(r))          # range 可反复遍历
+```
+
+预期输出：
+
+```text
+<class 'range'>
+True
+False
+False
+<class 'range_iterator'>
+0
+[0, 1, 2, 3, 4] [0, 1, 2, 3, 4]
+```
+
+结论：`range()` 返回的是一个 **`range` 对象——惰性的不可变序列（可迭代对象），不是迭代器**。它只保存 start/stop/step 三个参数，按需计算元素，所以 `range(10**9)` 几乎不占内存；但它支持反复遍历、索引、`len()`、`in` 判断，这些是迭代器做不到的。只有 `iter(range(...))` 才得到真正的迭代器 `range_iterator`。
+
 5. 如何实现一个"可暂停、可恢复"的迭代器？需要存储哪些状态？
+
+**参考答案**
+
+迭代器**天然就是"可暂停、可恢复"的**：每次 `__next__()` 算出一个值并返回，就是"暂停"；下一次调用 `next()` 就是"恢复"。关键在于——**要把"算下一个值所需的状态"保存在对象上**，让它在两次调用之间存活，而不是放在函数返回即销毁的临时局部变量里。
+
+需要存储的状态：当前位置 / 索引、最近几项的值（如斐波那契的两项）、计数器、底层数据源的引用、是否已结束的标志等，一句话——"继续算下一个值所必需的一切"。
+
+```python
+class PausableCounter:
+    """可暂停 / 可恢复的迭代器：状态保存在对象上，跨 next() 调用保留"""
+    def __init__(self, start, stop):
+        self.current = start     # 状态①：当前位置
+        self.stop = stop         # 状态②：结束边界
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.current >= self.stop:
+            raise StopIteration
+        value = self.current
+        self.current += 1        # 更新状态后返回，相当于"暂停"
+        return value
+
+c = PausableCounter(0, 5)
+print(next(c))     # 0：取一个就暂停
+print(next(c))     # 1：从上次位置恢复
+print(c.current)   # 2：能看到保存的状态
+print(list(c))     # [2, 3, 4]：继续取完剩余
+```
+
+预期输出：
+
+```text
+0
+1
+2
+[2, 3, 4]
+```
+
+这里 `self.current` 跨调用持久存在，就是"恢复"的全部秘密。生成器（`yield`）做的是同一件事，只不过由解释器自动帮你保存局部变量和执行位置，无需手写状态管理。
+
 6. `itertools.chain` 和 `+` 运算符拼接列表有什么区别？
+
+**参考答案**
+
+```python
+import itertools
+
+a = [1, 2]
+b = [3, 4]
+
+plus = a + b                     # + ：立即生成新列表，复制全部元素
+print(plus, type(plus))
+
+ch = itertools.chain(a, b)       # chain ：返回惰性迭代器，不复制
+print(type(ch))
+print(list(ch))
+
+# chain 可拼接任意可迭代对象（类型可不同）
+print(list(itertools.chain([1, 2], 'AB', (3,))))
+```
+
+预期输出：
+
+```text
+[1, 2, 3, 4] <class 'list'>
+<class 'itertools.chain'>
+[1, 2, 3, 4]
+[1, 2, 'A', 'B', 3]
+```
+
+主要区别：
+
+- **急切 vs 惰性**：`+` 立刻新建一个列表并复制所有元素，O(n+m) 时间和内存；`chain` 返回迭代器，不复制元素，遍历时才逐个产出，额外内存 O(1)。
+- **类型限制**：`+` 要求两边同类型（list + list）；`chain` 接受任意可迭代对象，可混合列表、字符串、元组等。
+- **可复用性**：`+` 的结果是列表，可反复遍历、可索引；`chain` 的结果是一次性迭代器。
+
+💡 提示：需要"拿到一个具体、可复用的列表"时用 `+`；需要"省内存地流式拼接"大量或无限序列时用 `chain`。另外 `chain` 是惰性的，消费前若原容器变化会反映最新内容，而 `+` 已经复制完毕、不受影响。
+
 7. 什么时候应该选择用迭代器而不是列表？什么时候反过来？
+
+**参考答案**
+
+**优先用迭代器 / 生成器**的场景：
+
+- 数据量大或无限：逐行读大文件、日志流、传感器数据，内存装不下全部。
+- 只需要**单次遍历**、边读边处理，不需要回头。
+- 想构建**惰性管道**（map / filter / chain 串联），节省内存。
+- 需要**短路求值**：`any` / `all` / `takewhile` 等一旦确定结果就停止，不必算完全部。
+
+**优先用列表**的场景：
+
+- 需要**随机访问**（索引）、切片、`len()`、排序、成员判断。
+- 需要**多次遍历**，或把同一份数据交给多个消费者。
+- 数据量小，且需要修改（增删元素）。
+
+权衡一句话：迭代器省内存但一次性、不能索引 / `len()`；列表灵活可复用但一次性占满内存。经验法则——"一次性处理大数据流 → 迭代器；小数据要反复 / 随机访问 → 列表"。
+
 8. 请写出 `for x in obj:` 在 CPython 虚拟机中的完整执行步骤。
+
+**参考答案**
+
+在 CPython 字节码层面，`for x in obj:` 大致经历以下步骤：
+
+1. **`GET_ITER`**：求出 `obj` 并调用 `iter(obj)`，即触发 `obj.__iter__()`（若没有则回退到 `__getitem__` 旧序列协议），把得到的迭代器压入值栈。
+2. **`FOR_ITER`**：循环头部，调用 `next(iterator)`（即 `iterator.__next__()`）。若返回一个值，就压栈并进入循环体；若抛出 `StopIteration`，`FOR_ITER` 会**内部捕获**它、弹出迭代器并跳到循环之后——异常不会向外传播。
+3. **`STORE_FAST x`**：把取到的值绑定到循环变量 `x`。
+4. **执行循环体**：依次运行循环内语句的字节码。
+5. **`JUMP_BACKWARD`**（3.12；旧版本是 `JUMP_ABSOLUTE`）：跳回 `FOR_ITER`，重复第 2 步。
+6. **收尾**：循环结束后弹出迭代器；若有 `else` 子句，仅在循环**未被 `break`** 打断时执行。
+
+可以用 `dis` 直接观察这些指令：
+
+```python
+import dis
+
+def loop():
+    for x in [1, 2, 3]:
+        print(x)
+
+dis.dis(loop)
+```
+
+在本机（Python 3.12）的实际输出：
+
+```text
+  3           0 RESUME                   0
+
+  4           2 LOAD_CONST               1 ((1, 2, 3))
+              4 GET_ITER
+        >>    6 FOR_ITER                13 (to 36)
+             10 STORE_FAST               0 (x)
+
+  5          12 LOAD_GLOBAL              1 (NULL + print)
+             22 LOAD_FAST                0 (x)
+             24 CALL                     1
+             32 POP_TOP
+             34 JUMP_BACKWARD           15 (to 6)
+
+  4     >>   36 END_FOR
+             38 RETURN_CONST             0 (None)
+```
+
+可以看到 `GET_ITER → FOR_ITER → STORE_FAST →（循环体）→ JUMP_BACKWARD` 这几条关键指令构成闭环。
+
+⚠️ 注意：具体指令名、偏移量和跳转目标随 Python 版本变化（如 3.12 用 `JUMP_BACKWARD` / `END_FOR`，旧版本用 `JUMP_ABSOLUTE`）。上面输出取自 Python 3.12，重点是理解执行流程，而非死记偏移量。
 
 ## 🔗 延伸阅读
 

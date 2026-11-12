@@ -497,10 +497,212 @@ class BankAccount:
 ## 💡 思考题
 
 1. 类方法 `@classmethod` 和静态方法 `@staticmethod` 的本质区别是什么？什么场景下应该用哪一个？
+
+**参考答案**
+
+**本质区别在"隐式第一个参数"**：`@classmethod` 自动收到 `cls`——实际发起调用的那个类（通过子类调用时就是子类），因此能读写类属性、能用 `cls(...)` 创建实例；`@staticmethod` 没有任何隐式参数，就是"恰好放在类命名空间里的普通函数"，不碰类状态也不碰实例状态。
+
+**选择标准**：
+
+- 需要类本身（替代构造器/工厂方法、统计实例数、修改类级配置）→ `@classmethod`。用 `cls` 而非写死类名，子类继承后工厂会自动创建子类实例；
+- 逻辑上属于这个类、但不需要类或实例数据的工具函数（如金额校验、格式化）→ `@staticmethod`。
+
+```python
+class Base:
+    @classmethod
+    def create(cls):
+        return cls()          # cls 是实际调用的类
+
+    @staticmethod
+    def info():
+        return '工具函数'
+
+
+class Child(Base):
+    pass
+
+
+print(type(Base.create()).__name__)   # Base
+print(type(Child.create()).__name__)  # Child —— classmethod 跟随子类
+print(Child.info())                   # 工具函数
+```
+
+预期输出：
+
+```text
+Base
+Child
+工具函数
+```
+
+💡 提示：如果一个"静态方法"里频繁写死 `ClassName.xxx`，说明它其实需要类状态，改成 `@classmethod` 用 `cls` 更利于继承。
+
 2. `@property` 的 getter/setter 和直接定义 `get_xxx()` / `set_xxx()` 方法相比，有什么优势？
+
+**参考答案**
+
+核心优势是**接口不变、实现可升级**：
+
+- **属性式语法**：`acc.balance` 比 `acc.get_balance()` 更简洁自然，读写看起来和普通属性一样，调用方无感知；
+- **平滑演进**：可以先用普通公开属性起步，等需要校验/计算时再改成 property，**所有调用代码一行都不用改**——这是 Java 式"一开始就写 getter/setter"做不到的；
+- **表达能力**：不写 setter 就是只读属性；计算属性（如面积）用起来像字段，语义清晰；
+- 与 `getattr`/`hasattr` 等内置机制无缝协作。
+
+```python
+class Temperature:
+    def __init__(self, celsius=0):
+        self._celsius = celsius
+
+    @property
+    def celsius(self):
+        return self._celsius
+
+    @celsius.setter
+    def celsius(self, value):
+        if value < -273.15:
+            raise ValueError('不能低于绝对零度')
+        self._celsius = value
+
+    @property
+    def fahrenheit(self):
+        return self._celsius * 9 / 5 + 32
+
+
+t = Temperature(25)
+print(t.celsius, t.fahrenheit)  # 25 77.0
+t.celsius = 30                  # 看起来是赋值，实际走 setter 校验
+print(t.fahrenheit)             # 86.0
+```
+
+预期输出：
+
+```text
+25 77.0
+86.0
+```
+
+💡 提示：property 适合"轻量、快速"的读写逻辑；如果获取一个属性要发起网络请求或耗时计算，用显式方法（或 `@cached_property`）更能提醒调用者成本。
+
 3. 类属性如果是一个可变对象（如列表、字典），多个实例共享修改时会发生什么？如何避免？
+
+**参考答案**
+
+类属性只有一份。如果它是列表/字典这类**可变对象**，任何实例做**原地修改**（`append`、`[k]=v` 等）改的都是这同一个对象，其他实例全部被"连带"——这通常不是想要的行为，而且是隐蔽 bug（没有赋值语句，看起来人畜无害）。
+
+**避免方法**：需要"每实例一份"的数据，放进 `__init__` 里用 `self.xxx = []` 初始化；类属性只放真正要共享的东西（常量、计数器、配置）。若确实想共享但又要隔离修改，就为每个实例 `copy.deepcopy` 一份。
+
+```python
+class Bad:
+    items = []          # 共享列表
+
+    def add(self, x):
+        self.items.append(x)
+
+
+class Good:
+    def __init__(self):
+        self.items = []  # 每实例一份
+
+    def add(self, x):
+        self.items.append(x)
+
+
+b1, b2 = Bad(), Bad()
+b1.add(1)
+print(b2.items)   # [1] 被污染
+
+g1, g2 = Good(), Good()
+g1.add(1)
+print(g2.items)   # [] 互不影响
+```
+
+预期输出：
+
+```text
+[1]
+[]
+```
+
+⚠️ 注意：同样的坑也出现在**函数默认参数**上（`def f(x=[])`），原理一致——默认值只求值一次、被所有调用共享。
+
 4. `@cached_property` 和 `@property` + 手动缓存有什么不同？底层是如何实现的？
+
+**参考答案**
+
+**手动缓存**要自己写样板：定义 `self._cache`、在 getter 里判断"算过没有"、算完存起来，还得自己考虑何时失效。`@cached_property`（Python 3.8+）把这些都自动化了：首次访问时计算，之后直接返回缓存。
+
+**底层机制**：`cached_property` 是一个**非数据描述符**（只实现了 `__get__`，没有 `__set__`）。首次访问触发 `__get__` 计算，然后把结果**写进实例的 `__dict__`**（键就是属性名）。由于"实例字典优先于非数据描述符"的属性查找规则，之后的访问直接在 `__dict__` 命中，根本不再进入 `__get__`。所以 `del obj.attr` 删掉缓存后，下次访问会重新计算——失效机制是免费的。
+
+```python
+from functools import cached_property
+
+
+class Dataset:
+    def __init__(self, data):
+        self.data = data
+
+    @cached_property
+    def total(self):
+        print('计算中...')
+        return sum(self.data)
+
+
+d = Dataset([1, 2, 3])
+print(d.total)               # 首次：计算
+print(d.total)               # 再次：直接取缓存
+print('total' in d.__dict__) # True：结果存进了实例字典
+del d.total                  # 删除缓存
+print(d.total)               # 重新计算
+```
+
+预期输出：
+
+```text
+计算中...
+6
+6
+True
+计算中...
+6
+```
+
+⚠️ 注意：`cached_property` 依赖实例有 `__dict__`，定义了 `__slots__` 且没留 `__dict__` 的类用不了；另外它**不会自动感知数据变化**——`self.data` 改了缓存也不会更新，需手动 `del`。Python 3.12 起内部不再加锁，多线程下首次计算可能重复执行（结果一致，但别依赖它做"只算一次"的副作用）。
+
 5. Python 为什么没有真正的「私有属性」？`_name` 和 `__name` 的约定意味着什么？
+
+**参考答案**
+
+这是 Python 的设计哲学："我们都是成年人"（we're all consenting adults）——**隐私靠约定而非强制**。任何属性都能通过 `obj.__dict__`、`vars(obj)`、`getattr` 检查出来，语言不提供 Java/C++ 那种编译期的访问壁垒。这样做是为了调试、序列化、测试和框架反射的便利，代价是"防君子不防小人"。
+
+两种下划线约定的含义完全不同：
+
+- **单下划线 `_name`**：纯粹的**命名约定**，告诉别人"这是内部实现，别从外部依赖它，将来可能变"。解释器不做任何限制，可以正常读写；唯一的实际效果是 `from module import *` 默认不会导入这类名字。
+- **双下划线 `__name`**：触发**名称改写（name mangling）**。在类体内，`self.__name` 会被编译器改写成 `self._ClassName__name`。目的是**避免子类意外覆盖父类的同名属性**，不是安全机制——知道改写规则后，用 `obj._ClassName__name` 照样能访问。
+
+```python
+# 思考题5：_name 约定与 __name 名称改写
+class Account:
+    def __init__(self):
+        self._balance = 0      # 约定：内部使用
+        self.__secret = 42     # 名称改写（name mangling）
+
+
+a = Account()
+print(a._balance)            # 0，可直接访问
+# print(a.__secret)          # AttributeError
+print(a._Account__secret)    # 42，改写后仍可访问
+print(list(vars(a)))         # 实例字典里的真实名字
+```
+
+预期输出：
+
+```text
+0
+42
+['_balance', '_Account__secret']
+```
+
+💡 提示：日常优先用单下划线表达"内部使用"即可；双下划线主要留给"可能被继承、且想避免子类撞名"的场景。不要把它当成加密或权限控制——真要保护数据，靠的是接口设计和文档约定。
 
 ---
 

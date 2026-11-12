@@ -793,10 +793,245 @@ class AlertAggregator:
 ## 7. 思考题
 
 1. **设计题**：如何设计一个支持多服务器的分布式监控系统？需要考虑哪些问题？
+
+**参考答案**
+
+分层架构（采集 → 传输 → 处理 → 存储 → 展示/告警）：
+
+```text
+被监控服务器 × N
+  每台跑一个轻量 Agent（psutil 采集 CPU/内存/磁盘/网络）
+        │ 周期上报(push) 或 中心拉取(pull)
+        ▼
+  采集网关 / 消息队列（Kafka、Redis：削峰、解耦）
+        ▼
+  中心处理（规则引擎、聚合、去重、升级）
+        ▼
+  时序存储（InfluxDB / TimescaleDB / Prometheus，分片 + 副本）
+        ▼
+  可视化（Grafana） + 告警通知（钉钉/邮件/短信，多渠道）
+```
+
+需要考虑的问题：
+
+1. **采集方式**：push（agent 主动上报，实时性好、适合大规模）vs pull（中心定时抓取，如 Prometheus，便于控制目标）；agent 要低开销、容错（采集失败不崩溃、断网本地缓存补传）。
+2. **可扩展性**：采集/处理/存储都能水平扩容；按指标/租户/时间分片；服务发现（新机器自动注册，如 Consul、K8s）。
+3. **时间与顺序**：各机器时钟同步（NTP），用统一时间戳并容忍乱序到达；统一时区与单位。
+4. **网络与容错**：上报失败重试 + 退避 + 本地缓冲；容忍网络分区，宁可漏采也不误报；写入幂等防重复。
+5. **存储**：时序库 + 降采样 + 保留策略（见第 2 题）；多副本防单点。
+6. **告警治理**：去重、聚合、静默、升级（见第 4 题），避免"告警风暴"；多渠道通知保证可达。
+7. **安全**：agent 认证（token/mTLS）、最小权限、传输加密、不采集敏感数据。
+8. **自监控**：监控系统本身也要被监控（见第 5 题），即"元监控"。
+
+💡 提示：小规模用"中心 SSH 轮询 + SQLite"（本章方案）即可；上百上千台再演进到"agent + 消息队列 + 时序库"，工业级直接上 Prometheus + Grafana，别重复造轮子。
+
 2. **优化题**：当监控指标数据量很大时，如何优化存储和查询性能？
+
+**参考答案**
+
+优化方向：
+
+1. **用时序数据库**：InfluxDB/TimescaleDB/Prometheus 专为"写多、按时间范围查"优化（列式存储、压缩、时间索引），远胜 SQLite 逐行存 JSON。
+2. **降采样/预聚合（rollup）**：秒级原始数据只留短期（如 7 天），预先聚合成分钟/小时/天级汇总长期保存；查大时间范围直接命中汇总表，扫描行数骤减。
+3. **时间分区 + 索引**：按天/月分区，timestamp 建索引；查询只扫相关分区（分区裁剪）。
+4. **批量写入**：多条指标合并成一个事务/`executemany`，别逐条 commit（磁盘 fsync 是瓶颈）。
+5. **压缩与列存**：数值指标用列式 + 编码（delta/gorilla）压缩率高，省空间省 IO。
+6. **保留策略（TTL）**：过期数据自动删除/归档，控制总量。
+7. **查询侧**：避免 `SELECT *`、只取需要的列；大范围聚合用近似算法；缓存热点查询结果。
+
+小例子（已验证，sqlite 预聚合：7 天分钟级原始数据 → 小时级 rollup，同一查询少扫 60 倍行）：
+
+```python
+import sqlite3, time, tempfile, os, random
+
+random.seed(42)
+with tempfile.TemporaryDirectory() as tmp:   # 临时库，用完自动清理
+    db = os.path.join(tmp, "metrics.db")
+    conn = sqlite3.connect(db)
+    c = conn.cursor()
+    c.execute("CREATE TABLE raw(ts INTEGER, mem REAL)")
+    c.execute("CREATE TABLE rollup_hourly(hour INTEGER, avg_mem REAL, n INTEGER)")
+
+    # 模拟 7 天分钟级数据 = 10080 个原始点
+    rows = [(i * 60, 50 + random.uniform(-5, 20)) for i in range(7 * 24 * 60)]
+    c.executemany("INSERT INTO raw VALUES(?,?)", rows)   # 批量写入
+    # 预聚合：按小时汇总成 rollup（168 行）
+    c.execute("INSERT INTO rollup_hourly SELECT ts/3600, AVG(mem), COUNT(*) FROM raw GROUP BY ts/3600")
+    conn.commit()
+
+    raw_n = c.execute("SELECT COUNT(*) FROM raw").fetchone()[0]
+    roll_n = c.execute("SELECT COUNT(*) FROM rollup_hourly").fetchone()[0]
+
+    # 查询"7 天平均内存"：原始表要扫全部行
+    t0 = time.perf_counter()
+    raw_val = c.execute("SELECT AVG(mem) FROM raw").fetchone()[0]
+    raw_t = (time.perf_counter() - t0) * 1000
+    # rollup 表按样本数加权平均，只扫 168 行
+    t0 = time.perf_counter()
+    roll_val = c.execute("SELECT SUM(avg_mem*n)/SUM(n) FROM rollup_hourly").fetchone()[0]
+    roll_t = (time.perf_counter() - t0) * 1000
+
+    print("原始表行数:", raw_n)
+    print("rollup 表行数:", roll_n)
+    print(f"原始表查询平均: {raw_val:.4f}（耗时 {raw_t:.2f}ms）")
+    print(f"rollup 查询平均: {roll_val:.4f}（耗时 {roll_t:.2f}ms）")
+    print("结果一致:", abs(raw_val - roll_val) < 1e-9)
+    conn.close()
+```
+
+预期输出（耗时因机器/版本而异，下面为示例值；行数与结果一致是确定的）：
+
+```
+原始表行数: 10080
+rollup 表行数: 168
+原始表查询平均: 57.5077（耗时 0.26ms）
+rollup 查询平均: 57.5077（耗时 0.03ms）
+结果一致: True
+```
+
+原始表 10080 行，rollup 表仅 168 行（少 60 倍）；查"7 天平均"两者结果完全一致（加权平均保证正确），但 rollup 扫描行数少得多、更快。数据量越大、查询范围越广，收益越明显。
+
+💡 提示：rollup 求总平均要按样本数加权（`SUM(avg*n)/SUM(n)`），不能直接 `AVG(avg)`——否则各小时样本数不同时会算偏。
+
 3. **扩展题**：如何添加"趋势告警"功能（如内存使用率在1小时内增长超过20%）？
+
+**参考答案**
+
+实现思路：
+
+1. **维护滑动窗口**：用 `deque` 保存窗口内（如 1 小时）的 `(时间戳, 值)` 样本，新样本进来时把滑出窗口的旧样本丢掉。
+2. **计算增长率**：拿最新值和窗口内最旧值比较，`growth = (最新 - 最旧) / 最旧`。
+3. **触发条件**：`growth > 阈值`（如 20%）就发趋势告警；可再要求"窗口内至少 N 个样本"，避免数据稀疏时误报。
+4. **工程细节**：基线可选最旧值/窗口均值/昨日同时刻；分母 ≤ 0 要保护跳过；配合去重与冷却（同一趋势别反复告警）；也可与绝对阈值组合（"既高又涨得快"才告警）。
+
+小例子（已验证，滑动窗口检测 1 小时增长 >20%）：
+
+```python
+from collections import deque
+
+class TrendDetector:
+    def __init__(self, window_seconds=3600, growth_threshold=0.20):
+        self.window = window_seconds
+        self.threshold = growth_threshold
+        self.samples = deque()   # (timestamp, value)
+
+    def check(self, ts, value):
+        self.samples.append((ts, value))
+        # 丢弃滑出窗口的旧样本
+        while self.samples and ts - self.samples[0][0] > self.window:
+            self.samples.popleft()
+        if len(self.samples) < 2:
+            return None
+        oldest_ts, oldest_val = self.samples[0]
+        if oldest_val <= 0:
+            return None
+        growth = (value - oldest_val) / oldest_val
+        if growth > self.threshold:
+            return f"趋势告警: {self.window//60} 分钟内增长 {growth*100:.1f}%（>{self.threshold*100:.0f}%）"
+        return None
+
+d = TrendDetector(window_seconds=3600, growth_threshold=0.20)
+print(d.check(0, 50.0))       # 第一个点，无告警
+print(d.check(1800, 60.0))    # +20%，等于阈值不算"超过"
+print(d.check(3600, 75.0))    # +50%，触发告警
+print(d.check(7200, 76.0))    # 窗口滑动，旧增长不再触发
+```
+
+预期输出：
+
+```
+None
+None
+趋势告警: 60 分钟内增长 50.0%（>20%）
+None
+```
+
+内存 1 小时内从 50% 涨到 75%（+50% > 20%）触发告警；到 ts=7200 时窗口滑动，最旧样本变成 75%，增长仅约 1.3%，不再告警——体现"滑动窗口"只看最近 1 小时。
+
+💡 提示：生产里样本通常存时序库、用范围查询取窗口数据，或直接用 Prometheus 的 `delta()`/`predict_linear()` 等函数；deque 版适合单机轻量场景。
+
 4. **实战题**：如何实现告警通知的升级机制（如连续3次告警后自动升级到更高级别通知）？
+
+**参考答案**
+
+实现思路：
+
+1. **统计连续告警次数**：为每条规则（或每个告警对象）维护一个"连续触发计数"，触发就 +1，恢复就清零。
+2. **级别映射**：把次数映射到通知级别，如 1～3 次→邮件、4～6 次→短信、7 次以上→电话值班；可用 `(n-1)//3` 算级别索引，封顶最高级。
+3. **升级对象**：不仅换渠道，还要换接收人（普通运维→运维主管→经理），确保有人兜底负责。
+4. **重置与冷却**：告警恢复后计数清零；配合冷却/去重，避免抖动反复触发升级；也可加"未确认超时升级"（N 分钟没人 ack 就升级）。
+5. **记录审计**：每次升级写日志，便于复盘。
+
+小例子（已验证，连续 3 次后升一级，恢复后清零）：
+
+```python
+class AlertEscalation:
+    def __init__(self, escalate_after=3):
+        self.escalate_after = escalate_after
+        self.counts = {}                          # rule -> 连续告警次数
+        self.levels = ["邮件", "短信", "电话值班"]   # 通知级别逐级升级
+
+    def on_alert(self, rule):
+        self.counts[rule] = self.counts.get(rule, 0) + 1
+        n = self.counts[rule]
+        # 每连续 escalate_after 次升一级（封顶最高级）
+        idx = min((n - 1) // self.escalate_after, len(self.levels) - 1)
+        print(f"第 {n} 次告警 [{rule}] → 用「{self.levels[idx]}」通知")
+        return self.levels[idx]
+
+    def on_resolve(self, rule):
+        if rule in self.counts:
+            print(f"[{rule}] 已恢复，计数清零")
+            self.counts[rule] = 0
+
+esc = AlertEscalation(escalate_after=3)
+for i in range(7):
+    esc.on_alert("内存过高")
+esc.on_resolve("内存过高")
+esc.on_alert("内存过高")   # 恢复后重新从邮件开始
+```
+
+预期输出：
+
+```
+第 1 次告警 [内存过高] → 用「邮件」通知
+第 2 次告警 [内存过高] → 用「邮件」通知
+第 3 次告警 [内存过高] → 用「邮件」通知
+第 4 次告警 [内存过高] → 用「短信」通知
+第 5 次告警 [内存过高] → 用「短信」通知
+第 6 次告警 [内存过高] → 用「短信」通知
+第 7 次告警 [内存过高] → 用「电话值班」通知
+[内存过高] 已恢复，计数清零
+第 1 次告警 [内存过高] → 用「邮件」通知
+```
+
+前 3 次用邮件，第 4 次起升短信，第 7 次起升电话；恢复后计数清零，下次告警又从邮件开始。
+
+💡 提示：更稳妥的是"未确认（ack）超时升级"而非纯计数——告警虽频繁但已有人处理时就不必打扰更高级别；计数升级更适合无人值守场景。
+
 5. **架构题**：如何设计监控系统的高可用性，确保监控服务本身不会成为单点故障？
+
+**参考答案**
+
+监控系统自己不能挂，关键设计：
+
+1. **多实例 + 无状态**：采集/处理/告警服务跑多副本，状态外置到 DB/队列，前面挂负载均衡，任一实例宕机不影响整体。
+2. **主选举 + 故障转移**：对必须单例的有状态组件（如某些聚合任务），用 leader 选举（etcd/ZooKeeper/Redis 锁），主挂了备自动顶上。
+3. **存储多副本**：时序库与配置存储做副本/主从（如 Prometheus + Thanos、InfluxDB 集群），防单点丢数据或不可用。
+4. **通知多渠道 + 降级**：告警同时走多渠道（钉钉 + 邮件 + 短信），某渠道失败自动切备用；通知服务本身也多实例。
+5. **死人开关（dead man's switch / 心跳看门狗）**：监控系统定期向一个**独立的外部看门狗**发"我还活着"心跳；看门狗收不到心跳就反过来告警"监控系统挂了"——这是防"监控静默失效"的关键。
+6. **元监控**：用另一套独立、简单的监控（或云厂商监控）来监控本监控系统，形成互相监督；跨机器/跨可用区部署，避免同机架故障。
+7. **自保护**：限流、熔断、背压，防止监控系统自己被指标洪流压垮；采集失败要降级而非崩溃。
+
+```text
+监控集群（多实例、跨可用区）
+   ├── 采集/处理 × N（无状态 + 负载均衡）
+   ├── 存储（多副本）
+   └── 定期心跳 ──► 独立外部看门狗
+                  （收不到心跳 → 告警"监控挂了"）
+```
+
+💡 提示：最容易被忽略的是"死人开关"——监控进程若卡死，它自己就发不出告警了，必须靠独立外部组件发现"它没声音了"，否则故障会被静默漏掉。
 
 ---
 

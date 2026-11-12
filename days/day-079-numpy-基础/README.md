@@ -506,9 +506,153 @@ print(f"总收益率: {(prices[-1]/prices[0]-1)*100:.2f}%")
 
 1. **为什么 NumPy 数组比 Python 列表快？** 从内存布局、数据类型、CPU 缓存、C 底层实现等角度思考。
 
+**参考答案**
+
+四个角度，层层递进：
+
+- **内存布局**：Python 列表存的是"指向对象的指针"，每个整数还是散落在堆上的独立对象；ndarray 是一整块**连续内存**，直接存裸数据。100 万个 int64，列表要约 8MB 指针 + 2800 万个字节对象开销，ndarray 只要 8MB。
+- **数据类型**：列表元素类型混杂，每次运算都要检查类型、做装箱/拆箱；ndarray 全体同一 dtype，运算时无需逐元素判断，还能用 CPU 的 SIMD 指令一次处理多个数。
+- **CPU 缓存**：连续内存对缓存极其友好——读一个元素时，相邻元素已被顺带加载进缓存行；列表的指针跳来跳去，缓存命中率低。
+- **C 底层实现**：`arr * arr` 的循环跑在编译好的 C 代码里，没有 Python 解释器的逐条指令开销；列表推导式每轮都要经过解释器。
+
+小例子（已验证，内存 + 速度对比；具体耗时因机器/版本而异）：
+
+```python
+import sys
+import time
+import numpy as np
+
+n = 1_000_000
+py_list = list(range(n))
+np_arr = np.arange(n)
+
+print("列表指针数组本身:", sys.getsizeof(py_list), "字节")
+print("每个 int 对象另占约:", sys.getsizeof(1000), "字节（不含在上面的数字里）")
+print("ndarray 总共:", np_arr.nbytes, "字节（连续内存，已含全部数据）")
+
+start = time.perf_counter()
+squares_list = [x * x for x in py_list]
+t_list = time.perf_counter() - start
+
+start = time.perf_counter()
+squares_arr = np_arr * np_arr
+t_np = time.perf_counter() - start
+
+print(f"列表推导式: {t_list:.4f}s")
+print(f"NumPy 向量化: {t_np:.4f}s")
+print(f"加速约 {t_list / t_np:.0f} 倍")
+```
+
+预期输出（示例值）：
+
+```
+列表指针数组本身: 8000056 字节
+每个 int 对象另占约: 28 字节（不含在上面的数字里）
+ndarray 总共: 8000000 字节（连续内存，已含全部数据）
+列表推导式: 0.0286s
+NumPy 向量化: 0.0014s
+加速约 21 倍
+```
+
+一句话总结：**NumPy 把"数据放一起、类型定死、循环交给 C"，三件事叠加出了数量级的差距。**
+
 2. **视图 vs 副本**：`arr.ravel()` 和 `arr.flatten()` 的区别是什么？在什么场景下应该用哪个？
 
+**参考答案**
+
+两者都把多维数组展平成一维，区别在**是否共享内存**：
+
+- `ravel()`：**尽量返回视图（view）**——不复制数据，和原数组共享同一块内存，改它会连带改原数组。零拷贝，快、省内存。
+- `flatten()`：**永远返回副本（copy）**——新开一块内存，改它不影响原数组。安全，但多一份内存和拷贝开销。
+
+场景选择：
+
+- 只是读取/遍历/喂给模型，或希望"改展平结果=改原数组"→ 用 `ravel()`。
+- 需要一份独立快照，后续修改不能污染原数据 → 用 `flatten()`。
+- 拿不准时用 `np.shares_memory(a, b)` 检查是否共享内存。
+
+小例子（已验证）：
+
+```python
+import numpy as np
+
+arr = np.arange(6).reshape(2, 3)
+
+flat_copy = arr.flatten()   # 永远返回副本
+flat_view = arr.ravel()     # 尽量返回视图（共享内存）
+
+flat_copy[0] = 999
+print("改 flatten 后 arr[0,0] =", arr[0, 0])   # 原数组不受影响
+
+flat_view[0] = 888
+print("改 ravel 后 arr[0,0] =", arr[0, 0])     # 原数组跟着变
+
+print("ravel 与原数组共享内存:", np.shares_memory(arr, flat_view))
+print("flatten 与原数组共享内存:", np.shares_memory(arr, flat_copy))
+
+t = arr.T.ravel()   # 转置后内存不连续，ravel 只能返回副本
+print("转置后 ravel 是副本:", not np.shares_memory(arr, t))
+```
+
+预期输出：
+
+```
+改 flatten 后 arr[0,0] = 0
+改 ravel 后 arr[0,0] = 888
+ravel 与原数组共享内存: True
+flatten 与原数组共享内存: False
+转置后 ravel 是副本: True
+```
+
+⚠️ 注意：`ravel()` 的"视图"是有条件的——数组内存不连续时（如转置后）它也会退化成副本。所以别假设"ravel 一定共享内存"，用 `shares_memory` 确认。切片 `arr[:]` 同理是视图，这是 NumPy 新手最常踩的坑。
+
 3. **广播的限制**：为什么 `np.array([[1,2,3],[4,5,6]]) + np.array([1,2])` 会报错？如何修复？
+
+**参考答案**
+
+广播（broadcasting，即不同形状数组自动对齐运算的规则）是**从最后一个维度往前逐维比较**的：每一维要么相等，要么其中一个是 1，否则报错。
+
+这里 `(2, 3)` 和 `(2,)` 对齐最后一维：3 对 2——既不相等也没有 1，所以失败。注意 `(2,)` 不会自动变成"每行一个数"，NumPy 只会把它往**列**方向对齐。
+
+修复取决于你的意图：
+
+- 想**每行加一个数**（第 0 行加 1、第 1 行加 2）：把 `(2,)`  reshape 成列向量 `(2, 1)`，最后一维 1 对 3 可以广播。
+- 想**每列加一个数**：向量长度应该是 3，即 `(3,)`，最后一维 3 对 3 相等。
+
+小例子（已验证）：
+
+```python
+import numpy as np
+
+a = np.array([[1, 2, 3], [4, 5, 6]])   # shape (2, 3)
+b = np.array([1, 2])                    # shape (2,)
+
+try:
+    a + b
+except ValueError as e:
+    print("直接相加报错:", e)
+
+# 修复1：想"每行加一个数"，把 b 变成列向量 (2, 1)
+print("修复1（按行加）:\n", a + b.reshape(2, 1))
+
+# 修复2：想"按列加"，b 的长度应该是 3
+c = np.array([10, 20, 30])              # shape (3,)
+print("修复2（按列加）:\n", a + c)
+```
+
+预期输出：
+
+```
+直接相加报错: operands could not be broadcast together with shapes (2,3) (2,)
+修复1（按行加）:
+ [[2 3 4]
+ [6 7 8]]
+修复2（按列加）:
+ [[11 22 33]
+ [14 25 36]]
+```
+
+💡 提示：记住口诀"**右对齐、逐维比、等或 1 才行**"。`(2,3)+(2,)` 失败而 `(2,3)+(3,)` 成功，差别就在最后一维。
 
 4. **性能陷阱**：以下哪种方式计算数组元素之和更快？为什么？
    ```python
@@ -517,7 +661,88 @@ print(f"总收益率: {(prices[-1]/prices[0]-1)*100:.2f}%")
    # 方式B: sum(a)
    ```
 
+**参考答案**
+
+**方式 A `np.sum(a)` 快得多**（本例约百倍，具体因机器/版本而异）。
+
+原因：`sum()` 是 Python 内置函数，它遍历 ndarray 时，每个元素都要先包装成 Python 标量对象（装箱），再做 Python 层面的加法——100 万个元素就是 100 万次对象创建和解释器开销。而 `np.sum()` 直接在 C 层对连续内存做累加，没有逐元素的 Python 开销，还能利用成对求和等优化。
+
+小例子（已验证）：
+
+```python
+import time
+import numpy as np
+
+a = np.arange(1_000_000)
+
+start = time.perf_counter()
+s1 = np.sum(a)
+t1 = time.perf_counter() - start
+
+start = time.perf_counter()
+s2 = sum(a)
+t2 = time.perf_counter() - start
+
+print(f"np.sum(a): {t1:.6f}s, 结果 {s1}")
+print(f"sum(a):    {t2:.6f}s, 结果 {s2}")
+print(f"np.sum 快约 {t2 / t1:.0f} 倍")
+```
+
+预期输出（示例值）：
+
+```
+np.sum(a): 0.000307s, 结果 499999500000
+sum(a):    0.029862s, 结果 499999500000
+np.sum 快约 97 倍
+```
+
+两者结果相同，但路径完全不同。**经验法则：对 ndarray 做统计/运算，永远优先用 NumPy 自己的函数（`np.sum`、`np.mean`、`arr.sum()`），别让 Python 内置函数逐元素去"啃"数组。** 同理，`for x in arr` 逐元素处理也是性能陷阱。
+
 5. **轴的理解**：`np.mean(arr, axis=0)` 和 `np.mean(arr, axis=1)` 的结果分别代表什么含义？画图说明。
+
+**参考答案**
+
+轴（axis）就是数组的维度编号：二维数组里 axis=0 是"行方向"（竖着），axis=1 是"列方向"（横着）。**`axis=n` 表示"沿着第 n 维压过去、把这一维消掉"**：
+
+- `mean(axis=0)`：跨行聚合，每一**列**得到一个均值，结果形状是 `(列数,)`。
+- `mean(axis=1)`：跨列聚合，每一**行**得到一个均值，结果形状是 `(行数,)`。
+
+画图（2 行 3 列的数组）：
+
+```
+         列0   列1   列2
+行0  [   1     2     3   ]  ──→ mean(axis=1) = 2.0
+行1  [   4     5     6   ]  ──→ mean(axis=1) = 5.0
+         ↓     ↓     ↓
+      mean(axis=0) = [2.5, 3.5, 4.5]
+```
+
+小例子（已验证）：
+
+```python
+import numpy as np
+
+arr = np.array([[1, 2, 3],
+                [4, 5, 6]])   # 2 行 3 列
+
+print("axis=0（跨行聚合，每列一个结果）:", arr.mean(axis=0))
+print("axis=1（跨列聚合，每行一个结果）:", arr.mean(axis=1))
+print("原形状:", arr.shape)
+print("axis=0 结果形状:", arr.mean(axis=0).shape)
+print("axis=1 结果形状:", arr.mean(axis=1).shape)
+```
+
+预期输出：
+
+```
+axis=0（跨行聚合，每列一个结果）: [2.5 3.5 4.5]
+axis=1（跨列聚合，每行一个结果）: [2. 5.]
+原形状: (2, 3)
+axis=0 结果形状: (3,)
+axis=1 结果形状: (2,)
+```
+
+💡 提示：记忆技巧——"**axis 几，就消掉第几维**"。`(2,3)` 消掉第 0 维剩 `(3,)`，消掉第 1 维剩 `(2,)`。这个规则对 sum/max/std 等所有聚合函数通用；加 `keepdims=True` 可以保留被消掉的维（变成 1），方便后续广播。
 
 ---
 

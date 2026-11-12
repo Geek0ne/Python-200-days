@@ -358,10 +358,243 @@ def method_decorator(func):
 ## 💡 思考题
 
 1. 装饰器返回的 `wrapper` 函数和原函数是什么关系？怎么证明 `@decorator` 等价于 `f = decorator(f)`？
+
+**参考答案**
+
+`wrapper` 是一个**新函数**（闭包），不是原函数本身。它内部把原函数 `func` 作为自由变量捕获，调用时先执行增强逻辑、再委托给 `func`。装饰后名字 `f` 实际指向 `wrapper`；原函数依然存在，被闭包引用着，并（若用了 `@functools.wraps`）可通过 `wrapper.__wrapped__` 访问。两者是"包装 / 被包装"的关系：调用签名一致，行为被增强。
+
+`@decorator` 的本质就是 `f = decorator(f)`——Python 在 `def` 语句执行完后自动做这次赋值。下面验证两种写法行为完全一致：
+
+```python
+import functools
+
+def decorator(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        print("调用前")
+        return func(*args, **kwargs)
+    return wrapper
+
+def f():
+    return "结果"
+
+f_manual = decorator(f)     # 方式一：手动装饰
+
+@decorator                  # 方式二：语法糖
+def f_sugar():
+    return "结果"
+
+print(f_manual())
+print(f_sugar())
+print(f_manual.__wrapped__ is f)   # True：wrapper 内部持有原函数 f
+```
+
+预期输出：
+
+```text
+调用前
+结果
+调用前
+结果
+True
+```
+
+两种写法都输出"调用前 → 结果"，且 `f_manual.__wrapped__ is f` 为 `True`，说明 wrapper 内部包着原函数——这就是 `@decorator` 与 `f = decorator(f)` 等价的证据。
+
 2. 如果同一个函数被多个装饰器装饰，它们的执行顺序是怎样的？为什么是洋葱模型？
+
+**参考答案**
+
+要区分两种顺序：
+
+- **装饰（应用）顺序：自下而上**。`@A @B def f` 等价于 `f = A(B(f))`：靠近函数体的 B 先包装，A 再包装 B 的结果。这一步发生在**定义时**。
+- **调用顺序：由外到内、再由内到外**。调用 f 时先执行 A 的前置，再 B 的前置，再到原函数；返回时先 B 的后置，再 A 的后置。
+
+```python
+def decorator_a(func):
+    def wrapper(*args, **kwargs):
+        print("A 前置")
+        result = func(*args, **kwargs)
+        print("A 后置")
+        return result
+    return wrapper
+
+def decorator_b(func):
+    def wrapper(*args, **kwargs):
+        print("B 前置")
+        result = func(*args, **kwargs)
+        print("B 后置")
+        return result
+    return wrapper
+
+@decorator_a
+@decorator_b
+def hello():
+    print("Hello!")
+
+hello()
+```
+
+预期输出：
+
+```text
+A 前置
+B 前置
+Hello!
+B 后置
+A 后置
+```
+
+**为什么是洋葱模型**：每个装饰器都把"上一层的结果"再包进一层闭包，形成层层嵌套，就像洋葱。调用时从最外层往里剥（A 前置 → B 前置 → 核心函数），到达核心后再逐层往外返回（B 后置 → A 后置）。前置"由外向内"、后置"由内向外"，完全对称。
+
 3. 没有 `functools.wraps` 会有什么实际影响？试想 Flask 的路由装饰器如果不用 wraps 会怎样？
+
+**参考答案**
+
+不加 `functools.wraps`，装饰器返回的 `wrapper` 的 `__name__`、`__doc__`、`__qualname__`、`__module__`、`__annotations__` 等元信息都变成 wrapper 自己的（名字成了 `"wrapper"`、文档成了 `None`）。实际影响：traceback 和调试看到的是 `wrapper` 而非真实函数名；`help()`、自动文档出错；**依赖 `__name__` 的框架会直接出 bug**。
+
+以 Flask 为例：`@app.route` 默认用视图函数的 `__name__` 作为**端点名（endpoint）**。若不用 wraps，所有视图函数都叫 `wrapper`，注册第二个路由时端点名冲突，抛出 `AssertionError: View function mapping is overwriting an existing endpoint function: wrapper`。下面用纯 Python 模拟这个注册逻辑：
+
+```python
+import functools
+
+def bad(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+def good(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs)
+    return wrapper
+
+@bad
+def view_a():
+    """文档 A"""
+
+@bad
+def view_b():
+    """文档 B"""
+
+print(view_a.__name__, view_a.__doc__)   # wrapper None
+print(view_b.__name__, view_b.__doc__)   # wrapper None
+
+# 模拟 Flask 按 __name__ 注册端点：两个视图都叫 wrapper → 冲突
+endpoints = {}
+for view in (view_a, view_b):
+    name = view.__name__
+    if name in endpoints:
+        print(f"端点冲突: {name}")
+    endpoints[name] = view
+```
+
+预期输出：
+
+```text
+wrapper None
+wrapper None
+端点冲突: wrapper
+```
+
+可见两个用 `bad` 装饰的视图都叫 `wrapper`，导致端点冲突；换成带 `@functools.wraps` 的 `good` 就能保留各自名字，冲突消失。所以 wraps 不只是"好看"，而是框架正确工作的刚需。
+
 4. 装饰器在函数定义时执行——这个特性有什么实际用途？（提示：注册机制、信号系统）
+
+**参考答案**
+
+装饰器在**函数定义时（通常是模块导入时）**就执行，而非调用时。这意味着：只要"定义"了函数，就能自动完成注册 / 绑定，无需任何显式调用。典型用途：
+
+- **注册机制**：插件系统、路由表（Flask `@app.route`）、命令注册表（CLI 框架）——函数定义时自动加入某个注册表。
+- **信号 / 事件系统**：`@register("click")` 把处理函数绑定到事件名，事件触发时按名查表调用。
+- **测试发现、缓存预热、权限标记**等需要"定义即收集元数据"的场景。
+
+```python
+handlers = {}
+
+def register(event):
+    def decorator(func):
+        handlers[event] = func     # 定义时就完成注册，无需显式调用
+        return func
+    return decorator
+
+@register("click")
+def on_click():
+    return "处理点击"
+
+@register("hover")
+def on_hover():
+    return "处理悬停"
+
+print(sorted(handlers))      # ['click', 'hover']
+print(handlers["click"]())   # 处理点击
+```
+
+预期输出：
+
+```text
+['click', 'hover']
+处理点击
+```
+
+注意：`on_click` / `on_hover` 这两个函数**从未被显式调用**，但 `handlers` 表已经填好了——这正是"定义时即完成注册"的证明。之后只要按事件名查表分发，就实现了解耦。
+
 5. 如何实现一个装饰器，让它既能带参数又能不带参数？（`@decorator` 和 `@decorator(args)` 都能工作）
+
+**参考答案**
+
+核心难点：`@decorator` 会把**函数本身**作为参数传进来，而 `@decorator(args)` 先传入**配置参数**、期望返回一个装饰器。解决办法是**判断第一个位置参数是不是可调用对象（函数）**：是，就按"不带参数"处理；否则按"带参数"处理，返回真正的装饰器。
+
+```python
+import functools
+
+def smart_decorator(*args, **kwargs):
+    """兼容 @smart_decorator 与 @smart_decorator(prefix=...) / @smart_decorator("...")"""
+    def decorator(func, prefix="LOG"):
+        @functools.wraps(func)
+        def wrapper(*a, **kw):
+            print(f"[{prefix}] 调用 {func.__name__}")
+            return func(*a, **kw)
+        return wrapper
+
+    # @smart_decorator：唯一位置参数就是函数本身
+    if len(args) == 1 and callable(args[0]) and not kwargs:
+        return decorator(args[0])
+    # @smart_decorator(...)：解析配置后返回装饰器
+    prefix = kwargs.get("prefix", args[0] if args else "LOG")
+    return lambda func: decorator(func, prefix)
+
+@smart_decorator
+def add(a, b):
+    return a + b
+
+@smart_decorator(prefix="DEBUG")
+def mul(a, b):
+    return a * b
+
+@smart_decorator("TRACE")
+def sub(a, b):
+    return a - b
+
+print(add(2, 3))
+print(mul(2, 3))
+print(sub(5, 2))
+```
+
+预期输出：
+
+```text
+[LOG] 调用 add
+5
+[DEBUG] 调用 mul
+6
+[TRACE] 调用 sub
+3
+```
+
+三种用法都成立：裸 `@smart_decorator`（默认 LOG）、关键字 `@smart_decorator(prefix="DEBUG")`、位置参数 `@smart_decorator("TRACE")`。
+
+💡 提示：若只需支持"裸用 + 关键字参数"两种形式，还有更简洁的写法——`def deco(_func=None, *, prefix="LOG")`：`_func` 非 None 即裸用，直接装饰；否则返回内层装饰器。上面的 `callable` 判断额外兼容了"单个位置配置参数"，更通用。
 
 ## 📚 扩展阅读
 

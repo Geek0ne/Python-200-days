@@ -571,13 +571,138 @@ graph TB
 
 1. **为什么 Python 选择多进程而非移除 GIL 来解决 CPU 密集型问题？** 考虑 C 扩展兼容性、内存模型复杂度等方面。
 
+**参考答案**
+
+移除 GIL（让单解释器内多线程真正并行）牵一发动全身，而多进程是「绕开」而非「改造」：
+
+- **内存模型依赖 GIL**：CPython 用引用计数管理内存，GIL 让计数操作天然线程安全。去掉它就得给每次引用增减加原子操作/细粒度锁，单线程性能也会下降。
+- **C 扩展生态**：海量 C 扩展（NumPy 等）默认「有 GIL 保护、单线程访问对象」。移除 GIL 会让它们大面积失效或需重写。
+- **内部结构非线程安全**：dict、list 等没有内置锁，全面加锁既复杂又拖慢速度。
+- **多进程的代价可控**：每个进程自带独立解释器和 GIL，由操作系统调度到不同核心，真正并行，且不动核心、不破坏生态；代价只是内存翻倍 + 需要 IPC。
+
+💡 提示：PEP 703 已在 Python 3.13+ 提供「可选无 GIL」构建（free-threaded），但需生态逐步适配，并非默认。小例子（已验证，子进程 PID 与主进程不同 → 独立解释器）：
+
+```python
+import multiprocessing as mp, os
+
+def show_pid(_):
+    return os.getpid()
+
+if __name__ == "__main__":
+    with mp.Pool(2) as pool:
+        pids = pool.map(show_pid, range(4))
+    print("主进程 PID:", os.getpid())
+    print("子进程 PID:", sorted(set(pids)))   # 与主进程不同的 PID
+```
+
 2. **Queue 内部是如何实现进程安全的？** 提示：它基于 `Pipe` + `BoundedSemaphore` + `Lock`。
+
+**参考答案**
+
+`multiprocessing.Queue` 的进程安全靠三件套协作：
+
+- **Pipe（管道）**：底层真正传输字节的通道，对象先 `pickle` 序列化再写入。
+- **Lock（互斥锁）**：保证同一时刻只有一个进程在读/写管道，避免多生产者/多消费者把字节流写乱。
+- **BoundedSemaphore（有界信号量）**：计数可用槽位，实现 `maxsize` 上限——满了 `put` 阻塞，取走后释放。
+
+此外它用一个后台「feeder 线程」缓冲 `put` 的数据，让 `put()` 尽快返回；`get()` 则在锁保护下读取并反序列化，再释放信号量。小例子（已验证，多进程经 Queue 回传结果）：
+
+```python
+import multiprocessing as mp
+
+def worker(q, x):
+    q.put(x * x)
+
+if __name__ == "__main__":
+    q = mp.Queue()
+    ps = [mp.Process(target=worker, args=(q, i)) for i in range(4)]
+    for p in ps: p.start()
+    for p in ps: p.join()
+    print(sorted(q.get() for _ in range(4)))   # [0, 1, 4, 9]
+```
 
 3. **在什么场景下，你应该选择 `Pipe` 而不是 `Queue`？** 考虑性能、拓扑结构、使用复杂度。
 
+**参考答案**
+
+当通信是「恰好两个进程之间」时，优先 `Pipe`：
+
+- **性能**：Pipe 没有 Queue 的锁/信号量/feeder 线程开销，点对点收发更快。
+- **拓扑**：Pipe 只有两个端点，适合一对一的请求-响应、双向聊天；Queue 是多对多，适合多生产者/多消费者的任务分发。
+- **复杂度**：Pipe 接口极简（`send`/`recv`），但**不保证多读者/多写者并发安全**，也没有容量上限；需要这些时用 Queue。
+
+一句话：两进程、要快、结构简单 → Pipe；多进程、要安全缓冲/限流 → Queue。小例子（已验证，父子进程经 Pipe 双向通信）：
+
+```python
+import multiprocessing as mp
+
+def child(conn):
+    msg = conn.recv()
+    conn.send(msg.upper())
+    conn.close()
+
+if __name__ == "__main__":
+    parent, child_end = mp.Pipe()
+    p = mp.Process(target=child, args=(child_end,))
+    p.start()
+    parent.send("hello")
+    print(parent.recv())   # HELLO
+    p.join()
+    parent.close()
+```
+
 4. **如果子进程处理过程中抛出异常，主进程如何捕获？** 尝试用 `apply_async` 的 `get()` 方法。
 
+**参考答案**
+
+用进程池时，子进程的异常会被「打包」回主进程，在取结果时重新抛出：
+
+- `apply_async(...)` 返回 `AsyncResult`，调用它的 `.get()` 时，若子进程抛了异常，`get()` 会在主进程**重新抛出同一异常**，用 try/except 即可捕获。
+- `pool.map(...)` 同理：取结果时会抛出子进程异常。
+- 注意：若用的是裸 `mp.Process`（非 Pool），子进程异常**不会**自动传回主进程；要检查 `p.exitcode`（非 0 表示出错），或通过 Queue/Pipe 把错误信息主动传回。
+
+小例子（已验证）：
+
+```python
+import multiprocessing as mp
+
+def boom(x):
+    raise ValueError(f"子进程出错: {x}")
+
+if __name__ == "__main__":
+    with mp.Pool(2) as pool:
+        result = pool.apply_async(boom, args=(42,))
+        try:
+            result.get()          # 在这里重新抛出子进程的异常
+        except ValueError as e:
+            print("主进程捕获:", e)   # 主进程捕获: 子进程出错: 42
+```
+
 5. **进程池的 `map` 和 `imap_unordered` 在结果顺序和内存使用上有什么区别？** 何时选择哪个？
+
+**参考答案**
+
+两者都并行执行，区别在「顺序」和「内存/时机」：
+
+- **`map`**：阻塞到**全部**完成，返回一个**完整列表**，顺序与**输入一致**。结果一次性攒齐，峰值内存较高。
+- **`imap_unordered`**：返回**迭代器**，谁先完成先产出谁（**完成顺序**，非输入顺序），可边产出边处理，峰值内存更低、能更早开始消费。
+- 补充：`imap` 也是惰性迭代，但**保持输入顺序**，可能被前面慢的任务卡住。
+
+选择：数据量小/中、需要按输入顺序拿全部结果 → `map`；数据量大、想尽快处理已完成结果、不在乎顺序、省内存 → `imap_unordered`。小例子（已验证，任务耗时不同）：
+
+```python
+import multiprocessing as mp, time
+
+def task(n):
+    time.sleep(n * 0.1)   # 不同耗时
+    return n
+
+if __name__ == "__main__":
+    args = [3, 1, 2]
+    with mp.Pool(3) as pool:
+        print(pool.map(task, args))                  # [3, 1, 2] 输入顺序
+        print(list(pool.imap_unordered(task, args))) # [1, 2, 3] 完成顺序
+```
 
 ---
 

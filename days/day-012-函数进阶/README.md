@@ -954,7 +954,81 @@ print(surprise(2))    # 输出: [0, 1] — 为什么是 0, 1 而不是 0, 0？
 
 思考顺序：第一次调用时 `lst` 是 `[]`，`len(lst)` 是 0，所以 `lst` 变成 `[0]`。第二次调用时 `lst` 还是那个列表，`len(lst)` 是 1，所以追加 1。这就证明了**调用之间共享同一个列表对象**。
 
+**参考答案**
+
+题目里的分析完全正确，实跑结果与之一致：
+
+```python
+def surprise(x, lst=[]):
+    lst.append(len(lst))   # 追加的是"当前列表长度"
+    return lst
+
+print(surprise(1))          # [0]
+print(surprise(2))          # [0, 1]
+print(surprise.__defaults__)  # 查看默认参数对象本身
+```
+
+运行输出：
+
+```text
+[0]
+[0, 1]
+([0, 1],)
+```
+
+关键点再强调一遍：
+
+- 默认值 `[]` 只在 **`def` 语句执行时创建一次**，存进 `surprise.__defaults__`。之后每次不传 `lst` 的调用，用的都是这同一个列表。
+- 第一次 `len(lst)==0`，追加 0 → `[0]`；第二次列表已是 `[0]`，`len(lst)==1`，追加 1 → `[0, 1]`。所以是 `0, 1` 而不是 `0, 0`。
+- 最后一行 `__defaults__` 输出 `([0, 1],)`，直接证明默认参数对象本身被改写了——它不再是空列表。
+
+正确写法是用 `None` 作默认值，在函数体内新建列表：
+
+```python
+def surprise(x, lst=None):
+    if lst is None:
+        lst = []          # 每次调用都创建独立的新列表
+    lst.append(len(lst))
+    return lst
+
+print(surprise(1))  # [0]
+print(surprise(2))  # [0]  ← 不再相互影响
+```
+
+⚠️ 注意：参数 `x` 在函数里根本没用到，它只是用来迷惑读者的——真正决定输出的是共享的 `lst`。
+
 2. ***args 和 **kwargs 的对比**：`*args` 和 `**kwargs` 各自什么时候使用？如果函数需要同时使用两者，为什么 `*args` 必须在 `**kwargs` 之前？尝试从 Python 参数解析机制的底层逻辑思考。
+
+**参考答案**
+
+各自的使用时机：
+
+- **`*args`**：当"位置值的个数不确定"时用。它把多余的位置参数打包成**元组**。例如求和 `sum_all(1, 2, 3)`、求最大值、拼接任意多个字符串——你关心的是"一组值"，而不是它们的名字。
+- **`**kwargs`**：当"命名选项的个数不确定"时用。它把多余的关键字参数打包成**字典**。例如配置函数 `configure(host=..., debug=...)`、用户档案 `create_profile(name, age=..., city=...)`——你关心的是"键值对"，名字本身有意义。
+
+为什么 `*args` 必须在 `**kwargs` 之前，要从参数解析顺序理解：
+
+- Python 解析一次调用时，**先按位置匹配，再按名称匹配**。位置参数先填满普通位置形参，剩下的进 `*args`；然后关键字参数去匹配同名的形参，剩下没人认领的才进 `**kwargs`。
+- 所以 `*args` 是"位置参数的兜底"，`**kwargs` 是"关键字参数的兜底"。位置匹配发生在名称匹配之前，`*args` 自然写在前面。
+- 更关键的是：`**kwargs` 必须是**最后一个**参数。它是关键字的"终点站"，会吞掉所有剩余关键字；如果它后面还能跟别的参数，那些参数将永远拿不到值（都被 `**kwargs` 截走了），产生无法解析的歧义。因此语法规定顺序为：普通位置参数 → `*args` → 仅限关键字参数 → `**kwargs`。
+
+一个同时使用两者的小例子：
+
+```python
+def demo(a, *args, **kwargs):
+    print(a, args, kwargs)
+
+demo(1, 2, 3, x=4, y=5)
+# 1 先匹配 a；2, 3 是多余位置参数 → args=(2, 3)；x=4, y=5 无同名形参 → kwargs
+```
+
+运行输出：
+
+```text
+1 (2, 3) {'x': 4, 'y': 5}
+```
+
+💡 提示：`args`、`kwargs` 只是约定俗成的名字，真正起作用的是 `*` 和 `**` 这两个符号；写成 `*values, **options` 效果完全一样。
 
 3. **类型注解的"谎言"**：Type Hints 只是"注解"，不强制检查类型。那么以下代码会怎样？
 
@@ -968,6 +1042,131 @@ print(result)
 
 测试后思考：这说明了类型注解的什么特性？在实际项目中如何弥补这个"不强制"的不足？
 
+**参考答案**
+
+这段代码会**报错**，而不是正常输出。实跑验证：
+
+```python
+def divide(a: int, b: int) -> float:
+    return a / b
+
+try:
+    result = divide("10", "5")   # 注解写的是 int，实际传入 str
+    print(result)
+except TypeError as e:
+    print("捕获到异常:", e)
+
+print(divide.__annotations__)    # 注解只是被存起来，并未参与检查
+print(divide(10, 5))             # 传入真正的 int 才正常
+```
+
+运行输出：
+
+```text
+捕获到异常: unsupported operand type(s) for /: 'str' and 'str'
+{'a': <class 'int'>, 'b': <class 'int'>, 'return': <class 'float'>}
+2.0
+```
+
+这说明类型注解的特性：
+
+- **注解只是元数据，不做运行时强制**。Python 把 `int`、`float` 原样存进 `divide.__annotations__`，调用时根本不看它。真正决定成败的是运行时的实际操作——`"10" / "5"` 是两个字符串相除，`/` 不支持，于是抛 `TypeError`。
+- 换句话说，注解"撒谎"（写 int 却传 str）不会在传参那一刻被拦下，而是要等到执行到不兼容的操作才暴露。
+
+实际项目中弥补"不强制"的办法：
+
+- **静态类型检查**：用 `mypy`、`pyright` 在运行前扫描代码，`divide("10", "5")` 会被直接标红报错（`pip install mypy` 后 `mypy 文件名.py`）。
+- **运行时校验**：在函数入口显式 `isinstance` 检查，或借助 `pydantic`、`typeguard` 等库按注解自动校验。
+- **单元测试**：覆盖正常与异常输入，尽早发现类型问题。
+
+⚠️ 注意：注解里的 `-> float` 也不保证返回浮点——若函数体返回 int，Python 同样不会纠正它。注解是"承诺"，不是"约束"。
+
 4. **仅限关键字参数的设计**：写一个函数 `send_message(recipient, subject, *, urgency, attachments=None)`，解释为什么 `urgency` 和 `attachments` 要设计成仅限关键字参数？如果允许用位置参数调用 `send_message("a", "b", "high", ["file.pdf"])` 会有什么问题？
 
+**参考答案**
+
+先给出实现并验证两种调用方式：
+
+```python
+def send_message(recipient, subject, *, urgency, attachments=None):
+    # * 之后的 urgency、attachments 是"仅限关键字参数"
+    if attachments is None:
+        attachments = []      # 用 None 默认值避免可变默认参数陷阱
+    return f"致 {recipient}: {subject} (urgency={urgency}, attachments={attachments})"
+
+# ✅ 正确：urgency、attachments 必须用关键字形式
+print(send_message("a@b.com", "你好", urgency="high", attachments=["file.pdf"]))
+
+# ❌ 错误：试图用位置参数传 urgency、attachments
+try:
+    send_message("a", "b", "high", ["file.pdf"])
+except TypeError as e:
+    print("捕获到异常:", e)
+```
+
+运行输出：
+
+```text
+致 a@b.com: 你好 (urgency=high, attachments=['file.pdf'])
+捕获到异常: send_message() takes 2 positional arguments but 4 were given
+```
+
+为什么把 `urgency`、`attachments` 设计成仅限关键字：
+
+- **它们是"配置/选项"，不是核心对象**。收件人、主题是消息的主体，而紧急程度、附件是修饰性的可选设置。强制写名字，调用处就自带说明：`urgency="high"` 一眼能懂，`"high"` 单独出现则含义模糊。
+- **防止位置混淆**。如果允许 `send_message("a", "b", "high", ["file.pdf"])`，读者必须翻到函数定义才知道第三个参数是紧急程度、第四个是附件；参数一多极易传反顺序，而且这种错误不会报错，只会悄悄产生错误结果。
+- **便于演进**。将来在中间插入新参数时，仅限关键字的调用方不受影响（它们靠名字匹配）；而纯位置调用会因位置整体后移而集体出错。
+
+至于 `attachments=None`：这是本课"安全默认值"模式——用不可变的 `None` 占位，进函数后再建列表，避免多次调用共享同一个列表。
+
+💡 提示：`*` 本身不接收任何值，它只是一个"分隔符"，告诉解释器"后面的参数只能用关键字传"。
+
 5. **混合所有概念**：设计一个函数签名，它至少包含：2 个位置参数、`*args`、1 个仅限关键字参数、`**kwargs`，并且包含完整的类型注解。描述这个函数应该做什么，并解释为什么需要这么复杂的参数结构。
+
+**参考答案**
+
+设计一个"生成报告"的函数 `build_report`，它把本课所有参数形式都用上：
+
+```python
+from typing import Any
+
+def build_report(
+    title: str,                 # 位置参数 1：报告标题（必填）
+    author: str,                # 位置参数 2：作者（必填）
+    *sections: str,             # 可变位置参数：任意多个正文章节
+    fmt: str = "text",          # 仅限关键字参数：输出格式（可选配置）
+    **metadata: Any,            # 可变关键字参数：任意附加信息
+) -> dict[str, Any]:
+    """把标题、作者、若干章节和附加信息组装成一份报告字典"""
+    return {
+        "title": title,
+        "author": author,
+        "sections": list(sections),   # 元组转列表，方便后续处理
+        "format": fmt,
+        "metadata": metadata,
+    }
+
+print(build_report(
+    "年度总结", "张三", "引言", "正文", "结语",   # 前两个是位置参数，后三个进 *sections
+    fmt="markdown",                            # 仅限关键字，必须写名字
+    year=2026, confidential=True,              # 无同名形参，全部进 **metadata
+))
+```
+
+运行输出：
+
+```text
+{'title': '年度总结', 'author': '张三', 'sections': ['引言', '正文', '结语'], 'format': 'markdown', 'metadata': {'year': 2026, 'confidential': True}}
+```
+
+这个函数做什么：接收报告的标题、作者和不定数量的章节，再按指定格式、携带任意附加元数据，组装并返回一份结构化的报告字典。
+
+为什么需要这么"复杂"的参数结构——每一部分都对应一种真实需求：
+
+- **2 个位置参数（`title`、`author`）**：报告的核心身份，必填、顺序固定，用位置传递最简洁。
+- **`*sections`**：章节数量天然不确定（可能 1 节也可能 10 节），用可变位置参数一次收齐，免去为每种数量写重载。
+- **仅限关键字 `fmt`**：它是可选配置而非内容，强制写 `fmt="markdown"` 让调用处自解释，也避免和章节内容在位置上混淆。
+- **`**metadata`**：附加信息（年份、是否机密、部门……）种类开放、无法穷举，用可变关键字参数兜底，函数无需为每个新字段改签名。
+- **完整类型注解**：`str`、`dict[str, Any]` 等让 IDE 能补全、让 mypy 能静态检查，弥补注解"不强制"的不足。
+
+💡 提示：参数顺序严格遵循"普通位置参数 → `*args` → 仅限关键字参数 → `**kwargs`"。这不是随意排列，而是 Python 参数解析机制（先位置后名称、`**kwargs` 兜底在最后）的必然要求。

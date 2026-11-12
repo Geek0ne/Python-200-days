@@ -629,14 +629,197 @@ git status --porcelain   # 应只剩待提交的课程文件
 
 1. **SM-2 的 EF 从 2.5 起步，且答对还会上升。** 如果一张卡连续 10 次 q=5，
    EF 会涨到多少？间隔会变成多少天？这个结果在真实学习中合理吗，你会怎么改？
+
+**参考答案**
+
+SM-2 每次答对（q≥3）EF 增加 0.1（q=5 时 delta=0.1），间隔按 `interval×EF` 指数增长。连续 10 次 q=5，EF 从 2.5 涨到 3.5，间隔暴涨到 4 万多天。
+
+```python
+def review(ease, interval, reps, q):
+    if q < 3:
+        reps = 0; interval = 1
+    else:
+        reps += 1
+        if reps == 1: interval = 1
+        elif reps == 2: interval = 6
+        else: interval = max(1, round(interval * ease))   # 先用旧 EF 算间隔
+    delta = 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)
+    ease = max(1.3, ease + delta)                          # 再更新 EF
+    return ease, interval, reps
+
+ease, interval, reps = 2.5, 0, 0
+print("次数  EF    间隔(天)")
+for i in range(1, 11):
+    ease, interval, reps = review(ease, interval, reps, 5)
+    print(f"{i:>2}   {ease:.2f}  {interval}")
+print(f"10 次 q=5 后：EF={ease:.2f}，间隔={interval} 天 ≈ {interval/365:.1f} 年")
+```
+
+预期输出：
+
+```text
+次数  EF    间隔(天)
+ 1   2.60  1
+ 2   2.70  6
+ 3   2.80  16
+ 4   2.90  45
+ 5   3.00  131
+ 6   3.10  393
+ 7   3.20  1218
+ 8   3.30  3898
+ 9   3.40  12863
+10   3.50  43734
+10 次 q=5 后：EF=3.50，间隔=43734 天 ≈ 119.8 年
+```
+
+EF 涨到 3.50，间隔膨胀到 43734 天（≈119.8 年）。真实学习里不可能这么久不复习还记得，所以不合理。改法：给 EF 封顶（如 ≤2.8）、给最大间隔封顶（如 ≤365 天），并用真实召回反馈而非「答对就涨」来调 EF。
+
+💡 提示：间隔用「更新前的旧 EF」计算，且 round 受浮点影响（45×2.9=130.5000…→131），数字以实跑为准，别手算。
+
 2. **本课的「召回概率」是 `exp(-t/S)` 生成的。** 如果换成一条更平缓的曲线
    （例如 `1/(1+t/S)`），SM-2 与固定间隔的对比结论会变吗？先预测，再改代码验证。
+
+**参考答案**
+
+先预测：更平缓的曲线意味着同样间隔下召回概率更高（遗忘更慢），直觉上固定间隔也能撑更久，SM-2 的优势可能缩小。但实测方向相反。
+
+```python
+import math, random
+from datetime import date, timedelta
+
+def make_cards(n=12):
+    day0 = date(2026, 1, 1)
+    return [{"ease":2.5,"interval":1,"reps":0,"due":day0,"last":day0} for _ in range(n)]
+def sm2_review(c, q, day):
+    if q < 3:
+        c["reps"]=0; c["interval"]=1
+    else:
+        c["reps"]+=1
+        if c["reps"]==1: c["interval"]=1
+        elif c["reps"]==2: c["interval"]=6
+        else: c["interval"]=max(1, round(c["interval"]*c["ease"]))
+    delta=0.1-(5-q)*(0.08+(5-q)*0.02)
+    c["ease"]=max(1.3, c["ease"]+delta)
+    c["last"]=day; c["due"]=day+timedelta(days=c["interval"])
+def recall(c, day, curve):
+    elapsed=max(0,(day-c["last"]).days)
+    S=max(1.0, c["interval"]*3.0)
+    return math.exp(-elapsed/S) if curve=="exp" else 1.0/(1.0+elapsed/S)
+def simulate(curve, scheduler, days=180, seed=20261026):
+    rng=random.Random(seed)
+    cards=make_cards()
+    today=date(2026,1,1)
+    reviews=failures=0
+    for off in range(days):
+        day=today+timedelta(days=off)
+        due=[c for c in cards if (c["due"]<=day if scheduler=="sm2" else c["due"]==day)]
+        for c in due:
+            q=5 if rng.random()<recall(c,day,curve) else 2
+            if q<3: failures+=1
+            reviews+=1
+            if scheduler=="sm2": sm2_review(c,q,day)
+            else:
+                c["interval"]=7; c["last"]=day; c["due"]=day+timedelta(days=7)
+    final=today+timedelta(days=days-1)
+    retention=sum(recall(c,final,curve) for c in cards)/len(cards)
+    avg_interval=sum(c["interval"] for c in cards)/len(cards)
+    return reviews, failures, avg_interval, retention
+
+for curve in ("exp","hyper"):
+    for sch in ("sm2","fixed"):
+        r,f,ai,ret=simulate(curve,sch)
+        print(f"curve={curve:5} {sch:5} 复习={r:4} 遗忘={f:3} 平均间隔={ai:6.1f} 期末留存={ret:.2f}")
+```
+
+预期输出：
+
+```text
+curve=exp   sm2   复习= 185 遗忘= 50 平均间隔=  87.6 期末留存=0.78
+curve=exp   fixed 复习= 312 遗忘= 90 平均间隔=   7.0 期末留存=0.83
+curve=hyper sm2   复习= 175 遗忘= 41 平均间隔= 118.4 期末留存=0.85
+curve=hyper fixed 复习= 312 遗忘= 79 平均间隔=   7.0 期末留存=0.84
+```
+
+指数曲线下固定间隔留存(0.83)略高于 SM-2(0.78)，但复习量多得多(312 vs 185)；换成更平缓的双曲线后，SM-2 留存(0.85)反超固定间隔(0.84)，且复习更少(175 vs 312)、平均间隔更长(118 vs 7)。所以「平缓曲线削弱 SM-2 优势」的预测被推翻——曲线越平缓，SM-2 用更少复习保住更高留存的优势越明显。结论会变，但方向与直觉相反。
+
+⚠️ 注意：这是模拟，留存数字依赖种子与曲线假设，不是真实记忆测量；重点看「复习量 vs 留存」的权衡趋势。
+
 3. **`bytes.count(b"\n")` 比 `splitlines()` 快 3.7 倍，但少算 19 行。**
    什么场景下这 19 行的误差不可接受？给出一个具体例子。
+
+**参考答案**
+
+`bytes.count(b"\n")` 数的是换行符个数，`splitlines()` 数的是「行」个数。最后一行若没有换行符结尾，count 就少算 1 行（累计少 19 行，说明有 19 个文件末尾无换行）。
+
+```python
+for s in [b"print(1)", b"print(1)\n", b"a\nb\nc"]:
+    print(repr(s), "count('\\n')=", s.count(b"\n"), "splitlines=", len(s.decode().splitlines()))
+```
+
+预期输出：
+
+```text
+b'print(1)' count('\n')= 0 splitlines= 1
+b'print(1)\n' count('\n')= 1 splitlines= 1
+b'a\nb\nc' count('\n')= 2 splitlines= 3
+```
+
+`b"print(1)"` 末尾无换行，count=0 但实际有 1 行；`b"a\nb\nc"` 有 3 行却只有 2 个换行符。误差不可接受的场景：按行计费/行数配额（末行是真实代码，漏算就少计费），或逐行解析且末行是有效数据（如 CSV 最后一条记录、日志最后一行）——用 count 当行数会漏处理最后一条。要准确行数就用 `splitlines()`，或 `count(b"\n") + (末尾无换行则 +1)`。
+
 4. **14 天计划里 Day 14 是空的。** 如果你坚持要填满它，有哪三种做法？
    每种做法分别牺牲了什么？
+
+**参考答案**
+
+Day 14 留空本是「缓冲/休息」的设计。坚持填满的三种做法及代价：
+
+1. **补进度**：把前面欠下/没消化完的内容补到 Day 14。牺牲：缓冲没了，前面再延误就没有回旋余地，计划变脆。
+2. **加深**：加一个综合项目或总复习，把 13 天串起来。牺牲：额外认知负荷与时间，挤占休息，可能导致后期疲劳、留存下降。
+3. **抢进度**：提前学下一阶段的新内容。牺牲：违背间隔重复与循序渐进，新知识缺少前面的巩固支撑容易夹生，也打破「学—练—休」节奏。
+
+💡 提示：留白不是浪费，是计划的弹性来源；填满它等于把弹性换成内容，三种做法都在牺牲某种「余量」。
+
 5. **知识地图统计的是教材，不是你的掌握度。** 设计一个最小可行的「掌握度采集」方案，
    要求：每课不超过 1 分钟、结果可比较、不需要人工打分。
+
+**参考答案**
+
+最小可行方案：每课配 3 道可自动判分的微自测（如实现一个函数，用预设用例断言对错），1 分钟内做完，得分=通过用例比例×100，跨课统一口径可比，全程机器判分。下面用「安全除法」微课演示：
+
+```python
+import time
+def run_quiz(learner_impl, time_limit=60):
+    cases = [((6,3),2.0), ((1,0),None), ((-9,3),-3.0)]   # 预设用例与期望
+    start=time.monotonic()
+    passed=0
+    for args, expected in cases:
+        try:
+            got=learner_impl(*args)
+        except Exception:
+            got="EXC"
+        passed += (got==expected)
+    elapsed=time.monotonic()-start
+    return {"score":round(passed/len(cases)*100), "passed":passed, "total":len(cases),
+            "seconds":round(elapsed,4), "within_limit":elapsed<=time_limit}
+
+def safe_div(a, b):
+    return None if b==0 else a/b
+def bad_div(a, b):
+    return a/b
+print("正确答案:", run_quiz(safe_div))
+print("错误答案:", run_quiz(bad_div))
+```
+
+预期输出：
+
+```text
+正确答案: {'score': 100, 'passed': 3, 'total': 3, 'seconds': 0.0, 'within_limit': True}
+错误答案: {'score': 67, 'passed': 2, 'total': 3, 'seconds': 0.0, 'within_limit': True}
+```
+
+每课 3 道断言式微自测，得分=通过率×100，跨课可比；`within_limit` 保证 1 分钟内完成；无需人工打分。safe_div 处理了除零得 100，bad_div 除零抛异常被记为错得 67——掌握度差异被自动量化。
+
+💡 提示：用例要覆盖边界（如除零），否则「全对」可能只是没测到弱点；得分可比的前提是每课题量/难度口径一致。
 
 ---
 

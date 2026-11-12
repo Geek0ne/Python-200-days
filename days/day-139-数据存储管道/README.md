@@ -165,7 +165,117 @@ flowchart TD
 ## 六、思考题
 
 1. 批量缓冲 100 条 vs 1000 条，各有什么代价？怎么选择缓冲大小的实验方法？
+
+**参考答案**
+
+- **缓冲 100 条**：崩溃丢失窗口小（最多丢 100 条）、数据延迟低（更快可查询）、内存占用小；但批次提交更频繁，吞吐提升有限。
+- **缓冲 1000 条**：吞吐更高（网络往返和事务提交次数更少）；但崩溃最多丢 1000 条、数据滞后更久、单事务更大（锁时间长、回滚成本高，可能撞数据库包大小上限）。
+
+**实验方法**：固定其他条件，对 buffer = 50/100/500/1000 分别压测吞吐（条/秒）、P99 延迟、内存占用，找到"吞吐不再显著提升"的拐点；再结合业务可容忍的丢失窗口和延迟要求，取较小值。通常 100~500 是甜点区。
+
+另外务必加**定时 flush**（如每 5 秒强制刷一次），防止低流量时数据一直卡在缓冲区。
+
+小例子：实测 100→500 吞吐翻倍，500→1000 只提升 10%，那就选 500。
 2. 为什么推荐"原始层 MongoDB + 分析层 MySQL"而不是直接写 MySQL？
+
+**参考答案**
+
+因为爬下来的数据是**半结构化**的：字段随站点/页面变化、嵌套深、经常增减。MySQL 要求固定 schema，加字段要 `ALTER TABLE`，嵌套结构只能序列化成 JSON 字符串（失去查询能力）；MongoDB 的文档模型天然契合，先存下来不丢信息。
+
+更关键的是**可重处理性**：原始层保留"原始快照"，当解析规则有 bug 时，可以从原始层重新 ETL，而不必重新爬取（重爬有风控成本）。如果直接写 MySQL，清洗错了数据就丢了。
+
+分析层需要 JOIN、事务、报表、BI 工具，MySQL/关系库更强；从 MongoDB ETL 到 MySQL，schema 稳定后再结构化。
+
+一句话：MongoDB 买"灵活性与可重处理"，MySQL 买"查询与分析能力"，各司其职。
+
+小例子：商品页今天 30 个字段、明天多 5 个，MongoDB 直接存，MySQL 得先改表。
 3. 如果爬虫在凌晨 3 点崩溃，怎么保证缓冲区里没 flush 的数据不丢？（提示：本地 WAL 文件 / 缩短定时 flush / 消息队列）
+
+**参考答案**
+
+三种思路：① **本地 WAL（预写日志）**——每条数据先追加写磁盘文件（fsync）再进缓冲，写库成功后才删日志，重启时重放未完成的日志；② **缩短定时 flush + close_spider 兜底**——只能防"正常退出"，防不了 kill -9/断电，丢失窗口 = flush 间隔；③ **消息队列（Kafka/Redis Stream）**——item 先入队再消费写库，队列自身持久化，天然不丢。
+
+下面用标准库演示最小 WAL（崩溃后自动恢复）：
+
+```python
+import json
+import os
+import tempfile
+
+class WalBuffer:
+    """先写 WAL（预写日志）再进内存缓冲；崩溃重启后重放 WAL 找回数据"""
+
+    def __init__(self, wal_path, db, batch=3):
+        self.wal_path, self.db, self.batch = wal_path, db, batch
+        self.buffer = []
+        self._replay()                      # 启动时先恢复上次崩溃遗留的数据
+
+    def _replay(self):
+        if os.path.exists(self.wal_path):
+            with open(self.wal_path, encoding="utf-8") as f:
+                for line in f:
+                    self.db.append(json.loads(line))
+            os.remove(self.wal_path)        # 生产上还要按唯一键去重，防止重复入库
+
+    def add(self, item):
+        with open(self.wal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(item, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())            # 强制落盘，断电也不丢
+        self.buffer.append(item)
+        if len(self.buffer) >= self.batch:
+            self.flush()
+
+    def flush(self):
+        self.db.extend(self.buffer)         # 模拟批量写库
+        self.buffer.clear()
+        os.remove(self.wal_path)            # 写库成功后才删 WAL
+
+with tempfile.TemporaryDirectory() as tmp:
+    wal = os.path.join(tmp, "spider.wal")
+    db = []                                 # 用列表模拟数据库
+    p1 = WalBuffer(wal, db, batch=3)
+    p1.add({"title": "数据1"})
+    p1.add({"title": "数据2"})              # 只有 2 条，没到批量阈值，还在缓冲区
+    # --- 模拟进程崩溃：p1 直接丢弃，没来得及 flush ---
+    p2 = WalBuffer(wal, db, batch=3)        # 重启：新实例自动重放 WAL
+    print("重启后数据库里的数据:", db)
+```
+
+预期输出：
+
+```text
+重启后数据库里的数据: [{'title': '数据1'}, {'title': '数据2'}]
+```
+
+两条还在缓冲区的数据，因为先写了 WAL，重启后被完整找回。
+
+⚠️ 注意："写库成功但 WAL 未删"的崩溃窗口会导致重放重复，所以写库必须幂等（唯一键 + upsert）；WAL 要放在与数据库同等或更可靠的磁盘上。
 4. `insert_many(ordered=False)` 和默认 True 的区别是什么？部分文档主键冲突时行为有何不同？
+
+**参考答案**
+
+- **`ordered=True`（默认）**：按顺序插入，一旦遇到错误（如主键冲突）就**立即停止**，后面的文档不再插入，抛出 `BulkWriteError`。
+- **`ordered=False`**：即使部分文档失败，也**继续插入剩余文档**，最后统一报告所有错误；成功的已经写入。
+
+部分主键冲突时：`True` 只插到冲突点之前，"前半截入库、后半截丢失"；`False` 会把所有不冲突的都插进去，冲突的跳过（并报错）。爬虫批量入库通常用 `False`——一条脏数据不该阻塞整批。
+
+小例子：100 条里第 3 条冲突，`True` 只插入前 2 条，`False` 插入其余 99 条。
+
+⚠️ 注意：`False` 不是事务，"部分成功"是常态，要处理 `BulkWriteError.details` 里的失败文档（重试或记录）；它服务端可并行，通常也更快。
 5. 如何设计一套"数据质量日报"，用哪些指标衡量昨天爬虫产出数据的质量？
+
+**参考答案**
+
+按四个维度设计指标，并落到"每天每爬虫"的粒度：
+
+1. **完整性**：各必填字段非空率、schema 校验失败率；
+2. **唯一性**：重复率（去重命中数/总数）、主键冲突数；
+3. **时效性**：抓取到入库延迟 P50/P99、今日产出量 vs 近 7 日均值（骤降 >30% 告警）；
+4. **准确/可追溯**：类型转换失败数、值域异常（如价格 ≤ 0）、`source_url` 覆盖率。
+
+实现：Pipeline 监控层对每条数据计数（成功/丢弃/重复/字段缺失），按天 + spider 写入统计表；定时任务每早汇总昨日数据生成报表（Markdown/HTML）推送钉钉/企微，红项自动告警。
+
+关键：报表要有**对比基线**（环比/同比），单个数字看不出好坏；保留每爬虫每站点粒度，方便定位是哪个爬虫出了问题。
+
+小例子：报表显示"price 非空率从 99.9% 掉到 70%"，立刻知道是价格选择器失效，而不是模糊的"数据好像少了"。

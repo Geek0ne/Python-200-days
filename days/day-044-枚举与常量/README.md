@@ -468,13 +468,176 @@ mindmap
 
 1. **为什么 Enum 成员默认从 1 开始而不是 0？** 答案在 `auto()` 设计理据中。
 
+**参考答案**
+
+因为 **0 在布尔上下文里是「假」（falsy）**，而从 1 开始能保证第一个成员是「真」（truthy），避免一类隐蔽 bug。
+
+设想 `auto()` 从 0 开始：`Color.RED = 0`。那么 `if Color.RED:` 会被判为 False——明明是一个合法的颜色成员，却在条件判断里「消失」了。类似地，`while member:`、`member or default` 这类写法都会因为 0 是 falsy 而出错。让自动值从 1 起跳，就保证了「任何枚举成员都是 truthy」，条件判断更符合直觉。
+
+```python
+print(bool(0))   # False —— 0 是 falsy
+print(bool(1))   # True  —— 1 是 truthy
+```
+
+💡 提示：这只是 `auto()` 的默认策略。如果你显式写 `RED = 0`，枚举照样允许，只是要自己留意布尔判断的坑；也可以重写 `_generate_next_value_` 改成从 0 或其他值开始。
+
 2. **如果不用 `@unique`，两个成员值相同会发生什么？** 后定义的成员会成为前者的别名还是独立成员？写代码验证。
+
+**参考答案**
+
+会成为**别名（alias）**，而不是独立成员。值相同时，第一个定义的名字是「规范成员」，后面的名字都指向同一个对象。
+
+```python
+from enum import Enum
+
+class Color(Enum):
+    RED = 1
+    CRIMSON = 1   # 值与 RED 相同
+    GREEN = 2
+
+print(Color.CRIMSON is Color.RED)      # True：CRIMSON 是 RED 的别名
+print(Color(1))                        # Color.RED：按值查找返回首个定义
+print(list(Color))                     # 迭代只含规范成员，不含别名
+print(list(Color.__members__))         # __members__ 含别名
+```
+
+预期输出：
+
+```
+True
+Color.RED
+[<Color.RED: 1>, <Color.GREEN: 2>]
+['RED', 'CRIMSON', 'GREEN']
+```
+
+可以看到：`CRIMSON is RED` 为 True（同一对象）；按值 `Color(1)` 返回 RED；直接迭代 `list(Color)` 只有 RED、GREEN 两个规范成员，别名 CRIMSON 被跳过；但 `__members__` 里仍保留 CRIMSON 这个名字。若加上 `@unique`，定义时就会直接抛 `ValueError`，把值冲突挡在早期。
 
 3. **为什么推荐用 `is` 而不是 `==` 比较枚举成员？** 在什么极端情况下 `==` 会返回意想不到的结果？
 
+**参考答案**
+
+因为枚举成员是**单例**——每个成员全局只有一个实例。`is` 比较的是「是不是同一个对象」（身份），对单例来说既快又绝对准确；而 `==` 比较的是「值相等」，可能被自定义的 `__eq__` 或混入类型干扰。
+
+`==` 出意外的典型情况是 **`IntEnum` / `StrEnum`**：它们同时是 int/str 的子类，会和裸整数/字符串判为相等：
+
+```python
+from enum import Enum, IntEnum
+
+class Color(Enum):
+    RED = 1
+
+class Code(IntEnum):
+    OK = 200
+
+print(Color.RED == 1)     # False：普通 Enum 不等于裸整数
+print(Code.OK == 200)     # True：IntEnum 会和整数相等，可能掩盖类型错误
+```
+
+预期输出：
+
+```
+False
+True
+```
+
+`Code.OK == 200` 为 True，意味着你无法靠 `==` 区分「枚举成员」和「一个普通整数」，传入错误的裸值也可能悄悄通过。而 `is` 只认那个唯一的枚举对象，`Code.OK is Code.OK` 恒为 True，拿一个整数来比绝不会误判。此外，若有人给枚举写了自定义 `__eq__`，`==` 的行为更不可控，`is` 则始终稳定。
+
+💡 提示：`is` 用于「判断是不是某个已知成员」；若你确实想按值匹配（如从外部数据还原），用 `Code(200)` 做查找更合适。另外不要写 `x is 200` 这种「is 配字面量」，解释器会告警。
+
 4. **设计题**：一个交通灯状态机——从绿灯到黄灯到红灯再回到绿灯。如果在红灯时强行变绿灯，应该报错。用枚举实现这个状态机。
 
+**参考答案**
+
+思路：用枚举表示三个状态，再用一张「转移表」规定每个状态**只能**转到哪个下一状态；任何不在表里的转换都抛异常。这样就把「合法流转」集中管理，新增/修改规则只改表即可。
+
+```python
+from enum import Enum, auto
+
+class Light(Enum):
+    GREEN = auto()
+    YELLOW = auto()
+    RED = auto()
+
+# 转移表：每个状态只能转到指定的下一个状态
+NEXT = {
+    Light.GREEN: Light.YELLOW,
+    Light.YELLOW: Light.RED,
+    Light.RED: Light.GREEN,
+}
+
+class TrafficLight:
+    def __init__(self):
+        self.state = Light.GREEN
+
+    def change_to(self, target: Light):
+        if NEXT[self.state] is not target:      # 只允许按顺序流转
+            raise ValueError(f"非法转换: {self.state.name} → {target.name}")
+        self.state = target
+
+    def next(self):
+        self.change_to(NEXT[self.state])
+
+light = TrafficLight()
+print(light.state.name)                 # GREEN
+light.next(); print(light.state.name)   # YELLOW
+light.next(); print(light.state.name)   # RED
+light.next(); print(light.state.name)   # GREEN（完成一轮）
+
+# 非法跳步：绿灯直接变红灯 → 报错
+try:
+    light.change_to(Light.RED)
+except ValueError as e:
+    print("捕获错误:", e)
+```
+
+预期输出：
+
+```
+GREEN
+YELLOW
+RED
+GREEN
+捕获错误: 非法转换: GREEN → RED
+```
+
+`next()` 按 绿→黄→红→绿 正常循环；一旦想跳步（绿直接到红），`change_to` 就抛 `ValueError`。
+
+💡 提示：题面「红灯强行变绿要报错」与「红→绿是正常循环」略有出入。本实现把规则定义为「只能按固定顺序流转、任何跳步都报错」。如果你的规则确实是「红灯禁止直接变绿」，只需把转移表里 `Light.RED` 的目标去掉（让红灯成为终态，或另设一个 `reset()` 方法经黄灯回到绿灯），其余代码不变——这正是转移表的好处。
+
 5. **思考题**：枚举的 `__members__` 属性是什么？它和直接迭代枚举类有什么区别？试着自己输出看看。
+
+**参考答案**
+
+`__members__` 是一个**「名字 → 成员」的有序映射**（类似字典），它收录了定义时写下的**所有名字，包括别名**。而直接迭代枚举类（`for x in Color` / `list(Color)`）只产出**规范成员**，会跳过别名。这就是两者最关键的区别。
+
+```python
+from enum import Enum
+
+class Status(Enum):
+    OK = 200
+    SUCCESS = 200      # OK 的别名
+    NOT_FOUND = 404
+
+print(list(Status))                 # 迭代：只有规范成员
+print(list(Status.__members__))     # __members__：包含别名
+print(Status.__members__["SUCCESS"])  # 可按别名取到成员
+print(Status.__members__["SUCCESS"] is Status.OK)  # True
+```
+
+预期输出：
+
+```
+[<Status.OK: 200>, <Status.NOT_FOUND: 404>]
+['OK', 'SUCCESS', 'NOT_FOUND']
+Status.OK
+True
+```
+
+可以看到：迭代结果只有 OK、NOT_FOUND 两项（别名 SUCCESS 被略去）；`__members__` 的键却有 OK、SUCCESS、NOT_FOUND 三个，且 `__members__["SUCCESS"]` 取到的就是 OK 本身。
+
+用途上：想「列出所有不重复的有效值」用迭代；想「按任意名字（含别名）查成员」或「保留定义时的全部命名」用 `__members__`。
+
+⚠️ 注意：`__members__` 是只读映射，不要试图往里增删；它包含别名，所以 `len(Status.__members__)` 可能大于 `len(list(Status))`。
 
 ---
 

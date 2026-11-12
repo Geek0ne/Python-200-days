@@ -1451,3 +1451,119 @@ module "vpc" {
 
 #### 总结 (Summary)
 Terraform 是一个强大的基础设施即代码工具，支持多云部署、自动化基础设施管理和安全合规。通过合理的配置和使用，可以显著提高开发效率和基础设施质量。
+
+## 思考题
+
+1. **声明式与幂等**：Terraform 的「声明式」和写脚本逐个调云 API 的「命令式」有什么区别？为什么同一份配置 `terraform apply` 两次不会创建两台机器？状态文件（`.tfstate`）在其中扮演什么角色？
+
+**参考答案**
+
+**命令式**描述「怎么做」：脚本一步步调 API 建 VPC、建子网、建实例。重复执行就会重复创建，你还得自己写「先查是否存在」的判断，出错后也很难回到一致状态。
+
+**声明式**描述「要什么」：`resource "aws_instance" "web" { instance_type = "t3.micro" }` 只声明期望状态，由 Terraform 自己算出「现状 → 期望」的差集，只执行必要的动作。
+
+**幂等**（idempotent，同一操作执行多次结果相同）正是差集为空的表现：第二次 apply 时，状态里已记录这台实例且属性完全一致，于是输出 `0 to add, 0 to change, 0 to destroy`，不会多出一台机器。
+
+状态文件是「Terraform 眼中的现实」：记录每个资源的真实 ID、属性、依赖关系。配置里的 `aws_instance.web` 只是个逻辑名字，靠状态才能对应到云上某台具体机器，进而判断该更新、该替换还是什么都不做。所以实际有三份信息在比对：**配置（期望）、状态（上次已知现实）、云端真实情况（refresh 后读到）**。有人在控制台手改了资源，就会出现**漂移（drift）**，plan 会把它显示出来。
+
+⚠️ 注意：状态文件可能含敏感值（数据库密码、密钥），**不要提交到 Git**；团队协作要用远程后端（S3 / GCS / Azure Blob 等）并开启**状态锁**，防止两人同时 apply 互相覆盖。
+
+2. **工作流四步**：`terraform init`、`validate`、`plan`、`apply` 各解决什么问题？为什么推荐 `plan -out=tfplan` 再 `apply tfplan`，而不是直接 `apply -auto-approve`？
+
+**参考答案**
+
+- **init**：下载 provider 插件、初始化后端（状态存哪里）、生成 `.terraform` 目录和 `.terraform.lock.hcl`（锁定插件版本）。新增模块、换后端、升级 provider 后都要重新 init。
+- **validate**：只做本地检查——语法、类型、必填字段、引用是否存在。它不访问云端、不读状态，速度快，适合当 CI 的第一道关卡。
+- **plan**：读配置 + 读状态 + 查询云端（refresh），算出变更集合并以 `+ create / ~ update / - destroy` 展示。这是**预演**，不动任何真实资源。
+- **apply**：真正执行变更，然后把结果写回状态。对应的 **destroy** 则按依赖逆序销毁状态中的资源。
+
+`plan -out=tfplan` 把这次预演结果存成计划文件，`apply tfplan` 严格执行**你审阅过的那一份**。若直接 `apply`，Terraform 会重新计算计划——在你审阅之后、执行之前，配置或云端状态可能已经变了，于是「看的是一份计划、执行的是另一份」。CI 里的标准做法就是：PR 阶段产出 plan 供评审，合并后 apply 同一个计划文件。
+
+`-auto-approve` 跳过交互确认，只适合自动化且计划已受控的场景；`destroy -auto-approve` 尤其危险，一条命令就能清空整套环境。
+
+💡 提示：`terraform plan -detailed-exitcode` 的退出码可直接用于流水线判断——0 表示无变更、1 表示出错、2 表示有变更。
+
+3. **用 Python 模拟一次 plan（代码）**：Terraform 的 plan 本质是「期望配置 vs 状态」的差集计算。请用标准库写一个迷你版，演示首次创建、重复执行无变更（幂等）、改配置后 update / destroy 三种情况，并说明它与真实 Terraform 的差距。
+
+**参考答案**
+
+```python
+# 依赖：仅标准库（纯本地模拟 plan 逻辑；真实 terraform 命令需自行安装并准备云账号）
+import json
+
+def plan(desired, state):
+    """对比「期望配置」与「状态」，算出变更集合（简化版 terraform plan）"""
+    actions = []
+    for name, want in desired.items():
+        have = state.get(name)
+        if have is None:
+            actions.append(("create", name, want))     # 状态里没有 → 新建
+        elif have != want:
+            actions.append(("update", name, want))     # 属性不同 → 更新
+        else:
+            actions.append(("no-op", name, want))      # 完全一致 → 什么都不做
+    for name in state:
+        if name not in desired:
+            actions.append(("destroy", name, state[name]))   # 配置里删了 → 销毁
+    return actions
+
+def apply(actions, state):
+    """执行变更并写回状态（简化版 terraform apply）"""
+    for action, name, attrs in actions:
+        if action == "destroy":
+            state.pop(name, None)
+        elif action != "no-op":
+            state[name] = dict(attrs)
+    return state
+
+def show(actions):
+    for action, name, _ in actions:
+        print(f"{action:8s} {name}")
+    changes = sum(1 for a, _, _ in actions if a != "no-op")
+    print(f"Plan: {changes} to change")
+
+# 期望状态：一台 web 实例 + 一个日志桶
+desired = {
+    "aws_instance.web": {"instance_type": "t3.micro", "tags": {"Env": "dev"}},
+    "aws_s3_bucket.logs": {"bucket": "my-logs"},
+}
+state = {}                        # 第一次运行，状态文件还是空的
+
+print("--- 第一次 plan ---")
+actions = plan(desired, state)
+show(actions)
+state = apply(actions, state)     # apply 之后状态被写入
+
+print("--- 第二次 plan（配置没改）---")
+show(plan(desired, state))        # 全是 no-op，这就是幂等
+
+print("--- 改配置后再 plan ---")
+desired["aws_instance.web"]["instance_type"] = "t3.small"   # 升级机型
+del desired["aws_s3_bucket.logs"]                           # 删掉一个资源
+show(plan(desired, state))
+print(json.dumps(state, ensure_ascii=False, sort_keys=True))
+```
+
+预期输出：
+
+```
+--- 第一次 plan ---
+create   aws_instance.web
+create   aws_s3_bucket.logs
+Plan: 2 to change
+--- 第二次 plan（配置没改）---
+no-op    aws_instance.web
+no-op    aws_s3_bucket.logs
+Plan: 0 to change
+--- 改配置后再 plan ---
+update   aws_instance.web
+destroy  aws_s3_bucket.logs
+Plan: 2 to change
+{"aws_instance.web": {"instance_type": "t3.micro", "tags": {"Env": "dev"}}, "aws_s3_bucket.logs": {"bucket": "my-logs"}}
+```
+
+`desired` 相当于 `.tf` 配置解析后的资源集合，`state` 相当于 `terraform.tfstate`。plan 就是逐资源比对生成动作列表，apply 就是执行这些动作并回写状态——第二次 `Plan: 0 to change` 直观展示了幂等：配置没变，现实就不该变。最后一行打印的是**变更前**的状态，说明 plan 阶段绝不修改状态，只有 apply 才会。
+
+真实 Terraform 比这复杂得多：靠**依赖图**决定执行顺序（VPC → 子网 → 实例）；区分「就地更新」与「替换」（先 destroy 再 create）；用 `count` / `for_each` 展开多实例；`data` 数据源只读查询云端；还要做变量求值、模块展开，并由 provider 插件真正调用云 API。
+
+⚠️ 注意：本例把机型变更简化成 `update`，真实 AWS provider 中不少字段变更会触发**资源替换**，plan 会标注 `destroy and then create replacement`——这意味着数据可能丢失，务必看清再 apply。本示例纯本地运行，不连云、不创建任何真实资源；要跑真 Terraform 需自行安装并准备账号凭证，练手建议先用 `local` / `null` provider。

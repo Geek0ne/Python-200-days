@@ -298,10 +298,128 @@ print(f"HTTP 版本: {response.http_version}")
 ## 5. 思考题
 
 1. **为什么 TCP 需要三次握手而不是两次？** 提示：考虑网络延迟和历史报文
+
+**参考答案**
+
+两次握手只确认了「客户端能发、服务端能收」这一个方向，服务端无法确认自己发的包对方真的收到了，也无法确认双方的初始序列号（ISN，给字节编号、判断报文新旧的起点）都被对方接受。
+
+核心原因是**网络里滞留的历史报文**。设想客户端发的第一个 SYN 在某个节点排队迟到了，客户端超时后重发 SYN、正常通信并关闭了连接；那个迟到的旧 SYN 这时才到达服务端。若只有两次握手，服务端回一个 SYN+ACK 就认为连接建立，白开一条「幽灵连接」占着内存和端口。三次握手下，客户端收到这个 SYN+ACK 会发现序号对不上，回 RST 拒绝，服务端就不会建立连接。
+
+第三次握手还顺带完成两件事：让服务端确认「客户端收到了我的 ISN」，双向序号都同步好；客户端也能在第三个 ACK 里就捎带数据（TCP Fast Open 把这个优化进一步提前）。
+
+小例子：`SYN(seq=x)` → `SYN+ACK(seq=y, ack=x+1)` → `ACK(ack=y+1)`。第二步客户端确认了 x，第三步服务端才确认了 y——少一步就少一个方向的确认。
+
+💡 提示：四次挥手比三次握手多一次，是因为服务端收到 FIN 后可能还有数据没发完，ACK 和 FIN 无法合并成一个包。
+
 2. **asyncio 的事件循环和操作系统的 epoll/kqueue 有什么关系？**
+
+**参考答案**
+
+一句话：**事件循环是「调度器」，epoll/kqueue/IOCP 是它底层用来问操作系统「哪些 socket 就绪了」的工具**。事件循环自己不做 I/O，它把这件事委托给内核。
+
+流程是这样的：协程执行到 `await reader.read()` 时数据还没到，协程挂起，并把「我关心这个 fd 的可读事件」注册给事件循环；事件循环把这些 fd 交给标准库 `selectors`（Linux 用 epoll、macOS/BSD 用 kqueue、Windows 用 IOCP 或 select），然后调用一次 `epoll_wait()` 之类的系统调用统一等待。内核返回就绪 fd 列表后，事件循环把对应协程重新排进可运行队列，`await` 那一行就继续往下走了。
+
+所以「单线程扛上万连接」不是 Python 的魔法，而是**阻塞点从「每个连接一个线程」变成了「整个进程一次系统调用」**。epoll 比老的 select/poll 强在：就绪列表由内核维护，不必每次把全部 fd 拷进内核再线性扫描，开销从 O(连接总数) 降到接近 O(就绪数)。
+
+小例子：`loop = asyncio.get_running_loop()`，`await loop.sock_recv(sock, 1024)` 内部就是「注册 fd → 挂起协程 → epoll 报告可读 → 恢复协程」。
+
+⚠️ 注意：事件循环是单线程的，协程里一旦写了 `time.sleep(1)` 或 CPU 密集循环，整个 epoll 等待都被卡住，所有连接一起变慢。这类活儿要用 `await asyncio.to_thread(...)` 或 `run_in_executor()` 丢进线程/进程池。
+
 3. **HTTP/3 为什么选择 UDP 而不是在 TCP 上改进？**
+
+**参考答案**
+
+不是 UDP 本身更好，而是**TCP 已经改不动了**：TCP 实现在操作系统内核里，升级要等用户换系统；沿途的路由器、防火墙、NAT 设备（统称「中间盒」）还会按老规矩检查 TCP 头，任何新字段都可能被丢弃或篡改。这种现象叫**协议僵化（ossification）**。
+
+TCP 有两个绕不过去的结构性问题：一是**队头阻塞**——TCP 保证字节流严格有序，一个包丢了，后面已到达的数据也得在内核缓冲区里等重传；HTTP/2 虽然在应用层分了多个 stream，但它们共用一条 TCP 连接，一个 stream 丢包会拖住全部。二是**握手延迟**——TCP 三次握手 1 个 RTT（往返时延），再叠加 TLS 握手又要 1~2 个 RTT。
+
+QUIC 的解法是**把可靠传输搬到用户态、跑在 UDP 之上**：UDP 只负责尽力送出数据报，重传、拥塞控制、有序交付全部由 QUIC 库（如 aioquic、quiche）在应用进程里实现。好处是：每个 stream 独立重传互不阻塞；传输握手与 TLS 1.3 握手合并，做到 1-RTT 甚至 0-RTT；连接用 Connection ID 而非「IP+端口」四元组标识，手机从 Wi-Fi 切到 4G 也不用重连；升级只需更新软件，不用等内核。
+
+小例子：加载网页时一张图片的包丢了，HTTP/2 over TCP 会让同连接上的 CSS/JS 一起等；HTTP/3 里只有那张图片的 stream 等，其它照常渲染。
+
+💡 提示：UDP 常被中间盒限速或封禁，所以客户端一般先试 QUIC，失败再回落到 HTTP/2 over TCP（通过 Alt-Svc 响应头协商）。
+
 4. **在自定义协议中，如何处理消息丢失和重传？** 提示：参考 TCP 的 ACK 机制
+
+**参考答案**
+
+先分清跑在哪一层：**如果自定义协议建在 TCP 上，字节不会丢也不会乱序**（TCP 已经做了确认、重传、排序），你要处理的只是「连接断了要重连」和「粘包/拆包」（用长度前缀或 `\n` 定界）。只有跑在 UDP 上，才需要自己实现 TCP 那套可靠机制。
+
+在 UDP 上要做四件事：
+
+1. **编号**：每条消息带递增的 `seq`，接收方据此去重和排序。
+2. **确认（ACK）**：接收方回 `ack=seq`，或用累积确认表示「seq 及之前都收到了」。发送方为每条未确认消息启动定时器。
+3. **超时重传**：定时器到期还没收到 ACK 就重发。超时时间按往返时延 RTT 动态估算（类似 TCP 的 `RTO = SRTT + 4×RTTVAR`），重传间隔用指数退避，避免网络拥塞时越重传越堵。
+4. **幂等/去重**：ACK 本身也可能丢，导致发送方重发、接收方收到重复消息。所以业务操作要设计成幂等的（带唯一请求 ID，处理过就直接返回上次结果），或接收方按 `seq` 丢弃重复包。
+
+小例子：发 `{"seq": 7, "op": "转账", "req_id": "a1"}`，200 ms 内没收到 `{"ack": 7}` 就重发；服务端发现 `req_id=a1` 已处理过，只回 ACK 不再扣款。
+
+💡 提示：生产环境别自己造轮子——要可靠就用 TCP，要低延迟就用现成的 QUIC/KCP 库。自研重传最常踩的坑是超时估得太短造成重传风暴，以及忘了幂等导致重复扣款。
+
 5. **如何用 asyncio 实现一个支持广播的聊天室？** 提示：用一个集合管理所有 writer
+
+**参考答案**
+
+思路：用 `asyncio.start_server` 起一个 TCP 服务，每个连接进来就把它的 `writer` 加进一个全局集合；读到一行消息后，遍历集合把数据写给「除发送者外」的所有 writer；连接断开时在 `finally` 里把 writer 从集合移除并关闭。下面这份代码只用标准库，自带三个客户端做自测，可直接运行。
+
+```python
+import asyncio
+
+# 用一个集合管理所有客户端 writer，实现广播
+clients = set()
+
+async def handle_client(reader, writer):
+    clients.add(writer)                 # 新连接登记
+    try:
+        while True:
+            data = await reader.readline()   # 按行定界，读到一条完整消息
+            if not data:                     # 客户端断开
+                break
+            # 广播给「除发送者外」的所有客户端
+            for w in list(clients):          # 复制集合，避免遍历时被修改
+                if w is not writer:
+                    w.write(data)
+                    await w.drain()
+    finally:
+        clients.discard(writer)         # 断开时务必清理
+        writer.close()
+
+async def main():
+    # 端口 0 = 让系统自动分配空闲端口
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+
+    # 启动三个客户端：Alice / Bob / Carol
+    r1, w1 = await asyncio.open_connection("127.0.0.1", port)
+    r2, w2 = await asyncio.open_connection("127.0.0.1", port)
+    r3, w3 = await asyncio.open_connection("127.0.0.1", port)
+    await asyncio.sleep(0.1)            # 等三个连接都登记进 clients
+
+    w1.write("Alice: 大家好\n".encode())
+    await w1.drain()
+    print("Bob 收到:", (await r2.readline()).decode().strip())
+    print("Carol 收到:", (await r3.readline()).decode().strip())
+
+    # 清理：关闭客户端，再关闭服务器
+    for w in (w1, w2, w3):
+        w.close()
+        await w.wait_closed()
+    server.close()
+    await server.wait_closed()
+
+asyncio.run(main())
+```
+
+运行输出（已验证）：
+
+```
+Bob 收到: Alice: 大家好
+Carol 收到: Alice: 大家好
+```
+
+关键点解释：`readline()` 用 `\n` 做消息定界，天然解决了 TCP 粘包问题；`w.write()` 只是把数据放进发送缓冲区，`await w.drain()` 才会在缓冲区积压时让出控制权，起到背压（backpressure）作用，防止慢客户端把内存撑爆；`list(clients)` 复制一份再遍历，避免广播过程中有连接断开导致「集合在迭代时被修改」的 RuntimeError。
+
+⚠️ 注意：这个版本是「谁发谁不收」的简单广播。生产环境还要加：昵称/鉴权、消息长度上限（防恶意大包）、异常 writer 的剔除，以及用 `asyncio.Queue` + 单个广播协程来保证所有人看到的消息顺序一致。
 
 ---
 

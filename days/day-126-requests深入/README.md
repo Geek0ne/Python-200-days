@@ -376,10 +376,133 @@ response = requests.get(url, auth=TokenAuth("your-token"))
 
 1. **Session vs 独立请求**：在什么场景下使用独立请求反而比 Session 更好？
 
+**参考答案**
+
+独立请求（`requests.get`）更合适的场景：
+
+- **一次性请求**：只发一两次、不需要保持 cookie/连接，用 Session 反而多此一举，还要管理它的生命周期。
+- **需要完全隔离的状态**：比如测试不同账号、不同 IP，不希望 cookie 互相"串味"。
+- **多线程图省事**：Session 并非完全线程安全，每线程用独立请求可避免共享状态的顾虑。
+- **临时脚本/探测**：写个小脚本只查一次某 API 版本号，一行 `requests.get` 就够。
+
+⚠️ 注意：但只要是高频、对同一站点发多个请求，Session 的连接复用和自动 cookie 管理优势就很明显，应优先用 Session。
+
 2. **Cookie 安全**：如果网站使用了 HttpOnly 和 Secure 标志的 Cookie，requests 库会如何处理？
+
+**参考答案**
+
+- **HttpOnly**：这是给浏览器 JavaScript 的限制（`document.cookie` 读不到它），目的是防 XSS 偷 cookie。requests 不是浏览器、不执行 JS，所以 HttpOnly 对它**没有影响**——它照常存储和发送这个 cookie。
+- **Secure**：标记该 cookie 只能通过 HTTPS 发送。requests 底层用 `http.cookiejar`，会**遵守 Secure 标志**：访问 `http://` 时不带这个 cookie，访问 `https://` 时才带。
+
+小例子：登录拿到一个 Secure 的 session cookie，后续必须用 `https://` 请求才能保持登录态；若误用 `http://`，cookie 不会被发送，服务器会认为你没登录。
+
+⚠️ 注意：requests 不会自动把 http 升级成 https，协议要自己用对。
 
 3. **重试策略**：如果目标服务器返回 429 (Too Many Requests)，应该如何设计重试策略？（提示：考虑 Retry-After 头）
 
+**参考答案**
+
+429 表示请求过频被限流。正确策略：
+
+- **尊重 Retry-After 头**：服务器会告诉你多久后再来（秒数或 HTTP 日期），按它等待，别硬撞。
+- **指数退避 + 抖动**：没有 Retry-After 时用退避（1s→2s→4s）并加随机抖动，避免大量客户端同步重试。
+- **限制重试次数**：超限就放弃或降级，别无限重试。
+- **从源头降速**：降低并发/请求速率，减少 429 发生。
+
+用 urllib3 的 `Retry(respect_retry_after_header=True, status_forcelist=[429, ...])` 挂到 `HTTPAdapter` 即可自动处理。下面用本地 mock 服务器演示（完全离线，需先 `pip install requests`）：
+
+```python
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+# ---------- 本地模拟服务器：前两次返回 429，第三次返回 200 ----------
+class MockHandler(BaseHTTPRequestHandler):
+    hits = 0  # 记录收到的请求次数
+
+    def do_GET(self):
+        MockHandler.hits += 1
+        if MockHandler.hits <= 2:
+            self.send_response(429)
+            self.send_header("Retry-After", "1")  # 服务器要求：1 秒后再来
+            self.end_headers()
+        else:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+    def log_message(self, *args):  # 关闭默认访问日志，输出更干净
+        pass
+
+server = HTTPServer(("127.0.0.1", 0), MockHandler)  # 端口 0 = 自动分配空闲端口
+port = server.server_address[1]
+threading.Thread(target=server.serve_forever, daemon=True).start()
+
+# ---------- 配置"尊重 Retry-After"的自动重试 ----------
+session = requests.Session()
+retries = Retry(
+    total=5,                                   # 最多重试 5 次
+    status_forcelist=[429, 500, 502, 503, 504],  # 这些状态码触发重试
+    respect_retry_after_header=True,           # 关键：按服务器要求的时间等待
+    backoff_factor=0.5,                        # 没有 Retry-After 头时的退避基数
+)
+session.mount("http://", HTTPAdapter(max_retries=retries))
+
+start = time.monotonic()
+resp = session.get(f"http://127.0.0.1:{port}/", timeout=5)
+elapsed = time.monotonic() - start
+print("状态码:", resp.status_code, "内容:", resp.text)
+print(f"共请求 {MockHandler.hits} 次，耗时 {elapsed:.1f} 秒（两次各等 1 秒）")
+server.shutdown()
+```
+
+预期输出：
+
+```
+状态码: 200 内容: OK
+共请求 3 次，耗时 2.0 秒（两次各等 1 秒）
+```
+
+客户端收到两次 429 后，各按 `Retry-After: 1` 等待 1 秒再重试，第三次成功，总耗时约 2 秒。
+
+⚠️ 合规提示：遵守网站限流规则与 robots.txt，退避是为了"礼貌"而非恶意绕过限流。
+
 4. **连接池大小**：pool_connections 和 pool_maxsize 分别控制什么？如何根据并发需求调整？
 
+**参考答案**
+
+- **`pool_connections`**：连接池的"池子数量"，即缓存多少个**不同主机**的连接池（对应 urllib3 的 `num_pools`）。
+- **`pool_maxsize`**：每个池子里最多保存多少条**可复用连接**（对应 `maxsize`），针对同一主机。
+
+一句话：前者管"对多少个不同主机保持池"，后者管"对同一主机最多复用几条连接"。
+
+调整建议：
+
+- 高并发抓**同一站点** → 调大 `pool_maxsize`（≥ 并发线程数），避免连接不够用而频繁新建/丢弃。
+- 爬**很多不同域名** → 调大 `pool_connections`。
+
+小例子：5 个线程并发抓同一站，`pool_maxsize=10` 就够用。
+
+⚠️ 注意：`pool_maxsize` 不是硬上限，超出时仍会新建连接，但用完即弃（并可能告警"连接池已满"），复用效率下降。
+
 5. **反爬虫对抗**：除了 User-Agent 伪装，还有哪些常见的反爬虫机制？如何绕过？
+
+**参考答案**
+
+常见反爬机制：
+
+- **IP 频率限制/封禁**：同一 IP 请求过快被限流或拉黑。
+- **请求头校验**：检查 UA、Referer、Accept 等是否像真实浏览器。
+- **Cookie/登录态/Token 校验**：要求携带有效会话。
+- **JS 挑战/动态渲染**：内容需执行 JS 才出现。
+- **验证码**：滑块、点选等。
+- **浏览器/TLS 指纹**（如 JA3）：识别 requests/curl 的流量特征。
+- **行为分析**：鼠标轨迹、请求时序异常。
+
+在合法合规前提下的应对：降低速率 + 指数退避、用 Session 保持登录态、完善请求头、动态页面改用 Selenium/Playwright、必要时用代理池分散 IP，以及**优先使用官方 API**。
+
+⚠️ 合规提示：遵守 robots.txt 与网站服务条款，控制频率不影响对方服务；不要破解验证码、绕过付费墙或抓取受保护的个人数据。对抗技术仅用于理解原理，生产环境应优先取得授权或使用官方接口。

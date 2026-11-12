@@ -522,3 +522,123 @@ print(f"64KB 块: {time.time()-start:.3f}s")
 | `detach()` | 分离底层二进制流 | `binary = f.detach()` |
 ```
 ```
+
+---
+
+## 九、思考题
+
+1. **`with` 与写入模式的选择**：为什么推荐 `with open(...)` 而不是手动 `f.close()`？`w`、`a`、`x` 三种写入模式在「文件已存在」时分别会发生什么？如果要生成一份**绝不能覆盖已有结果**的报告，该选哪个？
+
+**参考答案**
+
+手动 `close()` 的问题是：一旦读写过程中抛异常，`close()` 那一行就被跳过了，文件句柄泄漏、缓冲区里的数据也可能没落盘。`with` 依赖**上下文管理协议**（`__enter__` / `__exit__`），离开代码块时无论正常结束还是异常退出都会调用 `__exit__`，等价于把 `close()` 放进 `finally`，所以更安全也更简洁。
+
+三种写入模式对「已存在的文件」态度完全不同：
+
+- `w`：**先清空**再写，原内容全部丢失（最危险的误操作来源）。
+- `a`：保留原内容，指针固定在末尾，写入总是追加。
+- `x`：**排他性创建**，文件已存在就抛 `FileExistsError`，一个字节都不动。
+
+所以「绝不覆盖」的场景选 `x`，并捕获异常：`with open("report.txt", "x", encoding="utf-8") as f: ...`，外面套 `try/except FileExistsError` 提示用户改文件名。
+
+⚠️ 注意：`r` 模式打开不存在的文件会抛 `FileNotFoundError`，而 `w`/`a`/`x` 会自动创建；`with` 只保证「关闭」，不保证「写对了内容」，模式选错照样丢数据。
+
+2. **写完读不到内容（代码）**：`with open("demo.txt", "w+") as f: f.write("Hello"); print(f.read())` 为什么打印空字符串？请用代码演示文件指针的变化，并给出处理大文件时的安全读取写法。
+
+**参考答案**
+
+```python
+import os
+import tempfile
+
+# 在系统临时目录里做实验，不会污染项目目录
+with tempfile.TemporaryDirectory() as tmp:
+    path = os.path.join(tmp, "demo.txt")
+
+    # 陷阱：w+ 写完指针停在末尾，直接 read() 得到空字符串
+    with open(path, "w+", encoding="utf-8") as f:
+        f.write("Hello")
+        print(repr(f.read()))       # '' —— 指针已在末尾
+        f.seek(0)                   # 回到开头再读
+        print(repr(f.read()))       # 'Hello'
+        print(f.tell())             # 5 —— 读完指针又走到末尾
+
+    # 追加模式 a：不清空原内容，写入永远落在末尾
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\nWorld")
+
+    # 逐行迭代：内存里只留一行，适合大文件
+    with open(path, "r", encoding="utf-8") as f:
+        for i, line in enumerate(f, 1):
+            print(i, repr(line))    # 行尾的 \n 会被保留
+```
+
+预期输出：
+
+```
+''
+'Hello'
+5
+1 'Hello\n'
+2 'World'
+```
+
+文件对象内部有个**文件指针**，记录「下一次读写从哪个位置开始」。`write("Hello")` 之后指针停在 5，`read()` 从 5 读到末尾自然什么都没有；`seek(0)` 把指针拨回开头才读得到内容，`tell()` 则随时报告当前位置。
+
+大文件不要用 `read()`（一次性全进内存）或 `readlines()`（还要额外建列表），直接 `for line in f` 逐行迭代，内存占用与文件大小无关；二进制大文件用 `while chunk := f.read(65536)` 分块读。
+
+⚠️ 注意：文本模式下 `seek` 受限，只能用 `seek(0)` 或 `seek(tell() 返回的位置)`；`seek(-5, 2)` 这种「从末尾倒数」的写法只在二进制模式（`rb`）下合法，因为 UTF-8 字符长度可变，无法按字节倒推字符位置。
+
+3. **编码与 BOM（代码）**：同一个中文文件，用 `utf-8` 写、用 `ascii` 读会发生什么？`errors="ignore"` 和 `errors="replace"` 各付出什么代价？为什么处理 Excel 导出的 CSV 经常要用 `utf-8-sig`？
+
+**参考答案**
+
+```python
+import os
+import tempfile
+
+with tempfile.TemporaryDirectory() as tmp:
+    path = os.path.join(tmp, "cn.txt")
+
+    # 用 UTF-8 写入中文
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("你好，Python")
+
+    # 用 ASCII 读同一份字节 → 解码失败
+    try:
+        with open(path, "r", encoding="ascii") as f:
+            f.read()
+    except UnicodeDecodeError as e:
+        print("解码失败:", e.reason)
+
+    # errors="ignore"：丢掉无法解码的字节（会丢数据，慎用）
+    with open(path, "r", encoding="ascii", errors="ignore") as f:
+        print(repr(f.read()))       # 'Python'，中文全被丢掉
+
+    # 带 BOM 的 UTF-8：utf-8-sig 读取时自动去掉 BOM
+    bom_path = os.path.join(tmp, "bom.txt")
+    with open(bom_path, "w", encoding="utf-8-sig") as f:
+        f.write("标题")
+    with open(bom_path, "rb") as f:
+        print(f.read(3))            # b'\xef\xbb\xbf' —— BOM 三字节
+    with open(bom_path, "r", encoding="utf-8-sig") as f:
+        print(repr(f.read()))       # '标题'
+    with open(bom_path, "r", encoding="utf-8") as f:
+        print(repr(f.read()))       # '\ufeff标题'，BOM 变成了一个字符
+```
+
+预期输出：
+
+```
+解码失败: ordinal not in range(128)
+'Python'
+b'\xef\xbb\xbf'
+'标题'
+'\ufeff标题'
+```
+
+磁盘上存的永远是**字节**，编码就是「字节 ↔ 字符」的翻译规则。写入用 UTF-8、读取用 ASCII，等于拿错字典翻译，遇到 `0xe4` 这类超出 ASCII 范围的字节就抛 `UnicodeDecodeError`。`errors="ignore"` 让程序不崩，但代价是**静默丢数据**（中文全没了）；`errors="replace"` 把每个坏字节换成 ``（U+FFFD），本例会得到 9 个 `` 加 `Python`，同样不可逆。二者都只适合「尽力抢救」，正确做法始终是指定对的编码。
+
+**BOM**（字节顺序标记）是文件开头的 `EF BB BF` 三字节，Excel 导出 UTF-8 CSV 时经常带上它。用 `utf-8-sig` 读取会自动剥离；若用普通 `utf-8`，BOM 会变成字符 `\ufeff` 粘在第一个字段上，于是表头 `姓名` 变成 `\ufeff姓名`，后续按列名取值全部失败。
+
+💡 提示：读写文本一律显式写 `encoding="utf-8"`，别依赖系统默认（Windows 中文环境常是 GBK）；图片、音频、压缩包必须用 `rb`/`wb`，二进制模式不做任何编码与换行转换。

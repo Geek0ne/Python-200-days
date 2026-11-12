@@ -408,11 +408,34 @@ loaded = joblib.load('model.pkl')
 
 **提示：** 考虑数据利用率、评估偏差、计算成本之间的权衡。
 
+**参考答案**
+
+100 条样本太少，**保留验证集（holdout）不划算**：比如 75/25 划分，只有 75 条训练、25 条测试，测试集太小、估计方差大，而且单次划分很看运气。
+
+应选**交叉验证**：K-Fold（K=5 或 10）、分类任务用 Stratified K-Fold（保持类别比例），想更稳可用 Repeated K-Fold；样本这么少，甚至留一法（LOO，N=100 次训练）也算得动。CV 让每条数据都参与过训练和验证，数据利用率高、估计更稳更无偏。
+
+权衡：CV 要训练 K 次，但 100 条样本训练很便宜，完全值得。LOO 几乎无偏但方差偏大、要 100 次；5/10 折是更好的平衡。
+
+小例子：100 条做 10 折 → 每折 90 训练/10 验证，平均 10 次得到可靠分数；holdout 只有 25 条测试 → 一个噪声很大的数字。
+
+💡 提示：极小数据优先（重复/分层）K 折或 LOO；若还要调超参数，用嵌套交叉验证避免乐观偏差。
+
 ### 思考题 2：GridSearchCV 的计算成本
 
 > 一个 Pipeline 有 3 个步骤，每个步骤有 4 个超参数选择，使用 5 折交叉验证。总共需要训练多少次模型？
 
 **提示：** 总组合数 = 各步骤参数数量的乘积。
+
+**参考答案**
+
+分两步算：
+
+1. **组合数**：3 个步骤、每步 4 个候选值，全网格组合 = 4 × 4 × 4 = **64** 种。
+2. **每种组合做 5 折交叉验证**：训练 5 次 → 64 × 5 = **320** 次模型训练。
+
+所以交叉验证阶段共训练 **320 次**。（若 `refit=True`，GridSearchCV 还会用最优参数在全部数据上再训一次，合计 321 次，但 CV 训练次数是 320。）
+
+注意这是「各步候选值相互独立、穷举所有组合」的结果。组合数随步骤数**指数增长**（4³），这正是网格搜索昂贵的原因；超参数空间大时可改用 RandomizedSearchCV 或 HalvingGridSearchCV 降成本。
 
 ### 思考题 3：数据泄露
 
@@ -428,6 +451,50 @@ model.fit(X_train_scaled, y_train)
 
 **提示：** 思考 "fit" 操作在训练集和测试集上的含义。
 
+**参考答案**
+
+问题出在 `scaler.fit_transform(X_test)`：它在测试集上**又 fit 了一次**，于是测试集是用「它自己的均值/方差」标准化的，和训练集的缩放标准不一致。模型在「训练集统计量」缩放的输入上学习，却看到「测试集统计量」缩放的输入 → 分布错位，评估失真。更一般地，任何在测试/验证数据上做的 `fit` 都会**泄露信息**（交叉验证里若对全部数据 fit 预处理尤其严重）。原则：**fit 只在训练集上学统计量，测试集只能 transform**。
+
+修复：测试集改用 `scaler.transform(X_test)`；更稳妥的是把预处理和模型放进 Pipeline，交叉验证时自动只在每折训练部分 fit。下面实测对比（需 `pip install scikit-learn`）：
+
+```python
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
+from sklearn.datasets import make_classification
+
+X, y = make_classification(n_samples=200, n_features=5, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
+
+# ❌ 错误：在测试集上也 fit，测试集被它自己的均值/方差标准化
+scaler_wrong = StandardScaler()
+X_train_w = scaler_wrong.fit_transform(X_train)
+X_test_w = scaler_wrong.fit_transform(X_test)   # 又 fit 了一次！统计量与训练集不同
+print("错误做法-测试集标准化后均值:", X_test_w.mean(axis=0).round(3))
+
+# ✅ 正确：测试集只 transform，复用训练集学到的均值/方差
+scaler = StandardScaler()
+X_train_c = scaler.fit_transform(X_train)
+X_test_c = scaler.transform(X_test)
+print("正确做法-测试集标准化后均值:", X_test_c.mean(axis=0).round(3))
+
+# ✅ 更稳妥：预处理与模型放进 Pipeline，交叉验证时自动防泄露
+pipe = Pipeline([('scaler', StandardScaler()), ('clf', LogisticRegression())])
+pipe.fit(X_train, y_train)
+print("Pipeline 测试准确率:", round(pipe.score(X_test, y_test), 4))
+```
+
+预期输出（数值因机器/版本而异）：
+
+```
+错误做法-测试集标准化后均值: [-0.  0.  0.  0. -0.]
+正确做法-测试集标准化后均值: [ 0.071 -0.032 -0.26  -0.095 -0.113]
+Pipeline 测试准确率: 0.8167
+```
+
+错误做法里测试集均值≈0（因为它按自己 fit），正确做法里测试集均值非 0（沿用训练集统计量）——这正是两者不一致的证据。
+
 ### 思考题 4：Pipeline 的局限性
 
 > Pipeline 能否处理以下场景？如果不能，你会如何解决？
@@ -435,11 +502,37 @@ model.fit(X_train_scaled, y_train)
 > - 特征选择需要根据标签信息动态调整
 > - 需要并行运行多个模型然后融合预测结果
 
+**参考答案**
+
+Pipeline 是「transformer 链 + 最后一个 estimator」的**线性**结构，逐一看：
+
+- **人工规则的文本清洗**：能。把清洗规则包成一个自定义 transformer（`FunctionTransformer` 或带 `fit/transform` 的类），作为 Pipeline 的一步即可；`fit` 可以是空操作，`transform` 里执行规则。
+- **依赖标签的特征选择**：能。用在 `fit` 时接收 y 的有监督选择器，如 `SelectKBest(score_func=f_classif)`。Pipeline 会把 y 传给中间步骤的 `fit`，所以标签相关的选择既可行又在 CV 中防泄露。
+- **并行多模型再融合**：不能直接做。Pipeline 是单条顺序路径。并行 transformer 用 `FeatureUnion`，并行模型 + 融合用 `VotingClassifier` / `StackingClassifier`，或自定义 estimator。
+
+小例子：`Pipeline([('clean', FunctionTransformer(clean_fn)), ('select', SelectKBest(k=10)), ('clf', LogisticRegression())])`；融合用 `VotingClassifier([...])`。
+
+💡 提示：Pipeline 负责「线性」，分支/并行/融合交给 FeatureUnion、Voting、Stacking 或自定义组件。
+
 ### 思考题 5：模型持久化的安全隐患
 
 > `joblib.load()` 本质上执行 pickle 反序列化，这可能带来什么安全风险？在生产环境中如何安全地加载模型？
 
 **提示：** 考虑 pickle 反序列化漏洞、模型来源验证、沙箱加载等。
+
+**参考答案**
+
+`joblib.load()` 底层是 pickle 反序列化，而 pickle 在加载时会执行对象里嵌入的 `__reduce__` 等逻辑——也就是**可以执行任意代码**。加载一个不可信的 `.pkl` 可能触发远程代码执行（RCE）、窃取数据等。攻击者能构造一个加载即运行 `os.system(...)` 的恶意模型文件。
+
+生产环境的安全做法：
+
+- **只加载可信来源**的模型，校验哈希/签名（如 SHA256、GPG）和出处。
+- **固定 sklearn/numpy 版本**，保证兼容、减少意外行为。
+- **沙箱/隔离加载**：放进容器或受限权限的独立进程/服务，最小权限、隔离网络与密钥。
+- **优先更安全的格式**：如 ONNX、safetensors（只存权重、不执行代码），避免直接 pickle。
+- 不要直接加载用户上传的 pickle；先扫描/验证。
+
+⚠️ 注意：对任意模型不存在完全安全的「受限反序列化器」；可信来源 + 沙箱 + 安全格式才是现实防线。
 
 ---
 

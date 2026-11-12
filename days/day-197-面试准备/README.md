@@ -768,17 +768,146 @@ pgrep -af 'mock-interview|04-concurrency' || echo 'no leftover process'
 1. **GIL 与 asyncio**：asyncio 是单线程，为什么能处理上万并发连接？
    它和「多线程处理 IO」在什么场景下互换，什么场景下不能？
 
+**参考答案**
+
+asyncio 单线程能处理上万并发，是因为 IO 等待时线程不阻塞——事件循环（event loop）把每个协程在 `await` 处挂起、转去跑别的协程，IO 就绪再回来。并发靠「切换」而非「多核并行」，所以适合 IO 密集。GIL（全局解释器锁）限制同一时刻只有一个线程执行 Python 字节码，但 IO 等待会释放 GIL；asyncio 干脆只用一个线程，省掉线程切换与锁开销。
+
+```python
+import asyncio, time
+async def worker(i):
+    await asyncio.sleep(0.1)   # 模拟 IO 等待，期间让出事件循环
+    return i
+async def main(n=2000):
+    t0=time.perf_counter()
+    res=await asyncio.gather(*(worker(i) for i in range(n)))
+    dt=time.perf_counter()-t0
+    print(f"单线程并发 {n} 个 IO 任务，总耗时 {dt:.3f}s（每个等待 0.1s）")
+    print(f"完成 {len(res)} 个；若串行需 {n*0.1:.1f}s")
+asyncio.run(main())
+```
+
+预期输出（耗时随机器略有浮动）：
+
+```text
+单线程并发 2000 个 IO 任务，总耗时 0.112s（每个等待 0.1s）
+完成 2000 个；若串行需 200.0s
+```
+
+2000 个各等 0.1s 的任务，单线程并发总耗时约 0.1s，而串行要 200s——等待期间事件循环切换去跑别的协程，IO 等待被「重叠」了。互换场景：纯 IO 等待、连接数巨大时两者都行，asyncio 更省内存（协程比线程轻）；不能互换：需要真正并行 CPU 计算（要用多进程绕开 GIL），或依赖阻塞式第三方库（没有 async 版本会卡住整个事件循环，这时多线程/线程池更合适）。
+
 2. **二分答案的边界**：如果答案空间是浮点数，「左闭右开 + lo == hi」这套写法还适用吗？
    你会怎么改，如何保证精度与终止？
+
+**参考答案**
+
+不适用。浮点二分每次区间减半，但接近机器精度（ulp，最小可表示间隔）时 lo 和 hi 可能永远不相等（相邻两个浮点数之间插不进中点），靠 `lo == hi` 终止会死循环。改法：用固定迭代次数（如 100 次，足以缩到 1 ulp）或「区间宽度 < eps」终止，返回 `(lo+hi)/2`。
+
+```python
+import math
+def bisect_float(pred, lo, hi, iters=100):
+    for _ in range(iters):
+        mid=(lo+hi)/2
+        if pred(mid): hi=mid
+        else: lo=mid
+    return (lo+hi)/2
+ans=bisect_float(lambda x: x*x>=2, 0.0, 2.0)
+print(f"二分得到 sqrt(2) ≈ {ans:.15f}")
+print(f"math.sqrt(2)   = {math.sqrt(2):.15f}")
+print(f"绝对误差 = {abs(ans-math.sqrt(2)):.2e}")
+lo,hi=0.0,2.0
+for _ in range(100):
+    mid=(lo+hi)/2
+    if mid*mid>=2: hi=mid
+    else: lo=mid
+print(f"100 次后 lo==hi? {lo==hi}，区间宽度={hi-lo:.2e}")
+```
+
+预期输出：
+
+```text
+二分得到 sqrt(2) ≈ 1.414213562373095
+math.sqrt(2)   = 1.414213562373095
+绝对误差 = 2.22e-16
+100 次后 lo==hi? False，区间宽度=2.22e-16
+```
+
+100 次固定迭代把 sqrt(2) 逼近到误差 2.22e-16（约 1 ulp），但此时 `lo==hi` 仍是 False、区间宽度 2.22e-16——证明浮点二分不能靠 `lo==hi` 终止，要用固定次数或宽度阈值。
 
 3. **评分器的反例**：构造一段「覆盖分很高但实际是废话」的回答，
    说明四维评分为什么没拦住它，并提出一个不引入大模型的改法。
 
+**参考答案**
+
+「概念覆盖」维度只检查关键词是否出现，堆砌关键词就能拿满覆盖分，但回答没有因果解释、是废话。
+
+```python
+import re
+must_have = ["GIL", "线程", "IO", "CPU", "多进程"]
+nonsense = ("GIL 线程 IO CPU 多进程。GIL 线程 IO CPU 多进程。"
+            "GIL 线程 IO CPU 多进程，GIL 线程 IO CPU 多进程。")
+coverage = sum(1 for k in must_have if k in nonsense)/len(must_have)
+causal = len(re.findall(r"因为|所以|导致|释放|争抢|意味着|当.*?时", nonsense))
+kw_hits = sum(nonsense.count(k) for k in must_have)
+density = kw_hits/len(nonsense)
+print(f"概念覆盖 = {coverage:.2f}（很高）")
+print(f"因果信号 = {causal}（为 0 → 没有解释）")
+print(f"关键词密度 = {density:.2f}（异常高 → 堆砌）")
+```
+
+预期输出：
+
+```text
+概念覆盖 = 1.00（很高）
+因果信号 = 0（为 0 → 没有解释）
+关键词密度 = 0.28（异常高 → 堆砌）
+```
+
+这段回答覆盖分 1.00（五个关键词全有），但因果信号 0、关键词密度 0.28（异常高）——是堆砌的废话。四维评分没拦住它，是因为「覆盖」只看关键词在不在，不看有没有解释。不引入大模型的改法：把「因果信号词数 > 0」和「关键词密度 < 阈值」也纳入评分，覆盖高但无因果/密度超标就扣分。
+
 4. **STAR 的取舍**：如果项目因保密不能透露指标，STAR 的 R 该怎么讲，
    才能既可信又不违反保密？
 
+**参考答案**
+
+保密不能透露绝对指标时，R（Result）这样讲既可信又不泄密：
+
+1. **用相对/归一化结果**：说「延迟降低约 40%」「错误率降到原来的 1/5」，而不是绝对 QPS/营收。相对变化不暴露业务规模。
+2. **用定性+可验证的行为结果**：说「上线后该模块再没出现同类故障」「通过了安全审计」，用事件而非数字佐证。
+3. **用量级脱敏**：说「百万级日活场景」「TB 级数据」，给量级不给精确值；或事先征得公司同意用脱敏后的公开案例。
+4. **强调贡献与方法**：重点放在「我做了什么、为什么这么做、如何验证」，结果用「达成预期目标/通过验收」表述，让面试官相信过程而非追问机密数字。
+
+⚠️ 注意：先确认保密协议边界，宁可说「具体数字涉密不便透露，但可以讲相对改进和方法」，也不要编造或泄露精确指标。
+
 5. **复杂度预算**：n = 10^7，你的 O(n) Python 循环跑了 8 秒，超时。
    在不换语言的前提下，列出三种可行的优化方向，并说明各自的代价。
+
+**参考答案**
+
+纯 Python 循环慢，是因为每次迭代都有解释器开销。不换语言的三个方向：
+
+1. **把循环推进 C 层**：用内置函数/推导式（`sum`、`map`、列表推导）替代手写 for，底层在 C 里跑。代价：只适合能表达成内置操作的问题，复杂逻辑塞不进去。
+2. **向量化（numpy）**：把逐元素循环变成数组批量运算。代价：引入依赖、要把数据转成 ndarray，小数据反而更慢，且不是所有算法都能向量化。
+3. **减少每轮工作/换算法**：缓存重复计算、用生成器省内存，或把 O(n) 换成更优复杂度（如用求和公式 O(1)）。代价：可能增加代码复杂度或内存，换算法需要问题本身允许。
+
+方向 1 的实证：
+
+```python
+import timeit
+n=5_000_000
+manual=timeit.timeit("s=0\nfor x in range(n):\n    s+=x", setup=f"n={n}", number=3)
+builtin=timeit.timeit("sum(range(n))", setup=f"n={n}", number=3)
+print(f"n={n}，3 次总耗时：纯循环 {manual:.3f}s vs sum(range) {builtin:.3f}s，加速 {manual/builtin:.1f}x")
+```
+
+预期输出（加速比随机器浮动）：
+
+```text
+n=5000000，3 次总耗时：纯循环 0.297s vs sum(range) 0.100s，加速 3.0x
+```
+
+把求和循环换成内置 `sum(range)` 约 3 倍加速，因为累加在 C 层完成、省掉每轮 Python 字节码开销。
+
+💡 提示：重点是「内置/向量化把热循环移出解释器」这个方向，而非具体倍数；倍数随机器与数据规模变化。
 
 ---
 

@@ -784,3 +784,112 @@ def main():
 if __name__ == '__main__':
     main()
 ```
+
+## 思考题
+
+1. **Pod、Deployment、Service 的分工**：为什么生产环境不直接创建裸 Pod，而要套一层 Deployment？Pod 的 IP 会变，客户端怎样才能稳定访问到服务？
+
+**参考答案**
+
+Pod 是最小部署单元，但它是**易失的**：节点故障、资源驱逐、滚动更新都会让 Pod 被销毁重建，新 Pod 的名字和 IP 都变了。裸 Pod 没人负责「重建」，挂了就真挂了。
+
+Deployment 让你只声明**期望状态**（3 个副本、用这个镜像），它管理 ReplicaSet，ReplicaSet 时刻盯着实际副本数：少了就补、崩了就换；改镜像时由 Deployment 编排滚动更新，逐步把旧 ReplicaSet 的 Pod 换成新的。这就是 K8s 的核心套路——**控制器不断把实际状态拉向期望状态**（调谐 / reconcile）。
+
+Service 解决「地址会变」的问题：它用 **label selector** 动态挑出一组 Pod，对外提供一个固定的 ClusterIP 和 DNS 名，并在这组 Pod 间做负载均衡。Pod 增删、换 IP，Service 背后的 EndpointSlice 会自动更新，客户端只需要认 Service 名字。要对集群外暴露就用 NodePort / LoadBalancer，HTTP 按域名和路径路由则交给 Ingress。
+
+💡 提示：Service 的 selector 必须能匹配到 Pod 的 labels，否则它一个后端都选不到，访问就是连接失败——下一题就用代码校验这类一致性。
+
+2. **离线校验清单（代码）**：不连集群，如何用 Python 检查一份 Deployment 清单是否「自洽」？请实现必填字段检查与 selector / labels 一致性检查，并说明为什么值得在 `kubectl apply` 之前做这件事。
+
+**参考答案**
+
+```python
+# 依赖：仅标准库（离线校验，不连集群；真正 kubectl apply 需自行准备 K8s 环境）
+import json
+
+def make_deployment(name, replicas, image):
+    """用字典构造 Deployment 清单：labels 与 selector 同源，避免写歪"""
+    labels = {"app": name}
+    return {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": name, "labels": dict(labels)},
+        "spec": {
+            "replicas": replicas,
+            "selector": {"matchLabels": dict(labels)},   # 各自一份副本，互不影响
+            "template": {
+                "metadata": {"labels": dict(labels)},
+                "spec": {"containers": [
+                    {"name": name, "image": image,
+                     "ports": [{"containerPort": 80}]}
+                ]},
+            },
+        },
+    }
+
+def validate(manifest):
+    """离线校验：必填字段 + selector 与 Pod 模板 labels 是否匹配"""
+    problems = []
+    for field in ("apiVersion", "kind", "metadata", "spec"):
+        if field not in manifest:
+            problems.append(f"缺少必填字段 {field}")
+    if problems:
+        return problems
+
+    spec = manifest["spec"]
+    if manifest["kind"] == "Deployment":
+        selector = spec.get("selector", {}).get("matchLabels", {})
+        pod_labels = spec.get("template", {}).get("metadata", {}).get("labels", {})
+        # selector 的每个键值都必须出现在 Pod 模板的 labels 里
+        for k, v in selector.items():
+            if pod_labels.get(k) != v:
+                problems.append(f"selector 与模板 labels 不匹配: {k}={v}")
+        if not isinstance(spec.get("replicas"), int) or spec["replicas"] < 0:
+            problems.append("replicas 必须是非负整数")
+    return problems
+
+good = make_deployment("nginx", 3, "nginx:1.14.2")
+print(validate(good))                     # [] 表示校验通过
+
+bad = make_deployment("nginx", 3, "nginx:1.14.2")
+bad["spec"]["template"]["metadata"]["labels"]["app"] = "nginx-v2"   # 手滑改错标签
+print(validate(bad))
+
+bad2 = make_deployment("nginx", -1, "nginx:1.14.2")
+print(validate(bad2))
+
+spec = good["spec"]
+container = spec["template"]["spec"]["containers"][0]
+print(f"{good['metadata']['name']}: replicas={spec['replicas']}, image={container['image']}")
+print(json.dumps(spec["selector"], ensure_ascii=False))
+```
+
+预期输出：
+
+```
+[]
+['selector 与模板 labels 不匹配: app=nginx']
+['replicas 必须是非负整数']
+nginx: replicas=3, image=nginx:1.14.2
+{"matchLabels": {"app": "nginx"}}
+```
+
+K8s 清单本质就是结构化数据（YAML/JSON 都能表达），所以完全可以在本地用字典先做一遍「体检」：必填字段齐不齐、`replicas` 是不是非负整数、`selector.matchLabels` 是否被 Pod 模板的 `labels` 覆盖。本日实战里的 `K8sConfigManager.validate_config` 做的是同一类事，这里改成纯标准库实现，不依赖 PyYAML、也不访问集群。
+
+值得提前做的原因：`selector` 与模板 labels 不匹配这类错误，清单本身「格式合法」，apply 可能成功，但 Deployment 永远选不到自己创建的 Pod，副本数迟迟不达标——排查起来远比一条本地报错费劲。把校验放进 CI，问题就挡在提交阶段。
+
+⚠️ 注意：构造清单时如果把**同一个 labels 字典对象**同时塞给 selector 和 template，改一处等于改两处（别名共享），校验就失真了；本例用 `dict(labels)` 各拷一份。需要输出 YAML 文件时用 `yaml.dump`（`pip install pyyaml`），结构与字典一一对应；真正 apply / scale 需自行准备集群（minikube、kind 等）。
+
+3. **两种探针的区别**：`livenessProbe` 与 `readinessProbe` 各自决定什么？把一个启动需要 60 秒的应用配成 `livenessProbe.initialDelaySeconds: 5`、又不配 readiness，会发生什么？
+
+**参考答案**
+
+**livenessProbe（存活探针）**失败 → kubelet 认为容器「已经死了」，按重启策略**重启容器**。它治的是「进程还在但不干活」：死锁、卡死、内存泄漏后无响应。
+
+**readinessProbe（就绪探针）**失败 → **不重启**，只把该 Pod 从 Service 的后端列表（Endpoints/EndpointSlice）里摘掉，不再转发流量给它；探测恢复后自动加回。它治的是「暂时不能服务」：启动加载中、依赖未就绪、瞬时过载。
+
+启动要 60 秒的应用，liveness 从第 5 秒就开始探测，此时应用还没监听端口，探测连续失败达到 `failureThreshold` → 容器被重启 → 再次启动到一半又被杀，陷入 **CrashLoopBackOff**，永远起不来。正确做法：把 `initialDelaySeconds` 设得大于启动时间，或加 `startupProbe`（启动探针，专门保护慢启动，成功前暂停另外两种探针），或放宽 `periodSeconds` / `failureThreshold`。
+
+不配 readiness 的后果：Pod 一进入 Running 就可能被 Service 纳入流量，而应用其实还没准备好，滚动更新期间就会掉请求、报 502。
+
+⚠️ 注意：本日清单给 `nginx:1.14.2` 配了 `/health` 和 `/ready` 两个探测路径，但官方 nginx 镜像默认并没有这两个 location，直接 apply 会探测失败。照抄时要改成 `/`，或在镜像/ConfigMap 里补上对应配置（需自行准备环境验证）。

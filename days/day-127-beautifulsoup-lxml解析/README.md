@@ -234,10 +234,170 @@ if link:
 
 1. **性能对比**：在处理 10MB 的 HTML 文件时，lxml 比 BeautifulSoup 快多少？为什么？
 
+**参考答案**
+
+量级上，**纯 lxml（C 解析器 + XPath）通常比 BeautifulSoup + html.parser 快约 5~10 倍**；但 BeautifulSoup 即使改用 lxml 做后端，提速也有限。原因：
+
+- **lxml 底层是 C 库 libxml2**，解析在 C 层完成，极快。
+- **html.parser 是纯 Python** 实现，解析慢。
+- **bs4 的开销主要在 Python 层**：它要把解析树包装成 Python 对象，`find_all` 遍历也在 Python 层，所以即便解析快了，遍历仍拖后腿。
+
+因此"快多少"取决于用法：纯 lxml + XPath 最快，bs4 + lxml 次之，bs4 + html.parser 最慢。下面本地生成约 10MB HTML 实测（需先 `pip install beautifulsoup4 lxml`）：
+
+```python
+import time
+from bs4 import BeautifulSoup
+from lxml import html as lxml_html
+
+# 构造约 10MB 的 HTML：12 万个商品卡片
+card = '<div class="item"><a href="/p/1">商品标题</a><span class="price">99.00</span></div>\n'
+page = "<html><body>" + card * 120_000 + "</body></html>"
+print(f"HTML 大小: {len(page.encode('utf-8')) / 1024 / 1024:.1f} MB")
+
+def bench(name, parse):
+    start = time.perf_counter()
+    n = parse(page)          # 解析并顺便提取所有链接，模拟真实工作
+    cost = time.perf_counter() - start
+    print(f"{name:28s} 耗时 {cost:6.2f}s  提取链接 {n} 个")
+    return cost
+
+t1 = bench("BeautifulSoup(html.parser)",
+           lambda h: len(BeautifulSoup(h, "html.parser").find_all("a")))
+t2 = bench("BeautifulSoup(lxml)",
+           lambda h: len(BeautifulSoup(h, "lxml").find_all("a")))
+t3 = bench("lxml.html.fromstring + xpath",
+           lambda h: len(lxml_html.fromstring(h).xpath("//a/@href")))
+print(f"加速比: bs4+lxml 是 bs4+html.parser 的 {t1/t2:.1f} 倍；纯 lxml 是 {t1/t3:.1f} 倍")
+```
+
+本机一次实测输出（数字随机器和文档结构变化，量级供参考）：
+
+```
+HTML 大小: 10.1 MB
+BeautifulSoup(html.parser)   耗时   4.58s  提取链接 120000 个
+BeautifulSoup(lxml)          耗时   3.74s  提取链接 120000 个
+lxml.html.fromstring + xpath 耗时   0.50s  提取链接 120000 个
+加速比: bs4+lxml 是 bs4+html.parser 的 1.2 倍；纯 lxml 是 9.1 倍
+```
+
+可见纯 lxml + XPath 比 bs4 + html.parser 快约 9 倍，而 bs4 换 lxml 后端只快 1.2 倍——瓶颈在 Python 层的对象封装与遍历。
+
 2. **XPath 独有能力**：XPath 有哪些 BeautifulSoup 无法轻松实现的功能？（提示：父元素选择、文本节点）
+
+**参考答案**
+
+XPath 更轻松/独有的能力：
+
+- **轴导航**：`parent::`、`ancestor::`、`following-sibling::` 等反向/横向找节点（传统 CSS 没有父选择器）。
+- **文本节点**：`text()` 精确取直接文本（不含子标签文字）、`contains(text(), ...)` 按文本内容匹配元素。
+- **位置函数**：`last()`、`position()` 选最后一个/第 N 个。
+- **属性与逻辑组合**：`@attr` 取属性、`and`/`or` 组合条件。
+
+bs4 虽能用 `.parent`、`.find(text=True)` 等 Python 代码实现部分功能，但 XPath 一条表达式就搞定，更系统。下面离线演示（需先 `pip install lxml`）：
+
+```python
+from lxml import html
+
+doc = html.fromstring("""
+<html><body>
+  <div class="box">
+    <p>第一段</p>
+    <p class="target">目标段落<b>加粗子元素</b></p>
+    <p>第三段</p>
+  </div>
+</body></html>
+""")
+
+# ① 父元素选择：从 .target 反向找到它的父 div（CSS 选择器做不到）
+parent = doc.xpath("//p[@class='target']/parent::div")[0]
+print("① 父元素 class =", parent.get("class"))
+
+# ② 只取"直接文本节点"，不含子标签 <b> 里的文字
+direct_text = doc.xpath("//p[@class='target']/text()")
+print("② 直接文本节点 =", direct_text)   # 只有 '目标段落'，不含 '加粗子元素'
+
+# ③ 按文本内容匹配元素
+by_text = doc.xpath("//p[contains(text(), '第三')]")
+print("③ 按文本匹配到 =", by_text[0].text)
+
+# ④ 取某个元素后面的兄弟节点
+following = doc.xpath("//p[@class='target']/following-sibling::p")
+print("④ 后面的兄弟 p 数量 =", len(following))
+```
+
+预期输出：
+
+```
+① 父元素 class = box
+② 直接文本节点 = ['目标段落']
+③ 按文本匹配到 = 第三段
+④ 后面的兄弟 p 数量 = 1
+```
+
+💡 提示：新版 bs4 的 soupsieve 引擎已支持 `:has()` 等部分能力，但 XPath 的轴体系仍更完整、表达力更强。
 
 3. **动态内容**：如果网页内容是通过 JavaScript 动态加载的，BeautifulSoup 能直接提取吗？应该用什么工具？
 
+**参考答案**
+
+不能。BeautifulSoup 只解析"你拿到的 HTML 字符串"，它**不执行 JavaScript**。如果数据是 JS 运行后才填进 DOM 的，bs4 拿到的只是空壳。
+
+应改用：
+
+- **优先逆向 Ajax 接口**：F12 找到 JS 调用的 JSON API，直接用 requests 请求（最快、最稳）。
+- **浏览器自动化**：用 Selenium / Playwright 驱动真浏览器执行 JS，再取渲染后的 HTML 或元素。
+
+小例子：一个 SPA 页面，bs4 只看到 `<div id="root"></div>`；要用 Playwright 渲染后，里面才有真实内容。
+
 4. **选择器优化**：`soup.select("div > p > a")` 和 `soup.select("div p a")` 有什么区别？哪种更快？
 
+**参考答案**
+
+区别在层级关系：
+
+- **`div > p > a`**（子代选择器）：要求 a 的父是 p、p 的父是 div，**严格逐层直接父子**。
+- **`div p a`**（后代选择器）：只要 a 在 div 内、p 在 div 内即可，中间可隔**任意层级**，匹配范围更大。
+
+速度上两者通常在同一量级，选择依据应是**语义正确性**；在超大文档上更严格的选择器候选更少、往往略快，但差异远小于"解析器选择"带来的影响。下面离线演示（需先 `pip install beautifulsoup4`）：
+
+```python
+from bs4 import BeautifulSoup
+
+doc = BeautifulSoup("""
+<div>
+  <p><a>直接孙链接</a></p>
+  <section><p><a>深层嵌套链接</a></p></section>
+</div>
+""", "html.parser")
+
+# div > p > a：要求 a 的父是 p、p 的父是 div（严格逐层）
+strict = doc.select("div > p > a")
+# div p a：只要 a 在 div 内部、p 在 div 内部即可（任意层级）
+loose = doc.select("div p a")
+
+print("div > p > a 命中:", [a.text for a in strict])
+print("div p a   命中:", [a.text for a in loose])
+```
+
+预期输出：
+
+```
+div > p > a 命中: ['直接孙链接']
+div p a   命中: ['直接孙链接', '深层嵌套链接']
+```
+
+第二个链接的 p 外面隔了 `<section>`，不满足严格父子关系，所以只被后代选择器命中。
+
 5. **反爬虫对抗**：如果网站检测到你频繁解析同一个页面的不同部分，应该如何优化？
+
+**参考答案**
+
+核心思路是"减少重复请求与重复解析"，而不是高频硬撞：
+
+- **一次下载、一次解析、复用树**：把 HTML 缓存下来，解析成 soup/tree 后，所有字段都从同一棵树提取，别为每个部分重新请求或重新解析。
+- **批量提取**：一次性 `select` 出所有需要的节点，避免多次遍历。
+- **本地缓存 HTML**（文件/Redis）：调试时离线反复解析，不再打扰服务器。
+- **控制请求频率**：加延迟、限并发，避免触发反爬。
+- **用 lxml** 提升解析速度。
+
+⚠️ 合规提示：遵守 robots.txt 与频率限制，"优化"应是减少重复请求、降低对方负担，而非绕过检测高频抓取。

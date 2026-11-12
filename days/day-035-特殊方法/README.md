@@ -580,13 +580,210 @@ print(f"v3 × v4 = {v3.cross(v4)}")     # [0.00, 0.00, 1.00]
 
 1. **`__repr__` 与 `__str__`**：如果一个类只实现了 `__repr__` 没实现 `__str__`，`print(obj)` 会调用哪个？为什么？
 
+**参考答案**
+
+会调用 **`__repr__`**。原因是继承链上的回退机制：所有类最终继承自 `object`，而 `object.__str__` 的默认实现就是"调用 `self.__repr__()`"。当你没有覆盖 `__str__` 时，`print(obj)` / `str(obj)` 找到的正是这个默认的 `__str__`，它转而调用你实现的 `__repr__`。
+
+反过来不成立：只实现 `__str__` 而没实现 `__repr__` 时，`repr(obj)` 仍会走 `object.__repr__`（输出 `<__main__.X object at 0x...>` 这种带地址的默认形式），**不会**回退到 `__str__`。所以实践建议：**至少实现 `__repr__`**，这样调试和展示都有合理输出；需要更友好的展示时再额外实现 `__str__`。
+
+```python
+# 思考题1：只实现 __repr__ 时 print 走 __repr__
+class Point:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+    def __repr__(self):
+        return f'Point({self.x}, {self.y})'
+
+
+p = Point(3, 4)
+print(p)        # 没有 __str__，回退到 __repr__
+print(str(p))   # 同样回退
+```
+
+预期输出：
+
+```text
+Point(3, 4)
+Point(3, 4)
+```
+
+💡 提示：回退方向是单向的——`__str__` 缺省时退到 `__repr__`，但 `__repr__` 缺省时不会退到 `__str__`。
+
 2. **运算符重载的返回值**：`__add__` 应该返回新对象还是修改自身？两种方式分别在什么场景下更合适？
+
+**参考答案**
+
+**`__add__`（对应 `a + b`）应当返回新对象，不修改自身**。这符合"值语义"：`+` 是表达式，调用者期望 `a`、`b` 都不被改动，结果是一个新值。数字、字符串、元组都是这样。若 `__add__` 偷偷改了 `self`，会破坏链式表达式、引发隐蔽副作用，也不利于多线程安全。
+
+**原地修改交给 `__iadd__`（对应 `a += b`）**。对**可变容器**（如 `list`），`+=` 就地扩展并返回 `self`，省去创建新对象的开销；对**不可变类型**（如 `int`、`tuple`），没有 `__iadd__`，`a += b` 会退化为 `a = a + b`，即重新绑定到新对象。
+
+**选择标准**：
+
+- 表达"产生一个新值"、对象是不可变值类型 → `__add__` 返回新对象；
+- 表达"就地累积/更新"、对象是可变容器且追求性能 → 实现 `__iadd__` 修改并返回 `self`。
+
+```python
+# 思考题2：__add__ 返回新对象，__iadd__ 原地修改
+class Vec:
+    def __init__(self, x):
+        self.x = x
+
+    def __add__(self, other):
+        return Vec(self.x + other.x)   # 新对象，不改自身
+
+    def __iadd__(self, other):
+        self.x += other.x              # 原地修改
+        return self
+
+    def __repr__(self):
+        return f'Vec({self.x})'
+
+
+a = Vec(1)
+b = a + Vec(2)
+print(a, b)        # a 不变
+a += Vec(5)
+print(a)           # 原地累加
+```
+
+预期输出：
+
+```text
+Vec(1) Vec(3)
+Vec(6)
+```
+
+⚠️ 注意：`__iadd__` 必须 `return self`（或某个对象），因为 `a += b` 实际是 `a = a.__iadd__(b)`，忘记返回会让 `a` 变成 `None`。
 
 3. **`NotImplemented` vs `NotImplementedError`**：在 `__add__` 中返回 `NotImplemented` 和在重载方法中 `raise NotImplementedError` 有什么区别？
 
+**参考答案**
+
+两者名字像，但本质完全不同：
+
+- **`NotImplemented` 是一个"哨兵值"（单例对象）**，用于二元特殊方法（`__add__`、`__eq__` 等）**返回**。它告诉解释器："我不支持这个操作数类型，请试试另一方的反向方法。" 于是 `a + b` 中 `a.__add__` 返回 `NotImplemented` 后，Python 会转去调用 `b.__radd__(a)`；若双方都返回 `NotImplemented`，才最终抛出 `TypeError`。它是**协作式回退机制**的一部分。
+- **`NotImplementedError` 是一个"异常类"**，用于**抛出**，通常出现在抽象基类/父类里"子类必须覆盖"的方法中。一旦 `raise`，调用立即中断，**不会**触发任何反向运算回退。
+
+一句话：在运算符重载里要表达"我处理不了，交给对方"，必须 **`return NotImplemented`**；写成 `raise NotImplementedError` 会直接报错、丧失回退能力，是常见误用。
+
+```python
+# 思考题3：返回 NotImplemented 触发反向运算
+class A:
+    def __add__(self, other):
+        return NotImplemented   # 我不处理，交给对方
+
+
+class B:
+    def __radd__(self, other):
+        return 'B 处理了加法'
+
+
+print(A() + B())   # 解释器转而调用 B.__radd__
+```
+
+预期输出：
+
+```text
+B 处理了加法
+```
+
+⚠️ 注意：`NotImplemented` 只能用于二元运算方法的返回值；在普通方法里 `return NotImplemented` 没有特殊含义，而 `bool(NotImplemented)` 为 `True`，误用还可能触发 `DeprecationWarning`。
+
 4. **哈希与相等性**：如果你实现了 `__eq__`，为什么 Python 通常会将 `__hash__` 设为 `None`？实现 `__hash__` 时需要注意什么？
 
+**参考答案**
+
+哈希有一条**铁律**：**相等的对象必须有相等的哈希值**（`a == b` ⇒ `hash(a) == hash(b)`），否则字典/集合会出错。`object` 默认的 `__hash__` 基于对象的**身份（内存地址）**，而默认的 `__eq__` 也是身份比较，二者本来一致。
+
+一旦你覆盖了 `__eq__` 改成**按值相等**，默认的身份哈希就不再满足铁律了——两个"值相等"的对象会有不同哈希。为避免这种隐患，Python 在你定义 `__eq__` 时**自动把 `__hash__` 置为 `None`**，让实例**不可哈希**（放进 `set`/`dict` 键会 `TypeError`），逼使你显式决定哈希策略。
+
+**实现 `__hash__` 的要点**：
+
+- 哈希必须基于**与 `__eq__` 相同的字段**，保证相等对象哈希相同；
+- 这些字段最好是**不可变**的：对象作为字典键/集合元素期间若哈希会变，就再也找不回来了；
+- 常用写法 `return hash((self.x, self.y))`，把参与比较的字段打包成元组求哈希；
+- 若对象本质可变、不该做键，就保持 `__hash__ = None`。
+
+```python
+# 思考题4：__eq__ 与 __hash__ 的一致性
+class Point:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+    def __eq__(self, other):
+        return isinstance(other, Point) and (self.x, self.y) == (other.x, other.y)
+
+    def __hash__(self):
+        return hash((self.x, self.y))   # 与 __eq__ 用同样的字段
+
+
+p1, p2 = Point(1, 2), Point(1, 2)
+print(p1 == p2)             # True
+print(hash(p1) == hash(p2)) # True
+print(len({p1, p2}))        # 1，集合去重
+
+
+class OnlyEq:
+    def __eq__(self, other):
+        return True
+
+
+print(OnlyEq.__hash__)      # None：只定义 __eq__ 会变为不可哈希
+```
+
+预期输出：
+
+```text
+True
+True
+1
+None
+```
+
+💡 提示：`dataclass` 默认 `eq=True` 也会把 `__hash__` 设为 `None`；想要可哈希需显式 `@dataclass(frozen=True)`（冻结后自动生成基于字段的 `__hash__`）。
+
 5. **`__call__` 与闭包**：使用 `__call__` 的可调用对象和闭包函数相比，各自有什么优劣？在什么场景下可调用对象更好？
+
+**参考答案**
+
+两者都能实现"带状态、可像函数一样调用"的对象，区别在于状态的可见性与扩展性：
+
+- **闭包函数**：写法简洁、轻量，状态藏在自由变量里（配合 `nonlocal` 修改），天然封装、外部看不到。适合**状态简单、只需一个调用入口**的场景（如简单计数器、装饰器）。缺点是状态不可直接访问/重置，难以附加其它方法，调试和序列化较麻烦。
+- **可调用对象（`__call__`）**：状态是**显式的实例属性**，可读、可改、可重置；还能定义多个方法、支持继承、便于 `pickle` 序列化和单元测试。代价是代码量略多。
+
+**可调用对象更好的场景**：状态需要被外部检查或配置（如累计耗时、调用次数）、需要"重置/暂停"等额外操作、需要多个相关方法、需要继承复用或序列化保存状态时。
+
+```python
+# 思考题5：可调用对象的状态可访问、可重置
+class Counter:
+    def __init__(self):
+        self.count = 0
+
+    def __call__(self):
+        self.count += 1
+        return self.count
+
+    def reset(self):
+        self.count = 0
+
+
+c = Counter()
+print(c(), c(), c())   # 1 2 3
+print(c.count)         # 3，状态可直接访问
+c.reset()
+print(c())             # 1
+```
+
+预期输出：
+
+```text
+1 2 3
+3
+1
+```
+
+💡 提示：闭包要达到同样的"查看/重置状态"效果，得额外返回 getter/setter 或把状态挂到函数属性上，反而更别扭；这时可调用对象是更自然的选择。
 
 ---
 

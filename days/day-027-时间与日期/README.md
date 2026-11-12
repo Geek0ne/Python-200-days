@@ -1052,10 +1052,201 @@ print(f"耗时: {end - start:.6f}s")
 
 1. **时间戳精度问题**：`time.time()` 返回的浮点数精度有限，当时间戳非常大时（如接近 2038 年），微秒级的精度会丢失。为什么？在 Python 中如何解决高精度时间存储问题？
 
+**参考答案**
+
+`time.time()` 返回的 float 是 IEEE 754 双精度浮点数，尾数只有 52 位（加上隐含位共 53 个二进制有效位）。**数值越大，整数部分占走的位数越多，留给小数部分的位数就越少**。接近 2038 年时时间戳约 2.1×10⁹ ≈ 2³¹，整数部分占掉 31 位，小数只剩 22 位，相邻两个可表示浮点数的间隔变成 2⁻²² ≈ 0.24 微秒——微秒级精度已无法保证，加 0.1 微秒甚至会被舍入直接"吃掉"。
+
+解决办法的核心思想是：**用整数代替浮点数存时间**。
+
+- `time.time_ns()`（Python 3.7+）：返回整数纳秒，完全没有舍入误差；
+- 存储时拆成"整秒 + 纳秒/微秒余数"两个整数字段；
+- 用 `datetime` / `timedelta`：它们内部用整数的天/秒/微秒存储，同样没有浮点误差。
+
+```python
+import math
+import time
+
+ts = float(2**31 - 1)      # 2038-01-19，32 位时间戳上限
+print(math.ulp(ts))        # 相邻两个可表示浮点数的间隔（秒）
+x = ts + 0.0000001         # 试图加上 0.1 微秒
+print(x == ts)             # True：加法被舍入"吃掉"了
+
+# 解决：整数纳秒，绝无精度损失
+ns = time.time_ns()
+print(type(ns))
+print(ns // 1_000_000_000, ns % 1_000_000_000)  # 整秒 + 纳秒余数
+```
+
+预期输出（最后一行随当前时间变化）：
+
+```text
+2.384185791015625e-07
+True
+<class 'int'>
+1794486411 402750800
+```
+
+间隔约 2.4×10⁻⁷ 秒（0.24 微秒），所以 0.1 微秒的增量根本表示不出来。
+
+⚠️ 注意：`math.ulp` 需要 Python 3.9+，`time.time_ns()` 需要 3.7+；另外"2038 年问题"本身是 32 位整数溢出问题，与这里的浮点精度问题是两回事，64 位系统上整数时间戳不受 2038 限制。
+
 2. **Naive vs Aware**：假设你的应用需要存储用户的生日（只关心月日，不关心年份和时区），你会用哪种数据结构？为什么？
+
+**参考答案**
+
+先厘清概念：naive（不带时区）和 aware（带时区）是针对 `datetime` 的区分。但生日这个需求**连"年份"和"时刻"都不需要**，所以两种 `datetime` 都不合适——硬用会背上无意义的字段，还可能引入 bug（比如给生日加了时区再做转换，日期可能偏移一天）。
+
+最贴切的做法是用**最简单的结构只存月和日**：`(month, day)` 元组、`namedtuple`，或 `'MM-DD'` 字符串。如果确实想复用 `date` 的合法性校验和比较能力，可以约定一个"哨兵年份"（如 2000，它是闰年，连 2 月 29 日都放得下），但必须把这一约定写进文档。
+
+```python
+from collections import namedtuple
+
+Birthday = namedtuple('Birthday', 'month day')
+
+
+def parse_birthday(s):
+    month, day = map(int, s.split('-'))
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        raise ValueError('非法的月份或日期')
+    return Birthday(month, day)
+
+
+b = parse_birthday('06-18')
+print(b)
+print(b.month, b.day)
+```
+
+预期输出：
+
+```text
+Birthday(month=6, day=18)
+6 18
+```
+
+💡 提示：2 月 29 日出生的用户在平年怎么过生日，属于业务规则，数据结构层面只需保证能存下 `(2, 29)`；上面的粗略校验若改成按月校验天数会更严谨。
 
 3. **性能测量陷阱**：用 `time.time()` 来测量一个耗时 1 纳秒的操作会有什么问题？用 `time.perf_counter()` 能测出来吗？为什么？
 
+**参考答案**
+
+**用 `time.time()` 的问题**：它是"墙钟"，分辨率有限（很多平台只有微秒甚至毫秒级），还会被系统校时（NTP）拨动。1 纳秒比它的分辨率小几个数量级，单次测量得到的差值基本是 0 或随机噪声，完全不可信；校时还可能让差值变成负数。
+
+**`perf_counter()` 也测不出单次 1 纳秒**：它分辨率高得多（纳秒级）且单调递增、不受校时影响，是性能测量的正确选择。但"测一个 1ns 操作"仍失败，原因有二：一是 1ns 可能仍低于或接近它的分辨率；二是**两次调用 `perf_counter()` 本身的开销（几十纳秒）就远大于被测操作**，测到的其实是计时开销而非操作耗时。
+
+**正确姿势**：把操作重复执行很多遍再除以次数，用"摊薄"的办法把计时误差和调用开销稀释掉——这正是 `timeit` 模块的原理。
+
+```python
+import time
+
+# 单次测量：操作远快于时钟粒度，结果基本是 0 或噪声
+t0 = time.perf_counter()
+x = 1 + 1
+t1 = time.perf_counter()
+print(f"单次测量: {t1 - t0:.9f} 秒")
+
+# 正确姿势：重复一百万次取平均，摊薄时钟误差和调用开销
+N = 1_000_000
+t0 = time.perf_counter()
+for _ in range(N):
+    x = 1 + 1
+t1 = time.perf_counter()
+print(f"平均每次: {(t1 - t0) / N:.9f} 秒")
+```
+
+预期输出（具体数值因机器而异，单次那行通常接近 0 或明显偏大）：
+
+```text
+单次测量: 0.000000300 秒
+平均每次: 0.000000021 秒
+```
+
+单次测出的 300ns 其实是计时调用本身的开销；重复平均后才逼近真实的每次几十纳秒。
+
+💡 提示：实际项目直接用 `timeit.timeit()` / `python -m timeit`，它会自动选择重复次数并取最优值，比手写更稳妥。
+
 4. **跨年日期计算**：`date(2026, 1, 1) - timedelta(days=1)` 的结果是什么？`date(2026, 3, 1) - timedelta(days=1)` 呢？Python 是如何处理这类边界情况的？
 
+**参考答案**
+
+- `date(2026, 1, 1) - timedelta(days=1)` → `date(2025, 12, 31)`，自动**跨年**回到上一年最后一天。
+- `date(2026, 3, 1) - timedelta(days=1)` → `date(2026, 2, 28)`，因为 2026 不能被 4 整除、是**平年**，2 月只有 28 天。若是闰年（如 2024）则会得到 2 月 29 日。
+
+**原理**：`date` 内部把日期表示成"序数日"（ordinal，从公元 1 年 1 月 1 日起算的天数，可用 `toordinal()` 查看）。与 `timedelta` 加减时，先转成序数日做**整数加减**，再按历法规则（每月天数、闰年规则：能被 4 整除但不能被 100 整除，或能被 400 整除）换算回年/月/日。所以跨年、月末、闰年这些边界全部自动处理，不需要写任何特判。
+
+```python
+from datetime import date, timedelta
+
+print(date(2026, 1, 1) - timedelta(days=1))   # 跨年
+print(date(2026, 3, 1) - timedelta(days=1))   # 2026 平年
+print(date(2024, 3, 1) - timedelta(days=1))   # 2024 闰年
+print(date(2026, 1, 1).toordinal())           # 内部序数日
+```
+
+预期输出：
+
+```text
+2025-12-31
+2026-02-28
+2024-02-29
+739617
+```
+
+💡 提示：`timedelta` 只支持天/秒/微秒级别的加减，**没有"加一个月"**（每月天数不固定）；按月加减请用第三方库 `dateutil` 的 `relativedelta`（需 `pip install python-dateutil`）。
+
 5. **字符串解析歧义**：如果没有 `strptime`，让你写一个函数将 `'2026-06-18 09:15:30'` 解析为 datetime 对象（不能使用任何现成的解析库），你会怎么写？需要考虑哪些边界情况？
+
+**参考答案**
+
+思路分三步：**按分隔符拆分 → 逐段转整数 → 交给 `datetime` 构造器校验并组装**。不要自己手写"月份 1~12、闰年"之类的范围校验——构造器已经内置了全部历法规则，让它抛 `ValueError` 即可。
+
+需要考虑的边界情况：
+
+- 字段数量不对（缺时间部分、多了一段）；分隔符用错（`/`、`T` 等）；
+- 字段不是数字（字母、空串）；
+- 取值越界：月份 13、小时 25、2 月 30 日、平年的 2 月 29 日；
+- 首尾多余空白；个位数的月/日/时（`int('09')` 天然兼容前导零）。
+
+```python
+from datetime import datetime
+
+
+def parse_datetime(s):
+    """解析 'YYYY-MM-DD HH:MM:SS'，不使用任何现成解析库"""
+    parts = s.strip().split(' ')
+    if len(parts) != 2:
+        raise ValueError('必须包含日期和时间两部分，用空格分隔')
+    date_part, time_part = parts
+
+    ymd = date_part.split('-')
+    hms = time_part.split(':')
+    if len(ymd) != 3 or len(hms) != 3:
+        raise ValueError('日期必须是 年-月-日，时间必须是 时:分:秒')
+
+    try:
+        year, month, day = map(int, ymd)
+        hour, minute, second = map(int, hms)
+    except ValueError:
+        raise ValueError('各字段必须是整数')
+
+    # datetime 构造器自动校验取值范围（月份 1-12、闰年等）
+    return datetime(year, month, day, hour, minute, second)
+
+
+print(parse_datetime('2026-06-18 09:15:30'))
+for bad in ('2026-13-18 09:15:30', '2026-06-18 25:00:00', '2026-02-30 00:00:00'):
+    try:
+        parse_datetime(bad)
+    except ValueError as e:
+        print(f'{bad!r} -> {e}')
+```
+
+预期输出：
+
+```text
+2026-06-18 09:15:30
+'2026-13-18 09:15:30' -> month must be in 1..12
+'2026-06-18 25:00:00' -> hour must be in 0..23
+'2026-02-30 00:00:00' -> day is out of range for month
+```
+
+💡 提示：`int()` 其实还接受 `'+9'`、`'1_0'` 这类写法，若要求严格格式，可先用 `str.isdigit()` 逐段检查；真实项目里优先用 `strptime` 或 `datetime.fromisoformat`，手写解析只用于学习或极特殊的格式。

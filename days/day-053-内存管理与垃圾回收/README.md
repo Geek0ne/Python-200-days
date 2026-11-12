@@ -510,13 +510,145 @@ profiler.print_report()
 
 1. **为什么 Python 使用引用计数而不是只用垃圾回收器？** 提示：考虑实时性和性能。
 
+**参考答案**
+
+引用计数（每个对象记录「有多少引用指向我」，归零即回收）相比「只靠垃圾回收器」有几个关键优势：
+
+- **实时性/确定性**：最后一个引用消失的瞬间对象就被释放，资源（文件、连接）能及时归还，不用等下一次 GC。
+- **性能平滑**：回收成本分摊在每次赋值/删除上，避免标记-清除那种「集中扫描、长时间停顿」。
+- **实现简单、局部性好**：不需要全局遍历对象图。
+
+代价是：无法处理循环引用、每次引用变动都有计数开销、多线程下需要锁（GIL）。所以 Python 采用「引用计数为主 + 分代 GC 兜底循环引用」的组合。小例子（已验证，`del` 后立即回收）：
+
+```python
+class Res:
+    def __del__(self):
+        print("released")
+
+r = Res()
+del r            # 引用计数归零 → 立即回收
+print("after del")
+```
+
+输出先 `released` 再 `after del`，说明无需等待 GC。
+
 2. **分代回收的三代有什么区别？** 提示：考虑对象的存活时间。
+
+**参考答案**
+
+分代回收基于「弱分代假说」：大多数对象「朝生夕死」，活得越久的对象越不容易死。于是把对象按存活时间分三代，区别在于**回收频率**：
+
+- **第 0 代**：新创建的对象，回收最频繁（默认每净增 700 个对象触发一次）。
+- **第 1 代**：熬过一次第 0 代回收的对象，回收较频繁（默认每 10 次第 0 代回收触发一次）。
+- **第 2 代**：熬过第 1 代回收的「老对象」，回收最少（默认每 10 次第 1 代回收触发一次）。
+
+这样「频繁扫描年轻对象」就能回收绝大部分垃圾，而很少去动老对象，整体开销小。阈值可用 `gc.get_threshold()` 查看、`gc.set_threshold()` 调整。小例子（已验证）：
+
+```python
+import gc
+print(gc.get_threshold())   # (700, 10, 10)
+print(gc.get_count())       # 当前各代计数，动态变化
+```
 
 3. **为什么有 `__del__` 方法的循环引用对象无法被回收？** 提示：考虑 `__del__` 的调用时机。
 
+**参考答案**
+
+⚠️ 注意：这个说法在**现代 Python（3.4+）已不成立**。自 PEP 442「安全对象终结」起，带 `__del__` 的循环引用对象**也能被 GC 回收**。
+
+- **历史原因（≤3.3）**：循环引用里各对象的引用计数都不为 0，GC 想回收就得先调用 `__del__`，但无法确定调用顺序——某个 `__del__` 可能访问另一个待回收对象，甚至让对象「复活」。为安全起见，旧版 GC 干脆放弃回收，把它们丢进 `gc.garbage`。
+- **现代行为（3.4+）**：GC 先打破循环、再统一调用 `__del__`，因此能正常回收，`gc.garbage` 通常为空。
+- 仍要警惕的极端情况：`__del__` 中把对象重新挂到全局（复活）、或 `__del__` 抛异常，可能造成对象滞留。
+
+小例子（已验证，Python 3.12 能回收）：
+
+```python
+import gc
+
+class Node:
+    def __init__(self, name):
+        self.name = name
+        self.ref = None
+    def __del__(self):
+        print("del", self.name)
+
+gc.collect(); gc.garbage.clear()
+a = Node("A"); b = Node("B")
+a.ref = b; b.ref = a       # 循环引用
+del a; del b
+print("collected:", gc.collect())   # 2
+print("garbage:", gc.garbage)       # []
+```
+
+输出 `del A`、`del B`、`collected: 2`、`garbage: []`，说明带 `__del__` 的循环对象被成功回收。
+
 4. **如何检测 Python 程序的内存泄漏？** 提示：考虑 `gc` 模块和第三方工具。
 
+**参考答案**
+
+排查内存泄漏的常用手段（由轻到重）：
+
+- **`gc.get_objects()` 计数**：操作前后各 `gc.collect()` 再比较对象总数，持续增长提示泄漏。注意要用「会被 GC 跟踪」的对象（自定义实例、含可变值的容器）；只含不可变值的字典会被解除跟踪，数不到。
+- **`tracemalloc`（标准库，推荐）**：拍快照对比，按代码行定位内存增长最多的位置。
+- **第三方工具**：`objgraph`（`show_growth` / `show_most_common_types` / 引用链可视化）、`pympler`（`asizeof` / `muppy` / `summary`）、`memory_profiler`（逐行内存）。需 `pip install objgraph pympler memory_profiler`。
+- **常见泄漏源**：全局缓存只增不减、闭包持有大对象、忘记关闭的资源、循环引用。
+
+小例子（已验证）：
+
+```python
+import gc, tracemalloc
+
+# 方法一：tracemalloc 快照对比，定位增长最多的代码行
+tracemalloc.start()
+snap1 = tracemalloc.take_snapshot()
+leak = [dict(zip(range(100), range(100))) for _ in range(1000)]  # 模拟一直持有的数据
+snap2 = tracemalloc.take_snapshot()
+for stat in snap2.compare_to(snap1, 'lineno')[:3]:
+    print(stat)          # 排第一的通常是创建 leak 的那一行，size 为正
+tracemalloc.stop()
+
+# 方法二：gc.get_objects() 计数（用会被跟踪的对象）
+class Item:
+    def __init__(self, i):
+        self.i = i
+gc.collect()
+before = len(gc.get_objects())
+kept = [Item(i) for i in range(1000)]
+gc.collect()
+after = len(gc.get_objects())
+print("对象增量:", after - before)   # 约 1000，明显为正
+```
+
+预期：`tracemalloc` 输出的第一项指向创建 `leak` 的那一行、`size` 为正（约 4.5 MiB）；对象增量约为 1000（具体数值随环境略有波动），都表明有对象被持续持有。
+
 5. **`gc.garbage` 列表中存放的是什么？** 提示：考虑无法回收的对象。
+
+**参考答案**
+
+`gc.garbage` 是一个**普通列表**，存放 GC 判定为「不可回收（uncollectable）」的对象：
+
+- 历史上主要是「带 `__del__` 的循环引用对象」（Python ≤3.3）；现代 Python 能回收它们，所以该列表**通常为空**。
+- 极端情况（如 `__del__` 复活对象、终结出错）仍可能产生不可回收垃圾并留在此列表。
+- 调试时可用 `gc.set_debug(gc.DEBUG_SAVEALL)`：让所有不可达对象都进入 `gc.garbage` 而非被释放，方便检查；`gc.DEBUG_LEAK` 则打印泄漏相关信息。检查完记得 `gc.garbage.clear()` 并 `gc.set_debug(0)`。
+
+小例子（已验证）：
+
+```python
+import gc
+
+gc.collect()
+print(len(gc.garbage))          # 0（正常情况下为空）
+
+gc.set_debug(gc.DEBUG_SAVEALL)  # 调试：把不可达对象都留在 garbage
+class T:
+    pass
+t = T(); t.self = t             # 自循环
+del t
+gc.collect()
+print(len(gc.garbage) > 0)      # True
+gc.set_debug(0)
+gc.garbage.clear()
+```
 
 ---
 

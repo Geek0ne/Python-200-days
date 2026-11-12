@@ -465,13 +465,180 @@ print(cache)  # LRUCache(size=3, maxsize=3)
 
 1. **为什么 Python 不让 `list`、`dict`、`int` 等内置类型支持弱引用？** 提示：思考 CPython 的实现机制。
 
+**参考答案**
+
+弱引用需要对象在 C 层预留一个「弱引用链表头」指针（类型对象里的 `tp_weaklistoffset` 字段）。`list`、`dict`、`int`、`str`、`tuple` 这些内置类型的 C 结构体**没有预留这个字段**，所以无法挂弱引用。
+
+- 原因是性能与内存：内置类型被海量创建，给每个对象都加一个弱引用指针会平白增加内存和开销，而绝大多数场景用不到。
+- 这是「按需开启」的设计：自定义类默认会带上 `__weakref__` 槽，因此支持弱引用。
+- 补救：继承内置类型写一个子类，子类会自动获得 `__weakref__`，就能被弱引用了。
+
+小例子（已验证）：
+
+```python
+import weakref
+
+try:
+    weakref.ref([1, 2, 3])      # 内置 list 不支持
+except TypeError as e:
+    print(e)                    # cannot create weak reference to 'list' object
+
+class MyList(list):             # 自定义子类自动获得 __weakref__
+    pass
+
+ml = MyList([1, 2, 3])
+r = weakref.ref(ml)
+print(r() is ml)                # True
+```
+
 2. **`weakref.proxy()` 有什么潜在的陷阱？** 提示：考虑它与 `isinstance` 检查的关系。
+
+**参考答案**
+
+`proxy` 会「伪装」成目标对象，这带来几个陷阱：
+
+- **`isinstance` 与 `type` 不一致**：proxy 把 `__class__` 转发给目标，所以 `isinstance(proxy, Foo)` 返回 `True`，但 `type(proxy)` 其实是 `weakref.ProxyType`，`type(proxy) is Foo` 为 `False`。依赖精确类型判断的代码会被误导。
+- **目标死亡后抛 `ReferenceError`**：不像 `ref()` 返回 `None`，proxy 一旦被访问（甚至连 `isinstance` 都会）就抛 `ReferenceError`，必须 try/except 保护。
+- **不持有强引用**：目标随时可能被回收，proxy 不能延长其寿命；`proxy is obj` 也为 `False`（是两个不同对象）。
+
+小例子（已验证）：
+
+```python
+import weakref
+
+class Foo:
+    def hello(self):
+        return "hi"
+
+f = Foo()
+p = weakref.proxy(f)
+print(isinstance(p, Foo))   # True（转发 __class__，伪装成 Foo）
+print(type(p) is Foo)       # False（真实类型是 weakref.ProxyType）
+print(p.hello())            # hi
+
+del f                       # 目标被回收
+try:
+    isinstance(p, Foo)      # 连 isinstance 都会抛异常
+except ReferenceError as e:
+    print(e)                # weakly-referenced object no longer exists
+```
 
 3. **如果一个类同时继承了支持弱引用和不支持弱引用的父类，子类能否创建弱引用？** 提示：查看 MRO 和 `__weakref__` 属性。
 
+**参考答案**
+
+能——只要 MRO（方法解析顺序）里**有任意一个基类提供了 `__weakref__` 槽**，子类就支持弱引用；与「不支持」的基类共存并不影响（前提是不触发实例布局冲突）。
+
+- 普通 Python 类默认带 `__weakref__`；定义了 `__slots__` 且不含 `'__weakref__'` 的类则没有。
+- 子类是否支持，取决于继承链上是否「凑齐」了弱引用槽，而不是要求所有基类都支持。
+- 若所有基类都不提供 `__weakref__`，且子类用 `__slots__` 又不写 `'__weakref__'`，才不支持。
+
+小例子（已验证）：
+
+```python
+import weakref
+
+class NoWeak:
+    __slots__ = ('x',)          # 无 __weakref__ → 不支持
+
+class YesWeak:
+    pass                        # 普通类，自带 __weakref__
+
+try:
+    weakref.ref(NoWeak())
+except TypeError as e:
+    print(e)                    # cannot create weak reference to 'NoWeak' object
+
+class Child(NoWeak, YesWeak):   # 有一个基类提供 __weakref__ 就够了
+    pass
+
+c = Child()
+print(weakref.ref(c)() is c)    # True
+```
+
 4. **如何在多线程环境下安全地使用 `WeakValueDictionary`？** 提示：考虑加锁策略。
 
+**参考答案**
+
+`WeakValueDictionary` 不是线程安全的：多线程同时读写、加上 GC 回调随时删除条目，可能破坏内部状态或抛 `RuntimeError`。做法是**用一把锁包住所有访问**（增、删、查、遍历、求长度），并且因为条目可能随时消失，读取要用 `.get()` 并容忍 `None`。
+
+完整示例（已验证，20 个线程并发读写后结果为 20）：
+
+```python
+import threading, weakref
+
+class SafeWeakCache:
+    def __init__(self):
+        self._data = weakref.WeakValueDictionary()
+        self._lock = threading.RLock()      # 可重入锁，避免嵌套调用死锁
+    def put(self, k, v):
+        with self._lock:
+            self._data[k] = v
+    def get(self, k):
+        with self._lock:
+            return self._data.get(k)        # 可能返回 None（已被回收）
+    def __len__(self):
+        with self._lock:
+            return len(self._data)
+
+class Val:
+    def __init__(self, x):
+        self.x = x
+
+cache = SafeWeakCache()
+keep = []                                    # 持有强引用，防止演示时被回收
+def worker(i):
+    v = Val(i)
+    keep.append(v)
+    cache.put(i, v)
+    cache.get(i)
+
+threads = [threading.Thread(target=worker, args=(i,)) for i in range(20)]
+for t in threads: t.start()
+for t in threads: t.join()
+print(len(cache))                            # 20
+```
+
+💡 提示：锁只能保证「操作原子性」，不能阻止 GC 回收对象；因此「先判断 key 在、再取值」这种两步逻辑仍要放在同一把锁内，并随时准备值为 `None`。
+
 5. **弱引用的回调函数什么时候会被调用？** 是对象被 `del` 时还是被 GC 回收时？两者有什么区别？
+
+**参考答案**
+
+回调在**对象真正被销毁（回收）时**触发，而不是在你执行 `del` 时。`del name` 只是删除一个强引用、让引用计数减 1：
+
+- 若还有别的强引用，对象仍存活，回调**不会**触发；只有最后一个强引用消失、引用计数归 0，对象立即被释放，回调随即执行。
+- 若对象处于**循环引用**中，引用计数不会归 0，要等分代 GC（`gc.collect()`）回收它时才触发回调。
+- 所以「del 时」与「GC 回收时」的区别在于：del 只是减引用，回收才是销毁；二者可能重合（del 恰好删掉最后一个引用），也可能分离（循环引用）。
+
+小例子（已验证）：
+
+```python
+import weakref, gc
+
+class Obj:
+    pass
+
+events = []
+a = Obj()
+r = weakref.ref(a, lambda ref: events.append("collected"))
+b = a            # 第二个强引用
+del a            # 只删一个引用，对象仍存活
+print(events)    # []
+del b            # 最后一个强引用消失 → 立即回收并触发回调
+print(events)    # ['collected']
+
+class Node:
+    pass
+events2 = []
+n = Node()
+n.self = n       # 自循环
+r2 = weakref.ref(n, lambda ref: events2.append("cycle collected"))
+del n
+print(events2)   # []（还没回收）
+gc.collect()
+print(events2)   # ['cycle collected']
+```
 
 ---
 

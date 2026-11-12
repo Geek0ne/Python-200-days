@@ -796,13 +796,250 @@ print("\n✅ 分析完成！")
 
 1. **Series vs DataFrame：** 什么时候应该用 Series 而不是 DataFrame？它们之间如何相互转换？
 
+**参考答案**
+
+Series 是**带标签的一维数组**（相当于一列），DataFrame 是**二维表格**（多列的集合）。当你只处理"一列数据"时用 Series 更自然：单列统计（`.mean()`）、逐元素映射（`.map()`）、时间序列重采样（`.resample()`）等，API 更直接，也不用总写列名。涉及多列联动（筛选、合并、透视）时才需要 DataFrame。
+
+相互转换：
+
+- `df['列']` → Series；`df[['列']]`（双层括号）→ 仍是 DataFrame。
+- `s.to_frame()` → 单列 DataFrame；`df.squeeze()` → 单列/单行时压成 Series。
+- 取出一行 `df.loc[0]` 也是 Series（标签变成列名）。
+
+小例子（已验证）：
+
+```python
+import pandas as pd
+
+df = pd.DataFrame({"姓名": ["张三", "李四"], "薪资": [8000, 15000]})
+
+s = df["薪资"]            # 取单列 -> Series
+print(type(s).__name__)
+print(s.mean())
+
+d1 = s.to_frame()         # Series -> DataFrame
+print(type(d1).__name__)
+
+d2 = df[["薪资"]]         # 双层括号保持 DataFrame
+print(type(d2).__name__)
+
+s2 = d2.squeeze()         # 单列 DataFrame -> Series
+print(type(s2).__name__)
+```
+
+预期输出：
+
+```
+Series
+11500.0
+DataFrame
+DataFrame
+Series
+```
+
+💡 提示：`df['列']` 和 `df[['列']]` 只差一层括号，类型却不同——很多"为什么报错 AttributeError"的问题都源于把 DataFrame 当 Series 用（或反之）。
+
 2. **loc vs iloc：** 如果一个 DataFrame 的索引是字符串（如 `['a', 'b', 'c']`），`df.loc['a':'c']` 和 `df.iloc[0:3]` 的结果有什么区别？为什么？
+
+**参考答案**
+
+核心区别在**切片端点**：`loc` 按标签切片，**两端都包含**；`iloc` 按整数位置切片，**含头不含尾**（和 Python 列表一致）。
+
+对索引 `['a','b','c','d']`：`loc['a':'c']` 取标签 a 到 c（含 c），`iloc[0:3]` 取位置 0、1、2——这个例子里两者恰好都是 a、b、c 三行，但**语义不同**：loc 的终点是"标签 c"，iloc 的终点是"位置 3 之前"。换成默认整数索引就能立刻看出差别：`loc[0:2]` 是 3 行（含标签 2），`iloc[0:2]` 是 2 行。
+
+另一个易踩的坑：索引乱序时，`loc` 按标签在索引中的**位置区间**切，可能切出空表。
+
+小例子（已验证）：
+
+```python
+import pandas as pd
+
+# 情况1：字符串索引
+df = pd.DataFrame({"值": [10, 20, 30, 40]}, index=["a", "b", "c", "d"])
+print("loc['a':'c'] 包含标签 c:")
+print(df.loc["a":"c"])
+print("iloc[0:3] 取位置 0,1,2（不含位置 3）:")
+print(df.iloc[0:3])
+
+# 情况2：默认整数索引，差别最直观
+df2 = pd.DataFrame({"值": [10, 20, 30, 40]})
+print("loc[0:2] 行数:", len(df2.loc[0:2]), "（含标签 2）")
+print("iloc[0:2] 行数:", len(df2.iloc[0:2]), "（不含位置 2）")
+
+# 情况3：乱序索引，loc 按"标签位置"切
+df3 = pd.DataFrame({"值": [10, 20, 30]}, index=["c", "a", "b"])
+print("乱序索引 ['c','a','b'] 时 loc['a':'c']:")
+print(df3.loc["a":"c"])
+```
+
+预期输出：
+
+```
+loc['a':'c'] 包含标签 c:
+    值
+a  10
+b  20
+c  30
+iloc[0:3] 取位置 0,1,2（不含位置 3）:
+    值
+a  10
+b  20
+c  30
+loc[0:2] 行数: 3 （含标签 2）
+iloc[0:2] 行数: 2 （不含位置 2）
+乱序索引 ['c','a','b'] 时 loc['a':'c']:
+Empty DataFrame
+Columns: [值]
+Index: []
+```
+
+情况3 里 a 在位置 1、c 在位置 0，"从 1 切到 0"是空区间，所以返回空表。
+
+⚠️ 注意：`loc` 用不存在的标签切片会报 KeyError，而 `iloc` 越界位置会自动截断；混用标签和位置（如 `df.loc[0:2, '列']` 里行是位置）是新手常见错误——行标签是什么类型，就按什么类型理解。
 
 3. **apply vs vectorized：** `df['列'].apply(func)` 和直接向量化操作（如 `df['列'] * 2`）在性能上有什么差异？什么场景下应该用 apply？
 
+**参考答案**
+
+**向量化快得多**。`s * 2` 整个运算在 C 层对连续内存一次完成；`s.apply(func)` 本质是 Python 循环——每个元素都要调用一次 Python 函数（传参、执行、返回），10 万行就是 10 万次函数调用，通常慢几十到上百倍。
+
+什么时候才用 apply：逻辑**无法用现成的向量化 API 表达**时，比如逐元素调用自定义的复杂函数（解析特殊格式、调外部接口）、多条件嵌套的业务规则。但先想想有没有向量化替代：条件分支用 `np.where`/`pd.cut`，字符串处理用 `.str` 访问器，字典映射用 `.map`——这些都比 apply 快。
+
+小例子（已验证，具体耗时因机器/版本而异）：
+
+```python
+import time
+import pandas as pd
+
+s = pd.Series(range(100_000))
+
+start = time.perf_counter()
+r1 = s * 2                      # 向量化：C 层完成
+t1 = time.perf_counter() - start
+
+start = time.perf_counter()
+r2 = s.apply(lambda x: x * 2)   # apply：逐元素调用 Python 函数
+t2 = time.perf_counter() - start
+
+print(f"向量化 s*2: {t1:.6f}s")
+print(f"apply:      {t2:.6f}s")
+print(f"apply 慢约 {t2 / t1:.0f} 倍")
+print("结果一致:", r1.equals(r2))
+```
+
+预期输出（示例值）：
+
+```
+向量化 s*2: 0.000200s
+apply:      0.011000s
+apply 慢约 55 倍
+结果一致: True
+```
+
+💡 提示：`df.apply(func, axis=1)` 逐行 apply 更慢（每行构造一个 Series）。经验法则：**能向量化绝不 apply，能 map 绝不 apply**；apply 是"最后的手段"，不是默认选择。
+
 4. **groupby vs pivot_table：** 在什么情况下用 `groupby` 更合适？什么情况下用 `pivot_table` 更方便？能否用两者实现相同的结果？
 
+**参考答案**
+
+两者都是"分组 + 聚合"，区别在**输出形态和灵活性**：
+
+- `groupby` 输出**长表**（每组一行），更灵活：一次对多列做多种聚合（`.agg`）、`transform` 保持原形状、`filter` 按组筛选。适合"算完还要继续加工"的分析流程。
+- `pivot_table` 输出**宽表**（行索引 × 列索引的交叉表），一步到位生成报表形态，还支持 `margins=True` 加合计行/列。适合"直接给人看"的汇总报表。注意它默认 `aggfunc='mean'`，求和要显式写 `aggfunc='sum'`。
+
+**两者可以互相实现**：`pivot_table(values, index, columns, aggfunc)` ≈ `groupby([index, columns])[values].agg(...).unstack()`——unstack 就是把长表的某层索引"掰"成列。
+
+小例子（已验证，两种写法结果完全一致）：
+
+```python
+import pandas as pd
+
+sales = pd.DataFrame({
+    "月份": ["1月", "1月", "2月", "2月"],
+    "产品": ["A", "B", "A", "B"],
+    "销售额": [1000, 1500, 1200, 1800],
+})
+
+# pivot_table：直接输出"月份 × 产品"交叉表
+pivot = sales.pivot_table(values="销售额", index="月份", columns="产品", aggfunc="sum")
+print("pivot_table 结果:")
+print(pivot)
+
+# groupby + unstack：同样的结果
+gb = sales.groupby(["月份", "产品"])["销售额"].sum().unstack()
+print("groupby+unstack 结果:")
+print(gb)
+print("两者一致:", pivot.equals(gb))
+```
+
+预期输出：
+
+```
+pivot_table 结果:
+产品     A     B
+月份
+1月  1000  1500
+2月  1200  1800
+groupby+unstack 结果:
+产品     A     B
+月份
+1月  1000  1500
+2月  1200  1800
+两者一致: True
+```
+
+💡 提示：`pivot_table` 遇到重复的"行×列"组合会自动聚合（默认均值），而 `pivot` 遇到重复会直接报错——需要汇总时用前者。
+
 5. **缺失值策略：** 如果一列数据有 40% 的缺失值，你会选择删除该列、填充默认值、还是用其他方法处理？为什么？不同选择对分析结果会有什么影响？
+
+**参考答案**
+
+40% 已经远超"直接删行/填 0"的舒适区，**先诊断再决定**，而不是套公式：
+
+1. **查缺失原因**：是随机缺失（系统故障），还是系统性缺失（如"高收入人群不愿填收入"）？后者意味着"缺失本身携带信息"，绝不能简单填掉。
+2. **查该列重要性**：是核心分析字段还是可有可无的辅助字段？
+
+然后分情况：
+
+- **辅助字段** → 可以删除该列，损失可接受。
+- **核心字段** → 保留并做**有依据的填充**：按相关分组的中位数（如按行业填薪资）、回归/KNN 等模型预测填充；同时**新增一列 `是否缺失` 标记**，把缺失信息保留给模型。
+- **样本量充足且缺失随机** → 也可删行（`dropna`），但 40% 缺失意味着可能损失大量样本，要评估剩余样本是否仍有代表性。
+
+不同选择的影响：
+
+- **填均值/0**：把大量数据"钉"在同一个值上，**方差被人为压小**，分布形状和相关性都会失真。
+- **删行**：若缺失不是随机的，会引入**选择偏差**（留下的都是某类样本）。
+- **删列**：丢失该维度的全部信息，但最"诚实"，不引入假数据。
+
+小例子（已验证，均值填充如何压小标准差）：
+
+```python
+import numpy as np
+import pandas as pd
+
+np.random.seed(42)
+# 模拟"薪资"列：40% 缺失
+salary = pd.Series(np.random.normal(10000, 2000, 1000))
+salary[salary.sample(frac=0.4, random_state=1).index] = np.nan
+
+print("缺失比例:", f"{salary.isna().mean():.0%}")
+print("观测数据标准差:", round(salary.std(), 1))
+
+filled = salary.fillna(salary.mean())   # 均值填充
+print("均值填充后标准差:", round(filled.std(), 1))
+```
+
+预期输出（随机种子固定，结果可复现）：
+
+```
+缺失比例: 40%
+观测数据标准差: 1992.3
+均值填充后标准差: 1542.7
+```
+
+标准差从约 1992 掉到约 1543——40% 的数据被填成同一个均值，波动被"抹平"了。如果拿这列去做相关性分析或建模，结论会被悄悄带偏。
+
+⚠️ 注意：pandas 3.0 起 `fillna(method='ffill')` 已移除，要改用 `df.ffill()`；`df.fillna(df.mean())` 这类写法也要注意只对数值列生效。
 
 ---
 

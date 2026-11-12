@@ -590,13 +590,257 @@ if __name__ == "__main__":
 
 1. **鸭子类型 vs 接口**：Python 的鸭子类型和 Java 的 Interface 有什么区别？各自有何优劣？
 
+**参考答案**
+
+两者都实现"同一接口、不同实现"的多态，但约束方式根本不同：
+
+- **Java Interface 是"名义类型"（nominal）**：类必须显式 `implements` 接口，编译器在**编译期**检查是否实现了全部方法。类型身份由"声明"决定。
+- **Python 鸭子类型是"结构类型"（structural）**：不看继承或声明，只看对象**运行时有没有所需的方法/属性**。"走起来像鸭子就是鸭子"，绑定发生在运行期。
+
+**优劣对比**：
+
+- 鸭子类型**优点**：灵活、零样板、复用性高，任何满足行为的对象（包括第三方/内置类）都能直接用，无需改造继承体系；**缺点**：错误推迟到运行时才暴露，IDE 补全和静态检查弱，接口契约靠文档/类型提示维系。
+- Java 接口**优点**：编译期就能发现"没实现方法"，契约明确、工具支持好、重构安全；**缺点**：必须显式声明，无法让"已经存在但没 implements"的类直接适配，样板更多。
+
+Python 也提供折中：`abc.ABC`（名义约束 + 运行期检查）和 `typing.Protocol`（结构化类型 + 静态检查），需要契约时可任选。
+
+```python
+# 思考题1：鸭子类型无需继承，只看行为
+class Dog:
+    def speak(self):
+        return '汪汪'
+
+
+class Car:
+    def speak(self):
+        return '滴滴'
+
+
+def make_it_speak(thing):
+    print(thing.speak())   # 不检查类型，只要有 speak
+
+
+make_it_speak(Dog())
+make_it_speak(Car())
+```
+
+预期输出：
+
+```text
+汪汪
+滴滴
+```
+
+💡 提示：`Car` 和 `Dog` 毫无继承关系，却都能传进 `make_it_speak`——这在 Java 里必须让两者都 `implements` 某接口才行。
+
 2. **EAFP vs LBYL**：在什么场景下 LBYL 比 EAFP 更合适？写出一个 LBYL 更好的例子。
+
+**参考答案**
+
+EAFP 是 Python 的默认惯用法，但并非万能。**LBYL 更合适的场景**：
+
+- **失败是"常态"而非"异常"**：如果大量输入本就不合法（如解析用户随手填的表单），用异常做正常控制流既慢（抛/捕异常开销大）又掩盖意图，此时先检查更清晰高效；
+- **检查很便宜、且操作有副作用难以回滚**：先判断能避免执行不可逆/昂贵的操作；
+- **try 块可能抛出"同名但不同源"的异常**：EAFP 容易把深层真正的 bug 一并吞掉，LBYL 的前置判断能缩小范围、避免误捕。
+
+反之，在多线程/文件系统等"检查完到执行之间状态可能变化"的场景，LBYL 有竞态风险，EAFP 更稳妥。
+
+```python
+# 思考题2：失败是常态时，LBYL 比 EAFP 更清晰
+def parse_age(text):
+    text = text.strip()
+    if text.isdigit():      # 便宜的检查，避免把异常当正常控制流
+        return int(text)
+    return None
+
+
+print(parse_age('  18 '))
+print(parse_age('abc'))
+print(parse_age(''))
+```
+
+预期输出：
+
+```text
+18
+None
+None
+```
+
+💡 提示：这里非法输入很常见，用 `try: int(text) except ValueError` 会把"正常的非法输入"当异常处理，既低效又可能掩盖 `int` 内部其它问题；先 `isdigit()` 判断意图更明确。
 
 3. **ABC 设计**：假设你要设计一个「缓存系统」，要求所有缓存实现（内存、Redis、文件）都提供 `get(key)`、`set(key, value, ttl)`、`delete(key)` 方法。请用 ABC 设计这个接口。
 
+**参考答案**
+
+用 `abc.ABC` + `@abstractmethod` 定义**接口契约**：把 `get`/`set`/`delete` 声明为抽象方法，任何具体缓存（内存、Redis、文件）都必须实现它们，否则**实例化时直接报 `TypeError`**。这样上层代码只依赖 `Cache` 接口，就能透明切换不同后端（多态）。下面给出接口和一个带 TTL 惰性过期的内存实现作为示范。
+
+```python
+# 思考题3：用 ABC 设计缓存接口
+from abc import ABC, abstractmethod
+import time
+
+
+class Cache(ABC):
+    @abstractmethod
+    def get(self, key):
+        ...
+
+    @abstractmethod
+    def set(self, key, value, ttl=None):
+        ...
+
+    @abstractmethod
+    def delete(self, key):
+        ...
+
+
+class MemoryCache(Cache):
+    def __init__(self):
+        self._data = {}   # key -> (value, 过期时刻)
+
+    def set(self, key, value, ttl=None):
+        expire = time.monotonic() + ttl if ttl else None
+        self._data[key] = (value, expire)
+
+    def get(self, key):
+        item = self._data.get(key)
+        if item is None:
+            return None
+        value, expire = item
+        if expire is not None and time.monotonic() > expire:
+            del self._data[key]   # 惰性过期
+            return None
+        return value
+
+    def delete(self, key):
+        self._data.pop(key, None)
+
+
+c = MemoryCache()
+c.set('a', 1)
+print(c.get('a'))        # 1
+c.set('b', 2, ttl=0.01)
+time.sleep(0.02)
+print(c.get('b'))        # None，已过期
+c.delete('a')
+print(c.get('a'))        # None
+```
+
+预期输出：
+
+```text
+1
+None
+None
+```
+
+💡 提示：`Cache()` 或漏实现任一抽象方法的子类都无法实例化（`TypeError: Can't instantiate abstract class ...`），这正是 ABC 相比纯鸭子类型的价值——把"必须实现"的约束提前到创建对象时。Redis/文件后端只需同样继承 `Cache` 并实现三个方法即可无缝替换。
+
 4. **虚拟子类**：Python 的 `register()` 机制有什么用？在什么场景下会用到虚拟子类？
 
+**参考答案**
+
+`ABC.register(cls)` 把一个类登记为该 ABC 的**虚拟子类**：它**不需要真正继承** ABC，就能让 `isinstance(obj, ABC)` 和 `issubclass(cls, ABC)` 返回 `True`。本质是"事后认亲"——只改变类型检查的判定，不改变继承结构、不注入任何方法。
+
+**典型场景**：
+
+- **无法修改的类**：内置类型或第三方库的类已经具备了接口所需的行为，但你不能给它加基类，用 `register` 让它被你的接口检查认可（如把 `dict` 注册为某个 `Sized` 接口）；
+- **适配/集成**：把一组现有类统一"标记"为实现了某协议，方便用 `isinstance` 做分派，而无需侵入式改造；
+- **结构化判定的补充**：介于纯鸭子类型和强制继承之间的轻量手段。
+
+⚠️ 注意：`register` **不校验方法是否真的实现**——即使被注册的类缺少抽象方法，`isinstance` 仍为 `True`，调用时才会 `AttributeError`。它只影响类型判断，不提供 ABC 继承那种"未实现就不能实例化"的保护。
+
+```python
+# 思考题4：register 虚拟子类
+from abc import ABC, abstractmethod
+
+
+class Serializable(ABC):
+    @abstractmethod
+    def to_dict(self):
+        ...
+
+
+# 无法修改的类，用注册"认亲"，无需继承
+@Serializable.register
+class Legacy:
+    def to_dict(self):
+        return {'ok': True}
+
+
+print(isinstance(Legacy(), Serializable))   # True
+print(issubclass(Legacy, Serializable))     # True
+```
+
+预期输出：
+
+```text
+True
+True
+```
+
+💡 提示：`Legacy` 并没有继承 `Serializable`，但注册后类型检查就认它；`@Serializable.register` 是 `Serializable.register(Legacy)` 的装饰器写法，二者等价。
+
 5. **插件系统设计**：如何设计一个支持「优先级」的插件系统（高优先级插件先执行）？如果插件之间有依赖关系（插件 B 需要插件 A 先执行），该如何处理？
+
+**参考答案**
+
+分两层解决：
+
+- **优先级**：给每个插件一个 `priority` 数值，执行前按优先级**降序排序**即可（高者先执行）。
+- **依赖关系**：这本质是**有向无环图（DAG）的拓扑排序**。每个插件声明 `requires`（依赖的插件名），只有当依赖都已执行完，它才进入"可执行"候选集。若某轮没有任何候选却仍有剩余插件，说明存在**循环依赖或缺失依赖**，应报错。
+
+**把两者结合**：每一轮从"依赖已满足"的候选里，挑优先级最高的先执行——这样既保证依赖顺序（B 必在 A 后），又在无依赖约束时尊重优先级。
+
+```python
+# 思考题5：带优先级与依赖的插件执行顺序
+class Plugin:
+    def __init__(self, name, priority=0, requires=()):
+        self.name = name
+        self.priority = priority
+        self.requires = list(requires)
+
+    def run(self):
+        print(f'执行 {self.name}')
+
+
+def order_plugins(plugins):
+    done = set()
+    order = []
+    remaining = list(plugins)
+    while remaining:
+        # 依赖已满足的候选，按优先级从高到低选
+        ready = [p for p in remaining if all(r in done for r in p.requires)]
+        if not ready:
+            raise ValueError('存在循环依赖或缺失依赖')
+        ready.sort(key=lambda p: p.priority, reverse=True)
+        nxt = ready[0]
+        nxt.run()
+        done.add(nxt.name)
+        order.append(nxt.name)
+        remaining.remove(nxt)
+    return order
+
+
+plugins = [
+    Plugin('A', priority=1),
+    Plugin('B', priority=5, requires=['A']),  # 依赖 A，必须排在 A 后
+    Plugin('C', priority=10),                 # 优先级最高
+]
+print(order_plugins(plugins))
+```
+
+预期输出：
+
+```text
+执行 C
+执行 A
+执行 B
+['C', 'A', 'B']
+```
+
+💡 提示：`C` 优先级最高且无依赖，最先执行；`B` 虽然优先级（5）高于 `A`（1），但因为依赖 `A`，必须等 `A` 完成后才执行——依赖约束优先于优先级。生产环境可直接用标准库 `graphlib.TopologicalSorter`（Python 3.9+）做拓扑排序，再在同层内按优先级排序。
 
 ---
 

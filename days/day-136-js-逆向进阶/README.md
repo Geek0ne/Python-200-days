@@ -225,10 +225,66 @@ graph LR
 ## 六、思考题
 
 1. 为什么 Hook 脚本必须在目标 JS 之前执行？如果目标代码已经把函数引用存进闭包，还有什么补救办法？
+
+**参考答案**
+
+因为 JS 的函数是"值/引用"。如果目标代码先执行了 `var f = window.btoa`，闭包里存的就是**旧函数对象**；你之后替换 `window.btoa` 只是改了属性指针，闭包里的旧引用仍指向原函数，Hook 就被绕过了。所以注入必须早于目标脚本（`document-start` / `addScriptToEvaluateOnNewDocument`）。
+
+补救办法：
+
+1. **Hook 更底层的必经之路**：原函数内部仍会调用 `JSON.stringify`、`String.fromCharCode` 等，Hook 这些照样能抓到数据；
+2. **Hook 原型方法**：如 `XMLHttpRequest.prototype.send`，实例通过原型链查找，会拿到新函数；
+3. **用代理（mitmproxy）改写 JS 响应**：在文件最顶部插入 Hook 代码，保证时机最早；
+4. **在闭包赋值处下断点**：运行时手动替换 Scope 里的引用。
+
+小例子：即使 `btoa` 被缓存，加密函数内部仍用 `JSON.stringify` 序列化参数，Hook `stringify` 依然能拿到明文。
 2. 补环境时代码"不报错但签名结果不对"，你会用什么方法定位是哪个环境属性补漏了？
+
+**参考答案**
+
+这是最难查的 bug：漏补的属性返回 `undefined`，代码静默走了错误分支。定位方法：
+
+1. **Proxy 日志兜底**：用 Proxy 包裹 `window/document/navigator`，记录每一次 `get` 访问，再与真实浏览器执行时的访问日志对比，找出"真实浏览器访问了、但补环境里是 undefined"的属性。
+2. **与真实浏览器对拍**：同一份代码分别在真实浏览器和 Node 里跑，逐层打印中间变量（二分查找），找到第一个分叉的变量。
+3. **逐属性严格 diff**：不只检查"非空"，还要对比值是否合理（如 `navigator.plugins`、`languages`）。
+4. **注意 toString 检测**：补的函数 `toString()` 要返回 `native code`，否则也会露馅。
+
+小例子：日志显示代码读了 `navigator.languages`，而补环境只补了 `language` 没补 `languages` → 返回 undefined → 签名走了错误分支。
 3. `navigator.webdriver` 检测属于环境检测。站在攻防角度，为什么"属性改回 false"在 Selenium 下可能仍然被识破？（提示：CDP 特征）
+
+**参考答案**
+
+因为 Selenium/ChromeDriver 是通过 **CDP（Chrome DevTools Protocol）** 控制浏览器的，启用 CDP 的 `Runtime.enable` 会留下副作用：例如调用 `console.debug` 时 CDP 会序列化对象，触发对象的 getter/toString——放一个探针对象就能检测到。调试通道的存在本身会改变某些行为。
+
+此外还有大量其他自动化特征：chromedriver 二进制里的 `cdc_` 变量、`window.chrome` 缺失、UA 含 `HeadlessChrome`、权限 API 行为异常、插件/字体列表为空等。甚至 `webdriver` 属性的**描述符**（`Object.getOwnPropertyDescriptor`）异常也能识破 patch。
+
+本质：检测是**多信号交叉验证**，单点伪装掩盖不了所有检测面。对策是用 uc/stealth 这类成套方案，或改用无 CDP 特征的连接方式。
+
+小例子：`webdriver=false` 了，但 WebGL renderer 返回 "Google SwiftShader"（软件渲染），照样暴露无头。
 4. 什么情况下应该放弃补环境、直接上无头浏览器？各自的成本与风险如何权衡？
+
+**参考答案**
+
+**放弃补环境的信号**：① 环境检测太重（Canvas/WebGL/Audio 指纹深度参与签名），补环境要伪造整个渲染管线，成本无底洞；② 代码强混淆 + 频繁更新，补环境要不断跟进；③ 团队没有 JS 逆向能力、时间紧。
+
+两种方案的成本/风险对比：
+
+- **补环境 + Node**：快（毫秒级）、省资源、适合高并发；但开发成本高、脆弱（站点加一个检测就失效）、需持续维护。
+- **无头浏览器**：环境天然真实、零补环境、抗更新；但慢（每次签名百毫秒起）、吃内存（每实例几百 MB），且自身仍有自动化特征需要 stealth 处理。
+
+决策与 Day 135 第 5 题一致：低频高价值 → 浏览器；高频且算法稳定 → 补环境/复现。也可组合——用浏览器过挑战拿 Cookie，再用 requests 直连接口。
+
+小例子：签名算法每周变、每天只需几百条数据，直接 Playwright 调页面函数，比养一套补环境划算得多。
 5. Hook `JSON.parse` 与 Hook `XMLHttpRequest.send` 分别适合什么场景？两者的捕获时机有什么本质区别？
+
+**参考答案**
+
+- **Hook `JSON.parse`**：捕获"数据解密/反序列化"的时刻。服务端返回加密 JSON，前端解密后总要 `JSON.parse`，Hook 它就能拿到结构化明文数据。适合**响应被加密**的场景。时机在"数据到达后、业务代码处理时"。
+- **Hook `XMLHttpRequest.send`**：捕获"请求即将发出"的时刻。此时 URL 和 body 已拼好（含成品 sign），适合定位**请求参数怎么生成**，配合堆栈回溯找加密函数。时机在"请求离开前"。
+
+本质区别：一个在**响应链的消费端**（拿数据明文），一个在**请求链的出口**（拿参数成品 + 调用栈）。逆向请求参数 Hook `send`，逆向响应解密 Hook `parse`（或解密函数本身）。
+
+小例子：想知道接口返回了什么明文，Hook `JSON.parse`；想知道 sign 怎么算的，Hook `send` 再看 Call Stack。
 
 ---
 

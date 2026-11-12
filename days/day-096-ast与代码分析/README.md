@@ -775,13 +775,263 @@ flowchart LR
 
 1. **AST 与正则表达式的区别**：为什么不能用正则表达式来解析 Python 代码？用 AST 做代码分析相比正则有什么优势？
 
+**参考答案**
+
+根本原因是 **Python 不是「正则语言」，而是上下文无关文法**：它有任意深度的嵌套（括号、缩进块、推导式里再套推导式），而正则表达式没有「配对计数」能力，无法可靠匹配嵌套结构。
+
+用正则解析 Python 会踩的坑：
+
+- **字符串和注释里的假代码**：`s = "def foo():"`、`# import os` 会被当成真的定义/导入。
+- **上下文歧义**：跨行括号续行、`\` 续行、三引号跨行字符串、`f(a, b)` 与 `f (a)(b)`，正则每遇到一种就要打一个补丁。
+- **同名不同义**：`x = 1` 里的 `x` 是赋值（Store），`y = x` 里的 `x` 是读取（Load）；正则看不出区别，AST 的 `ctx` 字段直接告诉你。
+- **缩进即语法**：Python 用缩进划分代码块，正则很难还原「这个 return 属于哪个 if」。
+
+AST 的优势是**结构化 + 语义化**：`ast.parse` 用的是 Python 官方解析器，缩进、续行、转义全部正确处理；节点自带 `lineno`/`col_offset` 可精确定位；`isinstance(node, ast.Call)` 判类型比字符串匹配可靠；改完还能用 `ast.unparse` 还原成代码，或用 `compile` 直接执行。
+
+小例子：想统计「所有对 eval 的调用」，正则 `eval\(` 会把 `my_eval(`、`"eval("`、`# eval(` 全算进去；AST 里只需判断 `isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "eval"`，零误报。
+
+⚠️ 注意：AST 也不万能——它丢掉了注释和原始排版（`ast.unparse` 会重排引号与空格），需要保留格式时用 `tokenize` 或 `libcst`；而且 AST 只做语法分析，不做类型推断和跨模块符号解析，那些要交给 mypy/pyright。
+
 2. **安全执行**：`ast.literal_eval` 为什么比 `eval` 安全？如果要设计一个安全的在线 Python 执行环境，需要做哪些防护措施？
+
+**参考答案**
+
+`eval` 会**编译并执行任意表达式**：能调函数、能 `__import__`、能通过属性访问一路摸到 `os`/`subprocess`。`ast.literal_eval` 则先把字符串解析成 AST，再**只放行白名单节点**（Constant、List、Tuple、Dict、Set，以及数字前的正负号和复数加减），遇到 Call / Name / Attribute / Import 一律抛 `ValueError`——代码根本没被执行。
+
+下面用一个带副作用的函数直观对比（`eval` 的参数是写死的字面量，仅用于演示差异）：
+
+```python
+import ast
+
+# ✅ literal_eval 只接受字面量：数字/字符串/布尔/None/列表/元组/字典/集合
+print("字典:", ast.literal_eval("{'name': '张三', 'scores': [95, 88]}"))
+print("集合:", ast.literal_eval("{1, 2, 3}"))
+print("负数:", ast.literal_eval("-42"))
+
+# 用一个带副作用的函数，直观看出「代码有没有真的被执行」
+counter = {"n": 0}
+
+
+def ping():
+    counter["n"] += 1
+    return "pong"
+
+
+# ❌ eval 会真的调用函数，副作用发生了
+print("eval 调用 :", eval("ping()"), "| 副作用计数:", counter["n"])
+
+# ✅ literal_eval 直接拒绝，函数根本不会被调用
+for bad in ["ping()", "__import__('os').getcwd()", "x + 1", "[i for i in range(3)]"]:
+    try:
+        ast.literal_eval(bad)
+        print("竟然通过了:", bad)
+    except (ValueError, SyntaxError) as e:
+        print("拒绝:", bad, "->", type(e).__name__, "| 副作用计数:", counter["n"])
+```
+
+运行输出（已验证）：
+
+```
+字典: {'name': '张三', 'scores': [95, 88]}
+集合: {1, 2, 3}
+负数: -42
+eval 调用 : pong | 副作用计数: 1
+拒绝: ping() -> ValueError | 副作用计数: 1
+拒绝: __import__('os').getcwd() -> ValueError | 副作用计数: 1
+拒绝: x + 1 -> ValueError | 副作用计数: 1
+拒绝: [i for i in range(3)] -> ValueError | 副作用计数: 1
+```
+
+`eval("ping()")` 让计数从 0 变成 1（真的执行了），而 `literal_eval` 对同样的字符串直接拒绝，计数不再增长。但要注意 `literal_eval` **不是沙箱**：它仍要解析整个字符串，超深嵌套或超大字面量能撑爆内存/递归栈，所以还得限制输入长度。
+
+设计在线 Python 执行环境需要多层防护，缺一不可：
+
+1. **进程隔离**：每次执行起独立子进程，绝不在主服务进程里 `exec`。
+2. **操作系统级沙箱**：容器 / gVisor / Firecracker + seccomp 过滤系统调用，只读根文件系统，非 root 用户，禁网或只放行白名单。
+3. **资源上限**：`resource.setrlimit` 限制 CPU 时间、内存、文件大小、进程数；外层再加 wall-clock 超时并强杀，防死循环和 fork 炸弹。
+4. **输入输出限制**：限制源码长度和 stdout 大小；AST 预检黑名单（`import os`、`open`、`__` 开头的属性访问）只能作为**额外**一层，不能当唯一防线。
+5. **清理与审计**：执行完销毁临时目录和容器，记录源码与结果供审计。
+
+⚠️ 注意：「清空 `__builtins__`」或「删掉 `__import__`」这类纯 Python 沙箱**都能被绕过**（通过 `().__class__.__mro__` 摸到 `object` 再枚举子类），pysandbox 项目就是因此被作者宣布失败。真正的隔离必须落到操作系统层。
 
 3. **代码变换的局限性**：使用 `ast.NodeTransformer` 修改 AST 时，为什么需要调用 `ast.fix_missing_locations()`？如果省略会发生什么？
 
+**参考答案**
+
+`compile()` 要求每个语句/表达式节点都带 `lineno`、`col_offset`（3.8+ 还有 `end_lineno`、`end_col_offset`），因为字节码要附带行号表，供 traceback 和调试器使用。`ast.parse` 出来的节点自带这些字段，但**手工 `ast.Expr(...)` 新建的、或 `NodeTransformer` 里替换出来的节点没有**，于是编译时直接抛 `TypeError: required field "lineno" missing from stmt`。
+
+`ast.fix_missing_locations(tree)` 做的事就是**自顶向下把父节点的位置信息「继承」给缺失的子节点**（就地修改并返回同一棵树）。它只补缺失的，已有行号的节点保持原值。
+
+```python
+import ast
+
+# 手工造一个 print("Hello, AST!") 节点，故意不带行号/列号
+node = ast.Expr(
+    value=ast.Call(
+        func=ast.Name(id="print", ctx=ast.Load()),
+        args=[ast.Constant(value="Hello, AST!")],
+        keywords=[],
+    )
+)
+tree = ast.Module(body=[node], type_ignores=[])
+
+# unparse 只是「拼字符串」，不需要位置信息
+print("unparse 不需要行号:", ast.unparse(tree))
+
+# ❌ 省略 fix_missing_locations：compile 直接报错
+try:
+    compile(tree, "<ast>", "exec")
+    print("竟然编译成功了")
+except (TypeError, ValueError) as e:
+    print("省略 fix_missing_locations ->", type(e).__name__, ":", e)
+
+# ✅ 补全位置信息后就能编译执行
+ast.fix_missing_locations(tree)
+exec(compile(tree, "<ast>", "exec"))
+print("补全后的行号/列号:", node.lineno, node.col_offset)
+```
+
+运行输出（已验证，Python 3.12）：
+
+```
+unparse 不需要行号: print('Hello, AST!')
+省略 fix_missing_locations -> TypeError : required field "lineno" missing from stmt
+Hello, AST!
+补全后的行号/列号: 1 0
+```
+
+第三行的 `Hello, AST!` 是补全位置后 `exec` 真正执行出来的。注意 `ast.unparse` 不需要行号（它只是拼字符串），所以「能 unparse」不代表「能 compile」——这正是这个坑容易被忽略的原因。
+
+💡 提示：更精确的做法是用 `ast.copy_location(new_node, old_node)` 从被替换的旧节点拷贝真实位置，整棵树变换完再统一调一次 `fix_missing_locations` 兜底。另外 `NodeTransformer` 的 `visit_*` 返回 `None` 表示删除该节点、返回新节点表示替换，所以别忘了 `return node`，否则整棵子树会被静默删掉。
+
 4. **性能考虑**：在一个大型项目（10万行代码）中运行自定义 Linter，你会选择哪种遍历方式（NodeVisitor / walk / 手动递归）？为什么？
 
+**参考答案**
+
+选 **`ast.NodeVisitor`**（需要改写代码时用它的子类 `NodeTransformer`），核心理由是「一次遍历 + 按类型分派」，代码量和运行开销都最小。
+
+三种方式的实际差别：
+
+- **`NodeVisitor`**：`visit_FunctionDef`、`visit_Call` 这样的方法名直接对应节点类型，分派是一次属性查找；只为你关心的类型写逻辑，其余靠 `generic_visit` 自动下沉。一次遍历就能同时跑十几条规则。
+- **`ast.walk`**：广度优先把所有节点摊平成序列，写法最简单，但**每条规则都要重新 walk 一遍整棵树**，N 条规则就是 N 次全量遍历；而且它丢掉了父子关系，做「函数内变量作用域」「嵌套深度」这类需要上下文的检查很别扭。
+- **手动递归**：最灵活，但要自己处理所有节点类型和字段，容易漏掉 `ast.arguments`、`ast.comprehension` 这些非 stmt/expr 的中间节点，维护成本高。
+
+10 万行项目的工程做法：**每个文件只 `ast.parse` 一次**，把 tree 传给所有规则共享；用 `ProcessPoolExecutor` 按文件并行（AST 分析是 CPU 密集型，多进程才吃得到多核并绕开 GIL）；「函数长度」「圈复杂度」这类需要子树统计的规则，在 `visit_FunctionDef` 里只对**该子树**做一次局部 walk，而不是对全树反复 walk；再按「文件 mtime + 内容哈希」缓存结果，跳过未改动的文件。
+
+小例子：20 条规则用 `walk` 就是 20 次全树遍历；用 `NodeVisitor` 把 20 条规则按节点类型挂进同一个 visitor 只需 1 次遍历，差距通常是数倍（因机器/规则数量而异）。
+
+⚠️ 注意：`NodeVisitor` 重写了 `visit_Xxx` 后**不会**自动递归，必须显式调用 `self.generic_visit(node)`，否则该节点内部的告警全部漏掉——这是自定义 Linter 最常见的 bug。
+
 5. **扩展性**：如何让自定义 Linter 支持通过配置文件（如 `.lintrc`）来启用/禁用规则？设计一个简单的插件机制。
+
+**参考答案**
+
+思路是把「规则」和「引擎」解耦：**规则用装饰器注册进一张表，引擎只负责读配置、按节点类型分派、收集告警**。这样新增规则不用改引擎，启用/禁用/调阈值全靠配置文件。
+
+三个组成部分：
+
+1. **注册表 + 装饰器**：`@rule("W001", ast.FunctionDef, "函数名应使用 snake_case")` 把处理函数、关心的节点类型、提示语和默认开关一起存进 `RULES`。
+2. **配置合并**：优先级为 `disable` > `rules` 里的显式开关 > 插件默认值；`options` 提供阈值等参数（如 `max_args`）。配置用 JSON/TOML 都行，`.lintrc` 读进来 `json.loads` 即可。
+3. **引擎**：构造时把启用的规则按 `node_type` 分桶，`visit` 里查桶执行——整棵树只遍历一次，规则再多也不增加遍历次数。
+
+```python
+import ast
+import json
+
+# ---------- 1. 规则注册表：用装饰器把规则「插」进来 ----------
+RULES = {}
+
+
+def rule(code, node_type, message, enabled=True):
+    """插件注册装饰器：新增规则只需写一个函数，不用改 Linter 主体"""
+    def deco(func):
+        RULES[code] = {"func": func, "node_type": node_type,
+                       "message": message, "enabled": enabled}
+        return func
+    return deco
+
+
+# ---------- 2. 三个示例规则，编号沿用本课的 Linter ----------
+@rule("W001", ast.FunctionDef, "函数名应使用 snake_case")
+def check_func_name(node, opts):
+    name = node.name.lstrip("_")        # 允许下划线开头的私有函数
+    return node.name if name and not name.islower() else None
+
+
+@rule("W003", ast.FunctionDef, "函数参数过多")
+def check_args(node, opts):
+    limit = opts.get("max_args", 5)     # 阈值可由配置调整
+    n = len(node.args.args)
+    return f"{n} 个参数 > {limit}" if n > limit else None
+
+
+@rule("E001", ast.ExceptHandler, "不应使用裸 except")
+def check_bare_except(node, opts):
+    return "未指定异常类型" if node.type is None else None
+
+
+# ---------- 3. Linter 主体：按配置决定启用哪些规则 ----------
+class Linter(ast.NodeVisitor):
+    def __init__(self, config):
+        self.config = config
+        self.warnings = []
+        self.active = {}                # 节点类型 -> [规则编号]
+        for code, meta in RULES.items():
+            on = config.get("rules", {}).get(code, meta["enabled"])
+            if code in config.get("disable", []):
+                on = False              # disable 优先级最高
+            if on:
+                self.active.setdefault(meta["node_type"], []).append(code)
+
+    def visit(self, node):
+        for code in self.active.get(type(node), []):
+            meta = RULES[code]
+            detail = meta["func"](node, self.config.get("options", {}))
+            if detail is not None:
+                sev = "ERROR" if code.startswith("E") else "WARNING"
+                self.warnings.append(
+                    f"L{node.lineno} [{sev}] {code}: {meta['message']}（{detail}）")
+        return super().visit(node)      # 继续遍历子节点
+
+
+# ---------- 4. 配置：真实项目里就是 .lintrc 的内容 ----------
+# 读取方式: config = json.loads(Path(".lintrc").read_text(encoding="utf-8"))
+cfg_a = json.loads('{"disable": ["W001"], "options": {"max_args": 5}}')
+cfg_b = json.loads('{"rules": {"W001": true}, "options": {"max_args": 3}}')
+
+source = """
+def BadName(a, b, c, d, e, f):
+    try:
+        return a / b
+    except:
+        return 0
+"""
+
+for label, cfg in (("配置A：禁用 W001", cfg_a), ("配置B：启用 W001 且阈值改为 3", cfg_b)):
+    print(label)
+    linter = Linter(cfg)
+    linter.visit(ast.parse(source))
+    for w in linter.warnings:
+        print("   ", w)
+```
+
+运行输出（已验证）：
+
+```
+配置A：禁用 W001
+    L2 [WARNING] W003: 函数参数过多（6 个参数 > 5）
+    L5 [ERROR] E001: 不应使用裸 except（未指定异常类型）
+配置B：启用 W001 且阈值改为 3
+    L2 [WARNING] W001: 函数名应使用 snake_case（BadName）
+    L2 [WARNING] W003: 函数参数过多（6 个参数 > 3）
+    L5 [ERROR] E001: 不应使用裸 except（未指定异常类型）
+```
+
+同一份被检查代码：配置 A 禁用了 W001，就只报「参数过多」和「裸 except」；配置 B 打开 W001 并把阈值从 5 改成 3，告警多了一条、W003 的文案也跟着变——**引擎代码一行没改**。
+
+再往前一步就是真正的插件系统：把每条规则放进独立模块，用 `importlib.import_module` 按配置里的 `plugins = ["rules.naming", "rules.security"]` 动态导入（导入即触发装饰器注册），或用 `importlib.metadata.entry_points(group="mylinter.rules")` 让第三方 pip 包也能把规则挂进来。
+
+💡 提示：配置里的规则编号要做校验，未知编号应报错而不是静默忽略，否则用户把 `W001` 写成 `W01` 会误以为规则生效了；`severity` 也建议可配置，让团队把「裸 except」从 warning 提升为 error，从而卡住 CI。
 
 ---
 

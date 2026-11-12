@@ -599,13 +599,293 @@ def use_point():
 
 1. **选型题**：你要加速一个图像处理管道（读取图片→滤波→边缘检测→保存），每个步骤都用 NumPy 数组操作。应该选择 Cython 还是 Numba？为什么？
 
+**参考答案**
+
+先厘清一个关键前提：**如果每个步骤都已经是 NumPy 数组操作，重活其实已经在 C 里跑了**——NumPy 的 ufunc/向量化操作本身就是编译好的 C 代码，还会释放 GIL。这种情况下，无论套 Cython 还是 Numba，都不会让「NumPy 调用本身」明显变快。所以第一步永远是先 profile，找到真正的瓶颈。
+
+在「必须二选一」的前提下，对这个以 NumPy 为中心的管道，**更推荐 Numba**：
+
+- **几乎零改动**：给自定义的逐元素/逐像素循环加一个 `@njit` 装饰器即可，Numba 原生理解 NumPy 数组，能把多步操作融合成一个编译内核，省掉中间临时数组。
+- **上手成本低**：不用写 `.pyx`、不用配 `setup.py`、不用手动管理 C 类型。
+- **适合数值内核**：滤波、边缘检测里若有你自己写的 Python 循环，Numba 能直接编译成机器码（10~100x）。
+
+**什么时候反而选 Cython**：需要和 C/C++ 图像库（OpenCV、libjpeg、自研 C 算法）深度集成、要用 typed memoryview 做精细内存控制、或要把整个模块编译成稳定发布的 C 扩展时，Cython 更合适，但工程量更大。
+
+具体例子：管道里「读取/保存」是磁盘 I/O（工具帮不上），「滤波/边缘检测」若用 `cv2.filter2D`、`cv2.Canny` 或 `scipy.ndimage`（都是 C 实现）已经很快；真正值得加速的是你手写的 Python 逐像素循环——下面量化这种循环的成本：
+
+```python
+import time
+
+
+def python_kernel(n):
+    """模拟手写的逐像素 Python 循环（这正是 Numba/Cython 要编译掉的部分）"""
+    total = 0.0
+    for i in range(n):
+        x = i * 0.5
+        total += x * x          # 每个元素都在 Python 层做运算
+    return total
+
+
+t0 = time.perf_counter()
+python_kernel(2_000_000)
+print(f"纯 Python 逐元素循环 200 万次: {time.perf_counter() - t0:.3f}s")
+```
+
+运行输出（耗时随机器而异）：
+
+```
+纯 Python 逐元素循环 200 万次: 0.067s
+```
+
+这种 Python 级循环用 Numba `@njit` 编译后通常能快一个数量级以上；而已经是 NumPy/OpenCV 的向量化 C 操作则不必再套壳。
+
+💡 提示：实际用 Numba 加速时 `pip install numba numpy`，给函数加 `@njit(nopython=True)` 即可；首次调用含编译时间，计时前要先预热（参见本章「常见陷阱」）。
+
 2. **性能题**：为什么 ctypes 每次调用 C 函数都有固定开销，而 Cython 没有？从底层机制解释。
+
+**参考答案**
+
+因为两者调用 C 函数的「路径」完全不同：
+
+- **ctypes 是运行时 FFI 桥接**：每次调用都要在 Python 层做一整套 marshalling（编组）——把 Python 对象转换成 C 类型（int→c_int 等）、查找函数地址、用 libffi 动态构造调用栈帧、调用、再把 C 返回值转换回 Python 对象。这套胶水逻辑每次调用都重复执行，于是有一个固定的微秒级开销。
+- **Cython 是编译期绑定**：`.pyx` 被编译成 C 扩展模块，当你用 `cdef` 声明了类型后，对 C 函数的调用会被直接编译成一条原生 C 调用指令，参数已是 C 类型、无需运行时转换，也没有 libffi 动态构造栈帧的开销。所以 Cython 调 C 函数几乎没有「每次调用」的额外成本。
+
+一句话：ctypes 每次调用都「现场翻译 + 搭桥」，Cython 在编译时就把桥修好了、直接走过去。
+
+具体例子：对比「ctypes 包一层的 C abs」和「解释器直接调用的内置 abs」（后者也是 C 实现，但无编组开销）：
+
+```python
+import ctypes
+import ctypes.util
+import sys
+import time
+
+# 加载 C 标准库（Windows 用 msvcrt，Linux 用 libc）
+if sys.platform == "win32":
+    libc = ctypes.CDLL("msvcrt")
+else:
+    libc = ctypes.CDLL(ctypes.util.find_library("c"))
+libc.abs.argtypes = [ctypes.c_int]     # 声明参数/返回类型
+libc.abs.restype = ctypes.c_int
+
+N = 1_000_000
+t0 = time.perf_counter()
+for i in range(N):
+    libc.abs(-i)                        # 每次都要编组
+ct = time.perf_counter() - t0
+
+t0 = time.perf_counter()
+for i in range(N):
+    abs(-i)                             # 内置 abs：解释器直接调 C，无编组
+pt = time.perf_counter() - t0
+
+print(f"ctypes 调用 abs {N} 次: {ct:.3f}s, 每次 {ct / N * 1e6:.3f}us")
+print(f"内置 abs {N} 次: {pt:.3f}s, 每次 {pt / N * 1e6:.3f}us")
+print(f"ctypes/内置 耗时比: {ct / pt:.1f}x")
+```
+
+运行输出（数值随机器而异）：
+
+```
+ctypes 调用 abs 1000000 次: 0.206s, 每次 0.206us
+内置 abs 1000000 次: 0.048s, 每次 0.048us
+ctypes/内置 耗时比: 4.3x
+```
+
+两者最终都执行 C 的 abs，但 ctypes 每次多出约 0.16µs 的编组开销（约 4 倍慢）。Cython 编译后的直接 C 调用就像内置 abs 一样，没有这层每次调用的开销。
+
+⚠️ 注意：ctypes 的开销是「每次调用」固定的，所以调用次数越多、单次 C 工作越轻，开销占比越夸张；若单次 C 计算很重（如大数组运算），这点开销可忽略。务必声明 `argtypes/restype`，否则每次还要做更慢的默认类型推断。
 
 3. **设计题**：如果你有一个 10GB 的大文件需要逐行处理，ctypes 和 Cython 哪个更适合？为什么？
 
+**参考答案**
+
+先抓住本质：10GB 文件逐行处理，**第一约束是内存——必须流式（streaming）处理，绝不能一次性读进内存**；第二才是速度。瓶颈通常在磁盘 I/O 和「每行的处理逻辑」，而不是「调用 C 函数的速度」。
+
+- **ctypes 不适合**：它是「调用已有 C 库」的桥，本身不会加速 Python 的文件读取/逐行迭代。若用它，要么调用 C 库做 I/O（很别扭），要么对每一行调用一次 C 处理函数——而 ctypes 每次调用都有编组开销（见第 2 题），逐行调用几亿行会把这点开销放大成灾难。
+- **Cython 更适合**：可以把「读取 + 解析 + 转换」整个热循环写进编译代码，用 C 类型和 C 级 I/O（或 typed memoryview 处理缓冲），消除每行的 Python 对象开销，也没有逐次调用的编组成本。
+
+但更重要的结论：**如果每行处理很轻，这是 I/O 密集任务，纯 Python 流式读取就够了，ctypes/Cython 都帮不上大忙**（磁盘是瓶颈）；只有当「每行的解析/计算是 CPU 密集」时，才值得用 Cython（或 Numba）加速那段热循环。
+
+具体例子：流式逐行处理，内存恒定（与文件多大无关），临时文件写在系统临时目录、用后即删：
+
+```python
+import os
+import tempfile
+import tracemalloc
+
+# 造一个演示文件（真实场景是 10GB，这里用小文件演示「流式」模式）
+path = os.path.join(tempfile.gettempdir(), "big_demo.txt")
+with open(path, "w", encoding="utf-8") as f:
+    for i in range(200000):
+        f.write(f"{i},hello world,line {i}\n")
+
+# 关键：for line in f 一次只读一行，内存 O(1)，不随文件增大
+tracemalloc.start()
+total = 0
+n = 0
+with open(path, "r", encoding="utf-8") as f:
+    for line in f:
+        total += int(line.split(",", 1)[0])
+        n += 1
+_, peak = tracemalloc.get_traced_memory()
+tracemalloc.stop()
+print(f"处理 {n} 行，累加和 {total}，峰值内存 {peak / 1024:.1f} KB")
+os.remove(path)        # 清理临时文件
+```
+
+运行输出：
+
+```
+处理 200000 行，累加和 19999900000，峰值内存 33.8 KB
+```
+
+无论文件是 20 万行还是 10GB，峰值内存都维持在几十 KB——这就是流式处理。把其中 CPU 密集的处理段用 Cython 编译，才是 Cython 的用武之地。
+
+💡 提示：千万别用 `f.readlines()` 或 `f.read()` 读 10GB 文件（会撑爆内存）；逐行 `for line in f` 或分块 `f.read(8192)` 才是正解。
+
 4. **对比题**：Numba 的 `parallel=True` 和 `concurrent.futures.ThreadPoolExecutor` 有什么区别？在什么场景下各自更优？
 
+**参考答案**
+
+两者都能「多线程」，但层次和适用场景根本不同：
+
+- **Numba `parallel=True`（配合 `prange`）**：在**机器码层面**自动把循环并行化。Numba 编译出的原生代码**不持有 GIL**，内部用自己的线程层（TBB/OpenMP/workqueue）把 `prange` 循环切成多段跑在多核上。适合**数据并行的数值循环**（逐元素运算、归约、stencil），是真正的 CPU 多核并行。
+- **`ThreadPoolExecutor`**：在 **Python 层面**开线程跑 Python 函数。线程执行 Python 字节码时**受 GIL 限制**，同一时刻只有一个线程在跑 Python 代码——所以对 **CPU 密集的纯 Python 任务没有加速**；它只在 **I/O 密集**（等待时释放 GIL）或调用「会释放 GIL 的 C 扩展（如 NumPy）」时才有用。
+
+一句话：**Numba parallel 是「编译后的无 GIL 多线程」，能加速 CPU 计算；ThreadPoolExecutor 是「受 GIL 限制的 Python 多线程」，适合 I/O 不适合 CPU。**
+
+具体例子：用线程池跑 CPU 密集任务，验证 GIL 让它「并行不起来」：
+
+```python
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+
+def cpu_task(n):
+    s = 0
+    for i in range(n):
+        s += i * i          # 纯 Python CPU 计算，持有 GIL
+    return s
+
+
+K = 4
+SIZE = 3_000_000
+t0 = time.perf_counter()
+serial = [cpu_task(SIZE) for _ in range(K)]
+ts = time.perf_counter() - t0
+
+t0 = time.perf_counter()
+with ThreadPoolExecutor(max_workers=K) as ex:
+    threaded = list(ex.map(cpu_task, [SIZE] * K))
+tt = time.perf_counter() - t0
+
+print(f"串行 {K} 个 CPU 任务: {ts:.2f}s")
+print(f"{K} 线程并行: {tt:.2f}s")
+print(f"结果一致: {serial == threaded}")
+print(f"线程/串行 耗时比: {tt / ts:.2f} (≈1 或更慢=GIL 限制，无加速)")
+```
+
+运行输出（数值随机器而异）：
+
+```
+串行 4 个 CPU 任务: 0.37s
+4 线程并行: 0.35s
+结果一致: True
+线程/串行 耗时比: 0.95 (≈1 或更慢=GIL 限制，无加速)
+```
+
+4 线程几乎没有加速（比值≈1），因为 GIL 把 CPU 计算串行化了。换成 Numba `@njit(parallel=True)` + `prange`，同样的循环会被编译成无 GIL 的机器码并行，在多核上能接近线性加速。
+
+⚠️ 注意：ThreadPoolExecutor 并非一无是处——做网络/文件 I/O，或调用释放 GIL 的 NumPy 运算时它很有效；只是别拿它加速纯 Python 的 CPU 计算。Numba parallel 则要求函数能进 nopython 模式（不支持任意 Python 对象/类）。
+
 5. **进阶题**：编写一个 Cython 函数，接受两个 NumPy 数组，计算它们的余弦相似度，要求性能接近纯 C 实现。
+
+**参考答案**
+
+用 typed memoryview + 关闭边界检查，把余弦相似度写成接近纯 C 的 Cython 函数。
+
+`cosine.pyx`：
+
+```cython
+# cosine.pyx —— 用 typed memoryview 直接操作 NumPy 数组底层缓冲
+from libc.math cimport sqrt
+cimport cython
+
+
+@cython.boundscheck(False)      # 关闭边界检查（提速）
+@cython.wraparound(False)       # 关闭负索引回绕（提速）
+def cosine_similarity(double[:] a, double[:] b):
+    """计算两个一维 double 数组的余弦相似度，循环编译为纯 C"""
+    cdef Py_ssize_t i, n = a.shape[0]
+    cdef double dot = 0.0, na = 0.0, nb = 0.0
+    for i in range(n):
+        dot += a[i] * b[i]      # 点积
+        na += a[i] * a[i]       # ||a||^2
+        nb += b[i] * b[i]       # ||b||^2
+    return dot / (sqrt(na) * sqrt(nb))
+```
+
+`setup.py`（编译用）：
+
+```python
+from setuptools import setup
+from Cython.Build import cythonize
+
+setup(
+    ext_modules=cythonize("cosine.pyx", compiler_directives={"language_level": "3"})
+)
+```
+
+编译并调用（需 `pip install cython numpy setuptools`，且系统装有 C 编译器 gcc/clang/MSVC）：
+
+```bash
+python setup.py build_ext --inplace
+```
+
+```python
+import numpy as np
+from cosine import cosine_similarity
+
+a = np.array([1.0, 2.0, 3.0])
+b = np.array([4.0, 5.0, 6.0])
+print(cosine_similarity(a, b))   # 0.9746318461970762
+```
+
+为什么接近纯 C：`double[:]` 是 typed memoryview，直接拿到 NumPy 数组的连续 double 缓冲；`cdef` 声明让 `dot/na/nb/i` 都是 C 变量；关掉 boundscheck/wraparound 后，`for` 循环被编译成无 Python 对象开销的紧凑 C 循环，`sqrt` 直接调 C 数学库。
+
+**算法正确性验证**：本环境无 C 编译器、无法编译 Cython，故用等价的纯 Python 实现验证同一算法与输出：
+
+```python
+import math
+
+
+def cosine_py(a, b):
+    """与上面 Cython 完全相同的算法（纯 Python 参考实现）"""
+    dot = 0.0
+    na = 0.0
+    nb = 0.0
+    for x, y in zip(a, b):
+        dot += x * y
+        na += x * x
+        nb += y * y
+    return dot / (math.sqrt(na) * math.sqrt(nb))
+
+
+a = [1.0, 2.0, 3.0]
+b = [4.0, 5.0, 6.0]
+print(f"cosine([1,2,3],[4,5,6]) = {cosine_py(a, b)}")
+```
+
+运行输出：
+
+```
+cosine([1,2,3],[4,5,6]) = 0.9746318461970762
+```
+
+与公式 `dot/(||a||·||b||) = 32/(√14·√77)` 一致，证明 Cython 版本的算法正确。
+
+⚠️ 注意：Cython 代码必须先编译成 `.so/.pyd` 才能 import（不能直接 import `.pyx`）；typed memoryview 要求传入连续的一维 double 数组（必要时 `np.ascontiguousarray(a, dtype=np.float64)`）。本环境缺少 C 编译器，Cython 版未能实际编译运行，已用等价纯 Python 验证算法与输出。
 
 ---
 

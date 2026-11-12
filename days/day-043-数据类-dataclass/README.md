@@ -253,6 +253,147 @@ u = User("Alice", "25")  # ❌ mypy: Argument 2 to "User" has incompatible type 
 
 ---
 
+## 6. 思考题
+
+1. **`@dataclass` 到底做了什么**：给 `Point` 加上 `@dataclass` 后，省掉了哪些手写代码？`Point(1, "2")` 会报错吗？为什么默认的可变 dataclass 实例不能当字典键？
+
+**参考答案**
+
+装饰器会扫描所有带类型注解的类变量（字段），自动生成 `__init__`（按字段顺序接收参数并赋值）、`__repr__`（`Point(x=1, y=2)` 这种可读形式）、`__eq__`（逐字段比较，值相同就相等）。再按需生成比较方法（`order=True`）、不可变保护（`frozen=True`）、`__slots__`（`slots=True`，3.10+）。
+
+**不会报错**。类型注解只是「声明」，`@dataclass` 不做运行时类型检查，`Point(1, "2")` 照样创建成功，`y` 就是字符串 `"2"`。想要校验得自己在 `__post_init__` 里判断，或者交给 mypy 这类静态检查工具在运行前发现问题。
+
+默认不能当字典键，是因为 `eq=True` + `frozen=False` 时 dataclass 把 `__hash__` 设成了 `None`。道理和「列表不能当字典键」一样：对象可变，放进字典后再改字段，哈希值就变了，原来的条目再也找不回来。设 `frozen=True` 后实例不可变，dataclass 才会自动生成 `__hash__`。
+
+💡 提示：需要「按值相等」的数据容器选 dataclass；需要当键或集合元素，就用 `frozen=True`（或 `NamedTuple`）。
+
+2. **可变默认值与初始化后处理（代码）**：为什么 `items: list = []` 会直接报错？请用 `field(default_factory=list)`、`__post_init__`、`field(repr=False)` 写一个购物车数据类，并说明 `count` 这类计算字段有什么局限。
+
+**参考答案**
+
+```python
+from dataclasses import dataclass, field, asdict
+
+# ❌ 可变默认值：定义类的时候就会报错
+try:
+    @dataclass
+    class Bad:
+        items: list = []
+except ValueError as e:
+    print("报错:", e)
+
+# ✅ 正确写法：default_factory + __post_init__ + field 精细控制
+@dataclass
+class Cart:
+    owner: str
+    items: list = field(default_factory=list)    # 每个实例独立一份列表
+    coupon: str = field(default="", repr=False)  # 敏感字段不出现在 repr
+    count: int = field(init=False, default=0)    # 计算字段，不由外部传入
+
+    def __post_init__(self):
+        if not self.owner:                       # 校验要自己做
+            raise ValueError("owner 不能为空")
+        self.count = len(self.items)             # 初始化后计算一次
+
+a = Cart("Alice", ["apple"])
+b = Cart("Bob")
+a.items.append("banana")           # 只影响 a，不会串到 b
+print(a.items, b.items)            # ['apple', 'banana'] []
+print(a)                           # coupon 被隐藏；count 仍是创建时的 1
+print(asdict(a))                   # 转普通字典，方便 json.dumps
+```
+
+预期输出：
+
+```
+报错: mutable default <class 'list'> for field items is not allowed: use default_factory
+['apple', 'banana'] []
+Cart(owner='Alice', items=['apple', 'banana'], count=1)
+{'owner': 'Alice', 'items': ['apple', 'banana'], 'coupon': '', 'count': 1}
+```
+
+`[]` 这种默认值在**类定义时只求值一次**，若允许写下去，所有实例会共享同一个列表，改一个等于改全部。dataclass 干脆在装饰阶段就抛 `ValueError` 提醒你。`default_factory=list` 则是「每次创建实例时调用一次 `list()`」，各实例拿到独立副本。
+
+`__post_init__` 是自动生成的 `__init__` 末尾调用的钩子，适合做校验（年龄为负就抛错）、类型转换和派生字段计算；配合 `field(init=False)` 可以让计算字段不出现在构造参数里。`field(repr=False)` 把敏感或无关字段从打印结果中隐藏（但 `asdict()` 仍会包含它，真要脱敏得自己处理）。
+
+⚠️ 注意：`count` 停在 1，因为 `__post_init__` **只在创建时执行一次**，之后 `append` 不会重算。想要「随时正确」的派生值，应该用 `@property` 定义只读属性，而不是把它存成字段。
+
+3. **继承字段顺序与不可变版本（代码）**：父类 `Base` 的 `x` 有默认值，子类新增无默认值的 `y`，为什么会报错、怎么修？`order=True` 和 `frozen=True` 分别带来什么能力？
+
+**参考答案**
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Base:
+    x: int = 0
+
+# ❌ 字段顺序是「父类在前」：x 有默认值、y 没有 → 报错
+try:
+    @dataclass
+    class Derived(Base):
+        y: int
+except TypeError as e:
+    print("报错:", e)
+
+# ✅ 给 y 也补上默认值（或把父类字段改成无默认值）
+@dataclass
+class Derived(Base):
+    y: int = 0
+
+print(Derived(1, 2))               # Derived(x=1, y=2)
+
+# order=True 生成比较方法，可以直接排序
+@dataclass(order=True)
+class Version:
+    major: int
+    minor: int
+
+vs = [Version(1, 9), Version(1, 2), Version(2, 0)]
+print(sorted(vs))                  # 按字段声明顺序逐个比较
+
+# frozen=True：不可变 + 自动可哈希，能当字典键
+@dataclass(frozen=True)
+class Point:
+    x: int
+    y: int
+
+p = Point(1, 2)
+print({p: "起点"})
+try:
+    p.x = 9                        # 禁止修改
+except Exception as e:
+    print(type(e).__name__)        # FrozenInstanceError
+
+# 默认（可变 + eq=True）的 dataclass 不可哈希
+try:
+    hash(Derived(1, 2))
+except TypeError as e:
+    print("报错:", e)
+```
+
+预期输出：
+
+```
+报错: non-default argument 'y' follows default argument
+Derived(x=1, y=2)
+[Version(major=1, minor=2), Version(major=1, minor=9), Version(major=2, minor=0)]
+{Point(x=1, y=2): '起点'}
+FrozenInstanceError
+报错: unhashable type: 'Derived'
+```
+
+dataclass 生成的 `__init__` 参数顺序是**父类字段在前、子类字段在后**，即 `(x=0, y)`。Python 函数不允许「无默认值参数跟在有默认值参数后面」，所以装饰阶段就抛 `TypeError`。修法有三种：给 `y` 也加默认值；把父类 `x` 改成无默认值；或用 `field(kw_only=True)`（3.10+）把字段变成仅关键字参数，绕开位置顺序限制。
+
+`order=True` 额外生成 `__lt__`/`__le__`/`__gt__`/`__ge__`，比较规则是把字段按声明顺序组成元组逐个比，所以 `Version` 能直接 `sorted()`，先比 `major` 再比 `minor`。
+
+`frozen=True` 让实例不可变：赋值抛 `FrozenInstanceError`，同时自动生成 `__hash__`，于是能当字典键、放进集合。这也解释了最后一行——可变的 `Derived` 依然不可哈希。
+
+💡 提示：`frozen=True` 只是「浅冻结」，字段里若装着列表，列表内容仍可修改；需要彻底不可变就把字段也换成元组等不可变类型。
+
+---
+
 ## 总结
 
 ```

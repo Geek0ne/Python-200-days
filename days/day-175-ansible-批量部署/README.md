@@ -925,10 +925,144 @@ ls code/
 
 1. **Ansible 与 SSH 的关系**：Ansible 为什么不需要在目标节点安装 agent？SSH 在其中扮演什么角色？如果 SSH 端口被防火墙封锁，有哪些替代方案？
 
+   **参考答案**
+
+   Ansible 是**推送（push）模型**：控制节点把模块（一段 Python 代码）通过 SSH 临时推到目标节点，用目标机上的 Python 解释器执行，拿回 JSON 结果后即清理——目标节点不需要常驻 agent，只要有 SSH 服务 + Python 即可（网络设备则用专用连接插件）。SSH 扮演"传输层 + 认证层"：加密通道、密钥/密码认证，顺带完成文件传输（SFTP/SCP）。
+
+   SSH 端口被封锁时的替代方案（需自行准备环境）：
+
+   - **换端口/跳板**：SSH 只是改了非标端口的话，用 `ansible_port` 指定；网络隔离时用 `ProxyJump` 经堡垒机中转（堡垒机可达即可）；
+   - **`connection: local`**：直接在控制机本地执行，适合管理云 API 的场景（本质是本地调 SDK，根本不需要 SSH）；
+   - **WinRM/PSRP**：Windows 节点走 WinRM（5985/5986 端口）替代 SSH；
+   - **其他连接插件**：网络设备用 `netconf`（830）或 `httpapi`（443），容器用 `docker` 连接插件；
+   - **ansible-pull**：方向反转——目标节点定时从 Git 拉取 playbook 在本地执行，只需出站 HTTPS，适合完全禁止入站 SSH 的环境。
+
 2. **幂等性的代价**：Ansible 模块每次执行都要先查询当前状态再决定是否变更，这在什么场景下会成为性能瓶颈？如何优化？
+
+   **参考答案**
+
+   幂等性的代价是"先查后做"：每个模块都要先查询当前状态（文件是否存在、包装没装、用户有没有），拿到结果才决定是否变更。节点多、任务碎时，这些**状态查询的网络往返**就成了瓶颈。典型场景：
+
+   - `loop` 逐个安装 100 个包：每个循环项都是一次完整的"推模块 → 查询 → 执行 → 回传"往返；
+   - apt/dnf 这类包管理模块：每次查询都要读/刷新本地元数据，本身就慢；
+   - 每个 play 开头默认收集 facts：每台机器几十项系统查询。
+
+   优化手段：
+
+   - **提高并行度**：`forks`（默认 5）调到 20–50，同时管理更多机器；
+   - **开启 pipelining**：`pipelining = True` 减少每个任务的 SSH 连接次数（需目标机 sudoers 关闭 requiretty）；
+   - **合并循环项**：把列表一次性传给模块（如 `name: [pkg1, pkg2, ...]`），一次查询处理全部包，100 次往返变 1 次；
+   - **缓存 facts**：`fact_caching = jsonfile/redis`，有效期内不重复采集；不需要 facts 的 play 直接 `gather_facts: false`；
+   - **长任务用 async**：`async` + `poll` 避免长时间占用连接；
+   - **换执行引擎**：Mitogen for Ansible 用持久连接 + 远端常驻 Python 替代逐次 SSH 执行，往返开销可降一个数量级（需自行准备环境）。
 
 3. **动态 Inventory**：当管理 1000+ 台机器时，静态 Inventory 文件是否还适用？动态 Inventory 的实现原理是什么？
 
+   **参考答案**
+
+   1000+ 台时静态文件不再适用：机器每天创建/销毁（弹性伸缩、竞价实例），手工维护的清单永远滞后于现实，分组和变量也没法跟着变。动态 Inventory 让 Ansible 每次运行时**实时查询资产源**（云 API / CMDB），清单永远和现实一致。
+
+   实现原理是一个简单的可执行协议：写一个脚本，Ansible 用 `--list` 调它时输出整个清单的 JSON（分组 + 主机 + 变量），用 `--host <name>` 调它时输出单台主机的变量。若 `--list` 的结果里带上 `_meta.hostvars`，Ansible 就不再逐台调 `--host`——1000 台机器省掉 1000 次进程调用。
+
+   最小实现（纯标准库，离线可跑；生产中把 `fetch_hosts()` 换成你的云 API/CMDB 查询）：
+
+   ```python
+   #!/usr/bin/env python3
+   """最小 Ansible 动态 Inventory 脚本：真实场景把 fetch_hosts() 换成云 API / CMDB 查询。"""
+   import json
+   import sys
+
+   def fetch_hosts():
+       """模拟从 CMDB 拿到主机列表（生产环境：boto3 / requests 查你的资产系统）。"""
+       return [
+           {"name": "crawler-1", "ip": "10.0.1.11", "role": "spider"},
+           {"name": "crawler-2", "ip": "10.0.1.12", "role": "parser"},
+       ]
+
+   def build_inventory():
+       hosts = fetch_hosts()
+       return {
+           "crawler_nodes": {
+               "hosts": [h["name"] for h in hosts],
+               "vars": {"ansible_user": "root", "project_dir": "/opt/crawler"},
+           },
+           # _meta.hostvars：一次性带上全部主机变量，Ansible 就不会逐台再调 --host
+           "_meta": {
+               "hostvars": {
+                   h["name"]: {"ansible_host": h["ip"], "node_role": h["role"]}
+                   for h in hosts
+               }
+           },
+       }
+
+   if __name__ == "__main__":
+       if "--list" in sys.argv:
+           print(json.dumps(build_inventory(), indent=2, ensure_ascii=False))
+       elif "--host" in sys.argv:
+           name = sys.argv[sys.argv.index("--host") + 1]
+           print(json.dumps(build_inventory()["_meta"]["hostvars"].get(name, {})))
+       else:
+           print("用法: inventory.py --list | --host <name>", file=sys.stderr)
+           sys.exit(1)
+   ```
+
+   `python inventory.py --list` 实际输出：
+
+   ```text
+   {
+     "crawler_nodes": {
+       "hosts": [
+         "crawler-1",
+         "crawler-2"
+       ],
+       "vars": {
+         "ansible_user": "root",
+         "project_dir": "/opt/crawler"
+       }
+     },
+     "_meta": {
+       "hostvars": {
+         "crawler-1": {
+           "ansible_host": "10.0.1.11",
+           "node_role": "spider"
+         },
+         "crawler-2": {
+           "ansible_host": "10.0.1.12",
+           "node_role": "parser"
+         }
+       }
+     }
+   }
+   ```
+
+   `--host crawler-1` 则输出 `{"ansible_host": "10.0.1.11", "node_role": "spider"}`。使用时给脚本加执行权限（`chmod +x inventory.py`），然后 `ansible-playbook -i inventory.py site.yml`，Ansible 会自动按动态清单协议调用它。
+
 4. **Python API vs CLI**：在什么场景下应该用 `ansible-runner` 而不是直接 `subprocess.run(['ansible-playbook', ...])`？两者本质区别是什么？
 
+   **参考答案**
+
+   需要把 Ansible 执行**嵌入 Python 服务**（部署平台、CI 编排、chatops 机器人）时用 `ansible-runner`：
+
+   - **结构化事件**：runner 以 JSON 事件流逐任务/逐主机回传（开始、成功、失败、changed），能实时渲染进度和每台机器的结果表；subprocess 只能拿到原始 stdout 文本，要自己解析人类可读输出——脆弱，Ansible 版本一改格式就碎。
+   - **可靠的状态与产物**：runner 给出明确的最终状态（successful/failed/canceled），并把 stdout、事件流、fact 缓存持久化到 artifacts 目录，可审计、可回放；subprocess 要自己管理临时目录、超时和进程清理。
+   - **执行隔离与控制**：runner 统一管理私有工作目录、环境变量、inventory/playbook 注入，支持取消与超时，是官方推荐的程序化调用接口。
+
+   本质区别：subprocess 把 ansible-playbook 当**黑盒命令**，你只得到文本和退出码；runner 把它当**带事件流的执行引擎**，你得到结构化的生命周期数据。代价是多一层依赖和抽象——一次性小脚本用 subprocess 就够，长期运行的平台服务用 runner。
+
+   ⚠️ 注意：不要直接 import Ansible 内部 Python API（如 `ansible.executor.playbook_executor`）来跑 playbook——内部接口不保证兼容，版本升级就碎；程序化调用请走 ansible-runner。
+
 5. **故障处理策略**：当批量部署中某台节点失败时，`any_errors_fatal` 和 `max_fail_percentage` 有什么区别？如何设计优雅的回滚机制？
+
+   **参考答案**
+
+   两者粒度不同：
+
+   - **`any_errors_fatal: true`**：任何一台失败，整个 play 立即中止（所有主机都停），适合数据库迁移这类强一致场景——"宁可全停，不可半成功"；
+   - **`max_fail_percentage: 20`**：配合 `serial` 分批使用，**本批**失败比例超过阈值才中止后续批次，容忍个别坏机器。例如 `serial: 10` + `max_fail_percentage: 20` 表示每批 10 台最多容忍 2 台失败，适合无状态 web 服务的滚动更新。
+
+   优雅回滚的设计：
+
+   - **版本化目录 + 符号链接**：每次发布部署到独立目录（`releases/20261111-1200`），`current` 符号链接指向生效版本；回滚 = 把链接指回上一版再 reload，秒级完成，不用重跑安装；
+   - **block/rescue/always**：部署步骤包进 `block`，`rescue` 里做回滚动作（恢复符号链接、重启旧版本），`always` 里做清理和结果上报；
+   - **金丝雀 + 健康门禁**：先 `serial: 1` 发一台并通过健康检查，再放后续批次；门禁失败自动触发 rescue，把影响面控制在 1 台；
+   - **记录已变更主机清单**：回滚只针对真正 changed 的机器，不打扰健康节点，并留下审计日志。

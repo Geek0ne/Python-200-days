@@ -384,13 +384,102 @@ with torch.no_grad():
 
 1. **为什么不把 ReLU 放在输出层？** 输出层的激活函数由任务决定，ReLU 会截断负值，对于分类/回归都不合适。
 
+**参考答案**
+
+输出层要产出「符合任务要求」的预测，而 ReLU 把负值截成 0、上方无界，既给不出概率，也给不出回归需要的负值：
+
+- 二分类 → Sigmoid（输出 0~1 概率）
+- 多分类 → Softmax（通常内含在 CrossEntropyLoss 里，所以输出层直接给原始 logits）
+- 回归 → 不加激活/线性（允许任意实数）
+
+ReLU 是给**隐藏层**用的（引入非线性、缓解梯度消失）。放到输出层会扭曲预测的取值范围。
+
+小例子：回归目标 y=-3，ReLU 永远输出非负，根本拟合不了；分类要的是概率，ReLU 给的是无界非负分数，不是概率。
+
+💡 提示：多分类配 CrossEntropyLoss 时，输出层应是原始 logits（不要手动加 softmax），因为损失内部已包含。
+
 2. **如果把 2 层网络的所有 ReLU 去掉，会发生什么？** 两个线性层合并为一个，网络退化为线性模型，表达能力大幅下降。
+
+**参考答案**
+
+没有激活函数，两层线性会**塌缩成一层**：
+
+```
+y = W2(W1·x + b1) + b2 = (W2·W1)·x + (W2·b1 + b2) = W'·x + b'
+```
+
+于是无论堆多少层，整个网络都只是一个线性映射，只能表示线性函数，学不会 XOR、月牙这类非线性边界。深度变得毫无意义，表达能力大幅下降。
+
+小例子：在 make_moons 上去掉 ReLU，网络只能画一条直线，准确率很低；加上 ReLU 才能拟合弯曲边界。
+
+💡 提示：非线性正是「深度有意义」的前提。
 
 3. **CrossEntropyLoss 和 NLLLoss 有什么区别？** CrossEntropyLoss = LogSoftmax + NLLLoss，前者更方便，后者需要手动做 log softmax。
 
+**参考答案**
+
+`CrossEntropyLoss = LogSoftmax + NLLLoss` 的合体：它接收**原始 logits** 和类别索引，内部先做 log_softmax 再算负对数似然，一步到位且用 log-sum-exp 保证数值稳定。`NLLLoss` 则要求你**已经传入 log 概率**（即 LogSoftmax 的输出），更灵活但要多一步。
+
+下面验证两者等价（需 `pip install torch`）：
+
+```python
+import torch
+import torch.nn as nn
+
+logits = torch.tensor([[2.0, 1.0, 0.1],
+                       [0.5, 2.0, 0.3]])
+labels = torch.tensor([0, 1])
+
+# 方式一：直接用 CrossEntropyLoss（内部含 LogSoftmax）
+ce = nn.CrossEntropyLoss()(logits, labels)
+
+# 方式二：手动 LogSoftmax + NLLLoss
+log_probs = nn.LogSoftmax(dim=1)(logits)
+nll = nn.NLLLoss()(log_probs, labels)
+
+print(f"CrossEntropyLoss     = {ce.item():.6f}")
+print(f"LogSoftmax + NLLLoss = {nll.item():.6f}")
+print(f"两者相等: {torch.allclose(ce, nll)}")
+```
+
+预期输出：
+
+```
+CrossEntropyLoss     = 0.378823
+LogSoftmax + NLLLoss = 0.378823
+两者相等: True
+```
+
+⚠️ 注意：CrossEntropyLoss 前**不要**手动加 softmax（它要 logits）；NLLLoss 要的是 **log 概率**，不是原始概率。
+
 4. **为什么 Adam 的默认学习率是 0.001，而 SGD 是 0.01？** Adam 有自适应机制，会自动缩放学习率，所以可以用更小的初始值；SGD 需要更大的学习率来保证收敛速度。
 
+**参考答案**
+
+Adam 用梯度二阶矩（RMS）估计对每个参数的更新做归一化，有效步长≈`lr × 梯度/RMS`，相当于自动把梯度缩放到合适量级，所以原始 lr 不用大（0.001 即可）。SGD 直接用原始梯度幅度，梯度小就走得慢，需要更大 lr（0.01~0.1）才能有效前进。两者默认值不同，但「有效步长」接近。
+
+小例子：某参数梯度只有 1e-4，SGD 步长 = lr×1e-4（极小）；Adam 除以 RMS 后步长≈lr（有意义）。
+
+💡 提示：这只是起点经验值，仍需按任务调；SGD+momentum 精调后泛化常常更好。
+
 5. **训练时 loss 不下降可能是什么原因？** 学习率太大/太小、梯度未正确传播、数据未标准化、标签错误、网络结构问题等。
+
+**参考答案**
+
+常见原因排查清单：
+
+- **学习率**：太大→震荡/发散；太小→几乎不动。
+- **忘记 `zero_grad()`**：梯度累加，更新方向错。
+- **数据未标准化**：特征量纲过大，训练不稳。
+- **标签/损失错配**：标签错位，或回归用了分类损失、CE 前多加了 softmax。
+- **梯度没流动**：Dead ReLU（全 0）、tensor 被 detach、训练套了 `no_grad`、参数 `requires_grad=False`。
+- **结构/初始化问题**：网络太浅太小、forward 写错、初始化差；或没切 `model.train()`。
+
+调试技巧：打印 loss 和梯度范数；先试着**过拟合一个 batch**——若连一个 batch 都拟合不了，说明流程有 bug；检查形状/标签、调小 lr、做标准化。
+
+小例子：10 分类 loss 卡在 ln(10)≈2.30（均匀预测）→ 多半是梯度没流动或标签错了。
+
+💡 提示：先确认能过拟合单个 batch，再谈泛化。
 
 ---
 

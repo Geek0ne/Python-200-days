@@ -493,16 +493,108 @@ docker volume ls | grep 173  # 空
 1. `depends_on: {condition: service_healthy}` 保证的是**启动瞬间**的正确性。
    如果 postgres 在 app 启动 10 分钟后重启，app 会怎样？Compose 会不会帮忙？
    要让 app 活下来，需要在哪一层做什么？（提示：分层看 —— 编排层 / 应用层 / 驱动层）
+
+   **参考答案**
+
+   Compose 不会帮忙。`depends_on: {condition: service_healthy}` 只在 `docker compose up` 那一刻起作用——决定"谁先启动、谁后启动"；app 跑起来之后，postgres 哪怕重启一万次，Compose 也不会通知 app。此时 app 连接池里已建立的连接全变成断链，下一次查询就抛 `connection reset by peer` / `server closed the connection unexpectedly`。
+
+   要让 app 活下来，三层各做各的事：
+
+   - **编排层**：`restart: unless-stopped` + healthcheck——app 真崩了能被自动拉起来，但救不了"进程活着、连接断了"的场景；
+   - **驱动层**：SQLAlchemy 开 `pool_pre_ping=True`（每次取连接前先发一句轻量 `SELECT 1`，发现断链就丢弃重建），配 `pool_recycle` 定期淘汰老连接；
+   - **应用层**：对瞬时连接错误做重试 + 指数退避，作为最后兜底。
+
+   应用层兜底的最小模拟（纯标准库，离线可跑）：
+
+   ```python
+   import time
+
+   class FakeDB:
+       """模拟一个刚重启过的数据库：前 2 次查询失败（旧连接已断），之后恢复。"""
+       def __init__(self):
+           self.calls = 0
+
+       def query(self, sql):
+           self.calls += 1
+           if self.calls <= 2:
+               raise ConnectionError("connection reset by peer")
+           return "结果"
+
+   def query_with_retry(db, sql, retries=3, base_delay=0.05):
+       """应用层兜底：指数退避重试，不让瞬时故障打崩服务。"""
+       for attempt in range(retries + 1):
+           try:
+               return db.query(sql)
+           except ConnectionError:
+               if attempt == retries:          # 重试耗尽，向上抛给监控/告警
+                   raise
+               time.sleep(base_delay * 2 ** attempt)   # 0.05s → 0.1s → 0.2s
+
+   db = FakeDB()
+   print(query_with_retry(db, "SELECT 1"))     # 前 2 次失败，第 3 次成功
+   print("总查询次数:", db.calls)
+   ```
+
+   实际运行输出：
+
+   ```text
+   结果
+   总查询次数: 3
+   ```
+
+   前 2 次查询撞上断链，指数退避重试后第 3 次成功——数据库重启造成的瞬时故障被应用层吸收，服务不至于崩掉。生产中把 `FakeDB` 换成真实数据库连接即可，思路完全一致。
 2. 为什么 `docker compose config` 是排查环境变量问题的**第一步**？
    它展开的到底是哪一层的时间点？
+
+   **参考答案**
+
+   因为它展开的是**宿主机侧、解析时**这一层——compose 文件里的 `${VAR}` 是 compose CLI 在你的机器上、创建任何容器**之前**，用"shell 环境变量 + 同目录 `.env` 文件"替换掉的，而不是容器运行时才去读环境。
+
+   所以环境变量出问题（密码不对、镜像 tag 为空、端口没生效）时，第一步跑 `docker compose config` 打印最终合并后的 YAML：每个 `${VAR}` 到底被替换成了什么，一眼可见。这里就是空的/错的，说明问题在宿主 shell 或 `.env`，跟容器无关；这里是对的而容器里不对，才需要继续查 `environment:` 的传递和应用的读取逻辑。一步就把问题定位到"宿主侧"还是"容器侧"，这就是它当第一步的原因。
+
+   - 它同时还会校验 YAML 语法、多份 override 文件的合并结果和字段合法性，顺带排除低级错误；
+   - ⚠️ 注意：想给容器传字面量 `$`（比如密码里含 `$`），必须写 `$$` 转义，否则 compose 会把它当变量插值，密码被悄悄截断——这种坑用 `config` 一眼就能看出来。
 3. 本课的 `app` 和 `worker` 共用一个镜像，只靠 `command` 区分。
    如果 worker 需要额外依赖（比如 `celery`），你会拆成两个镜像还是继续共用？
    权衡是什么？
+
+   **参考答案**
+
+   看两类进程的"差异程度"，不是非黑即白：
+
+   - **继续共用**（差异只是一两个纯 Python 小包）：一个镜像意味着一次构建、一次推送、一个版本号，app 和 worker 天然版本对齐，不会出现"web 是新代码、worker 还是旧代码"的漂移；代价是 app 也背上了它不用的 celery（镜像略大、攻击面略增）。
+   - **拆成两个镜像**（差异大：worker 要 ffmpeg 之类的重依赖，或两者发布节奏不同）：各自精简、可独立发布和扩缩容；代价是两套 Dockerfile、两条 CI 流水线、两份版本 tag，还要自己保证二者兼容。
+
+   中间路线往往最优：抽一个**公共基础镜像**（装好全部共享依赖），app 和 worker 各自 `FROM` 它再加自己的小层。共享依赖仍然只构建一次，差异被隔离在最上层的小层里——既保住版本对齐，又各自精简。
+
+   💡 提示：判断标准是"两者是否一起变更"。一起变更就共用，独立演进就拆分。
 4. `service_healthy` 引入的启动延迟（实测 2–5 秒）应该由谁消化？
    集群里 50 个服务各等 5 秒，和把它们并行起来等同一个屏障，有什么区别？
+
+   **参考答案**
+
+   应该由**依赖拓扑**消化，而不是让每个服务自己傻等。两种形态差一个数量级：
+
+   - **串行链**：50 个服务用 `depends_on` 串成一条线（每个等前一个 healthy），总启动时间 ≈ 50 × 5 = 250 秒；
+   - **并行屏障**：它们都只依赖同一个基础服务（如 postgres），50 个服务同时启动、等同一个"postgres healthy"屏障，总时间 ≈ max(各自启动耗时) + 5 秒 ≈ 5–10 秒。屏障只付一次钱，串行链付 50 次。
+
+   所以做法是把依赖图压成"宽而浅"的 DAG：只给真实依赖画边（app 确实要等数据库），不给想象中的顺序画边；同层服务并行启动，共享同一个屏障。
+
+   还可以把屏障本身压短：healthcheck 的 `interval` 调小（如 2s）、`start_period` 设置合理，让"healthy"更早被探测到；对个别真有先后要求的场景，用应用层重试（见第 1 题）兜底，而不是把整条链串成串行。
 5. Compose 里能不能做生产级零停机发布（比如 nginx 蓝绿）？
    哪些能力 Compose 没有、必须换 Swarm/K8s？（提示：`deploy.update_config`、`labels`、
    滚动策略、`endpoint_mode`）
+
+   **参考答案**
+
+   能做"手工蓝绿"：同时跑 blue/green 两套项目，新版本通过健康检查后，改 nginx 的 upstream 指向再 `nginx -s reload`（平滑重载、不断连接）。但这是脚本拼出来的权宜之计，离"生产级"还差几块关键能力，必须换 Swarm/K8s：
+
+   - **`deploy.update_config`（滚动策略）**：一次更新几个（`parallelism`）、间隔多久（`delay`）、失败自动回滚（`failure_action: rollback`）、先起新再停旧（`order: start-first`）——这些字段只在 Swarm 模式生效，普通 `docker compose up` 会直接忽略；
+   - **服务发现与负载均衡（`endpoint_mode`）**：Swarm 的 VIP/DNSRR 模式自动把旧实例摘除、新实例挂入；Compose 里 upstream 要自己维护，切换是手工动作，切错了没有兜底；
+   - **声明式回滚**：K8s 一条 `kubectl rollout undo` 回到上一版本，历史版本有记录；Compose 只能自己重新 up 旧 tag，没有"发布历史"可查；
+   - **调和循环（reconciliation）**：Swarm/K8s 持续对比"实际状态 vs 声明状态"，实例挂了自动补齐、节点挂了自动迁移；Compose 是一次性编排，除了 restart 策略没人持续巡检。
+
+   结论：单机小项目手工蓝绿够用；要滚动更新、自动回滚、多机调度这类生产级能力，就上 Swarm/K8s。
 
 ---
 

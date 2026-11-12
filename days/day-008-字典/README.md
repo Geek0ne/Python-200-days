@@ -465,6 +465,112 @@ Python 在 3.3+ 中引入了 **PYTHONHASHSEED** 机制：每次启动解释器�
 
 ---
 
+## 七、思考题
+
+1. **列表为什么不能当字典的键**：`{"a": 1}` 合法，`{(1, 2): "x"}` 也合法，但 `{[1, 2]: "x"}` 会抛 `TypeError`。请从哈希表的工作方式解释这条规则，并判断「元组一定可哈希」这句话对不对。
+
+**参考答案**
+
+字典靠**哈希表**定位数据：存入时先算 `hash(key)` 得到一个整数，再映射到某个槽位；查找时**重新算一次同样的哈希**，才能回到同一个槽位把值取出来。
+
+因此键必须满足两个条件：能算出哈希（实现了 `__hash__()`），并且**哈希值在生命周期内不变**。列表是可变对象，`append` 之后内容变了，假如它能当键，哈希值也会跟着变，原先存进去的条目就再也找不回来了。Python 索性禁止列表（以及 `set`、`dict`）做键。元组不可变，内容确定后哈希就确定，所以可以当键。
+
+⚠️ 注意：「元组一定可哈希」是错的。元组的哈希由**元素**共同决定，只要里面装了可变对象就不可哈希——`hash(([1, 2], 3))` 会抛 `TypeError: unhashable type: 'list'`。同理 `frozenset` 可哈希而 `set` 不可。
+
+自定义对象想当键，要像本日 5.1 的 `Person` 那样同时实现 `__hash__()` 和 `__eq__()`，并保证「相等的对象哈希值相等」（通常用 `hash((self.name, self.age))` 这种元组组合）。否则两个「看起来一样」的对象会被存成两条互不相干的记录。
+
+2. **四种计数写法的取舍**：给定一段英文文本，统计词频并取出最高的 3 个词。请分别用 `dict.get`、`dict.setdefault`、`defaultdict(int)`、`Counter` 实现，并说明它们的区别与适用场景。
+
+**参考答案**
+
+```python
+from collections import defaultdict, Counter
+
+text = "the quick brown fox jumps over the lazy dog the fox"
+words = text.lower().split()          # 预处理：统一小写 + 按空格切词
+
+# 写法 1：dict.get —— 键不存在时返回默认值 0
+c1 = {}
+for w in words:
+    c1[w] = c1.get(w, 0) + 1
+
+# 写法 2：dict.setdefault —— 键不存在时先写入 0，再自增
+c2 = {}
+for w in words:
+    c2.setdefault(w, 0)
+    c2[w] += 1
+
+# 写法 3：defaultdict(int) —— 缺失键自动调用 int() 得到 0
+c3 = defaultdict(int)
+for w in words:
+    c3[w] += 1
+
+# 写法 4：Counter —— 一行完成计数
+c4 = Counter(words)
+
+print(c1 == c2 == dict(c3) == dict(c4))   # 四种写法结果一致
+print(c4.most_common(3))                  # 词频最高的 3 个词
+print(c4["cat"])                          # 不存在的词返回 0，不抛 KeyError
+```
+
+预期输出：
+
+```
+True
+[('the', 3), ('fox', 2), ('quick', 1)]
+0
+```
+
+四种写法本质相同：都在解决「键第一次出现时没有初值」的问题。`get` 每次显式给默认值，最通用；`setdefault` 会**真的把默认值写进字典**再返回，所以要多一行自增；`defaultdict(int)` 把「缺失就补 0」交给工厂函数，代码最短；`Counter` 是专为计数而生的字典子类，还自带 `most_common()`、加减交并等 API。
+
+💡 提示：计数首选 `Counter`，分组用 `defaultdict(list)`（`grouped[cls].append(name)`），去重用 `defaultdict(set)`。`most_common()` 在词频相同时按**首次插入顺序**排列，所以上面第三名是 `quick` 而不是 `brown`。
+
+3. **视图对象与键值互换的坑**：`d.keys()` 返回的是列表吗？为什么边遍历边 `del d[k]` 会报错？用 `{v: k for k, v in d.items()}` 做键值互换时，什么情况下会丢数据？
+
+**参考答案**
+
+```python
+d = {"a": 1, "b": 2}
+
+# 1) 视图是「活的」：字典变化后，之前拿到的视图也跟着变
+keys_view = d.keys()
+d["c"] = 3
+print(list(keys_view))          # ['a', 'b', 'c']
+
+# 2) 边遍历边删键会报错：先对键做快照再删
+try:
+    for k in d.keys():          # 直接遍历视图
+        if d[k] > 1:
+            del d[k]            # 字典大小改变 → RuntimeError
+except RuntimeError as e:
+    print("报错:", e)
+
+for k in list(d.keys()):        # list() 生成快照，遍历它才安全
+    if d[k] > 1:
+        del d[k]
+print(d)                        # {'a': 1}
+
+# 3) 键值互换：值有重复时会「丢键」
+scores = {"Alice": 90, "Bob": 90, "Carol": 85}
+swapped = {v: k for k, v in scores.items()}
+print(swapped)                  # {90: 'Bob', 85: 'Carol'}，Alice 被覆盖
+```
+
+预期输出：
+
+```
+['a', 'b', 'c']
+报错: dictionary changed size during iteration
+{'a': 1}
+{90: 'Bob', 85: 'Carol'}
+```
+
+`keys()` / `values()` / `items()` 返回的是**视图对象**，不是列表：它不复制数据，只「盯着」原字典，所以字典增删后视图立刻反映变化（这也是它省内存的原因）。正因为视图与原字典联动，遍历过程中改变字典大小会让迭代器失去位置，Python 直接抛 `RuntimeError`。解决办法是先用 `list(d.keys())` 拍一份快照，或者改用推导式生成新字典。
+
+键值互换的坑在于**字典的键唯一**：`scores` 里 Alice 和 Bob 都是 90 分，互换后 90 只能对应一个名字，后写入的 Bob 覆盖了 Alice。若需要保留全部对应关系，应把值聚合成列表（`defaultdict(list)` 分组），而不是简单互换。
+
+---
+
 ## 📖 参考链接
 
 - [Python 官方文档 — dict](https://docs.python.org/3/library/stdtypes.html#mapping-types-dict)

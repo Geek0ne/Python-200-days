@@ -610,6 +610,36 @@ if __name__ == "__main__":
 
 1. **GIL 与多线程**：如果 GIL 阻止了多线程并行执行 Python 代码，为什么 Python 还要提供 threading 模块？它主要解决什么问题？
 
+**参考答案**
+
+GIL 确实让「同一时刻只有一个线程执行 Python 字节码」，所以多线程**不能加速 CPU 密集型计算**。但 threading 依然有用，因为它解决的是另一类问题：
+
+- **I/O 密集型并发**：线程在等待网络/磁盘/`sleep` 时会**释放 GIL**，其他线程趁机执行。于是大量「等待时间」被重叠起来，总耗时大幅下降。
+- **响应性**：把耗时操作放到后台线程，主线程（如 UI）不被卡住。
+- **部分 C 扩展会释放 GIL**：NumPy、PIL 等在底层计算时放开 GIL，能真正并行。
+
+一句话：threading 主要为「I/O 等待」和「响应性」而生，CPU 密集型并行请改用 multiprocessing。小例子（已验证，4 个 0.5s 的 I/O 任务）：
+
+```python
+import threading, time
+
+def io_task():
+    time.sleep(0.5)      # 模拟 I/O，期间释放 GIL
+
+start = time.perf_counter()
+for _ in range(4):
+    io_task()
+print(f"串行: {time.perf_counter()-start:.2f}s")   # 约 2.00s
+
+start = time.perf_counter()
+ts = [threading.Thread(target=io_task) for _ in range(4)]
+for t in ts: t.start()
+for t in ts: t.join()
+print(f"并发: {time.perf_counter()-start:.2f}s")   # 约 0.50s
+```
+
+串行约 2 秒、并发约 0.5 秒——I/O 等待被重叠，这正是 threading 的价值。
+
 2. **死锁场景**：以下代码有什么问题？如何修复？
    ```python
    lock_a = threading.Lock()
@@ -626,11 +656,134 @@ if __name__ == "__main__":
                print("task2")
    ```
 
+**参考答案**
+
+问题：**加锁顺序不一致导致死锁**。`task1` 先拿 `lock_a` 再拿 `lock_b`，`task2` 先拿 `lock_b` 再拿 `lock_a`。若两线程交错执行——task1 持有 a、task2 持有 b——它们会各自等待对方手里的锁，形成「循环等待」，永远卡住。
+
+修复（任选其一）：
+- **统一加锁顺序**：所有线程都按「先 a 后 b」获取，破坏循环等待条件（最常用）。
+- 用一把锁保护这两份资源；或用 `acquire(timeout=...)` 超时回退重试。
+
+修复后的代码（已验证，可正常结束）：
+
+```python
+import threading
+
+lock_a = threading.Lock()
+lock_b = threading.Lock()
+
+def task1():
+    with lock_a:
+        with lock_b:
+            print("task1")
+
+def task2():
+    with lock_a:        # 与 task1 保持一致：先 a 后 b
+        with lock_b:
+            print("task2")
+
+t1 = threading.Thread(target=task1)
+t2 = threading.Thread(target=task2)
+t1.start(); t2.start()
+t1.join(); t2.join()
+print("完成，无死锁")
+```
+
+💡 提示：死锁四个必要条件（互斥、持有并等待、不可剥夺、循环等待），破坏任意一个即可预防；「统一顺序」破坏的是循环等待。
+
 3. **线程 vs 进程**：一个 Web 爬虫程序需要同时下载 100 个网页，应该用 threading 还是 multiprocessing？为什么？
+
+**参考答案**
+
+应该用 **threading**（或 asyncio），而不是 multiprocessing。下载网页是典型的 **I/O 密集型**任务：绝大部分时间在等网络响应，CPU 几乎空闲。
+
+- 线程在网络等待时释放 GIL，100 个下载可以重叠等待，墙钟时间大幅缩短。
+- 进程启动慢、内存开销大、还要跨进程通信，对「只是等网络」的任务得不偿失。
+- 推荐 `ThreadPoolExecutor` 设一个合理的 `max_workers`（如 10~20），避免瞬间打满连接。
+- 只有当「下载后还要做大量 CPU 解析」时，才考虑把解析部分交给 multiprocessing。
+
+小例子（已验证，用 sleep 模拟网络等待，20 个任务 / 10 线程）：
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+import time
+
+def fetch(i):
+    time.sleep(0.2)     # 模拟网络等待（真实爬虫换成 urllib/requests）
+    return i
+
+start = time.perf_counter()
+with ThreadPoolExecutor(max_workers=10) as ex:
+    results = list(ex.map(fetch, range(20)))
+print(len(results), f"{time.perf_counter()-start:.2f}s")   # 20 约 0.40s
+```
+
+20 个 0.2s 的任务用 10 线程约 0.4s 完成（而非串行 4s），说明 threading 非常适合此类 I/O 并发。
 
 4. **锁的选择**：什么场景下应该用 `threading.Lock()`？什么场景下应该用 `threading.RLock()`？
 
+**参考答案**
+
+- **`Lock`（不可重入）**：最基本的互斥锁。同一线程若再次 `acquire` 会**死锁**。适合「拿到锁后不会再调用同样需要这把锁的函数」的简单临界区。开销略小，默认优先用它。
+- **`RLock`（可重入）**：同一线程可多次 `acquire`（内部计数，需相应次数 `release`）。适合**递归**、或「持锁方法又调用另一个也要拿同一把锁的方法」的嵌套场景。
+
+判断口诀：会不会「同一线程嵌套获取同一把锁」？会 → RLock；不会 → Lock。小例子（已验证，用非阻塞获取避免死锁）：
+
+```python
+import threading
+
+lock = threading.Lock()
+lock.acquire()
+print(lock.acquire(blocking=False))   # False：Lock 不可重入
+lock.release()
+
+rlock = threading.RLock()
+rlock.acquire()
+print(rlock.acquire(blocking=False))  # True：RLock 可重入
+rlock.release()
+rlock.release()                       # 获取几次就释放几次
+```
+
 5. **守护线程陷阱**：如果一个守护线程正在写文件，主线程退出时守护线程被强制终止，可能导致什么问题？如何避免？
+
+**参考答案**
+
+守护线程在进程退出时会被**立即强制终止**，连 `finally` 都不执行。若它正在写文件，可能导致：
+
+- **半截/损坏的文件**：写了一半被砍断，内容不完整。
+- **缓冲区未刷新**：数据还在内存缓冲里没落盘，丢失。
+- **资源未关闭**：文件句柄、临时文件残留，状态不一致。
+
+避免办法：
+- **必须完成的任务别用守护线程**：改用普通（非守护）线程并 `join()` 等它结束。
+- **原子写**：先写临时文件，`flush` + `fsync` 后用 `os.replace` 原子替换，杜绝半截文件。
+- 需要后台常驻时，用 `Event` 通知它优雅收尾，再退出。
+
+小例子（已验证，非守护线程 + join + 原子写）：
+
+```python
+import threading, tempfile, os
+
+def safe_write(path, text):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())      # 确保落盘
+        os.replace(tmp, path)         # 原子替换，避免半截文件
+    except BaseException:
+        os.unlink(tmp)
+        raise
+
+path = os.path.join(tempfile.gettempdir(), "demo_atomic.txt")
+t = threading.Thread(target=safe_write, args=(path, "完整内容"))  # 默认非守护
+t.start()
+t.join()                              # 等它写完再退出
+with open(path, encoding="utf-8") as f:
+    print(f.read())                   # 完整内容
+os.unlink(path)                       # 清理
+```
 
 ---
 

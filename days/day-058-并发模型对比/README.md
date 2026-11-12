@@ -450,13 +450,262 @@ async def wrapper():
 
 1. **GIL 是锁，那能不能用 `threading.Lock()` 替代 GIL？为什么不行？**
 
+**参考答案**
+
+不能。两者是不同层次、保护不同对象的「锁」，是互补关系而非替代关系：
+
+- **层次不同**：GIL 是 CPython 解释器在 C 层内置的全局互斥锁，线程执行字节码前自动获取、遇到 I/O 或时间片（默认 5ms，由 `sys.setswitchinterval()` 控制）耗尽时自动释放；`threading.Lock()` 是用户级 Python 对象，只保护你手动用 `with lock:` 包起来的临界区。
+- **保护对象不同**：GIL 保护的是解释器自身的内部状态——最典型的是引用计数（每个对象的 `ob_refcnt`）、内存管理、全局解释器结构。这些操作隐含在数百万处 C 代码里，你无法用用户锁去逐一包裹；没有 GIL，多线程增减引用计数就会竞争，直接导致内存错乱甚至崩溃。`threading.Lock` 保护的是你自己的业务数据（共享变量、容器等）。
+- **粒度不同**：GIL 在阻塞 I/O 时会自动释放，让别的线程跑；若用一个用户级「大锁」当 GIL，它不会在 I/O 时自动释放，你得在每处 I/O 前后手动 release/acquire，既不现实也极易出错。
+- **C 扩展依赖**：大量 C 扩展（NumPy 等）是按「持有 GIL」的前提写的，去掉 GIL 它们会失效——这正是 PEP 703（Free-threaded）需要大改的原因。
+
+反过来，即便有 GIL，你仍需要 `threading.Lock` 来保护「复合操作」（如先检查再修改、跨多条字节码的读-改-写），因为 GIL 可能在两条字节码之间被释放，并不保证业务逻辑的原子性。
+
+最小示例：GIL 在 I/O 时自动释放，使两个线程的等待能重叠——这种「自动、细粒度」的行为是用户锁给不了的：
+
+```python
+import threading
+import time
+
+
+def sleeper():
+    time.sleep(0.5)        # 阻塞 I/O 期间，GIL 会被解释器自动释放
+
+
+t0 = time.perf_counter()
+threads = [threading.Thread(target=sleeper) for _ in range(2)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(f"2 个线程各 sleep 0.5s，总耗时 {time.perf_counter() - t0:.2f}s")
+```
+
+运行输出：
+
+```
+2 个线程各 sleep 0.5s，总耗时 0.51s
+```
+
+总耗时约 0.5s 而非 1.0s，说明两个线程的 I/O 等待重叠了——GIL 在 `sleep` 期间自动释放、结束后自动重新获取。这种自动 acquire/release 是解释器内建的，用户级 `threading.Lock` 做不到，所以无法替代 GIL。
+
+⚠️ 注意：在较新的 CPython（3.10+）里，简单的整数 `counter += 1` 因 eval 循环实现而「恰好」不可中断、不易丢更新，但这是实现细节而非语言保证，复合操作仍应加锁。
+
 2. **如果一个程序同时有大量 I/O 和少量 CPU 计算，应该选哪种模型？如果反过来呢？**
+
+**参考答案**
+
+看「哪个是主要瓶颈」：
+
+- **大量 I/O + 少量 CPU**（如爬虫、API 网关、Web 服务）：以**协程（asyncio）为主模型**，用单线程事件循环处理海量并发 I/O；把那少量 CPU 计算用 `loop.run_in_executor(...)` / `asyncio.to_thread(...)` 丢到线程池或进程池，避免阻塞事件循环。CPU 部分很轻时线程池即可，稍重就用进程池绕过 GIL。
+- **大量 CPU + 少量 I/O**（如科学计算、图像/视频处理、加密）：以**多进程为主模型**，每个进程有独立 GIL，能真正多核并行；每个进程内部自己处理那少量 I/O（或配一个小线程池）。别用多线程做 CPU 计算——GIL 争抢会让它比单线程还慢。
+
+一句话：**I/O 用协程、CPU 用进程，混合就「协程管 I/O + executor 管 CPU」。**
+
+最小示例：I/O 用协程并发，CPU 计算丢进进程池（既不阻塞事件循环，又绕过 GIL）：
+
+```python
+import asyncio
+from concurrent.futures import ProcessPoolExecutor
+
+
+def cpu_parse(x):
+    """模拟 CPU 密集的解析/计算"""
+    s = 0
+    for i in range(200000):
+        s += i * i
+    return (s + x) % 1000
+
+
+async def io_fetch(i):
+    """模拟网络 I/O"""
+    await asyncio.sleep(0.05)
+    return i
+
+
+async def main():
+    loop = asyncio.get_running_loop()
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        # I/O 部分用协程并发
+        data = await asyncio.gather(*[io_fetch(i) for i in range(4)])
+        # CPU 部分丢进进程池：不阻塞事件循环，又能绕过 GIL
+        tasks = [loop.run_in_executor(pool, cpu_parse, d) for d in data]
+        results = await asyncio.gather(*tasks)
+        print("I/O 用协程 + CPU 用进程池，结果:", results)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+运行输出：
+
+```
+I/O 用协程 + CPU 用进程池，结果: [0, 1, 2, 3]
+```
+
+4 个 I/O 由协程并发完成，CPU 计算在进程池里并行执行，两者互不阻塞。
+
+⚠️ 注意：Windows/macOS（spawn 启动方式）下，多进程代码必须放在 `if __name__ == "__main__":` 守卫内，且提交给进程池的函数要定义在模块顶层（可被 pickle），否则会报错或无限递归创建子进程。
 
 3. **Python 3.13 的 Free-threaded Python 改变了什么？这对 `asyncio` 的定位有什么影响？**
 
+**参考答案**
+
+**Free-threaded Python（PEP 703，Python 3.13 起可选，构建变体常写作 `python3.13t`）改变的是**：允许在编译期移除 GIL（`--disable-gil`），让多个线程能真正在多核上并行执行 Python 字节码——CPU 密集型多线程不再被 GIL 串行化。代价是：内部要用更细粒度的锁/原子操作保护引用计数等，单线程性能有一定开销，且大量 C 扩展需要适配（生态仍在跟进）。运行时可用 `sys._is_gil_enabled()` 查询当前是否启用 GIL。
+
+**对 asyncio 定位的影响**：基本不动摇，因为两者解决的是不同问题——
+
+- Free-threading 解决的是「**CPU 密集型**的多核并行」，它让「多线程做计算」变得可行。
+- asyncio 解决的是「**高并发 I/O** 的调度效率」：单线程管理上万连接、协程切换开销极小、内存占用极低。即便没有 GIL，用几万个操作系统线程去做 I/O 仍会被内存和调度开销压垮，远不如协程划算。
+- 所以未来更可能是**互补**：用 asyncio 处理海量 I/O，遇到 CPU 计算时丢给真正能并行的多线程（Free-threaded）或进程池，而不是用多线程取代 asyncio。
+
+最小示例：检测当前解释器是否为 Free-threaded 构建：
+
+```python
+import sys
+
+if hasattr(sys, "_is_gil_enabled"):
+    # Python 3.13+ 才有这个函数
+    print("Free-threaded 构建，GIL 是否启用:", sys._is_gil_enabled())
+else:
+    print("当前是带 GIL 的默认构建（Python < 3.13，或 3.13 默认构建）")
+print("Python 版本:", sys.version.split()[0])
+```
+
+在 Python 3.12（默认构建）上的运行输出：
+
+```
+当前是带 GIL 的默认构建（Python < 3.13，或 3.13 默认构建）
+Python 版本: 3.12.10
+```
+
+若在 3.13+ 的 Free-threaded 构建上运行，则会打印 `GIL 是否启用: False`。
+
+💡 提示：Free-threaded 目前仍是实验性/可选特性，默认安装的 Python 3.13 依旧带 GIL，不要以为「升级到 3.13 就没有 GIL 了」。
+
 4. **协程号称"并发"，但它真的是并行的吗？在单核和多核机器上表现有什么区别？**
 
+**参考答案**
+
+**协程是「并发」但不是「并行」**。并发（concurrency）指多个任务在同一时间段内交替推进；并行（parallelism）指多个任务在同一时刻同时执行，需要多个执行单元。asyncio 默认把全部协程放在**一个线程**里，由事件循环调度，协程只有在 `await`（让出控制权）时才切换——所以任一时刻只有一个协程在执行 Python 代码，这是并发而非并行。
+
+最小示例：所有协程都跑在同一个线程上：
+
+```python
+import asyncio
+import threading
+
+
+async def task(i):
+    await asyncio.sleep(0.01)
+    return threading.get_ident()      # 返回当前线程 ID
+
+
+async def main():
+    ids = await asyncio.gather(*[task(i) for i in range(5)])
+    print("5 个协程所在线程数:", len(set(ids)))   # 1 → 单线程并发
+    print("是否都在主线程:", all(t == threading.get_ident() for t in ids))
+
+
+asyncio.run(main())
+```
+
+运行输出：
+
+```
+5 个协程所在线程数: 1
+是否都在主线程: True
+```
+
+5 个「并发」协程实际共用 1 个线程，印证了单线程并发、并非并行。
+
+**单核 vs 多核**：
+
+- **单核机器**：任何模型都无法真正并行（只有一个执行单元）。线程/进程靠操作系统时间片轮转「看起来同时」，协程也在单核上交替。对 I/O 密集型任务，三者都能重叠等待时间、提升吞吐；对 CPU 密集型任务，谁都无法加速（总计算量不变）。
+- **多核机器**：多进程能真正跨核并行（每个进程独立 GIL）；多线程做 CPU 密集仍受 GIL 限制、无法利用多核（除非 Free-threaded 或释放 GIL 的 C 扩展）；**asyncio 默认仍只用一个核**——无论机器有多少核，单个事件循环只占一个。想吃满多核，需要「多进程 + 每进程一个事件循环」（如 `multiprocessing` 搭配 `asyncio`，或 uvicorn 多 worker）。
+
+⚠️ 注意：别指望「把 CPU 计算丢进 `asyncio.gather` 就能加速」——协程在单线程里串行执行，CPU 密集任务不会因为写成协程就并行，该用进程池还得用进程池。
+
 5. **设计一个爬虫系统：每天抓取 10 万页面，如何选择并发模型？请给出架构方案和理由。**
+
+**参考答案**
+
+先算账：10 万页/天 ≈ **平均 1.2 页/秒**，平均速率很低，瓶颈是网络 I/O 等待而非计算——所以**单进程 asyncio + aiohttp 的事件循环就绰绰有余**，不需要为抓取上多进程。真正的难点是礼貌性（别把对方站点打挂）、去重、失败重试、调度和断点续爬。
+
+推荐架构（I/O 密集 → 协程为主）：
+
+- **抓取层**：`asyncio + aiohttp`，单个 `ClientSession` 复用 TCP 连接；用 `asyncio.Semaphore` 限制全局并发（如 20~50），用 `TCPConnector(limit_per_host=...)` 或每主机一个信号量限制对单个站点的并发（如 1~2），并加限速/礼貌延迟。
+- **调度层**：URL 队列（`asyncio.Queue`；分布式时用 Redis/Kafka）；frontier 负责优先级与去重（内存 `set`，规模大时用 Redis set 或布隆过滤器）。
+- **解析层**：解析轻就直接在协程里做；若是 CPU 密集（复杂抽取、渲染），丢给 `ProcessPoolExecutor`，避免阻塞事件循环。
+- **可靠性**：失败指数退避重试、超时控制（`ClientTimeout`）、断点续爬（持久化队列与已访问集合）、日志与监控。
+- **存储层**：结果异步写入数据库/对象存储（批量写减少 I/O 次数）。
+- **扩展**：10 万/天单机即可；若涨到百万/天或需多机，用「多 worker 进程/多机 + 共享 Redis 队列」，每个 worker 内部仍是 asyncio。
+
+最小可运行骨架（队列 + worker 协程 + 全局信号量 + 重试，用模拟抓取代替真实网络）：
+
+```python
+import asyncio
+
+
+async def fetch(url):
+    """模拟抓取网页（真实项目换成 aiohttp）"""
+    await asyncio.sleep(0.02)
+    if "bad" in url:
+        raise ConnectionError("抓取失败")
+    return f"<html>{url}</html>"
+
+
+async def fetch_with_retry(url, retries=3):
+    """失败自动重试 + 退避"""
+    for attempt in range(retries):
+        try:
+            return await fetch(url)
+        except ConnectionError:
+            if attempt == retries - 1:
+                return None                       # 重试耗尽，记为失败
+            await asyncio.sleep(0.01 * (attempt + 1))
+
+
+async def worker(queue, sem, results):
+    while True:
+        url = await queue.get()
+        if url is None:                           # 结束哨兵
+            queue.task_done()
+            break
+        async with sem:                           # 全局并发上限
+            html = await fetch_with_retry(url)
+            results.append((url, html is not None))
+        queue.task_done()
+
+
+async def main():
+    urls = [f"http://site.com/page{i}" for i in range(8)] + ["http://bad.com/x"]
+    queue = asyncio.Queue()
+    sem = asyncio.Semaphore(3)                    # 全局最多 3 个并发
+    results = []
+    for u in urls:
+        queue.put_nowait(u)
+    workers = [asyncio.create_task(worker(queue, sem, results)) for _ in range(3)]
+    for _ in workers:
+        queue.put_nowait(None)                    # 每个 worker 一个结束哨兵
+    await asyncio.gather(*workers)
+    ok = sum(1 for _, success in results if success)
+    print(f"共 {len(results)} 页，成功 {ok}，失败 {len(results) - ok}")
+
+
+asyncio.run(main())
+```
+
+运行输出：
+
+```
+共 9 页，成功 8，失败 1
+```
+
+骨架演示了「队列调度 + 并发上限 + 失败重试」的核心结构；真实项目把 `fetch` 换成 aiohttp 请求，并补上每主机限速、去重与持久化即可。
+
+💡 提示：10 万/天的平均速率很低，别盲目追求高并发——**礼貌性与稳定性**（不被封 IP、能断点续爬）比速度更重要；规模变大再考虑分布式队列与代理池。
 
 ---
 

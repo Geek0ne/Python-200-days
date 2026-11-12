@@ -720,10 +720,146 @@ no images
 
 1. 你的服务对下游重试 3 次，下游也对它的下游重试 3 次，最坏情况下一次用户请求会放大成多少次调用？
    怎么用重试预算和抖动把放大倍数压住？
+
+**参考答案**
+
+每层「重试 3 次」若理解为最多 3 次尝试，两层嵌套最坏 3×3=9 次叶子调用；若理解为「失败后再重试 3 次」=4 次尝试，则 4×4=16。层数越多放大越猛（指数级）。压住的办法：全链路共享一个重试预算（budget），无论哪一层重试都从同一额度扣，扣完即停；再配合指数退避 + 满抖动（full jitter）打散重试时刻，避免同步重试风暴。
+
+```python
+def amplify(budget_limit):
+    calls = [0]
+    budget = [budget_limit]
+    def leaf():
+        if budget[0] <= 0:
+            return False
+        budget[0] -= 1
+        calls[0] += 1
+        return False          # 总是失败，测最坏放大
+    def layer(fn, attempts):
+        last = None
+        for _ in range(attempts):
+            last = fn()
+            if last or budget[0] <= 0:   # 预算耗尽就停
+                break
+        return last
+    def inner():
+        return layer(leaf, 3)
+    layer(inner, 3)           # 你的服务 → 下游 → 下游的下游
+    return calls[0]
+
+print("无共享预算，每层最多 3 次尝试，最坏叶子调用次数 =", amplify(10**9))
+print("共享预算=4 时，叶子调用次数 =", amplify(4))
+```
+
+预期输出：
+
+```text
+无共享预算，每层最多 3 次尝试，最坏叶子调用次数 = 9
+共享预算=4 时，叶子调用次数 = 4
+```
+
+无预算时两层各 3 次尝试 → 9 次叶子调用；共享预算=4 把全链路总调用钉死在 4 次。抖动（如 `sleep(random.uniform(0, base*2**attempt))`）把重试时刻打散，避免所有客户端同一瞬间重试造成尖峰。
+
+⚠️ 注意：「重试 3 次」有歧义——3 次尝试是 9，3 次重试（=4 次尝试）是 16；先澄清口径再算。
+
 2. 为什么 AES-GCM 的 nonce 复用比“密钥稍微弱一点”更危险？如果必须在分布式系统里生成 nonce，你会怎么保证唯一？
+
+**参考答案**
+
+AES-GCM 用 nonce 生成密钥流，nonce 复用 → 同一密钥流加密两条明文 → 两密文异或就消掉密钥流，直接泄露明文异或关系（无需密钥即可做 crib-dragging 还原明文），GCM 的认证标签也可能被伪造。这比「密钥稍弱」危险得多：弱密钥只是降低暴力破解成本，nonce 复用是直接把明文关系送出去。分布式保证唯一：用「节点唯一 ID + 单调计数器」拼 nonce（如 4 字节节点 ID + 8 字节计数），或用足够长的随机 nonce（96 位以上）使碰撞概率可忽略，并严禁同一 key 下计数器回绕/重启复用。
+
+```python
+import hashlib
+# 简化演示：用哈希模拟 CTR 密钥流，原理与 AES-GCM 的 nonce 复用一致（非真 AES）
+def keystream(key, nonce, n):
+    out = b""
+    counter = 0
+    while len(out) < n:
+        out += hashlib.sha256(key + nonce + counter.to_bytes(4, "big")).digest()
+        counter += 1
+    return out[:n]
+def xor(a, b):
+    return bytes(x ^ y for x, y in zip(a, b))
+
+key = b"secret-key"
+nonce = b"same-nonce-12"      # 两条消息用了同一个 nonce
+m1 = b"attack at dawn!!"
+m2 = b"retreat at dusk!"
+ks = keystream(key, nonce, max(len(m1), len(m2)))
+c1 = xor(m1, ks); c2 = xor(m2, ks)
+leak = xor(c1, c2)
+print("c1 XOR c2 == m1 XOR m2 →", leak == xor(m1, m2), "（密钥流被消掉，无需密钥即泄露明文关系）")
+```
+
+预期输出：
+
+```text
+c1 XOR c2 == m1 XOR m2 → True （密钥流被消掉，无需密钥即泄露明文关系）
+```
+
+nonce 相同 → 密钥流相同 → c1⊕c2 = m1⊕m2，攻击者不需要密钥就拿到两条明文的关系。
+
+⚠️ 注意：这是教学化的简化密钥流，真实项目请用成熟的 AES-GCM 库（如 `cryptography`，需 `pip install cryptography`）并严格管理 nonce 唯一性，不要自己实现加密。
+
 3. HMAC 签名已经覆盖 body 哈希，为什么还要签 method 和 path？举一个只签 body 会被利用的场景。
+
+**参考答案**
+
+只签 body，签名就和「请求方法/路径」无关。攻击者截获一个 `GET /records/42` 的合法签名请求，把方法改成 `DELETE`、路径与 body 不变，签名照样通过——于是用「读」的授权干了「删」的事。把 method、path 一起纳入规范化签名串，不同方法/路径即使 body 相同签名也不同，篡改即被拦住。
+
+```python
+import hmac, hashlib
+secret = b"api-secret"
+body = b'{"id": 42}'
+def sign_body_only(body):
+    return hmac.new(secret, body, hashlib.sha256).hexdigest()
+def sign_full(method, path, body):
+    canonical = b"\n".join([method.encode(), path.encode(), hashlib.sha256(body).digest()])
+    return hmac.new(secret, canonical, hashlib.sha256).hexdigest()
+
+sig_body = sign_body_only(body)
+print("只签 body：GET 的签名能原样用于 DELETE？",
+      hmac.compare_digest(sig_body, sign_body_only(body)), "→ 被利用")
+sig_get = sign_full("GET", "/records/42", body)
+sig_del = sign_full("DELETE", "/records/42", body)
+print("签 method+path：GET 签名 == DELETE 签名？",
+      hmac.compare_digest(sig_get, sig_del), "→ 拦住")
+```
+
+预期输出：
+
+```text
+只签 body：GET 的签名能原样用于 DELETE？ True → 被利用
+签 method+path：GET 签名 == DELETE 签名？ False → 拦住
+```
+
+只签 body 时 GET 与 DELETE 签名相同（True），可被越权重放；把 method+path+body 一起签后两者不同（False），篡改方法即失效。实践中还应加时间戳 + nonce 防重放。
+
 4. liveness 探针里如果检查数据库连接，会发生什么？请描述“数据库抖动 10 秒”到“全站雪崩”的完整链条。
+
+**参考答案**
+
+liveness 探针的语义是「进程是否还活着、要不要重启」，readiness 才是「能不能接流量」。把数据库连接检查放进 liveness，数据库一抖动就会被误判为「进程死了」而触发重启。完整链条：
+
+1. 数据库抖动 10 秒，连接超时/失败。
+2. liveness 检查 DB 失败 → K8s 判定容器不健康 → 杀掉并重启容器。
+3. 重启需要时间（拉起进程、建连接池、预热），期间实例不可用；大量实例因同一 DB 抖动同时被重启 → 可用实例骤减。
+4. 流量压到剩余实例 → 负载飙升、连接池打满 → 它们的 liveness 也失败 → 又被重启，形成正反馈。
+5. 重启后的实例一起向尚未恢复的 DB 发起连接风暴 → DB 压力更大、恢复更慢 → 全站雪崩。
+
+正确做法：liveness 只查进程自身（如轻量 `/healthz` 返回 200），把 DB 依赖检查放进 readiness——DB 抖动时只把实例摘出流量（不重启），DB 恢复后自动重新接入。
+
+💡 提示：liveness 失败 = 重启，readiness 失败 = 摘流量；外部依赖永远放 readiness，别放 liveness。
+
 5. 自动回滚失败时，脚本应该返回什么退出码、发什么级别的告警？如果回滚后旧版本也不健康，人工介入的第一步应该是什么？
+
+**参考答案**
+
+- **退出码**：返回非 0 且与「普通部署失败」可区分的码（如 2），让 CI/CD 明确知道「自动恢复也失败了」，而不是当成一般错误继续重试。
+- **告警级别**：最高级（critical / P1），因为此时新旧版本都不健康、自动手段已用尽，必须立刻叫人。
+- **人工介入第一步**：先止损/稳定现场，而不是继续盲目重试或改代码。确认当前流量与版本状态（哪个版本在跑、健康检查实际返回什么），必要时手动把流量切到已知健康的版本/降级页或摘除故障实例，先恢复可用性，再排查回滚为何失败（镜像拉取、配置、共享依赖）。
+
+⚠️ 注意：若回滚后旧版本也不健康，往往说明问题不在版本本身，而在共享依赖（数据库、配置、密钥、外部服务）——这时换版本无济于事，要先查依赖。
 
 ---
 

@@ -582,13 +582,207 @@ OverflowError: Python int too large to convert to SQLite INTEGER
 
 1. 你的规则基线在测试集上 F1 是 0.55，模型是 0.90。上线后模型真的会更好吗？
    需要额外验证哪三件事？
+
+**参考答案**
+
+不一定。测试集 F1 0.90 只说明「在这批离线数据上」模型更好，上线后可能翻车。需要额外验证三件事：
+
+1. **分布是否漂移**（distribution shift，线上数据与训练/测试数据分布不一致）：线上真实流量的特征分布是否和测试集一致。测试集往往是历史采样，上线后用户/内容变了，0.90 会掉。要用线上影子流量或小流量灰度对比。
+2. **特征是否泄漏、线上线下一致**：训练时用的特征线上能否实时拿到、口径是否一致。若测试集混入了「未来信息」或线上取不到的字段，离线高分是假象。
+3. **阈值与代价是否校准**：F1 默认 0.5 阈值，但业务上误杀/漏放代价不同。要按业务代价选阈值，看精确率/召回率各自的绝对值，而不是只盯一个 F1；还要确认 0.55 与 0.90 是同一测试集、同一口径下比出来的。
+
+💡 提示：先小流量灰度 + 线上监控，确认指标不掉再全量；离线高分 ≠ 线上更好。
+
 2. 为什么 SimHash 的 k 要随文档长度变化？请用"token 数 → 单 token 权重的期望位移"
    这个角度解释，并设计一个分长度分桶的方案。
+
+**参考答案**
+
+SimHash 把每个 token 哈希成 64 位、按位投票（+1/−1）累加，最后取符号。某一位的最终值是所有 token 在该位投票的「净和」。改一个 token，相当于把它的投票翻转，对每一位净和造成约 ±2 的位移。文档越短（token 数 n 小），单 token 权重 1/n 越大，这一位移越容易把某位符号翻转 → 汉明距离大；文档越长，单 token 权重越小，净和「惯性」越大，改一个 token 很难翻位 → 汉明距离小。所以固定 k 对短文本太松（漏判）、对长文本太紧（误判），k 必须随长度变化。
+
+```python
+import hashlib, re
+
+def tokens(text):
+    toks = re.findall(r"[a-z0-9]+", text.lower())
+    han = re.findall(r"[\u4e00-\u9fff]", text)
+    toks += ["".join(pair) for pair in zip(han, han[1:])]   # 中文用相邻二字组
+    return toks
+
+def simhash(text, bits=64):
+    votes = [0]*bits
+    for t in tokens(text):
+        h = int.from_bytes(hashlib.blake2b(t.encode(), digest_size=8).digest(), "big")
+        for i in range(bits):
+            votes[i] += 1 if (h >> i) & 1 else -1   # 按位投票
+    fp = 0
+    for i in range(bits):
+        if votes[i] > 0:
+            fp |= (1 << i)
+    return fp
+
+def hamming(a, b):
+    return bin(a ^ b).count("1")
+
+short_a = "无线蓝牙耳机降噪运动跑步防水黑色"
+short_b = "无线蓝牙耳机降噪运动跑步防水白色"   # 只改一个词
+base = ("新能源汽车电池续航测试报告"
+        "深度学习模型训练流程详解"
+        "分布式系统一致性协议比较"
+        "数据管道清洗与质量门禁"
+        "浏览器渲染等待策略实测"
+        "加密算法与密钥轮换实践"
+        "开源协作补丁提交流程"
+        "技术写作可复现性契约"
+        "间隔重复记忆排期算法"
+        "并发模型与全局解释器锁")
+long_a = base
+long_b = base.replace("续航", "续航力", 1)     # 长文里只改一处
+print(f"短文本 token 数 = {len(tokens(short_a))}，改一个词后汉明距离 = {hamming(simhash(short_a), simhash(short_b))}")
+print(f"长文本 token 数 = {len(tokens(long_a))}，改一处后汉明距离 = {hamming(simhash(long_a), simhash(long_b))}")
+```
+
+预期输出：
+
+```text
+短文本 token 数 = 15，改一个词后汉明距离 = 14
+长文本 token 数 = 110，改一处后汉明距离 = 3
+```
+
+同样「改一处」，15 个 token 的短文本汉明距离高达 14，110 个 token 的长文本只有 3——直观印证了单 token 权重随长度衰减。分长度分桶方案：按 token 数分桶（如 <30、30–100、>100），每桶用不同 k（短桶 k 大、长桶 k 小），或按桶建独立 bands 索引；也可把 k 设成随 n 单调递减的函数。
+
 3. 分桶索引 `bands=8` 保证 k≤7 的召回。如果业务需要 k=15 且不能用全量比对，
    你会怎么改？（提示：多个排列、多组 bands）
+
+**参考答案**
+
+靠鸽巢原理：把 64 位分成 b 段，若两指纹汉明距离 ≤ k，只要 b > k，就至少有一段完全相同（k 个差异位最多落在 k 段里，b>k 时必有一段无差异）。`bands=8` 只能保证 k≤7；要 k=15 就得 b≥16，即 `bands=16`（每段 4 位）。代价是段更短、随机碰撞概率上升、候选对变多，后续精确比对量增大。
+
+```python
+import random
+
+def bands_match(a, b, bands):
+    width = 64 // bands
+    for i in range(bands):
+        mask = ((1 << width) - 1) << (i*width)
+        if (a & mask) == (b & mask):   # 只要有一段完全相同就是候选
+            return True
+    return False
+
+rng = random.Random(7)
+N = 2000
+hit8 = hit16 = 0
+for _ in range(N):
+    a = rng.getrandbits(64)
+    b = a
+    for bit in rng.sample(range(64), 15):   # 制造恰好 15 位差异
+        b ^= (1 << bit)
+    assert bin(a ^ b).count("1") == 15
+    hit8 += bands_match(a, b, 8)
+    hit16 += bands_match(a, b, 16)
+print(f"距离=15 的 {N} 对指纹：")
+print(f"  bands=8 （每段8位，保证 k≤7）：至少一段相同比例 = {hit8/N:.3f}")
+print(f"  bands=16（每段4位，保证 k≤15）：至少一段相同比例 = {hit16/N:.3f}")
+```
+
+预期输出：
+
+```text
+距离=15 的 2000 对指纹：
+  bands=8 （每段8位，保证 k≤7）：至少一段相同比例 = 0.636
+  bands=16（每段4位，保证 k≤15）：至少一段相同比例 = 1.000
+```
+
+`bands=8` 对 k=15 只有约 63.6% 召回（漏掉 36%），`bands=16` 达到 100%。所以业务要 k=15 就把 bands 提到 16，再用精确汉明距离复核候选；若还要兼顾不同 k，可建多组不同 bands/排列的索引取并集（即提示说的「多个排列、多组 bands」）。
+
 4. 质量门禁把 `TEXT_TOO_SHORT` 设为 50 字。如果目标站点有大量"短公告"（20 字但有效），
    会发生什么？规则应该怎么写才不误杀？
+
+**参考答案**
+
+一刀切 50 字会把大量 20 字的有效短公告全部判 `TEXT_TOO_SHORT` 误杀。规则应按内容类型设不同阈值（公告短、文章长），并结合「标题非空、含有效信息」等多信号，而不是只看长度。
+
+```python
+def check_record(rec, min_len):
+    issues = []
+    if len(rec.get("body", "")) < min_len:
+        issues.append("TEXT_TOO_SHORT")
+    if not rec.get("title"):
+        issues.append("TITLE_EMPTY")
+    return issues
+
+samples = [
+    {"type": "announcement", "title": "停水通知", "body": "明日9点至17点停水，请提前储水。"},
+    {"type": "article", "title": "深度报道", "body": "短"},
+    {"type": "article", "title": "正常文章", "body": "这是一段足够长的正文内容，它超过了五十字的最小长度要求，因此应当顺利通过质量门禁，不会被 TEXT_TOO_SHORT 规则拦截掉。"},
+]
+for r in samples:
+    old = check_record(r, 50)
+    new = check_record(r, {"announcement": 10, "article": 50}.get(r["type"], 50))
+    print(f"  {r['type']:12} {len(r['body']):>2}字  旧规则(50)={old or '通过'}  新规则(分类)={new or '通过'}")
+```
+
+预期输出：
+
+```text
+  announcement 17字  旧规则(50)=['TEXT_TOO_SHORT']  新规则(分类)=通过
+  article       1字  旧规则(50)=['TEXT_TOO_SHORT']  新规则(分类)=['TEXT_TOO_SHORT']
+  article      66字  旧规则(50)=通过  新规则(分类)=通过
+```
+
+旧规则把 17 字的有效公告误杀；按类型设阈值后公告通过，而真正 1 字的废文章仍被拦，66 字正常文章两种规则都通过——分类阈值既不误杀也不漏放。
+
+⚠️ 注意：阈值要按站点实际内容分布标定，别拍脑袋；可再加「标题非空 + 含数字/时间等有效信息」做兜底。
+
 5. 幂等 ≠ 正确。请构造一个"重跑结果一致但数据错误"的管道，并给出能在 CI 里自动发现它的断言。
+
+**参考答案**
+
+幂等只保证「重跑结果一致」，不保证「结果正确」。一个把 URL 所有 query 参数都剥掉的规范化管道，重跑永远一致（幂等），却把 `?sku=blue` 和 `?sku=red` 两个不同商品页压成同一个 key，静默丢数据。CI 里要加「与真值对照」的断言，而不是只测幂等。
+
+```python
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+
+TRACK = {"utm_source","utm_medium","utm_campaign","spm","ref","from"}
+def canon_legacy(url):           # 错误：剥掉所有 query
+    s = urlsplit(url)
+    return urlunsplit((s.scheme, s.netloc, s.path, "", ""))
+def canon_fixed(url):            # 正确：只剥跟踪参数，保留业务参数并排序
+    s = urlsplit(url)
+    q = sorted((k,v) for k,v in parse_qsl(s.query) if k not in TRACK)
+    return urlunsplit((s.scheme, s.netloc, s.path, urlencode(q), ""))
+
+urls = [
+    "https://shop.example.com/product/106?sku=blue&utm_source=ad",
+    "https://shop.example.com/product/106?sku=red&utm_source=ad",
+    "https://shop.example.com/product/107?sku=green",
+    "https://shop.example.com/product/107?sku=yellow",
+]
+truth = {canon_fixed(u) for u in urls}
+legacy1 = {canon_legacy(u) for u in urls}
+legacy2 = {canon_legacy(u) for u in urls}
+print(f"旧规则 key 数={len(legacy1)}，重跑={len(legacy2)}，幂等={legacy1==legacy2}")
+print(f"真实页面数={len(truth)}")
+try:
+    assert len(legacy1) == len(truth)   # CI 断言：与真值对照
+    print("CI: 通过")
+except AssertionError:
+    print(f"CI 断言失败：旧规则把 {len(truth)} 个真实页面压成 {len(legacy1)} 个 key，"
+          f"静默丢失 {len(truth)-len(legacy1)} 个（重跑仍一致 → 幂等但错误）")
+fixed1 = {canon_fixed(u) for u in urls}
+print(f"新规则 key 数={len(fixed1)}，等于真实页面={len(fixed1)==len(truth)}")
+```
+
+预期输出：
+
+```text
+旧规则 key 数=2，重跑=2，幂等=True
+真实页面数=4
+CI 断言失败：旧规则把 4 个真实页面压成 2 个 key，静默丢失 2 个（重跑仍一致 → 幂等但错误）
+新规则 key 数=4，等于真实页面=True
+```
+
+旧管道幂等（重跑都是 2 个 key）但错误（真实有 4 个页面）。CI 里只断言「重跑一致」会放行；加一条「key 数 == 真值页面数」的断言就能自动抓住静默丢失。修复后规范化只剥跟踪参数、保留 sku 等业务参数，key 数恢复为 4。
 
 ---
 

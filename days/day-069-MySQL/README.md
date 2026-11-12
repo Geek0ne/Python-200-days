@@ -175,6 +175,79 @@ python code/05-order-db-project.py --self-test   # SQLite 离线跑全流程
 python code/05-order-db-project.py               # MySQL 环境实测
 ```
 
+## 8. 思考题
+
+1. **占位符与 SQL 注入**：`cur.execute("SELECT * FROM users WHERE name = '%s'" % name)` 与 `cur.execute("SELECT * FROM users WHERE name = %s", (name,))` 有什么本质区别？为什么本日反复强调 `charset="utf8mb4"`？
+
+**参考答案**
+
+第一种是 **Python 字符串格式化**：先把用户输入拼进 SQL 文本，再整条发给数据库。数据库无法区分哪部分是「指令」、哪部分是「数据」。如果 `name` 是 `' OR '1'='1`，最终 SQL 变成 `WHERE name = '' OR '1'='1'`，条件恒真，整张用户表就被拖走了——这就是 SQL 注入。
+
+第二种把 **SQL 模板与参数分开**交给驱动：参数只会被当成「值」处理（驱动负责转义或走预编译），里面的引号、分号不会改变语句结构，注入自然失效。
+
+⚠️ 注意：pymysql 的 `%s` 是 DB-API 占位符，**不是** Python 的 `%` 格式化，千万别写成 `cur.execute(sql % params)`。占位符只能替代「值」，表名、列名、`ORDER BY` 方向都不能用它，这类需求要用白名单校验。
+
+`utf8mb4` 的原因：MySQL 里的 `utf8` 其实是 `utf8mb3`，每字符最多 3 字节，而 emoji 是 4 字节，存进去会报错或变乱码。`utf8mb4` 才是完整的 UTF-8，建库、建表、连接三处都要统一。
+
+2. **事务与回滚（代码）**：转账要执行两条 UPDATE，若第一条成功、第二条失败会发生什么？请给出可离线运行的最小示例，并说明 pymysql 中的等价写法。
+
+**参考答案**
+
+```python
+# 依赖：仅标准库 sqlite3（本日「双后端」设计的离线版；真库需自行准备 MySQL 并 pip install pymysql）
+import sqlite3
+
+conn = sqlite3.connect(":memory:")     # 内存库，进程结束即消失，不留文件
+conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
+conn.executemany("INSERT INTO accounts VALUES (?, ?)", [(1, 500), (2, 500)])
+conn.commit()
+
+def transfer(conn, src, dst, amount):
+    """转账：两条 UPDATE 必须同生共死"""
+    try:
+        with conn:                     # 正常结束自动 commit，抛异常自动 rollback
+            conn.execute("UPDATE accounts SET balance = balance - ? WHERE id = ?",
+                         (amount, src))
+            if amount > 1000:          # 模拟业务校验失败（此时钱已扣掉一半）
+                raise ValueError("单笔限额 1000")
+            conn.execute("UPDATE accounts SET balance = balance + ? WHERE id = ?",
+                         (amount, dst))
+    except ValueError as e:
+        print("已回滚:", e)
+
+transfer(conn, 1, 2, 100)              # 成功：1 号 -100，2 号 +100
+print(conn.execute("SELECT * FROM accounts").fetchall())
+
+transfer(conn, 1, 2, 5000)             # 失败：第一条 UPDATE 也要撤销
+print(conn.execute("SELECT * FROM accounts").fetchall())
+```
+
+预期输出：
+
+```
+[(1, 400), (2, 600)]
+已回滚: 单笔限额 1000
+[(1, 400), (2, 600)]
+```
+
+关键在于**事务的原子性**：两条 UPDATE 属于同一个事务，要么一起生效，要么一起作废。示例中第二次转账在扣款之后抛错，`with conn:` 触发回滚，余额回到 `(400, 600)`，钱不会凭空消失。如果没有回滚（或中途误提交），就会出现「A 扣了钱、B 没收到」的脏账。
+
+换到 pymysql：把 `?` 换成 `%s`，把 `with conn:` 换成本日第 2 节的显式写法——`try: ... conn.commit()` / `except Exception: conn.rollback(); raise`。连接时保持 `autocommit=False`，让事务边界由自己掌控。
+
+💡 提示：长事务不提交会一直持锁、撑大回滚段，务必尽快 commit/rollback；连接归还连接池之前，也要确认事务已经结束，否则下一个借用者会继承你的未决事务。
+
+3. **索引与执行计划**：为什么 `WHERE DATE(created_at) = '2026-11-11'` 用不上索引，改成范围查询就可以？联合索引 `(user_id, created_at)` 的「最左前缀」是什么意思？`LIMIT 1000000, 10` 为什么越翻越慢？
+
+**参考答案**
+
+索引（InnoDB 的 B+ 树）里存的是**列的原始值**，靠有序性快速定位。一旦在索引列上套函数 `DATE(created_at)`，比较的对象变成了「函数计算结果」，树的有序性用不上了，只能逐行算一遍——EXPLAIN 里表现为 `type=ALL`、`key=NULL`（全表扫描）。改写成 `created_at >= '2026-11-11 00:00:00' AND created_at < '2026-11-12 00:00:00'`，列保持「裸露」，就能走 `range`。
+
+**最左前缀**：联合索引 `(user_id, created_at)` 是先按 `user_id` 排序、`user_id` 相同再按 `created_at` 排序。所以 `WHERE user_id = ? AND created_at >= ?` 能用整条索引；`WHERE user_id = ?` 能用前一半；而只给 `created_at` 的条件，因为数据在全局上并不是按时间有序的，通常用不上这条索引。建索引时要把「最常用来等值过滤的列」放左边。
+
+**深分页**：`LIMIT 1000000, 10` 的语义是「扫描并丢弃前 100 万行，再取 10 行」，偏移越大越慢。两种改法：延迟关联（先用覆盖索引取出这 10 行的主键，再 JOIN 回原表取完整列）；游标分页（记住上一页最后的 `id`，用 `WHERE id > ? ORDER BY id LIMIT 10`，每页成本恒定）。
+
+⚠️ 注意：索引不是越多越好，每次写入都要维护索引；选择性低的列（如性别）单独建索引几乎没收益。`EXPLAIN` 是 MySQL 语法，SQLite 对应的是 `EXPLAIN QUERY PLAN`，输出含义不同；上面的执行计划验证需自行准备 MySQL 环境。
+
 ## 小结
 
 - pymysql：`%s` 占位符 + 显式事务 + 必须回滚兜底

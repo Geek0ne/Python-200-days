@@ -640,10 +640,137 @@ class CorrectDescriptor:
 
 1. **为什么 `property` 是数据描述符，而普通方法（函数）是非数据描述符？** 这种设计有什么好处？
 
+**参考答案**
+
+区别在于**实现了哪些协议方法**：`property` 定义了 `__get__` + `__set__`（+ `__delete__`），所以是数据描述符；函数只定义了 `__get__`（用来把 `self` 绑定成绑定方法），没有 `__set__`，所以是非数据描述符。
+
+这种设计的好处来自二者的**优先级差异**（数据描述符 > 实例 `__dict__` > 非数据描述符）：
+
+- **property 必须「压过」实例字典**：它的职责是拦截读写做校验/计算。假如它是非数据描述符，用户一旦 `obj.name = x` 把值写进实例 `__dict__`，之后读取就会绕过 property，校验失效。做成数据描述符，保证无论实例字典里有没有同名值，**永远走 property 的 `__get__`/`__set__`**，控制不被架空。
+- **方法应当「允许被实例覆盖」**：方法只需在读取时绑定 self，不需要拦截赋值。做成非数据描述符，意味着可以给单个实例临时替换某个方法（`obj.method = 别的函数`，常用于测试打桩/ monkey patch），实例属性优先于方法生效，灵活而不冲突。
+
+一句话：**property 要「强制管控」所以用数据描述符；方法要「可被灵活覆盖」所以用非数据描述符。** 优先级规则恰好同时满足了这两种需求。
+
 2. **如果要实现一个 `@cached_property` 装饰器**（值计算后缓存到实例 `__dict__`，后续直接读取），它的描述符需要实现 `__set__` 吗？为什么？
+
+**参考答案**
+
+**不需要，而且恰恰不能实现 `__set__`。** `cached_property` 必须是**非数据描述符**（只有 `__get__`），缓存机制才能成立。
+
+原理正是优先级规则：非数据描述符 **低于** 实例 `__dict__`。第一次访问时实例字典里还没有这个键，于是走 `__get__` 计算值，并把结果写进 `obj.__dict__[同名]`；之后再访问，Python 发现实例字典里已有同名值，且描述符是非数据的，就**直接返回字典里的缓存值，不再触发 `__get__`**——这就是「算一次、后面直接读」。
+
+如果实现了 `__set__`，它就变成数据描述符，优先级高于实例字典，那么每次读取都会强制走 `__get__`，缓存永远读不到，每次都重新计算，`cached_property` 就退化成普通 `property` 了。
+
+```python
+class cached_property:
+    def __init__(self, func):
+        self.func = func
+        self.attrname = None
+
+    def __set_name__(self, owner, name):
+        self.attrname = name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self
+        value = self.func(obj)
+        obj.__dict__[self.attrname] = value   # 缓存到实例字典
+        return value
+        # 注意：故意不写 __set__，保持非数据描述符
+
+class Circle:
+    def __init__(self, r):
+        self.r = r
+
+    @cached_property
+    def area(self):
+        print("计算中...")
+        return 3.14159 * self.r ** 2
+
+c = Circle(2)
+print(c.area)    # 第一次：打印"计算中..."再输出结果
+print(c.area)    # 第二次：直接读缓存，不再打印"计算中..."
+```
+
+预期输出：
+
+```
+计算中...
+12.56636
+12.56636
+```
+
+「计算中...」只出现一次，证明第二次读取命中了实例字典里的缓存。标准库 `functools.cached_property` 正是这样实现的。
+
+⚠️ 注意：使用 `cached_property` 的类必须有 `__dict__`（不能是纯 `__slots__` 且没留 `__dict__` 的类），否则没地方存缓存。
 
 3. **`__set_name__` 是什么时候被调用的？** 如果你的描述符不写 `__set_name__`，有什么替代方案？
 
+**参考答案**
+
+`__set_name__(self, owner, name)` 在**所属类被创建时**自动调用（Python 3.6+）。具体时机：类体执行完、`type.__new__` 造出类对象的过程中，会遍历类属性，对每个实现了 `__set_name__` 的描述符调用一次，把「宿主类 owner」和「属性名 name」告诉它。每个描述符只调用一次，发生在任何实例创建之前。它的作用是让描述符知道自己在类里叫什么，从而能用 `_{name}` 之类的私有名去实例字典里存值。
+
+不写 `__set_name__` 的替代方案：
+
+- **构造时显式传名字**：`name = TypeChecked('name', str)`，把属性名作为参数传给描述符。缺点是名字要写两遍，改名时容易漏改、不同步。
+- **用元类统一设置**：在元类 `__new__` 里遍历属性，手动给每个描述符 `desc.name = key`，相当于自己实现 `__set_name__` 的逻辑。
+- **访问时动态推断**：在 `__get__`/`__set__` 里遍历 `obj.__dict__` 或类的属性反查名字，但低效又别扭，不推荐。
+
+💡 提示：`__set_name__` 是官方提供的「自动告知名字」机制，最省心；只有需要兼容 3.6 以前版本时才考虑显式传名。
+
 4. **Django 的 `Model.field` 和 SQLAlchemy 的 `Column` 都用了描述符**，试想它们是如何通过描述符将数据库值映射到 Python 属性的。
 
+**参考答案**
+
+它们把「字段」做成描述符挂在模型类上，利用 `__get__`/`__set__` 在「Python 属性」和「数据库值」之间做双向转换与追踪。关键要分**实例访问**和**类访问**两种情形：
+
+- **实例访问（`user.age`）——取值/转换**：`__get__` 从实例的状态容器（如 SQLAlchemy 的 `obj.__dict__` / `_sa_instance_state`，Django 的 `obj.__dict__`）里取出原始值，必要时做类型转换（数据库的字符串/整数 → Python 的 `datetime`、`Decimal`、枚举等），再返回。若值还没从数据库加载，可触发懒加载。
+- **实例赋值（`user.age = 30`）——校验/标脏**：`__set__` 先做类型/约束校验和转换，把值存进实例状态，并**标记该字段为「已修改」（dirty）**。这样 ORM 在 `flush`/`save` 时知道哪些列需要写回数据库，只更新变化的字段。
+- **类访问（`User.age`）——返回查询表达式**：当 `obj is None`（通过类而非实例访问）时，`__get__` 返回的不是值，而是一个「可参与运算的表达式对象」（SQLAlchemy 的 `InstrumentedAttribute`）。于是 `User.age > 18` 不是真的比较，而是**构造出一段 SQL 条件**，供 `filter()` 使用。
+
+一句话：**描述符让「读属性＝取/转换数据库值」「写属性＝校验并记录变更」「类上访问属性＝生成 SQL 表达式」三件事统一在一个字段对象里**，这正是 ORM 用起来像普通对象、底层却能操作数据库的核心机制。
+
+💡 提示：Django、SQLAlchemy 均为第三方库，实现细节随版本变化；理解时抓住「实例访问管数据、类访问管查询」这条主线即可。
+
 5. **如果一个类同时有 `__slots__` 和描述符**，描述符的 `__set__` 会被调用吗？为什么？
+
+**参考答案**
+
+**会。** 而且要点是：**`__slots__` 本身就是靠描述符实现的**。声明 `__slots__ = ('x',)` 时，Python 会在类上为 `x` 创建一个「成员描述符」（`member_descriptor`，属于数据描述符）。给 `obj.x` 赋值时，调用的正是这个描述符的 `__set__`——值被存进预留的槽位，而不是实例 `__dict__`（slotted 类根本没有 `__dict__`）。所以「slots + 描述符」不是冲突，而是 slots 离不开描述符。
+
+```python
+class Slotted:
+    __slots__ = ('x',)
+
+print(type(Slotted.__dict__['x']).__name__)   # slot 本身就是描述符
+s = Slotted()
+s.x = 10                                       # 调用 slot 描述符的 __set__
+print(s.x)
+print(hasattr(s, '__dict__'))                  # False：没有实例字典
+
+class Desc:
+    def __get__(self, obj, objtype=None):
+        return "d"
+    def __set__(self, obj, value):
+        pass
+
+try:
+    class Bad:
+        __slots__ = ('x',)
+        x = Desc()        # 自定义描述符与同名 slot 冲突
+except ValueError as e:
+    print("ValueError:", e)
+```
+
+预期输出：
+
+```
+member_descriptor
+10
+False
+ValueError: 'x' in __slots__ conflicts with class variable
+```
+
+需要注意一个限制：**同一个名字不能既是 slot 又是类级自定义描述符**，否则定义类时就抛 `ValueError`（如上）。因此若想在 slotted 类里用自定义描述符，要么让它管理**别的**名字、把值存进某个 slot，要么干脆不用 `__slots__`。另外，自定义描述符里常见的 `obj.__dict__[name] = value` 写法在纯 slotted 类上会失败（没有 `__dict__`），需改用槽位存储。
+
+⚠️ 注意：本章 5.2 的 `ValidatedSlot` 示例用了 `obj.__dict__`，那只适用于「带 `__dict__` 的类」；真正纯 `__slots__` 的类要换成槽位或 `object.__setattr__` 来存值。

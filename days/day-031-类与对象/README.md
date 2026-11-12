@@ -429,10 +429,200 @@ class Library:
 ## 💡 思考题
 
 1. Python 中为什么需要 `__new__` 和 `__init__` 两个方法？`__new__` 在什么场景下必须重写？
+
+**参考答案**
+
+因为"**创建对象**"和"**初始化对象**"是两件事：`__new__` 是真正的构造器，接收类 `cls`，负责创建并返回实例；`__init__` 接收已创建好的实例 `self`，只负责设置属性。实例化时先 `__new__` 后 `__init__`（正文 2.4 节的流程图）。分开后，开发者可以在"对象诞生之前"做控制，而日常初始化逻辑不受影响。
+
+**必须重写 `__new__` 的典型场景**：
+
+- **子类化不可变类型**（`int`、`str`、`tuple`、`frozenset`）：值在创建那一刻就定死了，`__init__` 里改不了，只能在 `__new__` 里把值传给 `super().__new__`；
+- **单例模式 / 实例缓存**：控制"是否真的创建新对象"，返回已有实例；
+- 需要返回别的类的实例等元编程场景。
+
+```python
+class Singleton:
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)  # 只创建一次
+        return cls._instance
+
+    def __init__(self, value):
+        self.value = value
+
+
+a = Singleton(1)
+b = Singleton(2)
+print(a is b)      # True，同一个实例
+print(a.value)     # 2，注意 __init__ 每次都会执行
+
+
+# 子类化不可变类型：必须在 __new__ 里传值
+class PositiveInt(int):
+    def __new__(cls, value):
+        if value <= 0:
+            raise ValueError('必须是正数')
+        return super().__new__(cls, value)
+
+
+print(PositiveInt(5) + 1)  # 6
+```
+
+预期输出：
+
+```text
+True
+2
+6
+```
+
+⚠️ 注意：单例例子里 `__init__` 每次实例化仍会执行，所以 `a.value` 被第二次调用改成了 2；若不想重复初始化，需在 `__init__` 里加"已初始化"标记。
+
 2. 如果 `__eq__` 没有定义，两个属性相同的对象用 `==` 比较会返回什么？为什么？
+
+**参考答案**
+
+返回 **`False`**。没定义 `__eq__` 时，`==` 沿用 `object` 的默认实现——比较**身份**（identity），即"是不是内存里的同一个对象"，等价于 `is`。Python 无法替你猜"哪些属性算相等"，所以默认采取最保守的语义；想按内容比较，必须自己定义 `__eq__`（如正文 4.2 节按标题+作者判断）。
+
+```python
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+p1 = Point(1, 2)
+p2 = Point(1, 2)
+print(p1 == p2)   # False：默认比较身份（是否同一对象）
+print(p1 is p2)   # False
+p3 = p1
+print(p1 == p3)   # True：同一个对象
+```
+
+预期输出：
+
+```text
+False
+False
+True
+```
+
+💡 提示：一旦定义了 `__eq__`，Python 会把类的 `__hash__` 置为 `None`（实例变得不可哈希，不能进 set/dict 键），除非你同时显式定义 `__hash__`——这是为了保证"相等的对象哈希值必须相同"的约定。
+
 3. 类变量和实例变量在内存中是如何分布的？修改类变量会影响所有实例吗？
+
+**参考答案**
+
+**分布**：类变量存放在**类对象的 `__dict__`** 里，只有一份，所有实例共享；实例变量存放在**每个实例自己的 `__dict__`** 里，各存各的。读取属性时先查实例的 `__dict__`，找不到再沿类（及父类）的 `__dict__` 找。
+
+**"修改"要分三种情况**：
+
+- **通过类赋值**（`Dog.tricks = ...`）：改的是那份共享数据，所有"没有同名实例属性"的实例都会看到变化；
+- **通过实例赋值**（`a.tricks = ...`）：不会动类变量，而是在 a 自己的 `__dict__` 里新建一个同名属性，把类变量"遮蔽"掉，只影响 a；
+- **原地修改可变类变量**（`a.tricks.append(...)`）：最危险——没有赋值发生，动的是共享的那个列表，所有实例都被连带。
+
+```python
+class Dog:
+    tricks = []           # 类变量：可变对象，所有实例共享
+
+    def __init__(self, name):
+        self.name = name  # 实例变量：各自独有
+
+
+a, b = Dog('A'), Dog('B')
+a.tricks.append('sit')    # 原地修改 → 动的是共享列表
+print(b.tricks)           # ['sit'] 被"连带"了
+
+Dog.tricks = []           # 通过类修改 → 所有实例看到新列表
+print(a.tricks, b.tricks)
+
+a.tricks = ['roll']       # 通过实例赋值 → 新建实例属性，遮蔽类变量
+print(a.tricks, b.tricks)
+print(Dog.tricks)         # 类变量本身没变
+```
+
+预期输出：
+
+```text
+['sit']
+[] []
+['roll'] []
+[]
+```
+
+💡 提示：这就是"不要用可变对象（列表/字典）当类变量默认值"的原因；需要每实例一份的数据，应放进 `__init__` 用 `self.xxx = []` 初始化。
+
 4. 设计模式中的「工厂模式」和普通类的 `__init__` 方法有什么区别？
+
+**参考答案**
+
+两者解决的问题不同：
+
+- **`__init__`**：只负责初始化"**这一个类**"的实例。调用 `Dog(...)` 时类已经定死了，`__init__` 无法决定"要不要换成别的类"。
+- **工厂模式**：把"创建哪个类、怎么创建"的逻辑封装进一个函数/方法，调用方只提需求（如 `'dog'`），不接触具体类名。工厂可以**按参数选择不同子类**、返回缓存实例、或执行多步组装，调用方与具体实现解耦——新增种类时只改工厂，不改调用代码。
+
+```python
+class Dog:
+    def speak(self):
+        return 'Woof'
+
+
+class Cat:
+    def speak(self):
+        return 'Meow'
+
+
+def animal_factory(kind):
+    """工厂：根据参数决定创建哪个类的实例"""
+    kinds = {'dog': Dog, 'cat': Cat}
+    if kind not in kinds:
+        raise ValueError(f'未知动物: {kind}')
+    return kinds[kind]()
+
+
+for kind in ('dog', 'cat'):
+    print(animal_factory(kind).speak())
+```
+
+预期输出：
+
+```text
+Woof
+Meow
+```
+
+💡 提示：Python 里不必照搬 Java 式的"工厂类"，一个函数就够；类方法形式的"替代构造器"（如 `datetime.fromtimestamp()`、`dict.fromkeys()`）也是工厂思想的常见落地。
+
 5. 如果一个类没有定义 `__str__`，调用 `print(obj)` 会怎么样？底层是怎么 fallback 的？
+
+**参考答案**
+
+`print(obj)` 会先调用 `str(obj)`，而 `str()` 的查找链是：**先找 `__str__`，没有就退回 `__repr__`，再没有就用 `object` 的默认 `__repr__`**——输出形如 `<__main__.A object at 0x...>`（类名 + 内存地址）。所以没定义 `__str__` 不会报错，只是显示效果取决于有没有 `__repr__`。
+
+```python
+class A:
+    pass
+
+
+class B:
+    def __repr__(self):
+        return 'B(自定义 repr)'
+
+
+print(A())   # <__main__.A object at 0x...>，地址每次运行不同
+print(B())   # B(自定义 repr) —— 没有 __str__ 时退回 __repr__
+```
+
+预期输出（A 的地址值每次运行不同）：
+
+```text
+<__main__.A object at 0x000001F103622210>
+B(自定义 repr)
+```
+
+这也解释了正文 4.3 节的建议：**至少实现 `__repr__`**——它既能服务调试，又能在缺 `__str__` 时兜底；反过来只写 `__str__` 则不会惠及 `repr()` 和容器内的元素显示（列表打印元素用的是 `repr`）。
 
 ---
 

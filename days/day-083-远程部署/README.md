@@ -436,7 +436,268 @@ def deploy_with_retry(deployer, package, version):
 ## 六、思考题
 
 1. **蓝绿部署和滚动更新各有什么优缺点？** 在什么场景下选择哪种？
+
+**参考答案**
+
+**蓝绿部署（Blue-Green）**：准备两套完整环境，Blue 跑当前生产版本，Green 部署新版本；Green 测试通过后，在负载均衡/路由处把流量**一次性整体**从 Blue 切到 Green。
+
+- 优点：切换瞬间完成；**回滚极快**（流量切回 Blue 即可，旧环境原封不动）；新版本先在隔离环境完整验证，上线风险低；不存在新旧混跑。
+- 缺点：要**双倍资源**（两套完整环境）；数据库 schema 变更棘手（两套版本可能要兼容同一个库）；切换是"全量"的，出问题影响面大（虽然回滚快）。
+- 适用：资源充足、对上线安全性/快速回滚要求高、无状态或 DB 兼容的服务、大版本发布。
+
+**滚动更新（Rolling Update）**：逐批替换实例（如每次 1～2 台），摘流量→更新→健康检查→加回，再下一批，直到全部变成新版本。
+
+- 优点：**省资源**（无需双倍环境）；渐进发布，出问题只影响一小部分，可中途暂停。
+- 缺点：发布期间**新旧版本共存**（要求 API/DB 向前向后兼容）；整体耗时长；回滚要反向再滚一遍，比蓝绿慢。
+- 适用：集群规模大、资源有限、能容忍短暂新旧共存、日常小步迭代（Kubernetes 默认策略）。
+
+一句话选型：**要"秒级切换 + 秒级回滚"且资源够 → 蓝绿；要省资源、渐进小步 → 滚动；想先用真实小流量验证 → 金丝雀**（先导 5% 流量到新版本，观察无异常再扩大）。
+
+💡 提示：无论哪种策略，数据库迁移都要"先扩展后收缩"（expand-contract）——先加兼容字段，等新旧版本都稳定后再删旧字段，否则新旧共存或回滚时会因 schema 不兼容报错。
+
 2. **如何设计一个支持多环境（dev/staging/prod）的部署系统？** 需要考虑哪些配置差异？
+
+**参考答案**
+
+设计要点：
+
+1. **配置分层/分离**：把"配置"抽成独立一层，每个环境一套（dev/staging/prod），**代码同一份、配置各不同**。常见做法：基础配置 + 各环境覆盖，或独立配置文件/配置中心（Consul、Nacos、Apollo）。
+2. **环境选择机制**：用环境变量（如 `DEPLOY_ENV`）或命令行参数指定目标环境，**默认落到最低风险的 dev**，防止误部署生产。
+3. **常见配置差异项**：
+   - 机器列表 / 副本数（dev 1 台，prod 多台）
+   - 调试开关、日志级别（dev DEBUG，prod INFO/WARN）
+   - 数据库/缓存/第三方服务的地址与凭证
+   - 域名、端口、资源限制、限流阈值
+   - 功能开关（feature flag，灰度用）
+4. **密钥管理**：密码/密钥/证书**绝不硬编码、不进 Git**，用环境变量、密钥管理（Vault、K8s Secret、云 KMS）在运行时注入，并按环境区分权限。
+5. **一致性与隔离**：同一份部署脚本、同一个构建产物（build once, deploy many），只换配置；环境间网络隔离，prod 加审批/灰度。
+
+小例子（已验证，stdlib 多环境配置 + 运行时注入密钥）：
+
+```python
+import os
+from dataclasses import dataclass, replace
+
+@dataclass
+class DeployConfig:
+    env: str
+    hosts: list
+    app_dir: str
+    debug: bool
+    replicas: int
+    db_url: str = ""   # 敏感信息运行时注入，不硬编码
+
+# 各环境静态配置（差异：机器列表、调试开关、副本数、部署路径等）
+CONFIGS = {
+    "dev":     DeployConfig("dev",     ["dev-1"],                    "/opt/app", True,  1),
+    "staging": DeployConfig("staging", ["stage-1", "stage-2"],       "/opt/app", False, 2),
+    "prod":    DeployConfig("prod",    ["prod-1", "prod-2", "prod-3"], "/srv/app", False, 3),
+}
+
+def load_config():
+    # 环境由环境变量 DEPLOY_ENV 选择，默认 dev（防止误部署到生产）
+    env = os.environ.get("DEPLOY_ENV", "dev")
+    if env not in CONFIGS:
+        raise ValueError(f"未知环境: {env}")
+    # 敏感信息运行时从环境变量/密钥管理注入，返回副本以免污染静态配置
+    return replace(CONFIGS[env], db_url=os.environ.get("DB_URL", ""))
+
+# 模拟通过环境变量选择 prod
+os.environ["DEPLOY_ENV"] = "prod"
+os.environ["DB_URL"] = "postgres://prod-db:5432/app"   # 由密钥管理注入，不硬编码
+cfg = load_config()
+print("当前环境:", cfg.env)
+print("目标主机:", cfg.hosts)
+print("调试模式:", cfg.debug)
+print("副本数:", cfg.replicas)
+print("DB URL 来自环境变量:", cfg.db_url)
+
+# 切到 dev 验证配置隔离
+os.environ["DEPLOY_ENV"] = "dev"
+print("切到 dev 后主机:", load_config().hosts, "调试:", load_config().debug)
+```
+
+预期输出：
+
+```
+当前环境: prod
+目标主机: ['prod-1', 'prod-2', 'prod-3']
+调试模式: False
+副本数: 3
+DB URL 来自环境变量: postgres://prod-db:5432/app
+切到 dev 后主机: ['dev-1'] 调试: True
+```
+
+同一份代码，靠 `DEPLOY_ENV` 切换环境、靠环境变量注入密钥，dev/prod 配置互不污染。
+
+💡 提示：坚持"一次构建、多环境部署"——产物（tar.gz/镜像）在各环境应是同一个，只换配置；别为每个环境重新打包，否则无法保证"staging 测过的就是 prod 跑的"。
+
 3. **部署失败后的回滚策略有哪些？** 如何保证回滚过程中服务不中断？
+
+**参考答案**
+
+常见回滚策略：
+
+1. **指针/软链切回**：版本化 `releases/vN` + `current` 软链，回滚 = 把 `current` 指回旧 release 目录再 reload，**无需重新上传，秒级完成**（最常用）。
+2. **蓝绿切回**：蓝绿部署时把流量切回旧环境（Blue），旧环境原封不动，回滚最快。
+3. **反向滚动**：滚动更新时，把已更新到新版本的实例逐批换回旧版本，较慢但省资源。
+4. **重新部署旧产物**：保留历史构建产物（tar.gz / 镜像 tag），回滚即重新部署上一个稳定版本；容器化环境直接改 image tag 最方便。
+5. **数据库/配置回滚**：代码回滚 ≠ 数据回滚。DB 迁移要有 down 脚本或备份恢复，配置变更也要版本化——这是回滚里最难的一环。
+
+如何保证回滚过程服务不中断：
+
+- **多实例 + 负载均衡**：先把要回滚的实例从 LB 摘除（draining 排空在途连接），回滚并健康检查后再加回；其余实例继续服务，用户无感。
+- **原子切换**：软链用 `ln -sfn` 这类原子操作，避免"半新半旧"的中间态被请求看到。
+- **优雅关闭**：旧进程收 SIGTERM 后处理完在途请求再退出（见第 4 题），别 `kill -9`。
+- **回滚也要健康检查**：回滚后确认旧版本健康再加回流量；若回滚也失败，立即告警转人工。
+- **兼容性兜底**：DB 用 expand-contract、API 向前向后兼容，让新旧共存与回滚都不报错。
+
+💡 提示：回滚应是"提前演练过的常规操作"，不是出事才临时想办法——定期在 staging 演练回滚，保留历史产物与备份，并记录每次回滚的原因便于复盘。
+
 4. **如何实现零停机部署？** 提示：考虑 connection draining 和 graceful shutdown。
+
+**参考答案**
+
+零停机的核心：**任何时刻都有健康实例对外服务，切换/重启不丢用户请求。** 关键机制：
+
+1. **多实例 + 负载均衡**：至少 2 个实例挂在 LB 后，更新其中一个时其余照常服务。
+2. **连接排空（connection draining）**：更新某实例前，先把它从 LB 摘除（标记不健康/权重置 0），LB 不再发新请求给它，但**允许已有连接处理完**。
+3. **优雅关闭（graceful shutdown）**：给进程发 SIGTERM，进程收到后：停止接收新请求 → 处理完在途请求 → 关闭资源 → 退出；设一个超时（如 30s），超时才 SIGKILL，绝不一上来就 `kill -9`。
+4. **健康检查门禁**：新实例启动并通过就绪/健康检查后**才加回 LB**；不通过就不加回并触发回滚。
+5. **分批滚动 / 蓝绿**：配合第 1 题的策略逐批或整体切换，保证全程"剩余健康实例足够"。
+
+单实例更新的典型时序：
+
+```text
+从 LB 摘除(draining) → 等在途请求完成 → SIGTERM 优雅退出
+   → 部署新版本 → 启动 → 健康检查通过 → 加回 LB → 下一台
+```
+
+小例子（已验证，stdlib 模拟"SIGTERM → 停收新请求 → 完成在途 → 安全退出"）：
+
+```python
+import signal
+
+class GracefulServer:
+    def __init__(self):
+        self.shutting_down = False
+        self.active = 0          # 正在处理中的请求数
+        self.done = []
+        signal.signal(signal.SIGTERM, self._on_sigterm)
+
+    def _on_sigterm(self, signum, frame):
+        print("收到 SIGTERM → 停止接收新请求，进入 draining")
+        self.shutting_down = True
+
+    def handle(self, name):
+        if self.shutting_down:
+            print(f"  拒绝新请求 {name}（负载均衡已摘除本实例）")
+            return
+        self.active += 1
+        print(f"  处理 {name}...")
+        self.active -= 1          # 模拟处理完成
+        self.done.append(name)
+
+    def shutdown(self):
+        # 优雅关闭：等在途请求全部处理完再退出
+        while self.active > 0:
+            print(f"  等待 {self.active} 个在途请求完成...")
+        print(f"优雅关闭完成，共处理 {len(self.done)} 个请求，可安全退出")
+
+s = GracefulServer()
+s.handle("req-1")
+s.handle("req-2")
+signal.raise_signal(signal.SIGTERM)   # 部署系统发来 SIGTERM（Windows 下也能触发 Python 处理器）
+s.handle("req-3")                     # 新请求被拒绝
+s.shutdown()
+print("已处理:", s.done)
+```
+
+预期输出：
+
+```
+  处理 req-1...
+  处理 req-2...
+收到 SIGTERM → 停止接收新请求，进入 draining
+  拒绝新请求 req-3（负载均衡已摘除本实例）
+优雅关闭完成，共处理 2 个请求，可安全退出
+已处理: ['req-1', 'req-2']
+```
+
+收到 SIGTERM 后不再接新请求（req-3 被拒），已接的 req-1/req-2 处理完才退出——这就是 graceful shutdown + draining 的最小骨架。
+
+💡 提示：真实服务还要处理长连接/WebSocket/后台任务，draining 超时要覆盖最长请求；Kubernetes 里用 `preStop` hook + `readinessProbe` + `terminationGracePeriodSeconds` 配合实现。
+
 5. **CI/CD 流水线中，Python 自动化部署脚本应该放在哪个阶段？** 如何与 Jenkins/GitHub Actions 集成？
+
+**参考答案**
+
+**放在哪个阶段**：典型流水线是 `提交 → 构建 → 测试 → 打包产物 →（部署 staging → 集成/冒烟测试）→ 部署 prod → 部署后验证`。Python 自动化部署脚本属于 **CD（Deploy/Release）阶段**，即"构建 + 测试 + 产物"都通过**之后**才执行。CI 负责"构建并验证"，CD 负责"把产物送到目标环境"，别把部署混进构建/测试阶段。部署脚本本身要版本化进仓库（如 `deploy/`），由流水线调用，目标环境用环境变量/参数传入。
+
+**GitHub Actions 集成示例**（示意 YAML）：
+
+```yaml
+name: deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt
+      - run: pytest            # CI：测试必须通过
+      - run: python build.py   # 打包产物
+      - uses: actions/upload-artifact@v4
+        with: { name: app, path: builds/app.tar.gz }
+  deploy-prod:
+    needs: build-test          # 构建测试成功后才部署
+    runs-on: ubuntu-latest
+    environment: production    # 可配置人工审批/保护规则
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: app }
+      - run: pip install fabric paramiko
+      - run: python deploy/deploy.py   # CD：调用 Python 部署脚本
+        env:
+          DEPLOY_ENV: prod
+          SSH_KEY: ${{ secrets.SSH_KEY }}   # 密钥从 Secrets 注入
+```
+
+**Jenkins 集成示例**（示意 Jenkinsfile）：
+
+```groovy
+pipeline {
+  agent any
+  stages {
+    stage('Build & Test') {
+      steps {
+        sh 'pip install -r requirements.txt'
+        sh 'pytest'
+        sh 'python build.py'
+      }
+    }
+    stage('Deploy to Prod') {
+      steps {
+        // 凭证用 Jenkins Credentials 注入，不硬编码
+        withCredentials([sshUserPrivateKey(credentialsId: 'prod-ssh', keyFileVariable: 'KEY')]) {
+          sh 'DEPLOY_ENV=prod python deploy/deploy.py --key $KEY'
+        }
+      }
+    }
+  }
+}
+```
+
+集成关键点：
+
+- **门禁**：用 `needs`/stage 依赖，测试通过才进部署。
+- **审批保护**：prod 用 `environment`/人工审批，防止误部署。
+- **密钥注入**：用 Secrets/Credentials，绝不写进脚本或日志。
+- **幂等 + 可回滚**：部署脚本要幂等、支持回滚，流水线失败时能自动/手动触发回滚。
+
+💡 提示：上面 YAML/Jenkinsfile 是示意片段，实际字段以所用平台版本为准；被调用的 `deploy.py` 就是第 2/3 题里那套 Fabric/Paramiko 部署逻辑，流水线只负责"在正确的阶段、带正确的环境和密钥"去调用它。

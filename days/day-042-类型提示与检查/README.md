@@ -330,13 +330,157 @@ class GitHubClient:
 
 1. **Optional 的含义**：`Optional[str]` 和 `Union[str, None]` 是完全等价的吗？`str | None` 和它们有什么区别（Python 版本相关）？
 
+**参考答案**
+
+**`Optional[str]` 和 `Union[str, None]` 完全等价**——`Optional[X]` 在 `typing` 里就是直接定义成 `Union[X, None]` 的别名，二者产生的对象、语义、检查行为都一模一样。注意 `Optional` 不是「可选参数」的意思，而是「值可能是 X，也可能是 None」。
+
+`str | None`（Python 3.10+ 的 `|` 写法）在**类型语义上**也和它们等价，区别主要在语法和版本：
+
+- **版本要求**：`Optional`/`Union` 从 3.5 起就能用；`X | Y` 这种「类型联合表达式」要到 **3.10** 才在运行时支持。在 3.9 及以下直接写 `str | None` 会报 `TypeError`。
+- **产生的对象不同**：`Union[str, None]` 是 `typing.Union` 对象，`str | None` 是新的 `types.UnionType` 对象；但类型检查器把它们视为同一类型。
+- **`isinstance` 支持**：3.10+ 可以 `isinstance(x, str | None)`（实际等价于检查 str，None 需另判），而 `isinstance(x, Optional[str])` 会报错——`typing` 的联合不能直接用于 isinstance。
+- **提前使用的技巧**：在文件顶部加 `from __future__ import annotations`，注解会被当成字符串延迟求值，于是 3.7+ 也能在「注解位置」写 `str | None`（但运行时主动求值仍需 3.10+）。
+
+💡 提示：新项目（3.10+）优先用 `str | None`，更简洁；要兼容旧版本就用 `Optional[str]`。三者表达的类型含义没有差别。
+
 2. **类型擦除**：Python 类型提示在运行时会被擦除，那么 `isinstance(x, list[int])` 会怎样？为什么？
+
+**参考答案**
+
+会**抛出 `TypeError`**，而不是返回 True/False。
+
+```python
+x = [1, 2, 3]
+print(isinstance(x, list))        # True：只能检查外层容器
+try:
+    isinstance(x, list[int])      # 参数化泛型不能用于 isinstance
+except TypeError as e:
+    print("TypeError:", e)
+```
+
+预期输出：
+
+```
+True
+TypeError: isinstance() argument 2 cannot be a parameterized generic
+```
+
+原因：`list[int]` 是一个「参数化泛型」（`types.GenericAlias`），它携带的「元素是 int」这条信息**只供静态检查器使用，运行时被擦除**。Python 的列表在运行时并不记录每个元素的类型，`isinstance` 也无从逐个校验，所以解释器干脆禁止把参数化泛型当作第二个参数，直接报错。
+
+正确做法：
+
+- 只检查外层容器：`isinstance(x, list)`。
+- 若确实要校验元素类型，得自己遍历：`all(isinstance(i, int) for i in x)`，或交给 pydantic 这类运行时校验库。
+
+⚠️ 注意：未参数化的 `list`、`dict` 可以用于 isinstance；带方括号的 `list[int]`、`dict[str, int]` 不行。`typing.List[int]` 同样会报错。
 
 3. **TypeVar vs Protocol**：假设你想写一个函数，可以接受任何有 `.speak()` 方法的对象。你会用 `TypeVar(bound=...)` 还是 `Protocol`？为什么？
 
+**参考答案**
+
+优先用 **`Protocol`**（协议/结构化类型）。因为需求是「**只要有 `.speak()` 方法就行**」，这正是鸭子类型，而 Protocol 就是「给鸭子类型加上静态契约」的工具——它**不要求对象继承任何基类**，只要结构上长得对（有匹配的方法签名）就兼容。
+
+```python
+from typing import Protocol
+
+class Speaker(Protocol):
+    def speak(self) -> str: ...
+
+class Dog:                      # 没有继承 Speaker
+    def speak(self) -> str:
+        return "Woof!"
+
+class Robot:                    # 也没有继承 Speaker
+    def speak(self) -> str:
+        return "Beep!"
+
+def make_speak(s: Speaker) -> str:
+    return s.speak()
+
+print(make_speak(Dog()))
+print(make_speak(Robot()))
+```
+
+预期输出：
+
+```
+Woof!
+Beep!
+```
+
+`Dog`、`Robot` 都没继承 `Speaker`，但类型检查器会认可它们，因为结构匹配。若改用 `TypeVar("T", bound=Animal)`，就**强制所有传入对象必须是 `Animal` 的子类**（名义继承），第三方那个恰好有 `.speak()` 却没继承 `Animal` 的类会被误判为不合法——这与「任何有 speak 的对象」的需求不符。
+
+什么时候用 `TypeVar(bound=...)`？当你**既要约束能力、又要在返回值里保留精确类型**时。比如 `def f(x: T) -> T`，传入 `Dog` 返回的还是 `Dog` 而非 `Animal`。两者还能结合：`T = TypeVar("T", bound=Speaker)`，既有结构化约束又保留具体类型。
+
+💡 提示：Protocol 默认只做静态检查；若想在运行时用 `isinstance` 判断，需给协议加 `@runtime_checkable`（且它只检查方法是否存在，不校验签名）。
+
 4. **协变与逆变**：`List[Dog]` 是 `List[Animal]` 的子类型吗？`Callable[[Animal], None]` 和 `Callable[[Dog], None]` 之间有什么类型关系？
 
+**参考答案**
+
+先记住三个词（设 `Dog` 是 `Animal` 的子类）：**协变**＝方向相同（子类→父类照搬），**逆变**＝方向相反，**不变**＝谁也不是谁的子类型。
+
+**`List[Dog]` 不是 `List[Animal]` 的子类型——`list` 是不变的。** 原因是列表可变：假如允许把 `List[Dog]` 当成 `List[Animal]` 用，那调用方就能往里 `append(Cat())`（Cat 也是 Animal），于是原本「只装狗」的列表混进了猫，类型安全被破坏。所以 mypy 会拒绝这种赋值。想要协变，得用**只读**容器，如 `Sequence[Dog]` 是 `Sequence[Animal]` 的子类型（不能 append，就不会被污染）。
+
+**`Callable[[Animal], None]` 是 `Callable[[Dog], None]` 的子类型——参数是逆变的。** 直觉：一个「能处理任何 Animal」的函数，当然能安全地用在「只需要处理 Dog」的场合（给它 Dog 它也能处理）；反过来，「只会处理 Dog」的函数不能用在「需要处理任意 Animal」的场合（来一只 Cat 就崩了）。所以「接受更宽类型」的函数，可以替换「接受更窄类型」的函数，方向与子类关系相反，故称逆变。
+
+小结口诀：
+
+- **返回值协变**：函数返回 `Dog` 可以当作返回 `Animal` 用（更具体→更通用，安全）。
+- **参数逆变**：函数接受 `Animal` 可以当作接受 `Dog` 用（更通用→更具体，安全）。
+- **可变容器不变**：`list[Dog]` 与 `list[Animal]` 互不兼容；只读的 `Sequence` 才协变。
+
+💡 提示：这套规则正是 `typing` 里 `Generic` 协变/逆变参数（`covariant=True` / `contravariant=True`）的由来，也是为什么 `Callable` 的参数位和返回位方向相反。
+
 5. **运行时 vs 静态**：类型提示能被用作运行时验证吗？pydantic 是如何做到无需显式调用验证器的？
+
+**参考答案**
+
+**能，但默认不会自动发生。** Python 解释器本身在运行时忽略类型提示（只做静态检查用），不过注解并没有消失——它们被存在类/函数的 `__annotations__` 里，可以用 `typing.get_type_hints()` 取回。任何库都能在运行时读取这些注解，据此做校验。下面用标准库手写一个最简校验器，揭示原理：
+
+```python
+from typing import get_type_hints
+
+class User:
+    id: int
+    name: str
+
+print(User.__annotations__)          # 运行时仍能拿到注解
+print(get_type_hints(User))          # 解析成真实类型对象
+
+# 手写一个最简「运行时校验」，说明 pydantic 的原理
+def validate(cls, **kwargs):
+    hints = get_type_hints(cls)
+    for field, typ in hints.items():
+        value = kwargs[field]
+        if not isinstance(value, typ):
+            raise TypeError(f"{field} 期望 {typ.__name__}，得到 {type(value).__name__}")
+    return kwargs
+
+print(validate(User, id=1, name="Alice"))
+try:
+    validate(User, id="x", name="Bob")
+except TypeError as e:
+    print("校验失败:", e)
+```
+
+预期输出：
+
+```
+{'id': <class 'int'>, 'name': <class 'str'>}
+{'id': <class 'int'>, 'name': <class 'str'>}
+{'id': 1, 'name': 'Alice'}
+校验失败: id 期望 int，得到 str
+```
+
+pydantic 做的正是这件事的「工业级自动化」：
+
+- **类创建时读注解**：`BaseModel` 通过元类，在你定义 `class User(BaseModel)` 那一刻就读取所有字段注解，为每个字段**预先构建好校验器**（比每次临时 isinstance 更快、功能更强，支持类型强制转换、嵌套模型等）。
+- **实例化时自动触发**：它重写了 `__init__`，`User(id=1, name="Alice")` 一调用就自动跑校验，失败抛 `ValidationError`。所以你**不用显式调用任何验证函数**——校验被织进了对象的构造过程。
+
+一句话：**类型提示是「数据」，静态检查器和 pydantic 都是「读取这份数据的消费者」**；前者在开发期读，后者在运行期读，并把它变成自动校验。
+
+⚠️ 注意：pydantic 是第三方库，需先 `pip install pydantic`；它默认会做「宽松转换」（如把 `"1"` 转成 int），若要严格禁止转换可开启 strict 模式。
 
 ---
 

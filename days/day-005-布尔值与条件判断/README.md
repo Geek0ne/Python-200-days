@@ -751,11 +751,83 @@ if abs(a - 0.3) < 1e-9:
 
 1. **短路求值应用题**：为什么下面的代码不会报错？`result = [] and 1/0` 的结果是什么？
 
+**参考答案**
+
+不会报错，结果是 `[]`。关键在 `and` 的**短路求值**：先算左边，`[]` 是空列表、属于 Falsy，此时整个 `and` 的结果已经注定为「假」，Python 就直接返回左边这个 `[]`，**根本不去计算右边的 `1/0`**，自然也不会触发 `ZeroDivisionError`。
+
+```python
+result = [] and 1/0   # 左边 [] 为 Falsy，短路，右边不执行
+print(repr(result))   # []
+```
+
+预期输出：
+
+```
+[]
+```
+
+⚠️ 注意：`and`/`or` 返回的是「最后被计算的那个操作数本身」，不一定是 `True`/`False`。这里返回的是列表 `[]`，而不是布尔值。
+
 2. **布尔值运算题**：`True + True + True * False` 的值是多少？先不要运行，在脑中推算。
+
+**参考答案**
+
+值是 `2`。推算分两步：先按优先级算乘法（`*` 高于 `+`），`True * False` 即 `1 * 0 = 0`；再算加法 `True + True + 0` 即 `1 + 1 + 0 = 2`。因为 `bool` 是 `int` 的子类，`True` 当 `1`、`False` 当 `0` 参与算术。
+
+```python
+print(True + True + True * False)  # 先乘后加：1 + 1 + (1*0) = 2
+```
+
+预期输出：
+
+```
+2
+```
+
+💡 提示：结果是整数 `2` 而非布尔值。这类「拿布尔做算术」的写法可读性差，实际代码里应避免，这里只是帮助理解 `bool` 的本质。
 
 3. **链式比较题**：`1 == 1 == 1` 的结果是什么？`1 == 1 == 2` 呢？为什么？
 
+**参考答案**
+
+`1 == 1 == 1` 是 `True`，`1 == 1 == 2` 是 `False`。链式比较 `a == b == c` 等价于 `(a == b) and (b == c)`，中间的 `b` 只求值一次：
+
+- `1 == 1 == 1` → `(1==1) and (1==1)` → `True and True` → `True`
+- `1 == 1 == 2` → `(1==1) and (1==2)` → `True and False` → `False`
+
+```python
+print(1 == 1 == 1)  # True
+print(1 == 1 == 2)  # False
+```
+
+预期输出：
+
+```
+True
+False
+```
+
+⚠️ 注意：它**不是** `(1 == 1) == 2` 那种「先算前两个、再拿结果比第三个」的结合方式。链式比较是 Python 特有的语法，多数其他语言不支持。
+
 4. **Truthy/Falsy 题**：`bool("False")` 的结果是什么？解释原因。
+
+**参考答案**
+
+结果是 `True`。字符串的真假**只看它是否为空，与内容无关**：`"False"` 是一个长度为 5 的非空字符串，所以是 Truthy。只有空字符串 `""` 才是 Falsy。
+
+```python
+print(bool("False"))  # True —— 非空字符串都为真
+print(bool(""))       # False —— 只有空串为假
+```
+
+预期输出：
+
+```
+True
+False
+```
+
+这是初学者常踩的坑：以为字符串里写着 "False" 就代表假。其实 `"False"`、`"0"`、`"no"` 这些非空字符串全是 `True`。💡 提示：若想把 `"False"`/`"0"` 这类文本解析成真正的布尔值，需要自己写判断逻辑（如 `s.lower() in ("true", "1", "yes")`），不能直接 `bool(s)`。
 
 5. **代码审查题**：以下代码有什么问题？如何改进？
    ```python
@@ -764,6 +836,48 @@ if abs(a - 0.3) < 1e-9:
            if user.has_permission:
                do_something()
    ```
+
+**参考答案**
+
+问题在于**三层嵌套 if**（俗称「箭头形代码」）：每加一个条件就往右缩进一层，可读性差、难维护，想给某个条件补 `else` 分支时更是无从下手。这违背了「扁平优于嵌套」的 Python 之禅。
+
+改进一：用 `and` 把条件合并成一行。短路求值保证了安全——`user` 为 `None`/空时后面两个属性访问根本不会执行：
+
+```python
+class User:
+    def __init__(self, is_active, has_permission):
+        self.is_active = is_active
+        self.has_permission = has_permission
+
+def do_something():
+    print("执行操作")
+
+user = User(True, True)
+# 三个条件合并；短路保证 user 为空时不会访问其属性
+if user and user.is_active and user.has_permission:
+    do_something()
+```
+
+预期输出：
+
+```
+执行操作
+```
+
+改进二：如果这段逻辑在函数里，用**守卫子句**（不满足就提前 `return`），把嵌套「拉平」：
+
+```python
+def handle(user):
+    if not user:
+        return
+    if not user.is_active:
+        return
+    if not user.has_permission:
+        return
+    do_something()  # 走到这里说明三个条件都满足
+```
+
+两种写法都比三层嵌套清晰。💡 提示：经验法则是嵌套尽量不超过 3 层，一旦过深就考虑合并条件、守卫子句或拆分函数。
 
 ---
 

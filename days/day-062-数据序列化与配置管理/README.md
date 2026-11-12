@@ -391,10 +391,174 @@ cfg.update(env_overrides(os.environ))          # 环境变量最后盖一层
 ## 8. 思考题
 
 1. **JSON 为什么不支持 datetime 类型？** 如果你是 JSON 标准委员会成员，你会怎么设计解决这个问题？
+
+**参考答案**
+
+JSON 的设计目标是「最小的跨语言数据交换格式」，只有六种值类型（对象、数组、字符串、数字、布尔、null）。日期是个很「重」的概念：时区、历法、精度、格式约定在各语言里千差万别，一旦加入日期类型，就会破坏 JSON 的简单性和通用性——所以标准故意把它留白。
+
+如果我是委员会成员，我不会改核心类型，而是加一层**约定**：① 规定日期一律用 ISO 8601 字符串表示（如 `"2026-07-01T12:30:00"`）；② 用 JSON Schema 的 `format: "date-time"` 做校验；③ 需要强类型时用带标签的对象，如 `{"$date": "..."}`（MongoDB 的 Extended JSON 正是这么做的）。
+
+Python 里的落地方式就是本章讲的 `default=` / `cls=`：序列化时把 `datetime` 转成 `isoformat()` 字符串，反序列化时再用 `fromisoformat()` 还原：
+
+```python
+import json
+from datetime import datetime
+
+
+def encode_datetime(obj):
+    """遇到 datetime 就转成 ISO 8601 字符串，其他类型照常报错"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"无法序列化 {type(obj)}")
+
+
+data = {"event": "登录", "time": datetime(2026, 7, 1, 12, 30)}
+text = json.dumps(data, default=encode_datetime, ensure_ascii=False)
+print(text)
+
+restored = json.loads(text)                      # 读回来 time 还是字符串
+restored["time"] = datetime.fromisoformat(restored["time"])  # 手动还原
+print(restored["time"], type(restored["time"]).__name__)
+```
+
+预期输出：
+
+```text
+{"event": "登录", "time": "2026-07-01T12:30:00"}
+2026-07-01 12:30:00 datetime
+```
+
+JSON 层面日期始终是字符串，「类型」靠两端约定维护——这正是 JSON 保持简单的代价与智慧。
 2. **pickle 的安全性设计为什么如此糟糕？** 为什么要支持 `__reduce__` 这个接口？
+
+**参考答案**
+
+pickle 的定位是「序列化**任意** Python 对象」，包括自定义类的实例。要重建任意对象，就必须有一个通用协议：`__reduce__` 让类自己声明「用哪个可调用对象 + 哪些参数来重建我」。看一个无害的例子：
+
+```python
+import pickle
+
+
+class Point:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+    def __reduce__(self):
+        # 告诉 pickle：反序列化时「调用 Point(x, y)」来重建对象
+        return (Point, (self.x, self.y))
+
+
+data = pickle.dumps(Point(1, 2))
+p = pickle.loads(data)   # 这一步真的执行了 Point(1, 2) 这个调用
+print(p.x, p.y)
+```
+
+预期输出：
+
+```text
+1 2
+```
+
+关键在最后一行注释：`loads` 不是「解析数据」，而是**执行字节流里记录的函数调用**。把 `(Point, (1, 2))` 换成 `(os.system, ("恶意命令",))`，反序列化就变成任意命令执行——这就是危险的根源。
+
+所以 pickle 并非「设计失误」，而是**用安全性换表达力**：它诞生于进程间通信等可信场景，「数据即代码」在当时是合理的。为什么不删掉 `__reduce__`？因为删了它，大量自定义类型就无法序列化，整个生态会崩。官方的立场一直是：只 `loads` 自己生成的、可信的数据，文档里有醒目警告。
+
+⚠️ 注意：来自网络、上传文件、未知缓存的 pickle 数据一律不要 `loads`；对外交换数据用 JSON/msgpack，必须用 pickle 时可自定义 `Unpickler` 重写 `find_class` 做类型白名单。
 3. **YAML 的缩进规则和 Python 一样，那它有没有类似 PEP 8 的缩进规范？** 缩进多少个空格最合适？
+
+**参考答案**
+
+没有 PEP 8 那样的官方规范文档。YAML 规范只有两条硬性要求：**同一层级的缩进必须一致**；**只能用空格，禁止 Tab**（Tab 在不同编辑器里宽度不同，会导致解析歧义）。
+
+事实标准是 **2 个空格**：PyYAML 的 `dump` 默认输出 2 空格缩进，Kubernetes、Ansible、GitHub Actions 的官方文档也都用 2 空格。4 空格完全合法，但 YAML 配置动辄嵌套五六层，4 空格很快吃掉行宽，可读性反而下降。
+
+比「几个空格」更重要的是**项目内一致**：同一个文件里混用 2 和 4 会直接解析报错。团队约定一个值（推荐 2），再用编辑器的「显示空白字符」功能兜底即可。
+
+验证 PyYAML 的默认风格（需先 `pip install pyyaml`）：
+
+```python
+import yaml
+
+data = {"server": {"host": "localhost", "ports": [80, 443]}}
+print(yaml.dump(data, default_flow_style=False))
+```
+
+预期输出：
+
+```text
+server:
+  host: localhost
+  ports:
+  - 80
+  - 443
+```
+
+可以看到映射缩进 2 空格；列表项 `- 80` 与父键 `ports` 对齐——这是列表缩进的两种合法风格之一（另一种是再缩进一层），PyYAML 默认用前者。
 4. **如果一个配置文件中既有 YAML 的锚点别名，又有环境变量引用，解析时应该先处理哪个？** 为什么？
+
+**参考答案**
+
+**先处理锚点/别名，后处理环境变量。** 两者根本不在一个层面：锚点（`&`）/别名（`*`）是 YAML **语法**的一部分，由解析器（`safe_load`）在解析阶段展开，决定最终的数据结构；而 `${VAR}` 对 YAML 来说只是普通字符串，是**应用层**的约定，解析器根本不认识它。
+
+如果反过来——先做文本替换再解析 YAML——环境变量值里可能含有冒号、引号、换行等特殊字符，会破坏 YAML 结构，甚至注入新的锚点或标签，既是正确性问题也是安全问题。
+
+正确顺序：`safe_load` 解析（锚点此时已展开）→ 递归遍历得到的 dict/list → 只对叶子字符串做 `${VAR}` 替换。这样替换自然作用于所有引用了锚点的副本。完整示例（需先 `pip install pyyaml`）：
+
+```python
+import os
+import re
+import yaml
+
+os.environ["DB_HOST"] = "10.0.0.8"   # 模拟环境变量
+
+text = """
+defaults: &defaults
+  host: ${DB_HOST}
+  timeout: 30
+service_a:
+  <<: *defaults
+  name: a
+"""
+
+config = yaml.safe_load(text)        # 第 1 步：解析 YAML，锚点/别名此时已展开
+
+
+def expand(node):                    # 第 2 步：递归替换叶子字符串里的 ${VAR}
+    if isinstance(node, dict):
+        return {k: expand(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [expand(v) for v in node]
+    if isinstance(node, str):
+        return re.sub(r"\$\{(\w+)\}",
+                      lambda m: os.environ.get(m.group(1), m.group(0)),
+                      node)
+    return node
+
+
+config = expand(config)
+print(config["defaults"]["host"])
+print(config["service_a"]["host"])
+```
+
+预期输出：
+
+```text
+10.0.0.8
+10.0.0.8
+```
+
+`service_a` 通过合并键 `<<: *defaults` 继承了锚点内容，环境变量替换发生在解析之后，所以两处 `host` 都被正确替换。
 5. **msgpack 比 JSON 更紧凑，为什么没有替代 JSON 成为 Web API 的主流格式？** 有哪些关键限制？
+
+**参考答案**
+
+- **不可读**：msgpack 是二进制，`curl` 看不到响应内容、日志没法肉眼检查、配置不能手工编辑；JSON 是文本，任何编辑器都能打开。调试体验的差距是巨大的。
+- **浏览器不原生支持**：JavaScript 内置 `JSON.parse`，而 msgpack 需要额外的解码库并处理二进制（`ArrayBuffer`），前端接入成本高。Web API 的最大客户端就是浏览器，这一条几乎一票否决。
+- **生态惯性**：OpenAPI/Swagger、JSON Schema、API 网关、日志系统、CDN 缓存……整条工具链都默认 JSON。省 30%~40% 带宽的收益，不足以让整个生态搬家。
+- **带宽并非主要瓶颈**：多数 API 载荷很小，开启 gzip 压缩后 JSON 与 msgpack 的体积差距进一步缩小；真正追求极致性能的内部通信，又有 protobuf/gRPC 这样的更强方案。
+- **缺少配套标准**：msgpack 本身没有 schema/校验标准，类型约定要自己维护；JSON 有 JSON Schema 这样成熟的生态。
+
+结论：msgpack 适合「机器对机器」的内部场景——RPC、缓存序列化（如 Redis）、消息队列；面向公众的 Web API，JSON 依然是综合最优解。「更紧凑」只是众多权衡维度中的一个。
 
 ---
 

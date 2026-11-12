@@ -322,10 +322,150 @@ df.to_excel('output.xlsx', sheet_name='Sheet1', index=False)
 ## 6. 思考题
 
 1. **CSV 的最大的缺点是什么？** 如果让你设计一种替代 CSV 的纯文本表格格式，你会改善哪些方面？
+
+**参考答案**
+
+最大的缺点是**没有类型、没有 schema（模式，即对列名和类型的声明）**——文件里一切都是字符串，含义全靠读取方猜：`007` 是数字 7 还是工号「007」？`1e3` 是字符串还是 1000？空单元格是空字符串还是缺失值？Excel 会悄悄把 `007` 变成 7、把 `2026-01-01` 变成日期，数据在你不知情时就被改坏了。
+
+第二个缺点是**方言碎片化**：分隔符（逗号/分号/制表符）、引号规则、编码（UTF-8/GBK）、换行符（CRLF/LF）都不写在文件里，同一个 `.csv` 在不同工具里可能解析出不同结果——这正是本章 Dialect 系统存在的原因。
+
+如果让我设计替代格式，会改善四点：① 加 schema 头，声明列名和类型（如 `# schema: id:int,name:str,amount:decimal`）；② 固定唯一方言：UTF-8、逗号分隔、RFC 4180 引号规则，禁止读取方做隐式类型转换；③ 显式区分 null 与空字符串（如 `\N` 对 `""`）；④ 支持元数据（版本号、生成时间）。
+
+现实中已有类似方案：JSON Lines（类型自描述）、Parquet（列式二进制 + schema）、SQLite（单文件数据库）。但它们都牺牲了「任何文本编辑器能打开、任何工具能导入」的通用性——CSV 的简单正是它的核心竞争力，「最低公共标准」的地位很难被撼动。
 2. **openpyxl 在处理 10 万行 Excel 时为什么会内存溢出？** 有没有办法处理超大的 Excel 文件？
+
+**参考答案**
+
+原因：默认模式下 openpyxl 会把**整个工作簿建成内存对象树**——每个单元格都是一个 `Cell` 对象（值、样式引用、坐标等，单个可达数百字节）。10 万行 × 20 列 = 200 万个单元格，内存轻松吃掉几个 GB，于是溢出。
+
+解决办法是**流式模式**：读取用 `load_workbook(path, read_only=True)`，内部增量解析 XML，`iter_rows` 逐行产出、不建完整对象树；写入用 `Workbook(write_only=True)`，每行 `append` 完即丢弃。两者内存占用都恒定在很低水平。完整示例（需先 `pip install openpyxl`）：
+
+```python
+import tempfile
+from pathlib import Path
+
+from openpyxl import Workbook, load_workbook
+
+with tempfile.TemporaryDirectory() as tmp:
+    path = Path(tmp) / "big.xlsx"
+
+    # 流式写：write_only 模式下每行写完即丢弃，不在内存里攒整张表
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("data")
+    ws.append(["id", "value"])                 # 表头
+    for i in range(100_000):
+        ws.append([i, i * 2])
+    wb.save(path)
+
+    # 流式读：read_only 模式逐行迭代，只累加求和，不保存全部数据
+    wb = load_workbook(path, read_only=True)
+    ws = wb["data"]
+    total = 0
+    for _, value in ws.iter_rows(min_row=2, values_only=True):
+        total += value
+    wb.close()                                 # read_only 模式要显式关闭，释放文件句柄
+    print("行数: 100000, value 总和:", total)
+```
+
+预期输出：
+
+```text
+行数: 100000, value 总和: 9999900000
+```
+
+总和即 0+2+4+…+199998 = 9999900000；整个过程内存只有几十 MB，普通模式则可能需要数 GB。
+
+⚠️ 注意：`read_only` 模式不支持随机写单元格、改样式等操作，用完必须 `wb.close()`；其他思路还有先转成 CSV 再用 pandas `chunksize` 分块处理，或换用更快的解析引擎（如 python-calamine）。
 3. **为什么 Excel 打开 UTF-8 编码的 CSV 文件会乱码？** `utf-8-sig` 解决了什么问题？
+
+**参考答案**
+
+原因：Excel（尤其 Windows 版）双击打开 CSV 时**不按 UTF-8 解读**，而是按系统 ANSI 代码页猜编码——简体中文系统是 GBK。「张三」的 UTF-8 字节被当成 GBK 解读，就成了「寮犱笁」这类乱码。文件本身没坏，是「读取方猜错了编码」。
+
+BOM（Byte Order Mark，字节顺序标记）是文件开头的 3 个字节 `EF BB BF`，相当于给 Excel 的明示信号：「这是 UTF-8」。有 BOM，Excel 就能正确识别。
+
+`utf-8-sig` 就是「UTF-8 + 自动处理 BOM」：写入时自动加 BOM，读取时自动剥掉。pandas 用 `df.to_csv('out.csv', encoding='utf-8-sig')`，标准库用 `open(..., encoding='utf-8-sig')`。验证：
+
+```python
+import tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory() as tmp:
+    p = Path(tmp) / "demo.csv"
+    p.write_text("姓名,城市\n张三,北京\n", encoding="utf-8-sig")
+
+    raw = p.read_bytes()
+    print("前 3 个字节:", raw[:3].hex())        # efbbbf 就是 BOM
+    print("以 BOM 开头:", raw.startswith(b"\xef\xbb\xbf"))
+    # 用 utf-8-sig 读回会自动剥掉 BOM，首列列名不会混入 \ufeff
+    print("第一行:", p.read_text(encoding="utf-8-sig").splitlines()[0])
+```
+
+预期输出：
+
+```text
+前 3 个字节: efbbbf
+以 BOM 开头: True
+第一行: 姓名,城市
+```
+
+⚠️ 注意：BOM 对其他工具是多余字节——若用普通 `utf-8` 读取带 BOM 的文件，首列列名会变成 `'\ufeff姓名'`，导致按列名取值失败。所以「给 Excel 看的文件用 utf-8-sig，程序间交换用纯 utf-8」。
 4. **pandas 的 `read_csv` 和 `csv.DictReader` 在处理大型文件时哪个更高效？** 为什么？
+
+**参考答案**
+
+纯比速度，**pandas 快得多**：`read_csv` 默认用 C 引擎批量解析，数据按列存储（列式内存布局），类型推断一次完成；`DictReader` 是纯 Python，逐行创建字典、每个字段都是字符串对象。大文件下两者通常差 5~20 倍。
+
+但「高效」要分两个维度看：**pandas 默认全量载入内存**，10 GB 的 CSV 会直接撑爆内存；`DictReader` 天生流式，一次只处理一行，内存占用极小。所以：
+
+- 需要分析、聚合、类型转换 → 用 pandas；文件超大时加 `chunksize=100_000` 分块迭代，兼得 C 引擎速度和可控内存；
+- 只是逐行清洗、过滤、转发，或内存受限、不想引入重依赖 → `csv` 模块足够。
+
+一句话总结：pandas 用内存换速度，DictReader 用速度换内存，`chunksize` 是两者的折中。
 5. **Excel 的 .xlsx 格式本质上是 ZIP 包，这带来了哪些优缺点？**
+
+**参考答案**
+
+优点：① **压缩率高**——XML 是重复度极高的文本，ZIP 压缩后体积大幅缩小；② **开放标准**（ECMA-376）——任何语言都能解压读写，不被微软私有格式绑架；③ **模块化**——样式、共享字符串、各工作表分开存放，`sharedStrings.xml` 让重复字符串只存一份；④ **可检查、可修复**——用解压工具就能看到内部结构，文件损坏时甚至能手工抢救数据。
+
+缺点：① **不能流式追加**——ZIP 的中央目录在文件末尾，改一个单元格也要重写整个包；② **随机访问要先解压再解析 XML**，没法像 CSV 那样天然逐行处理（`read_only` 模式是折中方案）；③ **脆弱**——几个字节损坏就可能整包打不开；④ XML 冗长、解析耗 CPU，读写速度不如纯二进制格式。
+
+用标准库 `zipfile` 直接验证「xlsx 就是 ZIP」（需先 `pip install openpyxl`）：
+
+```python
+import tempfile
+import zipfile
+from pathlib import Path
+
+from openpyxl import Workbook
+
+with tempfile.TemporaryDirectory() as tmp:
+    path = Path(tmp) / "demo.xlsx"
+    wb = Workbook()
+    wb.active["A1"] = "hello"
+    wb.save(path)
+
+    # xlsx 就是 ZIP 包：用标准库 zipfile 直接查看内部结构
+    with zipfile.ZipFile(path) as z:
+        for name in z.namelist():
+            print(name)
+```
+
+预期输出（openpyxl 3.1.x，条目顺序可能随版本略有差异）：
+
+```text
+docProps/app.xml
+docProps/core.xml
+xl/theme/theme1.xml
+xl/worksheets/sheet1.xml
+xl/styles.xml
+_rels/.rels
+xl/workbook.xml
+xl/_rels/workbook.xml.rels
+[Content_Types].xml
+```
+
+工作表数据在 `xl/worksheets/sheet1.xml`，样式在 `xl/styles.xml`，`docProps/` 存文档属性——与本章开头的结构图一一对应。
 
 ---
 

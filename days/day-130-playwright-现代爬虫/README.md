@@ -217,10 +217,74 @@ data = page.evaluate("() => window.__INITIAL_STATE__")
 ## ❓ 思考题
 
 1. Playwright 的 Locator 和 Selenium 的 WebElement 有什么本质区别？为什么 Playwright 没有 StaleElementReferenceException？
+
+**参考答案**
+
+本质区别：
+
+- **Selenium 的 WebElement** 是"即时快照"：定位那一刻就绑定到具体 DOM 节点，页面一刷新/重渲染，旧引用就失效，抛 `StaleElementReferenceException`。
+- **Playwright 的 Locator** 是"惰性 + 自动重试"的查询描述：它不绑定具体节点，每次操作时才重新查找元素，并自动等待其可用。
+
+所以页面变化后 Locator 会重新定位，自然不会出现 stale 异常。
+
+小例子：列表刷新后，Selenium 的旧 element 引用报错，Playwright 的 locator 会自动找到新节点。
 2. "自动等待"在 click 前检查了哪些条件？什么情况下自动等待救不了你（仍需手动 wait_for）？
+
+**参考答案**
+
+click 前的 actionability（可操作性）检查：
+
+- **Visible**：元素可见；
+- **Stable**：尺寸稳定（动画结束）；
+- **Receives events**：没被其他元素遮挡；
+- **Enabled**：没被 disabled。
+
+全部满足才执行，默认 30s 超时。
+
+自动等待救不了的情况（需手动 wait_for）：
+
+- 等"数据加载完"而非元素存在，如等 Ajax 列表项数量达标 → `wait_for_function` / `wait_for_selector`；
+- 等 URL 变化 → `wait_for_url`；
+- 等网络空闲 → `wait_for_load_state`（但长轮询页面会一直不空闲而超时）；
+- 元素已在但内容还没填充。
+
+小例子：按钮一直在，但要点的是"加载完成后才出现的第 20 条数据"，就得手动 `wait_for_function`。
 3. BrowserContext 相比"多开浏览器进程"的优势是什么？什么场景下体现最明显？
+
+**参考答案**
+
+BrowserContext 相当于浏览器内的一个"无痕窗口"，是轻量隔离会话。优势：
+
+- **创建极快**：比启动新浏览器进程快一个数量级。
+- **资源省**：共享一个浏览器进程，内存开销小。
+- **完全隔离**：各 context 的 Cookie/缓存/存储互不污染，可模拟 N 个独立用户。
+- **原生并发**：一个进程开 N 个 context，配合 async 并发。
+
+最明显的场景：需要模拟多用户/多账号并发爬取或测试时，"1 浏览器 + N context"远优于"N 个浏览器进程"。
+
+小例子：并发爬 50 个需登录的账号，开 50 个 context 比开 50 个 Chrome 轻量得多。
 4. `page.route()` 除了反爬还能做什么？（提示：mock 测试环境接口）
+
+**参考答案**
+
+`page.route()` 能拦截、改写、mock 任何网络请求。除了反爬（拦截指纹脚本），还能：
+
+- **mock 测试接口**：直接返回假 JSON，前端无需真后端即可测试各种状态。
+- **屏蔽资源加速**：拦截图片/字体/广告/统计脚本，加快加载、省带宽。
+- **改写请求/响应**：注入 header、修改返回数据做边界测试。
+- **录制/调试**：观察并记录请求。
+
+小例子：用 route 把 `/api/user` 直接 `fulfill` 一段固定 JSON，就能离线测试前端的各种渲染状态。
 5. 对一个数据在 `window.__APP_DATA__` 里的页面，用 `page.evaluate` 取数据和解析 DOM 各有什么优缺点？
+
+**参考答案**
+
+- **`page.evaluate` 取 JS 变量**：优点是拿到结构化原始数据（JSON），快、稳、不受页面样式/布局变化影响、字段全；缺点是依赖该变量存在且结构稳定，变量名/结构一变就失效，且需页面已执行 JS 填充它。
+- **解析 DOM**：优点是直观、所见即所得，不依赖内部变量；缺点是慢、易受布局/类名变化影响、可能丢隐藏字段、还要处理渲染等待。
+
+结论：数据在 JS 变量里时优先 `evaluate`（更稳更快），DOM 解析作为兜底。
+
+小例子：`page.evaluate("() => window.__APP_DATA__")` 一行拿全量 JSON，胜过爬几十个 DOM 节点。
 
 ---
 

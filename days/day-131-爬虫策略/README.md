@@ -251,10 +251,185 @@ AUTOTHROTTLE_MAX_DELAY = 60
 ## ❓ 思考题
 
 1. 布隆过滤器为什么"可能误报存在，绝不漏报不存在"？这个特性对爬虫意味着什么？
+
+**参考答案**
+
+原理：插入时用 k 个哈希函数把位数组的 k 个位置置 1；查询时只有 k 个位置**全是 1** 才判"可能存在"。
+
+- **绝不漏报不存在**：已加入的 URL，它的 k 个位都被置 1 且标准布隆不会清零，所以查询必返回"存在"。换言之，被判"不存在"的 URL 一定没加入过——这个判定 100% 可靠。
+- **可能误报存在**：不同 URL 的哈希可能撞到相同位置，别的 URL 把某个没加入的 URL 的 k 个位"顺手"都置 1 了，于是它被误判为存在（假阳性）。
+
+对爬虫的意义：判"已爬"可能误判 → 极少数没爬的 URL 被跳过 → 丢一点数据；但判"没爬"绝对可靠 → 不会重复爬。大规模爬虫宁可丢 1% 也不爆内存。下面用纯标准库演示（可直接运行）：
+
+```python
+import hashlib
+
+class BloomFilter:
+    def __init__(self, size=10_000, k=3):
+        self.size = size               # 位数组长度
+        self.k = k                     # 哈希函数个数
+        self.bits = bytearray(size)    # 用字节数组模拟位数组（1 字节当 1 位，便于理解）
+
+    def _positions(self, item):
+        # 取 MD5 摘要的不同片段，模拟 k 个独立的哈希函数
+        digest = hashlib.md5(item.encode()).digest()
+        return [int.from_bytes(digest[i*4:(i+1)*4], "big") % self.size
+                for i in range(self.k)]
+
+    def add(self, item):
+        for pos in self._positions(item):
+            self.bits[pos] = 1         # 把 k 个位置全部置 1
+
+    def __contains__(self, item):
+        # k 个位置全是 1 -> "可能存在"；任何一个是 0 -> "肯定不存在"
+        return all(self.bits[pos] for pos in self._positions(item))
+
+bf = BloomFilter()
+crawled = [f"http://example.com/page/{i}" for i in range(1000)]
+for u in crawled:
+    bf.add(u)
+
+# 已加入的 URL：100% 命中（绝不漏报"不存在"）
+print("已爬 URL 全部命中:", all(u in bf for u in crawled))
+# 没加入的 URL：绝大多数判为不存在，极少数被误判为存在（假阳性）
+fresh = [f"http://example.com/new/{i}" for i in range(1000)]
+fp = sum(u in bf for u in fresh)
+print(f"未爬 URL 被误判为已爬: {fp}/1000")
+```
+
+预期输出：
+
+```
+已爬 URL 全部命中: True
+未爬 URL 被误判为已爬: 19/1000
+```
+
+已爬的 1000 个 URL 全部命中（零漏报）；没爬的 1000 个里有 19 个被误判（约 1.9% 假阳性）。生产环境用 `pybloom-live`/`mmh3` 并按公式调参可把误判率压到 1% 以下。
 2. 1000 万 URL 的爬虫，用 set 去重大约要多少内存？Bloom Filter（1% 误判）呢？误判的 1% 会造成什么后果？
+
+**参考答案**
+
+- **set**：一个 URL 平均约 70 字节，加上 Python 字符串对象和哈希表开销，约 200+ 字节/条，1000 万 ≈ **2~3GB**。
+- **Bloom Filter（1% 误判）**：理论最优约 9.6 bit/元素，1000 万 × 9.6 bit ≈ **12MB**，比 set 省约 200 倍。
+
+误判 1% 的后果：约 1% 没爬过的 URL 被误判为"已爬"而跳过，**丢失约 1% 的数据**；但不会重复爬、不会爆内存。取舍：大规模爬虫宁可丢 1% 也不让内存爆炸。
+
+💡 提示：精确公式 `m = -n·ln(p)/(ln2)²`、`k = (m/n)·ln2`。n=1e7、p=0.01 时 m≈9.6e7 bit≈12MB、k≈7。
 3. 为什么 checkpoint 要"写临时文件 + os.replace"而不能直接覆盖原文件？
+
+**参考答案**
+
+直接 `open(path, "w")` 覆盖原文件时，会先清空再写入；若写到一半进程崩溃/断电，原文件已被破坏、新文件又不完整，得到"半截 JSON"，重启时 `json.load` 直接报错，进度全丢。
+
+正确做法：先把完整状态写到临时文件并 `fsync` 落盘，再用 `os.replace(tmp, path)` 原子替换——同分区 rename 是原子操作，结果**要么是旧的完整文件，要么是新的完整文件**，绝不会是半截。下面用纯标准库演示（临时目录自动清理，可直接运行）：
+
+```python
+import json
+import os
+import tempfile
+
+def save_checkpoint(state, path):
+    """先写临时文件，再 os.replace 原子替换，绝不产生半截文件"""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())   # 确保数据真正落到磁盘
+    os.replace(tmp, path)      # 同分区 rename 是原子操作
+
+with tempfile.TemporaryDirectory() as d:
+    ckpt = os.path.join(d, "checkpoint.json")
+    state = {"visited": ["u1", "u2", "u3"], "queue": ["u4", "u5"]}
+    save_checkpoint(state, ckpt)
+    print("正常写入后读取:", json.load(open(ckpt, encoding="utf-8")))
+
+    # 模拟"写临时文件时崩溃"：tmp 里只有半截 JSON，但还没 replace
+    with open(ckpt + ".tmp", "w", encoding="utf-8") as f:
+        f.write('{"visited": ["u1", "u2"], "que')  # 故意写一半
+    # 原 checkpoint 完好无损，重启仍能恢复
+    print("崩溃后原文件仍可读取:", json.load(open(ckpt, encoding="utf-8")))
+    print("目录里残留的临时文件:", [x for x in os.listdir(d) if x.endswith('.tmp')])
+```
+
+预期输出：
+
+```
+正常写入后读取: {'visited': ['u1', 'u2', 'u3'], 'queue': ['u4', 'u5']}
+崩溃后原文件仍可读取: {'visited': ['u1', 'u2', 'u3'], 'queue': ['u4', 'u5']}
+目录里残留的临时文件: ['checkpoint.json.tmp']
+```
+
+即使临时文件写了一半，原 checkpoint 依然完整可恢复。
+
+⚠️ 注意：临时文件要与目标同目录/同分区，`os.replace` 才是原子的；跨分区会退化为拷贝，失去原子性。
 4. 令牌桶和固定 sleep 相比有什么优势？什么场景下优势最明显？
+
+**参考答案**
+
+固定 sleep 是"永远慢"——每个请求前都干等固定时间，吞吐被死死压住。令牌桶按平均速率生成令牌、桶容量允许突发：空闲时攒令牌，忙时可一次性发几个（突发），长期平均速率仍受限。优势：
+
+- **允许突发**，更接近真实用户行为；
+- **吞吐更高**，不必每个请求都干等；
+- **平均速率仍可控**，依然礼貌。
+
+最明显的场景：页面刚加载完需要快速发几个关联请求（详情页 + 评论 + 推荐），随后歇一会——令牌桶能突发处理，固定 sleep 只能逐个慢等。下面用纯标准库演示（可直接运行）：
+
+```python
+import time
+
+class TokenBucket:
+    """每 1/rate 秒生成一个令牌，拿到令牌才能发请求；桶容量决定突发量"""
+    def __init__(self, rate=2.0, capacity=3):
+        self.rate = rate            # 令牌生成速率（个/秒）= 平均 QPS
+        self.capacity = capacity    # 桶容量 = 允许的瞬时突发量
+        self.tokens = capacity      # 初始装满
+        self.last = time.monotonic()
+
+    def acquire(self):
+        while True:
+            now = time.monotonic()
+            # 按流逝时间补充令牌，但不超过桶容量
+            self.tokens = min(self.capacity,
+                              self.tokens + (now - self.last) * self.rate)
+            self.last = now
+            if self.tokens >= 1:
+                self.tokens -= 1
+                return
+            time.sleep((1 - self.tokens) / self.rate)  # 等到下一个令牌
+
+bucket = TokenBucket(rate=2.0, capacity=3)  # 平均 2 QPS，允许突发 3 个
+start = time.monotonic()
+for i in range(6):
+    bucket.acquire()
+    print(f"请求 {i+1} 在 {time.monotonic()-start:.2f}s 发出")
+```
+
+预期输出（时刻为近似值）：
+
+```
+请求 1 在 0.00s 发出
+请求 2 在 0.00s 发出
+请求 3 在 0.00s 发出
+请求 4 在 0.52s 发出
+请求 5 在 1.00s 发出
+请求 6 在 1.50s 发出
+```
+
+前 3 个请求靠初始令牌瞬间突发发出，之后按平均 2 QPS（每 0.5 秒一个）节奏放行——既有突发又控住了平均速率。
 5. 收到 429（Too Many Requests）后，爬虫正确的应对流程是什么？
+
+**参考答案**
+
+正确流程：
+
+- **立即降速/暂停**：别继续硬撞，先停下来。
+- **读 Retry-After 头**：按服务器要求的时间等待（秒数或 HTTP 日期）。
+- **指数退避 + 抖动**：没有 Retry-After 时用 `base × 2^n` 退避并加随机抖动，避免同步重试。
+- **限制重试次数**：超限就放弃或换策略，别无限重试。
+- **从源头降速**：降低并发/速率，必要时换代理 IP 分散压力。
+- **记录与监控**：记日志、监控 429 频率，持续被限就整体降速。
+
+⚠️ 合规提示：尊重网站限流与 robots.txt，退避是"礼貌"而非恶意绕过限流。
 
 ---
 

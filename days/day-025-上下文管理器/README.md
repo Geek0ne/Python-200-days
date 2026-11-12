@@ -919,6 +919,36 @@ A: 默认**不能**。大多数上下文管理器（如 `open()` 返回的文件
 
 **提示**：想想 Python 的"鸭子类型"哲学、标准库的灵活性、以及用户自定义类型的自由度。
 
+**参考答案**
+
+Python 选择"协议"而不是"抽象基类"（ABC，即强制子类实现某些方法的基类），核心原因是鸭子类型（duck typing）哲学：只要一个对象走起来像鸭子、叫起来像鸭子，它就是鸭子。对象只要有 `__enter__` 和 `__exit__` 两个方法，`with` 就能用它，完全不需要继承某个特定基类。
+
+这样做的好处：
+
+- **零侵入**：标准库和第三方库的既有类（文件对象、锁、数据库连接）只需实现两个方法就能支持 `with`，不必改动继承树。
+- **不受继承束缚**：一个类可以继承任意业务基类，同时又是上下文管理器，不用为了这个能力额外挤进一层 ABC。
+- **风格统一**：迭代（`__iter__`）、可调用（`__call__`）等能力都走同样的"特殊方法协议"路线，学会一个就学会一类。
+- **组合灵活**：`contextlib.closing` 这类工具可以给任何带 `close()` 的对象"贴上" with 能力；若走继承路线，就得修改类本身或做注册，麻烦得多。
+
+极小的例子——没有任何继承，照样能用 `with`：
+
+```python
+class Hello:
+    def __enter__(self):
+        print("进入")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print("退出")
+        return False
+
+
+with Hello():
+    print("中间")
+```
+
+依次输出 `进入`、`中间`、`退出`。`with` 只检查"有没有这两个方法"，不关心"继承了谁"。
+
 ### 思考题 2：try/finally vs with
 
 ```python
@@ -938,6 +968,46 @@ with open("file") as f:
 
 **提示**：想想 `open()` 本身可能失败的情况，以及 `__exit__` 的返回值。
 
+**参考答案**
+
+不是严格等价。对内置文件对象这个具体例子，两者的可观察行为几乎一致（都保证关闭文件；`open()` 失败时都不做清理）；但在协议层面有两点关键差异：
+
+1. **`open()` 本身失败时**：方式 A 的 `open()` 写在 `try` 之外，它抛异常时 `finally` 不会执行——不过此时文件根本没打开，也没有东西可关；方式 B 中 `__enter__` 失败时同样不会调用 `__exit__`。这一点两者其实一致，真正的启示是：资源要在 `__enter__` 里获取，而不是在 `__init__` 里，否则获取失败时清理逻辑不会执行，就会泄漏。
+2. **`__exit__` 能抑制异常，`finally` 不能**：`with` 会把异常信息传给 `__exit__`，若它返回 `True`，异常就被吞掉、程序继续往下走；`try/finally` 只保证清理代码执行，异常仍会向外传播。文件对象的 `__exit__` 返回 `None`（不抑制），所以本例表现相同；换成自定义管理器差异就出现了：
+
+```python
+class Swallow:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return True  # 抑制异常
+
+
+# with 版本：异常被 __exit__ 吞掉
+with Swallow():
+    raise ValueError("出错了")
+print("with 版本：异常被吞掉，程序继续")
+
+# try/finally 版本：finally 无法抑制异常
+try:
+    try:
+        raise ValueError("出错了")
+    finally:
+        pass  # 相当于清理动作
+except ValueError:
+    print("try/finally 版本：异常照常抛出，需要外部捕获")
+```
+
+预期输出：
+
+```text
+with 版本：异常被吞掉，程序继续
+try/finally 版本：异常照常抛出，需要外部捕获
+```
+
+💡 提示：`with` 还有工程上的优势——代码更短、不会忘记写 `finally`、资源的作用域一目了然，所以日常应优先用 `with`。
+
 ### 思考题 3：ExitStack 的设计意图
 
 假设你有以下场景：
@@ -950,6 +1020,63 @@ files = ["a.txt", "b.txt", "c.txt"]
 1. 用 `with open(f1) as a, open(f2) as b, ...` 有什么问题？
 2. `ExitStack` 如何解决这个问题？
 3. 如果中间一个文件打开失败，已经打开的文件应该怎么处理？
+
+**参考答案**
+
+1. 逗号分隔的写法要求**写代码时就知道文件数量**。而 `files` 是运行时的列表，长度不定，没法写出固定个数的 `open`；硬要做只能递归嵌套或拼接代码字符串，既丑陋又容易出错。
+2. `ExitStack` 是一个"动态上下文管理器栈"：每调用一次 `stack.enter_context(...)` 就登记一个管理器，`with` 块结束时按 **LIFO**（后进先出）顺序自动调用它们的 `__exit__`。资源数量完全由运行时决定，一行列表推导就能打开任意多个文件。
+3. 中间某个文件打开失败时，异常会传出 `with` 块，`ExitStack` 的 `__exit__` 依然会执行，把**已经打开的文件按相反顺序全部关闭**，不会泄漏。这正是手写多层 `try/finally` 难以保证的地方。
+
+完整示例（自包含，用临时文件演示两种情况）：
+
+```python
+import os
+import tempfile
+from contextlib import ExitStack
+
+# 准备演示用的临时文件（实际使用时换成你自己的文件列表）
+tmpdir = tempfile.mkdtemp()
+paths = [os.path.join(tmpdir, n) for n in ("a.txt", "b.txt", "c.txt")]
+for i, p in enumerate(paths):
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(f"文件 {i} 的内容")
+
+# 正常情况：运行时决定打开多少个文件
+with ExitStack() as stack:
+    handles = [stack.enter_context(open(p, encoding="utf-8")) for p in paths]
+    for h in handles:
+        print(h.read())
+print("全部关闭:", all(h.closed for h in handles))
+
+# 异常情况：第三个文件不存在
+bad_paths = paths[:2] + [os.path.join(tmpdir, "不存在.txt")]
+opened = []
+try:
+    with ExitStack() as stack:
+        for p in bad_paths:
+            opened.append(stack.enter_context(open(p, encoding="utf-8")))
+except FileNotFoundError:
+    print("有文件打开失败，异常向外传播")
+print("失败前已打开的文件是否全部自动关闭:", all(h.closed for h in opened))
+
+# 清理演示文件
+for p in paths:
+    os.remove(p)
+os.rmdir(tmpdir)
+```
+
+预期输出：
+
+```text
+文件 0 的内容
+文件 1 的内容
+文件 2 的内容
+全部关闭: True
+有文件打开失败，异常向外传播
+失败前已打开的文件是否全部自动关闭: True
+```
+
+关键看第二段演示：`不存在.txt` 触发 `FileNotFoundError`，但之前打开的两个文件仍被自动关闭（`h.closed` 全为 `True`）。
 
 ### 思考题 4：__exit__ 中的异常吞噬
 
@@ -972,6 +1099,53 @@ with Swallower():
 
 如果 `__exit__` 中除了返回 True，还打印了日志，这个日志是否可能被用户忽略？在生产环境中应该如何处理这种"抑制"操作？
 
+**参考答案**
+
+很可能被忽略。`print` 只是写到标准输出：生产环境里 stdout 未必被收集，可能被海量正常输出淹没，而且没有级别、时间戳和完整堆栈，出了问题很难追查。"抑制异常"意味着程序带着一个隐患继续运行，所以必须留下可审计的记录。
+
+生产环境的建议做法：
+
+- 用 `logging` 模块代替 `print`，以 `warning` 或 `error` 级别记录，并通过 `exc_info` 附上完整 traceback（异常堆栈）。
+- 只抑制"预期的、可恢复的"异常（如文件不存在），抑制范围尽量小，并在注释里写明为什么可以安全忽略。
+- 关键路径上配合监控指标或告警，让"被抑制的异常"能被统计和看见，而不是无声无息。
+
+```python
+import logging
+
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
+logger = logging.getLogger("demo")
+
+
+class Swallower:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None and issubclass(exc_type, ValueError):
+            # 用 warning 级别记录，并带上完整 traceback
+            logger.warning("抑制了一个 ValueError: %s", exc_val,
+                           exc_info=(exc_type, exc_val, exc_tb))
+            return True
+        return False
+
+
+with Swallower():
+    raise ValueError("test")
+print("ValueError 被吞掉，程序继续执行")
+```
+
+预期输出（traceback 部分输出到 stderr，细节随环境略有差异）：
+
+```text
+WARNING 抑制了一个 ValueError: test
+Traceback (most recent call last):
+  ...
+ValueError: test
+ValueError 被吞掉，程序继续执行
+```
+
+⚠️ 注意：题目中的 `Swallower` 只定义了 `__exit__`、缺少 `__enter__`，直接运行会报错（Python 3.12 报 `TypeError: 'Swallower' object does not support the context manager protocol`），需要补上 `def __enter__(self): return self`。另外原式 `exc_type == ValueError` 只匹配该类型本身，用 `issubclass` 还能覆盖它的子类。
+
 ### 思考题 5：与装饰器的组合
 
 如何实现一个既可以用作 `@timer` 装饰器又可以用作 `with timer:` 上下文管理器的工具？这两种使用方式在语义上有什么细微差别？
@@ -988,6 +1162,61 @@ with timer():
 ```
 
 **提示**：考虑一下，装饰器方式无法精确控制计时范围，而上下文管理器可以。如果需要同时支持两种模式，需要满足什么接口？
+
+**参考答案**
+
+关键是让同一个类同时满足两套接口：上下文管理器协议（`__enter__`/`__exit__`）和"可调用"接口（`__call__`，即实例能像函数一样被调用，这正是装饰器的工作方式）。标准库的 `contextlib.ContextDecorator` 已经实现了后者——它的 `__call__` 会把被装饰函数包进 `with self:` 里执行，所以继承它就一次获得两种用法。
+
+两种方式的语义差别：
+
+- **装饰器方式**：计时范围是整个函数体，且每次调用都自动计时，适合"长期监控某个函数的整体耗时"；但没法只给函数中的一部分代码计时。
+- **上下文管理器方式**：计时范围是任意代码块，可以只测函数里的三行，还能通过 `as t` 拿到实例、读取 `t.elapsed` 做后续处理，控制更精确。
+
+```python
+import time
+from contextlib import ContextDecorator
+
+
+class timer(ContextDecorator):
+    def __init__(self, name="timer"):
+        self.name = name
+        self.elapsed = None  # 保存计时结果，供 with ... as t 读取
+
+    def __enter__(self):
+        self._start = time.perf_counter()  # 高精度计时起点
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.elapsed = time.perf_counter() - self._start
+        print(f"[{self.name}] 耗时 {self.elapsed:.4f} 秒")
+        return False  # 不抑制异常
+
+
+# 用法 1：装饰器 —— 每次调用函数都自动计时
+@timer("load_data")
+def load_data():
+    time.sleep(0.05)  # 模拟耗时操作
+    return 42
+
+
+# 用法 2：上下文管理器 —— 只给指定代码块计时
+with timer("代码块") as t:
+    time.sleep(0.02)
+
+print("函数返回值:", load_data())
+print(f"代码块耗时约 {t.elapsed:.2f} 秒")
+```
+
+预期输出（具体耗时数值因机器而异）：
+
+```text
+[代码块] 耗时 0.0204 秒
+[load_data] 耗时 0.0504 秒
+函数返回值: 42
+代码块耗时约 0.02 秒
+```
+
+💡 提示：作装饰器时要写带括号的 `@timer("名字")`，它会为每个被装饰函数创建新实例；若写裸的 `@timer`，函数会被当成 `name` 传进 `__init__`，语义就错了。不想继承 `ContextDecorator` 的话，也可以自己手写 `__call__` 返回包装函数（参见正文 8.3 节的 `Timer` 例子）。
 
 ---
 

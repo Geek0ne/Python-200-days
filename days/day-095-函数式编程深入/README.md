@@ -589,10 +589,202 @@ print(f"警告数: {analysis['warnings']}")
 ## 5. 思考题
 
 1. **`lru_cache` 和手动实现的字典缓存有什么区别？** 提示：考虑线程安全、LRU 淘汰、内存管理
+
+**参考答案**
+
+两者本质都是「参数 → 结果」的查表，但 `lru_cache` 把四件麻烦事替你做好了：
+
+- **LRU 淘汰与内存上限**：`maxsize=128` 保证最多存 128 条，超出时淘汰「最久未使用」（Least Recently Used）的那条；手写 dict 默认无限增长，长跑服务会慢慢吃光内存。`maxsize=None` 才是无上限。
+- **线程安全**：`lru_cache` 的 C 实现内部带锁，多线程同时调用不会把缓存结构写坏；手写 dict 在 CPython 里靠 GIL 侥幸不出错，但「先查→再算→再写」不是原子的，仍会重复计算，在自由线程构建（3.13+ 的 no-GIL）下更危险。
+- **参数规范化**：它按「位置参数 + 关键字参数」生成键，`f(1, b=2)` 和 `f(1, 2)` 命中同一条；手写 dict 得自己拼键，很容易漏掉这种情况。参数必须可哈希，传 list/dict 会 `TypeError`。
+- **可观测与可清理**：自带 `cache_info()`（hits/misses/maxsize/currsize）和 `cache_clear()`，方便调优和测试隔离；这些手写版本都得自己加。
+
+此外 `lru_cache` 用 `update_wrapper` 保留了原函数的 `__name__`/`__doc__`，并暴露 `__wrapped__` 方便拿到未装饰的版本；3.9+ 还可以直接写 `@cache`（等价于 `maxsize=None`）。
+
+小例子：给递归斐波那契加 `@lru_cache(maxsize=None)`，复杂度从指数级降到线性级；手写 dict 也能做到，但淘汰、并发、统计都要自己实现。
+
+⚠️ 注意：`lru_cache` 会**强引用**参数和返回值，装饰实例方法时连 `self` 一起留住，导致对象无法回收——这类场景改用 `weakref` 或把缓存挂在实例上。另外它只适合**纯函数**，有副作用或结果随时间变化的函数不能缓存。
+
 2. **柯里化和偏函数（partial）有什么区别？什么时候用哪个？**
+
+**参考答案**
+
+**偏函数 `partial`** 是「预填参数」：一次性固定若干参数（位置前缀或任意关键字），得到参数更少的新函数；调用时若还缺参数，直接 `TypeError`。
+
+**柯里化 `curry`** 是「改造成单参数函数链」：`f(a, b, c)` 变成 `f(a)(b)(c)`，每传一个参数就返回一个「还在等剩下参数」的新函数，凑齐才真正执行。
+
+选型要点：
+
+- 想固定配置、简化调用（`partial(api_request, method="GET", timeout=10)`）→ 用 `partial`：标准库自带、开销小、可读性好，是 Python 里的首选。
+- 想做「逐步特化」的函数工厂，或把函数喂给只接受单参数的高阶函数（`map(double, xs)`）→ 柯里化更自然。
+- `partial` 能用关键字固定**任意位置**的参数，柯里化通常只能按顺序固定前缀；反过来柯里化可以无限细分，`partial` 一次就定型。
+- Python 没有内置 curry，要自己写装饰器（用 `inspect.signature` 数参数个数），对 `*args`、默认值、关键字参数的处理很容易出 bug——这也是实践中大家更爱 `partial` 的原因。
+
+下面这份代码把两者的行为差异跑出来对比：
+
+```python
+from functools import partial
+import inspect
+
+
+def log(level, module, message):
+    """普通三参数函数"""
+    return f"[{level}] [{module}] {message}"
+
+
+def curry(func):
+    """把多参数函数变成可以「一次传一个」的柯里化版本"""
+    n = len(inspect.signature(func).parameters)   # 一共需要几个参数
+
+    def curried(*args):
+        if len(args) >= n:                        # 参数够了，真正执行
+            return func(*args)
+        return lambda *more: curried(*(args + more))  # 不够就继续收集
+
+    return curried
+
+
+c_log = curry(log)
+
+# 柯里化：每一步返回「还差参数」的新函数，可以任意细分
+error = c_log("ERROR")            # 还差 2 个
+db_error = error("Database")      # 还差 1 个
+print("柯里化逐步调用 :", db_error("连接超时"))
+print("柯里化一次给全 :", c_log("INFO")("API")("ok"))
+print("柯里化混合传参 :", c_log("WARN", "Cache")("命中率低"))
+
+# partial：一次性固定前缀参数（或关键字参数），剩下的按普通方式传
+p_log = partial(log, "ERROR", "Database")
+print("partial 固定前缀:", p_log("连接超时"))
+print("partial 关键字  :", partial(log, message="连接超时")("ERROR", "Database"))
+
+# 关键差异：partial 只是「预填参数」，不会自动继续等待
+p = partial(log, "ERROR")
+try:
+    p("Database")                 # 只有 2 个参数，还差 message
+except TypeError as e:
+    print("partial 缺参报错:", e)
+
+# 柯里化版本同样只给 2 个参数时，返回的是函数而不是报错
+print("柯里化缺参返回 :", callable(c_log("ERROR")("Database")))
+```
+
+运行输出（已验证）：
+
+```
+柯里化逐步调用 : [ERROR] [Database] 连接超时
+柯里化一次给全 : [INFO] [API] ok
+柯里化混合传参 : [WARN] [Cache] 命中率低
+partial 固定前缀: [ERROR] [Database] 连接超时
+partial 关键字  : [ERROR] [Database] 连接超时
+partial 缺参报错: log() missing 1 required positional argument: 'message'
+柯里化缺参返回 : True
+```
+
+最后两行是核心区别：同样只给两个参数，`partial` 立刻报错，柯里化则返回一个可继续调用的函数。另外注意 `partial(log, message=...)` 能用关键字固定**最后一个**参数，这是纯位置式柯里化做不到的。
+
+💡 提示：`partial` 返回的是 `functools.partial` 对象而非函数，它没有 `__name__`，也不是描述符（放到类属性上不会自动绑定 `self`）。需要「像普通函数一样」时，用闭包或 `functools.wraps` 包一层。
+
 3. **不可变数据结构在并发编程中有什么优势？** 提示：考虑锁、竞态条件
+
+**参考答案**
+
+核心优势是**没有共享可变状态，就没有竞态条件**。竞态条件（race condition）指结果依赖线程执行的先后顺序：两个线程同时 `count += 1`，各自读到旧值再写回，就少加了一次。不可变对象根本无法被「写回」，这类 bug 从源头消失。
+
+具体好处：
+
+- **免锁**：读不可变数据不用加锁，省掉锁竞争、死锁风险和加解锁开销，只读场景可以直接多线程/多进程共享。
+- **安全发布**：把 tuple / frozenset / NamedTuple 交给别的线程，不用担心对方偷偷改内容，也不必做防御性拷贝。
+- **可哈希**：不可变才能当 dict 键、set 元素、`lru_cache` 的参数，缓存和去重才成立。
+- **易推理、可重放**：管道里每一步都返回新对象，出错时能定位到具体哪一步，也便于实现撤销/回滚。
+
+小例子：配置对象用 `NamedTuple` 或 `@dataclass(frozen=True)`，10 个线程同时读它完全安全；若用 dict，某个线程写一句 `cfg["timeout"] = 5` 就会影响所有人。
+
+⚠️ 注意两点：一是**不可变要「深」**——tuple 里装 list，列表照样能被改，`([1, 2],)` 并非真正不可变；二是**不可变不等于原子**，`self.config = new_config` 这种「读-改-写」整体仍可能丢更新，需要锁或队列来串行化。另外每次修改都新建对象，高频更新会有 GC 压力，这时可考虑 `pyrsistent` 这类持久化数据结构（结构共享，只复制改动路径）。
+
 4. **如何将函数式管道与异步编程结合？** 提示：考虑 async 函数的组合
+
+**参考答案**
+
+同步管道 `pipe(f, g, h)` 的本质是 `h(g(f(x)))`；异步版只需把「调用」换成「await 调用」，组合子本身几乎不用改：
+
+```python
+import asyncio
+
+
+def async_pipe(*funcs):
+    """把若干 async 函数组合成管道：前一个的返回值是后一个的入参"""
+    async def pipeline(data):
+        for f in funcs:
+            data = await f(data)      # 逐个 await，保证顺序
+        return data
+    return pipeline
+
+
+# ---- 三个异步处理步骤（用 sleep 模拟 I/O）----
+async def fetch(user_id):
+    await asyncio.sleep(0.01)         # 模拟查数据库
+    return {"id": user_id, "name": f"  User{user_id}  ", "score": str(60 + user_id * 10)}
+
+
+async def clean(user):
+    await asyncio.sleep(0.01)         # 模拟调远程校验服务
+    # 返回新字典而不是原地修改，保持「不可变」风格，并发复用才安全
+    return {**user, "name": user["name"].strip().lower()}
+
+
+async def enrich(user):
+    await asyncio.sleep(0.01)         # 模拟调风控接口
+    score = int(user["score"])
+    return {**user, "score": score, "passed": score >= 60}
+
+
+process = async_pipe(fetch, clean, enrich)
+
+
+async def main():
+    # 单个数据走管道
+    print("单个结果:", await process(1))
+
+    # 多个数据「并发」走同一条管道：管道只是函数组合，可安全复用
+    results = await asyncio.gather(*(process(i) for i in (1, 2, 3)))
+    print("并发结果:", [r["name"] for r in results])
+
+
+asyncio.run(main())
+```
+
+运行输出（已验证）：
+
+```
+单个结果: {'id': 1, 'name': 'user1', 'score': 70, 'passed': True}
+并发结果: ['user1', 'user2', 'user3']
+```
+
+要点解释：
+
+- **组合子是同步的，被组合的函数是异步的**。`async_pipe` 本身是普通函数，返回一个 `async def pipeline`。千万别写成 `reduce(lambda acc, f: f(acc), funcs, data)`——那样得到的是 coroutine 对象而非结果，会触发「coroutine was never awaited」警告。
+- **顺序 vs 并发**：同一条数据流经各步骤必须串行 `await`（后一步依赖前一步）；不同数据之间用 `asyncio.gather` 并发，这才是异步管道的收益所在。
+- **保持纯函数风格**：每步返回新对象（`{**user, ...}`）而不是原地改，管道就能被多个协程安全复用，正好呼应第 3 题的不可变性。
+- **流式处理**：数据量很大时把步骤写成异步生成器（`async def` + `yield`），用 `async for` 串起来，边读边处理，内存占用恒定。
+
+⚠️ 注意：`asyncio.gather` 的结果按**传入顺序**排列（不是完成顺序）；某步抛异常时其它任务默认不会被取消，需要 `return_exceptions=True`，或用 Python 3.11+ 的 `asyncio.TaskGroup` 统一处理。CPU 密集步骤放进管道会阻塞事件循环，要用 `await asyncio.to_thread(...)` 挪出去。
+
 5. **Python 的 `map/filter/reduce` 和列表推导式哪个更好？为什么？**
+
+**参考答案**
+
+结论：**日常业务代码优先用推导式**；`map/filter` 在特定场景更优；`reduce` 大多数时候不如专用内置函数或显式循环。
+
+- **可读性**：`[x * 2 for x in xs if x > 0]` 一眼看清「过滤 + 变换」；`list(map(lambda x: x * 2, filter(lambda x: x > 0, xs)))` 嵌了两层 lambda，阅读顺序还是反的。Python 3 已把 `reduce` 从内置函数移到 `functools`，也体现了官方对这种风格的态度。
+- **性能**：当映射函数是**已存在的内置/C 函数**时 `map` 更快，因为省掉了每个元素的 Python 字节码开销，例如 `list(map(str, range(1000)))` 通常快于 `[str(x) for x in range(1000)]`（具体倍数因机器/版本而异）；但只要用了 `lambda`，`map` 反而更慢，因为多了一次函数调用。
+- **惰性**：Python 3 的 `map/filter` 返回迭代器，处理大文件或无限序列时不占内存，这点与生成器表达式 `(x * 2 for x in xs)` 等价；而 `[...]` 推导式会一次性建好整个列表。
+- **表达力**：推导式支持多重 for、条件、解包、嵌套，`map/filter` 做不到；多参数 `map` 会以最短序列为准，容易埋下静默截断的坑。
+- **reduce**：`reduce(operator.add, xs)` 不如 `sum(xs)` 直观。它适合「自定义二元累积」，比如合并区间、串联管道；能用 `sum/any/all/max/min/"".join` 就别写 reduce。
+
+小例子：`sum(map(len, words))` 比 `sum([len(w) for w in words])` 更省内存也更快；但 `[w.upper() for w in words if w]` 比 `list(map(str.upper, filter(None, words)))` 更好读。
+
+💡 提示：这是风格取舍而非对错——团队统一最重要。函数式风格浓的代码库（大量用 `toolz`/`pyrsistent`）里 map/filter 更协调；普通业务代码里推导式几乎总是更清晰。
 
 ---
 

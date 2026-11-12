@@ -1022,13 +1022,227 @@ class DatabasePipeline:
 
 1. **缓存策略**：在爬虫中如何设计多级缓存（本地内存 → Redis → 数据库）？各层缓存的失效策略如何设计？
 
+**参考答案**
+
+多级缓存的本质是**用"离计算越近、容量越小、速度越快"的层挡住大部分请求**。典型读路径：先查 L1 本地内存 → 未命中查 L2 Redis → 再未命中查 L3 数据库 → 都没有才去爬目标网站；任何一层命中就返回，并把结果回填到上层。
+
+各层定位与失效策略：
+
+| 层 | 存什么 | 速度/容量 | 失效策略 |
+|----|--------|-----------|----------|
+| L1 本地内存 | 热点页面/价格 | 纳秒级，几千~几万条 | **短 TTL（秒~分钟）+ LRU 容量淘汰**，进程私有 |
+| L2 Redis | 跨实例共享的页面/去重指纹 | 毫秒级，容量大 | **TTL（分钟~小时）+ 更新时主动删除**，多实例共享 |
+| L3 数据库 | 全量历史数据 | 较慢，持久 | 不设 TTL，作为"事实来源"，由业务更新 |
+
+设计要点：
+
+- **TTL 按数据变化频率定**：分类结构一天变一次 → 缓存 24 小时；价格分钟级变动 → 缓存 1~5 分钟。
+- **写时失效**：数据更新后先写数据库，再删除（而非更新）缓存，下次读时自然重建，避免不一致。
+- **防三类经典问题**：缓存穿透（查不存在的数据 → 缓存空值）、缓存击穿（热点 key 过期瞬间大量请求 → 加互斥锁只放一个请求去重建）、缓存雪崩（大批 key 同时过期 → TTL 加随机抖动）。
+
+小例子（已验证，L1 层的 LRU + TTL 实现，用 `now` 参数模拟时间流逝）：
+
+```python
+import time
+from collections import OrderedDict
+
+class TTLCache:
+    """带过期时间的本地缓存（LRU + TTL），模拟多级缓存的 L1 层"""
+    def __init__(self, capacity=3, ttl=60):
+        self.capacity = capacity   # 最多存几条
+        self.ttl = ttl             # 过期时间（秒）
+        self.data = OrderedDict()  # key -> (值, 过期时刻)
+
+    def get(self, key, now=None):
+        now = time.time() if now is None else now
+        if key not in self.data:
+            return None
+        value, expire_at = self.data[key]
+        if now >= expire_at:       # 过期：删除并返回未命中
+            del self.data[key]
+            return None
+        self.data.move_to_end(key) # 命中：挪到末尾（最近使用）
+        return value
+
+    def put(self, key, value, now=None):
+        now = time.time() if now is None else now
+        if key in self.data:
+            del self.data[key]
+        elif len(self.data) >= self.capacity:
+            self.data.popitem(last=False)  # 容量满：淘汰最久未使用的
+        self.data[key] = (value, now + self.ttl)
+
+cache = TTLCache(capacity=2, ttl=60)
+t0 = 1000.0
+cache.put("p1", "价格99", now=t0)
+print("TTL 内命中:", cache.get("p1", now=t0 + 30))
+print("TTL 过期后未命中:", cache.get("p1", now=t0 + 61))
+cache.put("p2", "价格59", now=t0)
+cache.put("p3", "价格39", now=t0)
+cache.put("p4", "价格19", now=t0)   # 容量只有 2，淘汰最久未用的 p2
+print("p2 被 LRU 淘汰:", cache.get("p2", now=t0 + 1))
+print("p4 仍在:", cache.get("p4", now=t0 + 1))
+```
+
+预期输出：
+
+```
+TTL 内命中: 价格99
+TTL 过期后未命中: None
+p2 被 LRU 淘汰: None
+p4 仍在: 价格19
+```
+
+💡 提示：L1 是进程私有的，多爬虫实例之间不共享；需要共享的状态（去重指纹、代理池）放 L2 Redis。
+
 2. **分布式调度**：如果要在多台机器上部署爬虫实例，如何实现任务的公平分配和避免重复爬取？（提示：考虑 Celery 或自建调度器）
+
+**参考答案**
+
+分布式爬虫要解决两件事：**任务怎么分**（公平、不闲死也不撑死）和**全局去重**（多台机器不爬同一个 URL）。常见方案：
+
+- **scrapy-redis（共享队列）**：把 Scrapy 调度器的内存队列换成 Redis 队列、去重集合换成 Redis 集合。所有机器从同一个队列抢任务——谁空闲谁取走，天然公平（类似"工作窃取"）；去重指纹全局共享，天然不重复。改造成本最低，是 Scrapy 分布式的事实标准。
+- **Celery（中心调度）**：调度器把 URL 拆成任务投进消息队列（RabbitMQ/Redis），各 worker 消费；靠 ack 机制确认完成，worker 挂掉任务可重新投递。适合任务异构、需要复杂编排的场景。
+- **自建静态分片**：按 `hash(url) % N` 把 URL 分给 N 台机器。实现最简单，但数据倾斜时不公平，增减机器要重新分片（可用一致性哈希缓解）。
+
+避免重复爬取的关键是**全局指纹 + 原子操作**：用 Redis 的 `SETNX`（不存在才写入）把"检查指纹 + 记录指纹"合成一步原子操作。如果先 `GET` 判断再 `SET`，两台机器可能同时判断"没见过"然后都去爬——竞态条件。超大规模可用分布式布隆过滤器省内存（代价是极小概率误判"见过"）。
+
+其他要考虑的：worker 心跳与失联任务回收、代理池共享与配额、按域名限速（多台机器合力也不能超过对方容忍度）、统一监控各实例进度。
+
+💡 提示：公平分配没有银弹——共享队列简单通用，但要注意"慢任务霸占 worker"问题，可按域名/优先级拆多个队列。
 
 3. **优雅停机**：爬虫正在运行时收到 SIGTERM 信号，如何确保当前任务完成后再退出？如何处理正在处理中的数据？
 
+**参考答案**
+
+核心原则：**信号处理器只设标志位，主循环看到标志后"做完手头的事再退出"**，绝不在信号处理器里直接干重活或立刻 `sys.exit()`。
+
+具体做法：
+
+1. **注册 SIGTERM 处理器**：收到信号只把 `stop_requested = True`。Scrapy 场景下等价于触发 `CloseSpider`/调用引擎关闭——引擎停止调度新请求，但等待在途的下载和解析完成。
+2. **主循环检查标志**：每处理完一个任务就看一眼标志，为真则不再取新任务；未开始的任务留在队列里（配合 JOBDIR 持久化），下次启动接着爬。
+3. **处理中的数据必须 flush**：批量写入的缓冲区要在退出前落盘（Scrapy 的 `close_spider` 钩子就是干这个的）；数据库连接、文件句柄在 `finally` 里关闭。
+4. **写入幂等**：用 upsert（有则更新无则插入）而非盲目 insert，这样中断后重爬不会产生重复数据。
+5. **兜底超时**：设一个宽限期（如 30 秒），超时仍未退出就强制结束（Docker 的 `stop_grace_period`、K8s 的 `terminationGracePeriodSeconds` 就是这个机制）。
+
+小例子（已验证，`signal.raise_signal` 模拟操作系统发来 SIGTERM）：
+
+```python
+import signal
+
+stop_requested = False
+
+def on_sigterm(signum, frame):
+    global stop_requested
+    print("收到 SIGTERM：停止调度新任务")
+    stop_requested = True
+
+signal.signal(signal.SIGTERM, on_sigterm)
+
+tasks = ["页面A", "页面B", "页面C", "页面D"]
+done = []
+for i, task in enumerate(tasks):
+    if stop_requested:
+        print(f"任务 {task} 未开始，留待下次恢复")
+        break
+    print(f"处理任务: {task}")
+    done.append(task)          # 当前任务一定做完
+    if i == 1:
+        # 模拟此刻操作系统发来 SIGTERM（如 docker stop）
+        signal.raise_signal(signal.SIGTERM)
+
+print(f"flush 已完成的 {len(done)} 条数据到磁盘（模拟）")
+print("进程优雅退出")
+```
+
+预期输出：
+
+```
+处理任务: 页面A
+处理任务: 页面B
+收到 SIGTERM：停止调度新任务
+任务 页面C 未开始，留待下次恢复
+flush 已完成的 2 条数据到磁盘（模拟）
+进程优雅退出
+```
+
+可以看到：页面B 做到一半收到信号，仍然做完了；页面C/D 没有开始，数据先 flush 再退出。
+
+⚠️ 注意：Windows 对 SIGTERM 的支持有限（真实进程间发送行为与 Linux 不同），生产部署建议在 Linux/容器里验证信号流程；本例用 `raise_signal` 在进程内触发，跨平台可运行。
+
 4. **增量爬取**：如何设计增量爬取策略，只爬取有变化的页面？比较基于时间戳和基于内容哈希两种方案的优劣。
 
+**参考答案**
+
+两种方案的思路与优劣：
+
+**基于时间戳**：记录每个 URL 上次的爬取时间/页面更新时间，只爬"更新时间晚于上次"的页面。高级玩法是用 HTTP 条件请求——带上 `If-Modified-Since`/`If-None-Match`（ETag），服务器没变化就返回 304，连正文都不用传。
+
+- 优点：省带宽省时间（304 极轻量），实现简单。
+- 缺点：依赖服务器"诚实"——很多动态页不返回 Last-Modified，或每次访问都变（页面里嵌了当前时间）；页面标注的发布时间也可能缺失、不准。
+
+**基于内容哈希**：每次照常下载页面，对正文（或提取出的关键字段）算 SHA1/MD5，与库里存的旧指纹比较，不同才处理/入库。
+
+- 优点：判断准确，不依赖服务器元数据；还能过滤"时间戳变了但正文没变"的噪声（广告位、推荐列表）。
+- 缺点：省不了下载和解析的开销；哈希对象要选稳定字段，否则误报"有变化"。
+
+**最佳实践是组合**：先用 ETag/304 粗筛（省带宽），命中 200 后再用内容哈希细判（省存储和下游处理）。库里为每个 URL 存 `(etag, last_modified, content_hash)` 三元组。
+
+小例子（已验证，内容哈希判断是否需要更新）：
+
+```python
+import hashlib
+
+def content_hash(text):
+    """计算内容指纹：只对正文做哈希，排除广告/时间戳等噪声"""
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+# "数据库"里存着上次爬取时各页面的内容指纹
+stored = {"https://example.com/news/1": content_hash("正文：产品A发布")}
+
+def need_update(url, new_body):
+    new_fp = content_hash(new_body)
+    old_fp = stored.get(url)
+    if old_fp == new_fp:
+        return False          # 内容没变，跳过后续处理/存储
+    stored[url] = new_fp      # 变了：更新指纹
+    return True
+
+url = "https://example.com/news/1"
+print("内容未变，重爬:", need_update(url, "正文：产品A发布"))
+print("正文修改后重爬:", need_update(url, "正文：产品A发布（已调价）"))
+```
+
+预期输出：
+
+```
+内容未变，重爬: False
+正文修改后重爬: True
+```
+
+💡 提示：增量爬取的请求记得 `dont_filter=True`（或每次用新 JOBDIR），否则 Scrapy 的 URL 去重会把"再次爬同一 URL"直接拦掉。
+
 5. **法律合规**：在编写爬虫时，哪些行为可能触犯法律？如何在技术层面确保爬虫的合规性？（提示：robots.txt、请求频率、数据使用）
+
+**参考答案**
+
+**可能触法的行为**（以中国法律环境为例）：
+
+- **突破技术措施抓取非公开数据**：绕过登录墙、破解验证码/加密接口去拿本不可见的数据，可能涉及"非法获取计算机信息系统数据罪"。
+- **把对方服务器爬瘫**：高并发无节制请求造成服务不可用，可能涉及"破坏计算机信息系统罪"，至少承担民事赔偿。
+- **批量抓取个人信息**：手机号、身份证、行踪轨迹等，违反《个人信息保护法》，情节严重的涉及刑事犯罪。
+- **违反 robots 协议/服务条款大规模搬运内容**：可能构成不正当竞争，或侵犯著作权。
+
+**技术层面的合规措施**：
+
+1. `ROBOTSTXT_OBEY = True`，遵守 robots.txt 的Disallow 规则。
+2. 限速：`DOWNLOAD_DELAY` + `AUTOTHROTTLE_ENABLED`，把请求频率控制在对方可承受范围；收到 403/429 立即退避或停止。
+3. 只抓**公开可访问**的数据，不绕过登录、付费墙、验证码。
+4. User-Agent 表明身份（可附联系方式），不伪装成搜索引擎误导对方。
+5. 个人信息最小化：能不抓就不抓，必须抓的做脱敏/匿名化，不转售。
+6. 数据使用守边界：不整体搬运原文做竞品，遵守目标网站服务条款与版权。
+
+⚠️ 注意：robots.txt 本身不是法律，而是行业规范——违反它不必然违法，但会成为纠纷中的不利证据；具体业务是否合规应咨询法务。技术上"能做"不等于法律上"可做"。
 
 ---
 

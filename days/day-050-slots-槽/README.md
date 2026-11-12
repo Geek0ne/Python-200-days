@@ -600,13 +600,182 @@ if __name__ == "__main__":
 
 1. **`__slots__` 为什么不能和 `__dict__` 同时使用？** 如果你既想要内存优化，又想动态添加属性，该怎么办？
 
+**参考答案**
+
+并不是「绝对互斥」。真正的原因是：一旦类定义了 `__slots__`，Python 就**不再自动为实例创建 `__dict__`**，未声明的属性无处存放，于是看起来二者不能共存。
+
+- 想「既省内存又能动态加属性」，可以把 `'__dict__'` 显式写进 `__slots__`，固定槽和动态字典就同时存在了。
+- 但代价是字典又回来了，内存优势基本消失——这是「鱼与熊掌」的权衡。
+- 折中：只给少数高频属性用槽，另设一个字典槽（如 `__slots__ = ('x', 'extra')`，把动态属性塞进 `extra`）；或干脆不用 `__slots__`。
+
+小例子（已验证）：
+
+```python
+class Hybrid:
+    __slots__ = ('x', '__dict__')   # 显式保留 __dict__
+    def __init__(self):
+        self.x = 1
+
+h = Hybrid()
+h.y = 2                              # 动态属性进入 __dict__
+print(h.x, h.y, h.__dict__)          # 1 2 {'y': 2}
+
+class Strict:
+    __slots__ = ('x',)               # 不含 __dict__
+s = Strict()
+try:
+    s.y = 2
+except AttributeError as e:
+    print(e)                         # 'Strict' object has no attribute 'y'
+```
+
 2. **`__slots__` 对数据类（`@dataclass`）有什么影响？** 如何为 `@dataclass` 添加 `__slots__`？
+
+**参考答案**
+
+`@dataclass` 默认生成的类带 `__dict__`，可以动态加属性。加上 `__slots__` 后同样能省内存、禁止未声明属性，但要注意「字段默认值」与槽的冲突。
+
+- **Python 3.10+**：直接写 `@dataclass(slots=True)`，解释器会自动生成 `__slots__` 并重建类，最省心。
+- **旧版本手动写**：在类体里定义 `__slots__`。但若某字段带默认值（如 `x: int = 0`），该默认值会变成**类变量**，与同名槽冲突，抛 `ValueError`。解决办法是去掉类体默认值、改用 `field(default=...)` 仍会冲突，所以最稳妥还是升级到 3.10 用 `slots=True`。
+
+小例子（已验证，Python 3.12）：
+
+```python
+from dataclasses import dataclass
+
+@dataclass(slots=True)          # 3.10+ 自动生成 __slots__
+class Point:
+    x: int
+    y: int
+
+p = Point(1, 2)
+print(p)                        # Point(x=1, y=2)
+print(hasattr(p, '__dict__'))   # False
+try:
+    p.z = 3
+except AttributeError as e:
+    print(e)                    # 'Point' object has no attribute 'z'
+
+# 手动写 __slots__ 时，带默认值的字段会与槽冲突
+try:
+    @dataclass
+    class Bad:
+        __slots__ = ('x',)
+        x: int = 0              # 默认值 → 类变量，与同名槽冲突
+except ValueError as e:
+    print(e)                    # 'x' in __slots__ conflicts with class variable
+```
+
+⚠️ 注意：`slots=True` 是 Python 3.10 才加入的参数；更低版本会报 `TypeError: dataclass() got an unexpected keyword argument 'slots'`。
 
 3. **在什么场景下不应该使用 `__slots__`？** 比如需要动态属性、序列化、或频繁修改的类。
 
+**参考答案**
+
+`__slots__` 是「用灵活性换内存/速度」的优化，下列场景不适合：
+
+- **需要动态属性**：运行时要随意 `obj.new_attr = ...`（如 ORM、配置对象、给实例打补丁）。
+- **多继承且多个基类都有非空 `__slots__`**：会触发「实例布局冲突」，无法创建子类。
+- **依赖 `__dict__` 的工具/序列化**：一些库直接读写 `obj.__dict__`（如某些序列化、调试、`vars(obj)`）；用槽后需自己实现 `__getstate__`/`__setstate__`。
+- **需要弱引用但没声明 `'__weakref__'`**：默认槽类不支持 `weakref`。
+- **对象数量很少**：省下的内存微不足道，属于过早优化，反而增加维护成本。
+
+多继承冲突小例子（已验证）：
+
+```python
+class A:
+    __slots__ = ('x',)
+class B:
+    __slots__ = ('y',)
+
+try:
+    class C(A, B):    # 两个非空 slots 基类 → 实例布局冲突
+        pass
+except TypeError as e:
+    print(e)          # multiple bases have instance lay-out conflict
+```
+
+💡 提示：只有「大量、结构固定、需要省内存」的对象（游戏实体、数据记录、百万级节点）才值得用 `__slots__`。
+
 4. **`__slots__` 和 `NamedTuple` 的区别是什么？** 什么情况下用哪个更合适？
 
+**参考答案**
+
+两者都能省内存，但本质不同：
+
+- **`NamedTuple` 是 `tuple` 的子类**：不可变、有序、可索引/解包/迭代，元素可哈希时整体可哈希，自带 `_fields`、`_asdict()`、`_replace()`。它适合「只读的值对象/记录」。
+- **`__slots__` 类是普通类**：默认可变，按属性名访问，不能直接索引或解包（除非自己加方法），但能自由定义方法、属性、继承。它适合「有行为、需要修改的实体」。
+
+选择：要「不可变 + 可解包 + 当字典键」用 `NamedTuple`；要「可变 + 丰富方法 + 大量实例省内存」用 `__slots__` 类。小例子（已验证）：
+
+```python
+from typing import NamedTuple
+
+class PointNT(NamedTuple):      # tuple 子类：不可变、可索引/解包
+    x: int
+    y: int
+
+class PointSlots:               # 普通类 + slots：可变、按名访问
+    __slots__ = ('x', 'y')
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+nt = PointNT(1, 2)
+print(nt[0], nt.x, tuple(nt))   # 1 1 (1, 2)
+try:
+    nt.x = 9                    # 不可变
+except AttributeError as e:
+    print(e)                    # can't set attribute
+
+ps = PointSlots(1, 2)
+ps.x = 9                        # 可变
+print(ps.x)                     # 9
+```
+
 5. **如何测量 `__slots__` 的实际内存节省？** 除了 `sys.getsizeof`，还有什么方法可以更准确地测量？
+
+**参考答案**
+
+`sys.getsizeof` 是**浅层**大小：它只算对象本身，**不含实例指向的 `__dict__`**。所以直接比较会误导——普通对象本身可能比槽对象还小，但加上字典后普通对象就大得多。更准确的做法：
+
+- **手动补上字典**：`sys.getsizeof(obj) + sys.getsizeof(obj.__dict__)`（注意 3.11+ 同类实例共享键表，简单相加会略微高估）。
+- **`tracemalloc`（标准库，推荐）**：统计「创建一整批对象」期间真实分配的内存，最贴近实际节省。
+- 第三方 `pympler.asizeof` 可递归计算深层大小（需 `pip install pympler`）。
+
+小例子（已验证，CPython 3.12 / 64 位）：
+
+```python
+import sys, tracemalloc
+
+class Normal:
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+
+class Slots:
+    __slots__ = ('x', 'y', 'z')
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = x, y, z
+
+# 1) 浅层 getsizeof：普通对象不含 __dict__，需单独相加
+a, b = Normal(1, 2, 3), Slots(1, 2, 3)
+print(sys.getsizeof(a))           # 48（普通对象本身）
+print(sys.getsizeof(a.__dict__))  # 296（还要加上字典）
+print(sys.getsizeof(b))           # 56（槽对象本身）
+
+# 2) tracemalloc：测量整批对象的真实分配
+n = 100_000
+def measure(cls):
+    tracemalloc.start()
+    objs = [cls(i, i, i) for i in range(n)]
+    current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    return current
+
+print(measure(Normal))   # 约 12795440 字节
+print(measure(Slots))    # 约 9592704 字节（更省）
+```
+
+预期输出：浅层大小为 `48 / 296 / 56`，可见普通对象「本身 48 + 字典 296」远大于槽对象的 56；`tracemalloc` 下 10 万个对象普通类约 12.8 MB、槽类约 9.6 MB，槽类明显更省。具体字节数随 Python 版本与平台变化，但「槽类总内存更小」的结论稳定。
 
 ---
 

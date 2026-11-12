@@ -277,10 +277,238 @@ def require_role(role):
 ## 💡 思考题
 
 1. 为什么带参数的装饰器需要三层嵌套？能否用更少层次实现？
+
+**参考答案**
+
+三层嵌套对应**三种不同的职责**，每层都是一个可调用对象：
+
+1. **最外层**：接收**装饰器参数**（如 `n=3`），返回中间层。`@repeat(3)` 会先执行 `repeat(3)`。
+2. **中间层**：接收**被装饰的函数**（`func`），返回内层。这才是真正的"装饰器"。
+3. **最内层（wrapper）**：接收**函数的调用参数**（`*args, **kwargs`），执行增强逻辑。
+
+之所以要三层，是因为"装饰器参数、被装饰函数、调用参数"这三类信息在不同时机传入，必须各用一层来捕获。`@repeat(3)` 本质是 `say = repeat(3)(say)`，两次调用分别剥掉两层，最后由 wrapper 处理调用参数。
+
+**能否更少层？** 三种职责无法省略，但可以用 `functools.partial` 或类来压缩"显式 def 嵌套层数"。例如用 partial 预先绑定参数，只需写两层 def：
+
+```python
+import functools
+from functools import partial
+
+def repeat(func, n):           # 只有两层：repeat + wrapper
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        result = None
+        for _ in range(n):
+            result = func(*args, **kwargs)
+        return result
+    return wrapper
+
+@partial(repeat, n=3)          # partial 预先绑定 n，补上"参数层"
+def say(msg):
+    print(msg)
+
+say("hi")
+```
+
+预期输出：
+
+```text
+hi
+hi
+hi
+```
+
+这里 `partial(repeat, n=3)` 生成了一个"只等 func"的可调用对象，承担了最外层的角色，于是显式嵌套减为两层。同理，带参数的类装饰器用 `__init__` 收参数、`__call__` 收函数，也能把嵌套压平。
+
 2. 类装饰器和函数装饰器在内存管理上有什么区别？
+
+**参考答案**
+
+两者在"保留哪些对象存活"上没有本质差别——都持有原函数和自身状态的引用，只要被装饰的名字还在，这些对象就不会被回收。区别在于**状态存放的位置和对象开销**：
+
+- **函数装饰器**：状态存在**闭包单元**（自由变量，如 `count`、`cache`）里，或通过 `wrapper.count = ...` 附加到 wrapper 上。被装饰的名字最终指向一个**函数对象**，相对轻量。
+- **类装饰器**：状态存在**实例属性**（`self.count`、`self.cache`）里，即实例的 `__dict__`。被装饰的名字最终指向一个**类实例**，实例默认带 `__dict__`，单个对象开销通常比"函数 + 闭包单元"略大（可用 `__slots__` 减小）。
+
+```python
+import functools
+
+def func_deco(func):
+    count = 0
+    @functools.wraps(func)
+    def wrapper(*a, **kw):
+        nonlocal count
+        count += 1
+        return func(*a, **kw)
+    return wrapper
+
+class ClassDeco:
+    def __init__(self, func):
+        self.func = func
+        self.count = 0
+    def __call__(self, *a, **kw):
+        self.count += 1
+        return self.func(*a, **kw)
+
+@func_deco
+def f():
+    pass
+
+@ClassDeco
+def g():
+    pass
+
+f(); f()
+g(); g()
+
+# 函数装饰器：状态藏在闭包单元里
+cells = dict(zip(f.__code__.co_freevars, (c.cell_contents for c in f.__closure__)))
+print(cells["count"])      # 2
+print(type(f).__name__)    # function
+
+# 类装饰器：状态在实例 __dict__ 里
+print(g.count)             # 2
+print(type(g).__name__)    # ClassDeco
+```
+
+预期输出：
+
+```text
+2
+function
+2
+ClassDeco
+```
+
+实际影响：简单状态（一个计数器）用闭包更轻量；复杂状态（缓存 + 过期时间 + 命中统计 + 连接池）用类实例能组织多个字段和方法，也更容易定义清理逻辑（如 `__del__` 或 close 方法）来显式释放资源。另外，类装饰器若持有绑定方法、方法又反向引用实例，可能形成循环引用，需要垃圾回收器来打破——闭包同样可能出现循环引用。
+
 3. 如有 `@A @B` 和 `@B @A` 两种情况，什么场景下结果会不同？
+
+**参考答案**
+
+当两个装饰器**不可交换（non-commutative）**时结果不同。典型场景：
+
+- **对返回值做变换**：如 `bold` 把结果包 `<b>`、`italic` 包 `<i>`，顺序决定标签的嵌套次序。
+- **有顺序依赖的副作用**：如"先鉴权再记日志"与"先记日志再鉴权"；又如 `@lru_cache` 放在 `@timer` 内层还是外层，决定计时是否包含缓存命中。
+- **一个依赖另一个添加的行为**：如重试装饰器应包住"已降级"的函数，顺序影响重试的对象。
+
+反之，若两个装饰器只添加**彼此独立、互不干扰**的副作用（如两段无关日志），最终返回值通常相同（但副作用的输出先后仍不同）。
+
+```python
+import functools
+
+def bold(func):
+    @functools.wraps(func)
+    def wrapper():
+        return f"<b>{func()}</b>"
+    return wrapper
+
+def italic(func):
+    @functools.wraps(func)
+    def wrapper():
+        return f"<i>{func()}</i>"
+    return wrapper
+
+@bold
+@italic
+def hello():
+    return "Hello"
+
+@italic
+@bold
+def hello2():
+    return "Hello"
+
+print(hello())    # <b><i>Hello</i></b>
+print(hello2())   # <i><b>Hello</b></i>
+```
+
+预期输出：
+
+```text
+<b><i>Hello</i></b>
+<i><b>Hello</b></i>
+```
+
+`@bold @italic` 等价于 `bold(italic(hello))`：italic 先包内层、bold 再包外层，得到 `<b><i>…</i></b>`；交换后得到 `<i><b>…</b></i>`。这就是"顺序影响结果"的最直观例子。
+
 4. 缓存装饰器在并发场景下会有什么问题？如何解决？（提示：线程安全）
+
+**参考答案**
+
+**问题**（以朴素 `memoize` 的 `if args not in cache: cache[args] = func(args)` 为例）：
+
+- **检查-then-写入竞态**：两个线程同时发现某 key"不在缓存"，于是都去计算、都写入——同一份昂贵计算被重复执行（缓存击穿 / dogpile 效应）。
+- **复合操作非原子**：CPython 的 GIL 让单条 dict 读写原子，但"检查 → 计算 → 写入"这一整段不是原子的；对更复杂的缓存（如 LRU 用 OrderedDict 要同时读 + 移动 + 淘汰），并发修改甚至可能破坏结构。在无 GIL 的自由线程版本（3.13+）里问题更突出。
+
+**解决**：
+
+- **加锁**：把"检查 + 计算 + 写入"放进 `threading.Lock` 临界区，保证同一 key 只算一次。缺点是一把全局锁会串行化所有调用；要更高并发可用**按 key 加锁**（只阻塞计算同一 key 的线程）。
+- **直接用 `functools.lru_cache`**：它内部带锁，保证缓存结构不会被并发破坏（但同一 key 在极端竞争下仍可能被计算多次——它保证一致性，不保证"只算一次"）。
+- 异步场景用 `asyncio.Lock`。
+
+下面用全局锁保证"只算一次"，并用多线程验证：
+
+```python
+import functools
+import threading
+
+def memoize_locked(func):
+    cache = {}
+    lock = threading.Lock()
+    @functools.wraps(func)
+    def wrapper(*args):
+        with lock:                   # 检查 + 计算 + 写入都在锁内 → 同一 key 只算一次
+            if args not in cache:
+                cache[args] = func(*args)
+            return cache[args]
+    return wrapper
+
+compute_count = 0
+count_lock = threading.Lock()
+
+@memoize_locked
+def slow_square(n):
+    global compute_count
+    with count_lock:
+        compute_count += 1
+    return n * n
+
+threads = [threading.Thread(target=slow_square, args=(7,)) for _ in range(8)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(slow_square(7))   # 49
+print(compute_count)    # 1：加锁保证只计算一次
+```
+
+预期输出：
+
+```text
+49
+1
+```
+
+8 个线程并发请求同一参数，实际只计算了一次。若去掉锁，`compute_count` 可能大于 1（取决于线程调度），那就是竞态问题。
+
 5. 重试装饰器如何处理幂等性问题？哪些操作不适合重试？
+
+**参考答案**
+
+**幂等性**指：一个操作执行一次和执行多次，对系统状态的影响相同。重试的安全前提是操作**幂等**，因为重试意味着"再执行一次"，而超时不等于服务端没执行——第一次可能已经成功、只是响应丢了，重试就会执行第二次。
+
+**适合重试（幂等）**：纯读取（HTTP GET）、纯计算、幂等写入（PUT 更新为同一值、DELETE 指定资源），或带**幂等键（idempotency key）**的请求（服务端按 key 去重）。
+
+**不适合重试（非幂等）**：POST 创建资源（可能重复创建）、支付 / 扣款（可能重复扣钱）、计数器自增（`+=1`）、发送邮件 / 短信（可能重复发送）、向列表或日志追加记录。
+
+重试装饰器处理幂等性的做法：
+
+- **装饰器本身无法判断业务是否幂等**，这是调用者的责任：只把重试用在幂等操作上。
+- **先让非幂等操作变幂等**：引入幂等键 / 唯一请求 ID，由服务端去重；或用事务、"先查后做"的去重逻辑，再重试。
+- **只重试瞬时异常**（网络超时、503、连接重置），不要重试业务错误（参数校验失败、4xx）——重试它们无意义且可能放大副作用。
+- **限制次数 + 指数退避 + 随机抖动**，避免雪崩和对下游的重复冲击。
+
+💡 提示：对"扣款"这类操作，正确姿势不是"失败就重试"，而是"先按订单号查询是否已扣款成功，再决定是否重新发起"——把非幂等变成幂等，才谈得上重试。
 
 ## 📚 扩展阅读
 

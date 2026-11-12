@@ -393,13 +393,147 @@ print(p)  # Point(x=3, y=4)
 
 1. **为什么 `type(type) is type`？** 这意味着什么？
 
+**参考答案**
+
+因为 **`type` 是它自己的实例**——这是 Python 对象体系刻意设计的「终点」。
+
+ normally 对象层级是「实例 → 类 → 元类」：`type(狗实例)` 是 `Dog`，`type(Dog)` 是 `type`。如果继续追问「type 的类型是谁」，再往上造一个「元元类」就会无穷无尽。Python 让这条链在 `type` 处**自我闭环**：`type(type) is type`，于是任何对象的类型追溯最终都停在 `type`，不会无限上升。
+
+这意味着：
+
+- **`type` 是「实例化链」的根**：所有类（包括 `type` 自己）都是由 `type` 或其子类创建的。
+- **要区分两条链**：「实例化链」（谁创建了谁，根是 `type`）和「继承链」（谁是谁的父类，根是 `object`）。`type` 本身也继承自 `object`（`type.__bases__ == (object,)`），而 `object` 的类型又是 `type`（`type(object) is type`），两者互相依存、各自闭环。
+
+```python
+print(type(type))            # <class 'type'>
+print(type(object))          # <class 'type'>
+print(type.__bases__)        # (<class 'object'>,)
+print(object.__bases__)      # ()  —— object 没有父类，是继承链的根
+```
+
+💡 提示：可以这样记——`object` 是「所有类的祖先」（继承层面），`type` 是「所有类的制造者」（实例化层面），而 `type` 自己制造了自己。
+
 2. **元类的 `__new__` 和 `__init__` 有什么区别？** 在元类中，`__new__` 不能直接调用 `super().__init__()`，为什么？
+
+**参考答案**
+
+两者是「创建对象」的两个阶段，分工不同（对元类而言，被创建的对象就是「类」）：
+
+- **`__new__(mcs, name, bases, attrs)`**：负责**创建并返回**类对象，是「分配/构造」阶段。它拿到的是类名、基类、属性字典这些「原材料」，调用 `super().__new__(...)` 真正造出类，然后 `return` 它。想修改类结构（增删属性、收集字段）就在这里做。
+- **`__init__(cls, name, bases, attrs)`**：负责**初始化已经创建好的**类对象，是「装修」阶段。它的第一个参数 `cls` 就是 `__new__` 返回的那个类，此时类已存在，可以做后续设置，但不返回任何东西。
+
+为什么 `__new__` 里不能直接调 `super().__init__()`？因为**调用时机和职责不对**：`__new__` 执行时类对象还没被造出来，没有可供初始化的实例；初始化是 `__init__` 的活儿，Python 会在 `__new__` 返回对象后**自动**接着调用 `__init__`。若在 `__new__` 里手动调 `__init__`，等于对着「尚不存在/还没返回」的对象提前初始化，逻辑错乱，还会导致重复初始化。正确写法是：`__new__` 里只调 `super().__new__()` 造对象，初始化交给随后自动触发的 `__init__`。
+
+一句话：**`__new__` 造出来（return 对象），`__init__` 装上去（无返回值）；先有 `__new__` 后有 `__init__`，各司其职，不能越位。**
 
 3. **如果一个类同时使用了元类和装饰器，执行顺序是什么？** 先元类还是先装饰器？
 
+**参考答案**
+
+**先元类，后装饰器。** 顺序是：执行类体 → 元类创建出类对象（`__new__`/`__init__`）→ 类装饰器作用在这个已创建好的类上。原因很直观：装饰器 `@deco` 本质是 `Demo = deco(Demo)`，它得先有一个「类」才能装饰，而这个类正是元类造出来的。
+
+```python
+def deco(cls):
+    print("2. 装饰器执行")
+    cls.decorated = True
+    return cls
+
+class Meta(type):
+    def __new__(mcs, name, bases, attrs):
+        print("1. 元类 __new__ 执行")
+        return super().__new__(mcs, name, bases, attrs)
+
+@deco
+class Demo(metaclass=Meta):
+    pass
+
+print("3. 使用类:", Demo.decorated)
+```
+
+预期输出：
+
+```
+1. 元类 __new__ 执行
+2. 装饰器执行
+3. 使用类: True
+```
+
+可见元类 `__new__` 先打印（造类），装饰器随后打印（加工类）。如果有多个装饰器，按「就近原则」从下往上依次作用，但都发生在元类创建之后。
+
+💡 提示：元类影响「这个类及其所有子类」的创建过程；装饰器只加工「被装饰的这一个类」。两者可叠加，但装饰器若返回一个全新的类，要注意它可能不再带原来的元类。
+
 4. **Django 的 `Model` 基类是如何利用元类实现字段自动收集的？** 试着查看 Django 源码中的 `ModelMetaclass`。
 
+**参考答案**
+
+Django 的 `Model` 用的元类叫 `ModelBase`（位于 `django/db/models/base.py`），思路与本章的 `ModelMeta` 一致，但更完善。核心流程在它的 `__new__` 里：
+
+- **分离「字段」与「普通属性」**：遍历类体 `attrs`，把凡是 `Field` 实例（带 `contribute_to_class` 方法的对象）挑出来，从普通属性里移走，避免它们被当成常规类属性。
+- **让字段「认领」名字并登记**：对每个字段调用 `field.contribute_to_class(cls, name)`，字段由此知道自己叫什么、属于哪个类，并被收进一个专门的字段集合。
+- **构建 `_meta`（Options）**：把收集到的字段、表名、排序、约束等元信息封装成 `_meta` 对象挂到类上。之后 `User._meta.get_fields()`、建表、生成 SQL 都靠它。
+- **处理继承**：合并父类（含抽象基类）的字段，处理 `Meta` 内部类的继承规则。
+- **注册到应用注册表**：通过 `apps.register_model(...)` 把模型登记到所属 app，框架据此发现所有模型、做迁移和外键解析。
+
+所以用户只写 `name = CharField(...)`，元类就在「类诞生那一刻」自动完成了字段收集、命名、元信息构建和注册——这正是声明式 ORM 的魔力。
+
+💡 提示：Django 是第三方框架（需 `pip install django`），其源码会随版本演进，建议直接读你所用版本的 `django/db/models/base.py` 中 `ModelBase.__new__`。理解时抓住「收集字段 → 建 `_meta` → 注册模型」这条主线即可，不必拘泥细节。
+
 5. **能否用元类实现 `@dataclass` 的功能？** 如果能，怎么做？如果不能，为什么？
+
+**参考答案**
+
+**能。** `@dataclass` 的本质是「读取类的字段注解，自动生成 `__init__`、`__repr__`、`__eq__` 等方法」。这件事元类完全做得到——在 `__new__` 里读取 `attrs['__annotations__']`，据此生成方法并塞回 `attrs` 即可。下面是一个最小实现：
+
+```python
+class DataMeta(type):
+    def __new__(mcs, name, bases, attrs):
+        annotations = attrs.get('__annotations__', {})
+        fields = list(annotations)          # 从注解拿到字段名
+
+        def __init__(self, *args):
+            for fname, value in zip(fields, args):
+                setattr(self, fname, value)
+
+        def __repr__(self):
+            inner = ", ".join(f"{f}={getattr(self, f)!r}" for f in fields)
+            return f"{name}({inner})"
+
+        def __eq__(self, other):
+            if not isinstance(other, type(self)):
+                return NotImplemented
+            return all(getattr(self, f) == getattr(other, f) for f in fields)
+
+        attrs['__init__'] = __init__        # 把生成的方法注入类
+        attrs['__repr__'] = __repr__
+        attrs['__eq__'] = __eq__
+        return super().__new__(mcs, name, bases, attrs)
+
+class Point(metaclass=DataMeta):
+    x: int
+    y: int
+
+p = Point(1, 2)
+print(p)                 # Point(x=1, y=2)
+print(p == Point(1, 2))  # True
+print(p == Point(3, 4))  # False
+```
+
+预期输出：
+
+```
+Point(x=1, y=2)
+True
+False
+```
+
+`Point` 没手写任何方法，元类却根据 `x: int`、`y: int` 注解自动生成了构造、打印和相等比较，效果与 `@dataclass` 类似。
+
+不过「能做」不等于「该做」：
+
+- 真正的 `dataclass` 还要处理默认值、`default_factory`、关键字参数、`frozen`、`order`、继承字段顺序等大量细节，用元类全部重写成本高。
+- **`dataclass` 官方就是用类装饰器实现的**，因为这种「加工单个类」的需求装饰器更简单直观；元类的优势在「影响所有子类」，这里用不上。
+
+💡 提示：本题是很好的元类练习，但生产环境请直接用标准库 `@dataclass`。记住经验法则——能用装饰器解决的，就别上元类。
 
 ---
 

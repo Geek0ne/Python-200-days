@@ -425,13 +425,140 @@ doc.list_snapshots()
 
 1. **为什么 Python 对不可变对象不进行拷贝？** 提示：考虑性能优化和内存管理。
 
+**参考答案**
+
+不可变对象（如 `int`、`str`、`bytes`、全不可变元素的 `tuple`）一旦创建就不能被修改，因此**多个引用共享同一个对象是绝对安全的**——谁也无法通过它影响到别人。既然共享没有风险，拷贝就毫无意义。
+
+- **性能**：拷贝要分配新内存、复制内容；直接返回原对象省去了这些开销。
+- **内存**：大量相同的整数/字符串可以共用一份，减少占用（小整数、短字符串还有驻留优化）。
+- 所以 `copy.copy()` / `copy.deepcopy()` 对这类对象通常**直接返回原对象本身**（`is` 为 `True`）。
+
+小例子（已验证）：
+
+```python
+import copy
+
+a = 42
+print(copy.copy(a) is a, copy.deepcopy(a) is a)   # True True
+s = "hello"
+print(copy.copy(s) is s, copy.deepcopy(s) is s)   # True True
+t = (1, 2, 3)
+print(copy.copy(t) is t, copy.deepcopy(t) is t)   # True True
+```
+
+⚠️ 注意：「不可变」要看整体。含可变元素的元组是例外（见第 2 题）；`frozenset` 等少数不可变容器在 `deepcopy` 时仍会重建新对象。
+
 2. **`copy.copy()` 和 `copy.deepcopy()` 对元组有什么区别？** 提示：元组是不可变的，但可能包含可变元素。
+
+**参考答案**
+
+关键看元组里**有没有可变元素**：
+
+- **`copy.copy(元组)`**：元组顶层不可变，浅拷贝**直接返回原元组本身**（`is` 为 `True`），即使里面装着可变列表也一样——内部列表仍是共享的。
+- **`copy.deepcopy(元组)`**：会检查元素。若全是不可变元素，返回原元组；若含可变元素（如列表），则**生成一个新元组**，并递归深拷贝那些可变元素，使其完全独立。
+
+小例子（已验证）：
+
+```python
+import copy
+
+t = (1, 2, [3, 4])          # 元组不可变，但含可变列表
+sc = copy.copy(t)
+print(sc is t)              # True：浅拷贝返回原元组
+dc = copy.deepcopy(t)
+print(dc is t)              # False：含可变元素 → 新元组
+print(dc[2] is t[2])        # False：内部列表也被深拷贝
+dc[2].append(5)
+print(t[2])                 # [3, 4]：原对象不受影响
+
+t2 = (1, 2, 3)              # 全不可变元素
+print(copy.deepcopy(t2) is t2)   # True：返回原元组
+```
 
 3. **如何让一个类同时支持浅拷贝和深拷贝？** 提示：需要实现哪些魔术方法？
 
+**参考答案**
+
+实现两个魔术方法即可：`__copy__(self)` 控制浅拷贝，`__deepcopy__(self, memo)` 控制深拷贝。`copy.copy()` 会优先调用 `__copy__`，`copy.deepcopy()` 会优先调用 `__deepcopy__`。
+
+- 浅拷贝：返回一个新实例，但**共享**内部可变属性。
+- 深拷贝：递归拷贝内部属性；务必把新对象登记进 `memo`（`memo[id(self)] = new`），以正确处理循环引用。
+
+完整示例（已验证）：
+
+```python
+import copy
+
+class Box:
+    def __init__(self, items):
+        self.items = items
+    def __copy__(self):                 # 浅拷贝：新壳，共享 items
+        return Box(self.items)
+    def __deepcopy__(self, memo):       # 深拷贝：递归拷贝 items
+        new = Box([])
+        memo[id(self)] = new            # 先登记，防止循环引用无限递归
+        new.items = copy.deepcopy(self.items, memo)
+        return new
+
+b = Box([1, 2, 3])
+sc = copy.copy(b)
+dc = copy.deepcopy(b)
+print(sc is b, sc.items is b.items)     # False True（共享）
+print(dc is b, dc.items is b.items)     # False False（独立）
+```
+
 4. **深拷贝的 `memo` 参数有什么作用？** 提示：考虑循环引用和对象去重。
 
+**参考答案**
+
+`memo` 是一个字典，键为「原对象的 `id`」、值为「已生成的副本」。它有两个核心作用：
+
+- **处理循环引用**：拷贝前先查 `memo`，若对象已拷贝过就直接返回副本，避免 A→B→A 这样的环导致无限递归。
+- **对象去重（保持共享拓扑）**：若同一个对象在结构里被引用多次，只拷贝一次，其余位置复用同一副本，从而保留原有的「共享关系」。
+
+小例子（已验证）：
+
+```python
+import copy
+
+# 去重：同一对象被引用两次，只拷贝一次并保持共享
+shared = [1, 2]
+data = [shared, shared]
+dc = copy.deepcopy(data)
+print(dc[0] is dc[1])      # True（副本之间仍共享）
+print(dc[0] is shared)     # False（但与原对象无关）
+
+# 循环引用：memo 记住已拷贝对象，避免无限递归
+cyc = [1]
+cyc.append(cyc)
+bc = copy.deepcopy(cyc)
+print(bc[1] is bc)         # True
+```
+
+💡 提示：自定义 `__deepcopy__` 时，应「先建空壳并写入 `memo`，再递归拷贝属性」，这样即使属性指回自身也能正确收敛。
+
 5. **在什么情况下应该避免使用深拷贝？** 提示：考虑性能、资源、线程安全等因素。
+
+**参考答案**
+
+深拷贝「递归复制整棵对象图」，代价高且并非总是可行，下列情况应避免：
+
+- **性能/内存敏感**：大型或深层嵌套结构、热点循环里频繁拷贝。深拷贝慢且会临时翻倍内存，可能 OOM。只需顶层独立时用 `copy.copy()` 或具体构造（如 `list(x)`、`dict(x)`）。
+- **不可拷贝的资源**：文件句柄、socket、线程锁、数据库连接、生成器等。深拷贝它们会报错，或危险地「复制」出本应唯一的资源。
+- **线程安全**：拷贝正被其他线程修改的结构可能读到不一致状态；锁、条件变量等同步原语拷贝后也毫无意义。
+- **不可变数据**：本就共享安全，无需拷贝。
+
+替代思路：只拷贝「会变化的部分」（结构共享）、改用不可变数据、或实现自定义 `__deepcopy__` 跳过不可拷贝资源。小例子（已验证，锁无法深拷贝）：
+
+```python
+import copy, threading
+
+lock = threading.Lock()
+try:
+    copy.deepcopy(lock)    # 锁 / 文件句柄 / socket 等资源无法拷贝
+except TypeError as e:
+    print(e)               # cannot pickle '_thread.lock' object
+```
 
 ---
 

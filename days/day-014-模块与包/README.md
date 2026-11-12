@@ -1489,13 +1489,213 @@ graph TD
 
 1. **命名空间设计**：为什么 Python 选择用 `import module` 而不是像 C 那样直接 `#include "module.h"` 把代码内容插入到当前位置？两种方案各自的优劣是什么？
 
+**参考答案**
+
+两者的本质区别：`#include` 是**预处理阶段的文本插入**——编译前把头文件内容原样复制到当前文件里，所有名字混进同一个命名空间；`import` 是**运行时的模块加载**——Python 在独立的命名空间里执行目标文件，生成一个模块对象，再把它绑定到当前作用域的名字上，访问时带 `模块名.` 前缀。
+
+`import` 方案的优势（也是 Python 选它的原因）：
+
+- **命名隔离**：两个模块有同名函数也互不冲突；`#include` 则会重定义冲突，只能靠命名约定或头文件保护宏（include guard）避免。
+- **只执行一次**：有 `sys.modules` 缓存，导入多少次都只执行一遍模块代码；`#include` 在每个引用处都重复展开。
+- **动态灵活**：可以在函数内、条件分支里导入，甚至运行时才决定导入谁；`#include` 只能在编译前静态确定。
+
+`#include` 的优势：机制简单直接、没有运行时查找开销，也契合 C"先编译后链接"的模型——C 编译期就要看到声明，而 Python 是运行时查名字。代价是容易命名冲突、代码膨胀、复用性差。
+
+小例子体会隔离（两个模块都有 `sqrt`，互不干扰）：
+
+```python
+import math
+import cmath
+
+print(math.sqrt(16))    # 4.0 —— 实数版本
+print(cmath.sqrt(-1))   # 1j —— 复数版本
+```
+
+预期输出：两行依次为 `4.0`、`1j`。若是文本插入，两个 `sqrt` 会互相覆盖，只剩后一个。
+
 2. **缓存与热加载**：如果项目正在运行，你修改了一个模块的源代码，为什么新代码不会生效？通过什么机制可以强制重新加载模块而不重启进程？
+
+**参考答案**
+
+原因是 **`sys.modules` 缓存**：模块第一次被导入时，Python 执行它的代码并把生成的模块对象缓存进 `sys.modules` 字典；之后每次 `import` 同名模块都直接取缓存对象，**不再读源文件、不再执行代码**。所以进程运行中修改源码，对已导入的模块毫无影响。
+
+强制重新加载的机制是 `importlib.reload(模块)`：它重新读取源文件，并**在原模块对象的命名空间里**重新执行模块代码。完整演示：
+
+```python
+import importlib
+import os
+import sys
+import tempfile
+
+# 1. 在临时目录里创建一个模块文件
+tmpdir = tempfile.mkdtemp()
+mod_path = os.path.join(tmpdir, "hotmod.py")
+with open(mod_path, "w", encoding="utf-8") as f:
+    f.write("value = 1\n")
+
+sys.path.insert(0, tmpdir)      # 让解释器能找到它
+import hotmod
+print(hotmod.value)             # 1
+
+# 2. 运行中修改源代码
+with open(mod_path, "w", encoding="utf-8") as f:
+    f.write("value = 999\n")
+
+import hotmod                   # 再次 import：命中缓存，不读新文件
+print(hotmod.value)             # 仍是 1
+
+# 3. 强制重新加载
+importlib.reload(hotmod)        # 重新执行模块代码
+print(hotmod.value)             # 999
+```
+
+预期输出：三行依次为 `1`、`1`、`999`。第二次 `import` 命中缓存所以还是 1，`reload` 之后才变成 999。
+
+⚠️ 注意：`reload` 不是完美的热更新——它只更新模块对象自身的命名空间；之前用 `from hotmod import value` 绑定的旧名字、用旧类创建的实例，仍指向旧对象。生产环境更稳妥的做法是重启进程或使用专门的热更新框架。
 
 3. **包与模块的差异**：一个带 `__init__.py` 的目录和一个不带 `__init__.py` 的目录，在 `import` 时行为有何不同？Python 3.3+ 引入的 **命名空间包（namespace package）** 是什么？
 
+**参考答案**
+
+- **带 `__init__.py`（常规包）**：导入时先执行 `__init__.py`，可以在其中做初始化、重导出子模块的函数、定义 `__all__`；包有确定的 `__file__`（指向 `__init__.py`）。
+- **不带 `__init__.py`**：Python 3.3 之前根本无法导入；3.3 起（PEP 420）引入**命名空间包**——如果 `sys.path` 各处都找不到同名的常规包或模块，Python 会把所有同名目录当作同一个逻辑包的"碎片"合并起来：不执行任何初始化代码，`__file__` 为 `None`，`__path__` 横跨多个目录。
+
+命名空间包的典型用途是**把一个逻辑包拆到多个安装目录/发行包里**（例如 `google.cloud` 的各子包分开安装，却共享 `google` 这个命名空间）。注意优先级：搜索路径上只要存在同名**常规包**，它就优先，命名空间目录会被忽略。
+
+验证（两个目录各放 `nspkg` 的一部分，都没有 `__init__.py`）：
+
+```python
+import os
+import sys
+import tempfile
+
+base = tempfile.mkdtemp()
+for part in ("part1", "part2"):          # 两个目录各放包的一部分
+    pkg = os.path.join(base, part, "nspkg")
+    os.makedirs(pkg)                     # 注意：没有创建 __init__.py
+    with open(os.path.join(pkg, part + ".py"), "w") as f:
+        f.write(f"who = {part!r}\n")
+    sys.path.insert(0, os.path.join(base, part))
+
+import nspkg                             # 命名空间包：无 __init__.py 也能导入
+from nspkg import part1, part2
+print(part1.who, part2.who)              # part1 part2
+print(nspkg.__file__)                    # None：命名空间包没有单一源文件
+print(len(nspkg.__path__))               # 2：搜索路径横跨两个目录
+```
+
+预期输出：
+
+```text
+part1 part2
+None
+2
+```
+
+💡 提示：日常项目仍建议写 `__init__.py`，行为更可预测、还能控制公开接口；命名空间包留给确实需要"跨目录合并"的场景。
+
 4. **循环导入的根源**：`a.py` 导入 `b.py`，`b.py` 又导入 `a.py`，为什么有时会出错有时又不会？延迟导入（把 `import` 放在函数内部）是如何解决这个问题的？
 
+**参考答案**
+
+根源在于 **import 会立即执行模块的顶层代码**，而 `from X import name` 要求那个名字在导入瞬间**已经存在**。两个模块都在顶层互相 `from` 导入时，先被导入的那个才执行到一半，对方就来取名字，自然取不到：
+
+```python
+# a.py
+from b import func_b      # ① 导入 a 会触发执行 b
+
+def func_a():
+    return func_b()
+
+# b.py
+from a import func_a      # ② a 还卡在第一行，func_a 尚未定义 → 报错
+
+def func_b():
+    return "B"
+```
+
+运行 `import a` 会报：`ImportError: cannot import name 'func_a' from partially initialized module 'a' (most likely due to a circular import)`。
+
+**什么时候不报错？** 常见两种：一是双方都用 `import module` 写法——它只绑定模块对象，不要求对方内部的名字已存在，函数体里再访问 `b.func_b()`，调用时两个模块早已加载完整（实测输出正常）；二是 `from` 导入的位置恰好排在所需定义之后、且导入顺序凑巧。所以"出错与否"取决于导入写法、语句位置和谁先被导入。
+
+**延迟导入如何解决**：把 `import` 挪进函数体，模块加载阶段就不执行它，等函数被调用时才导入——那时双方顶层代码都执行完了，名字齐全。而且 `sys.modules` 有缓存，函数里反复 import 几乎零开销：
+
+```python
+# a.py
+def func_a():
+    from b import func_b    # 延迟导入：调用时 b 早已加载完毕
+    return "A + " + func_b()
+
+# b.py
+from a import func_a        # 现在没问题：a 的顶层没有立即导入 b
+
+def func_b():
+    return "B"
+```
+
+运行 `import a; print(a.func_a())`，预期输出 `A + B`。
+
+💡 提示：延迟导入是补救手段，更根本的解法是重构——把互相依赖的部分提取到第三个模块，消除环。
+
 5. **__all__ 的安全意义**：如果第三方库的 `__init__.py` 中没有定义 `__all__`，使用 `from package import *` 可能带来什么安全隐患？Python 的哪些安全机制可以限制 `import` 行为？
+
+**参考答案**
+
+没有 `__all__` 时，`from package import *` 的规则是：导入包命名空间里**所有不以下划线开头的名字**——不仅包括作者想公开的 API，还包括内部实现顺手导入的模块（如 `json`、`os`）和没加下划线的辅助函数。隐患有两类：
+
+- **命名空间污染与静默覆盖**：星号导入把一堆你不知道的名字灌进当前作用域，可能悄悄覆盖你的同名变量；读代码的人也看不出某个名字从哪来。
+- **扩大攻击面**：关键在于**导入即执行顶层代码**。引入的名字越多，意味着可能执行越多你没打算执行的代码；恶意或被篡改的包可以在导入时做任何事（读文件、发网络请求）。
+
+演示（模拟一个没有 `__all__` 的第三方模块，`__init__.py` 同理）：
+
+```python
+# leaky.py
+import json          # 内部实现用的模块
+
+def public_api():
+    return "ok"
+
+def _private():
+    return "secret"
+```
+
+```python
+# main.py
+from leaky import *
+
+print(public_api())      # ok
+print(json.dumps([1]))   # [1] —— json 也被"顺手"导入了！
+# _private 不会进来（下划线开头）
+```
+
+预期输出：`ok` 和 `[1]` 各一行。内部依赖 `json` 泄漏了出来；若 `leaky` 定义了 `__all__ = ["public_api"]`，就只会导入 `public_api`。
+
+Python 中限制/审计 import 的机制：
+
+- **`__all__` 白名单**（库作者侧）：精确控制 `import *` 导出的名字。
+- **审计钩子 `sys.addaudithook`**（Python 3.8+，使用者侧）：每次导入都会触发 `"import"` 事件，钩子可以记录日志或抛异常拦截：
+
+```python
+import sys
+
+def guard(event, args):
+    if event == "import":
+        name = args[0]
+        if name == "ctypes":          # 举例：禁止导入 ctypes
+            raise RuntimeError(f"禁止导入 {name}")
+
+sys.addaudithook(guard)
+try:
+    import ctypes
+except RuntimeError as e:
+    print("被拦截:", e)
+```
+
+预期输出：`被拦截: 禁止导入 ctypes`。
+
+- **启动选项**：`-I` 隔离模式（忽略环境变量和用户 site-packages）、`-S`（不加载 site）等，减少不可信代码被加载的途径。
+
+⚠️ 注意：Python **没有真正的 import 沙箱**——审计钩子用于监控和拦截，不是安全边界（已运行的恶意代码不导入任何东西也能搞破坏），`__all__` 也只防"意外导入"不防"蓄意攻击"。根本的安全原则是：只导入你信任的代码。
 
 ---
 
