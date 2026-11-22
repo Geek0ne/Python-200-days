@@ -6,7 +6,7 @@
 
 每天写代码 · 系统学习 · 可衡量的进步
 
-![Progress](https://img.shields.io/badge/Progress-200%2F200-brightgreen) ![Commits](https://img.shields.io/badge/Commits-1479-brightgreen) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
+![Progress](https://img.shields.io/badge/Progress-200%2F200-brightgreen) ![Commits](https://img.shields.io/github/commits/Geek0ne/Python-200-days) ![Phase](https://img.shields.io/badge/Phase-12_%E7%BB%BC%E5%90%88%E5%AE%9E%E6%88%98-ff69b4) ![License](https://img.shields.io/badge/License-MIT-lightgrey) [![CI](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml/badge.svg)](https://github.com/Geek0ne/Python-200-days/actions/workflows/ci.yml)
 
 [🌐 在线学习站](https://python.geek0ne.com/) · [📖 路线图](ROADMAP.md) · [🤝 贡献指南](CONTRIBUTING.md)
 
@@ -76,7 +76,7 @@
 | 指标 | 数据 |
 |:----|:----:|
 | 📅 已完成天数 | **200 天** |
-| 📝 总提交次数 | **1,479 commits** |
+| 📝 总提交次数 | ![Commits](https://img.shields.io/github/commits/Geek0ne/Python-200-days) |
 | 📄 总代码行数 | **209,416 行** |
 | 📂 总文件数 | **1,459 个** |
 | 🏗️ 当前阶段 | **Phase 12 — 综合实战**（✅ 已完成，Day 200/200） |
