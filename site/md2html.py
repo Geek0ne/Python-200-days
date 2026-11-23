@@ -331,6 +331,23 @@ SCROLLSPY_JS = """
 })();
 """
 
+# 回到顶部按钮：滚动超过一屏后淡入，点击平滑滚回顶部。
+BACKTOP_JS = """
+(function () {
+  var btn = document.querySelector('.backtop');
+  if (!btn) return;
+  function toggle() { btn.classList.toggle('show', window.scrollY > 400); }
+  window.addEventListener('scroll', toggle, { passive: true });
+  toggle();
+  btn.addEventListener('click', function () {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+})();
+"""
+
+BACKTOP_BTN = ('<button class="backtop" type="button" '
+               'aria-label="回到顶部" title="回到顶部">↑</button>')
+
 
 def render_lesson(md_text: str, *, day, prev_day=None, next_day=None,
                   all_days=None, site_root: str = "..") -> str:
@@ -401,6 +418,8 @@ def render_lesson(md_text: str, *, day, prev_day=None, next_day=None,
   {''.join(nav_items)}
 </nav>
 
+{BACKTOP_BTN}
+
 <script src="{site_root}/assets/mermaid.min.js"></script>
 <script>
 if (window.mermaid) {{
@@ -414,6 +433,7 @@ function copyCode(btn) {{
   }});
 }}
 {SCROLLSPY_JS}
+{BACKTOP_JS}
 </script>
 </body>
 </html>
@@ -439,8 +459,10 @@ def render_subpage(md_text: str, *, title: str, day, site_root: str = "..") -> s
   <h1>{e(title)}</h1>
 </header>
 <div class="lwrap"><main class="lbody">{body}</main></div>
+{BACKTOP_BTN}
 <script src="{site_root}/assets/mermaid.min.js"></script>
-<script>if (window.mermaid) {{ mermaid.initialize({{ startOnLoad: true, securityLevel: 'loose' }}); }}</script>
+<script>if (window.mermaid) {{ mermaid.initialize({{ startOnLoad: true, securityLevel: 'loose' }}); }}
+{BACKTOP_JS}</script>
 </body>
 </html>
 """

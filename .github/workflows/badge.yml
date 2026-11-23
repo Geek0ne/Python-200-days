@@ -1,0 +1,35 @@
+name: Update commit badge
+
+# push 到 main 后统计精确提交总数，写入 badges 分支根目录的 commits.json，
+# README 顶部的 shields.io endpoint 徽章实时读取该 JSON，显示精确数字（如 1482）。
+# 单独用 badges 分支承接：徽章数据更新不进 main，避免"提交→改数→再提交"的自激励循环。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  badge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 生成徽章 JSON 并推送到 badges 分支
+        run: |
+          N=$(git rev-list --count HEAD)
+          mkdir -p /tmp/badge && cd /tmp/badge
+          printf '{\n  "schemaVersion": 1,\n  "label": "commits",\n  "message": "%s",\n  "color": "brightgreen",\n  "cacheSeconds": 300\n}\n' "$N" > commits.json
+          git init -b badges .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add commits.json
+          git commit -m "commits: ${N}"
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
