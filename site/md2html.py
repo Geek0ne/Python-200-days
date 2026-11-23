@@ -201,6 +201,55 @@ def highlight_code(lang: str, body: str) -> str:
     return highlight(body, lexer, _FMT)
 
 
+_TAG_RE = re.compile(r"<[^>]+>")
+_TAG_NAME_RE = re.compile(r"</?([a-zA-Z][\w-]*)")
+
+
+def wrap_code_lines(hl: str) -> str:
+    r"""把 pygments(nowrap) 高亮结果按物理行切开，每行包一层 <span class="cl">。
+
+    行号由 CSS counter 画在 .cl::before 伪元素上——伪元素内容不进
+    innerText，复制按钮取 pre.innerText 不会被行号污染。跨多行的
+    token span 在行边界先闭合、下一行重新打开，保证每行 HTML 自洽。
+    """
+    hl = hl.rstrip("\n")
+    if not hl:
+        return hl
+    out: list[str] = []
+    open_tags: list[str] = []
+    buf: list[str] = []
+
+    def close_line() -> None:
+        for tag in reversed(open_tags):
+            buf.append(f"</{_TAG_NAME_RE.match(tag).group(1)}>")
+        out.append('<span class="cl">' + "".join(buf) + "</span>")
+        buf.clear()
+        buf.extend(open_tags)
+
+    i, n = 0, len(hl)
+    while i < n:
+        ch = hl[i]
+        if ch == "<":
+            m = _TAG_RE.match(hl, i)
+            if m:
+                tag = m.group(0)
+                buf.append(tag)
+                if tag.startswith("</"):
+                    if open_tags:
+                        open_tags.pop()
+                elif not tag.endswith("/>"):
+                    open_tags.append(tag)
+                i = m.end()
+                continue
+        if ch == "\n":
+            close_line()
+        else:
+            buf.append(ch)
+        i += 1
+    close_line()
+    return "".join(out)
+
+
 def render_blocks_html(blocks: list[Block]) -> dict[int, str]:
     out: dict[int, str] = {}
     for i, b in enumerate(blocks):
@@ -222,7 +271,7 @@ def render_blocks_html(blocks: list[Block]) -> dict[int, str]:
                 f'<div class="codeblock">'
                 f'<div class="cb-head"><span class="cb-lang">{label}</span>'
                 f'<button class="copy" type="button" onclick="copyCode(this)">复制</button></div>'
-                f'<pre class="hl-pre"><code class="hl">{highlight_code(b.lang, b.body)}</code></pre>'
+                f'<pre class="hl-pre"><code class="hl">{wrap_code_lines(highlight_code(b.lang, b.body))}</code></pre>'
                 f"</div>"
             )
     return out
@@ -250,6 +299,37 @@ def build_toc(body_html: str) -> str:
 
 def hstrip(s: str) -> str:
     return s
+
+
+# 目录滚动跟随脚本：滚到哪个小节，左侧 TOC 对应项点亮。
+# 写成常量而非模板 f-string 内联，避免 JS 花括号全部要转义成 {{}}。
+SCROLLSPY_JS = """
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+  if (!links.length) return;
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+  var heads = [];
+  document.querySelectorAll('.lbody h2[id], .lbody h3[id]').forEach(function (h) {
+    if (byId[h.id]) heads.push([h, byId[h.id]]);
+  });
+  if (!heads.length) return;
+  function apply() {
+    var cur = null;
+    for (var i = 0; i < heads.length; i++) {
+      if (!heads[i][0].offsetParent) continue;  // 折叠 details 里的标题不可见
+      if (heads[i][0].getBoundingClientRect().top <= 96) cur = heads[i][1];
+      else break;
+    }
+    var atBottom = window.innerHeight + window.scrollY >=
+                   document.documentElement.scrollHeight - 2;
+    if (atBottom) cur = heads[heads.length - 1][1];
+    links.forEach(function (a) { a.classList.toggle('active', a === cur); });
+  }
+  window.addEventListener('scroll', apply, { passive: true });
+  apply();
+})();
+"""
 
 
 def render_lesson(md_text: str, *, day, prev_day=None, next_day=None,
@@ -333,6 +413,7 @@ function copyCode(btn) {{
     setTimeout(function () {{ btn.textContent = o; }}, 1500);
   }});
 }}
+{SCROLLSPY_JS}
 </script>
 </body>
 </html>
