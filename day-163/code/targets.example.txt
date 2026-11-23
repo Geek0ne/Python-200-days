@@ -1,0 +1,29 @@
+# Day 163 · 目标清单示例（供 03-vuln-scan-cli.py --targets 使用）
+#
+# 格式：每行  <URL或路径> [参数名] [sqli|xss]
+#   · 以 / 开头  → 自动拼上 --base（推荐，便于把整轮审计锁定在同一个基址）
+#   · 完整 URL   → 交给 Scope 门禁逐项校验，越界会直接以退出码 2 终止，**不重试**
+#   · 以 # 开头  → 注释
+#   · 省略参数名 → 由检测器取 URL 里的第一个查询参数
+#   · 省略检测器 → 含 id= 的按 sqli，其余按 xss
+#
+# 用法（内置靶标 + 本清单）：
+#   python3 03-vuln-scan-cli.py --lab --targets targets.example.txt
+
+# ── SQLi 组 ────────────────────────────────────────────────
+/product?id=1            id   sqli     # 有缺陷：字符串拼接 → 错误回显
+/safe-product?id=1       id   sqli     # 安全对照：参数化 → 必须沉默
+/echo?id=1               id   sqli     # 假阳性陷阱：回显已转义，长度必变
+
+# ── XSS 组 ─────────────────────────────────────────────────
+/search?q=hello          q    xss      # 有缺陷：反射进文本节点
+/safe-search?q=hello     q    xss      # 安全对照：html.escape + CSP
+/profile?name=ops        name xss      # 上下文：双引号属性内
+/greeting?name=ops       name xss      # 上下文：<script> 块（最危险）
+/comment?note=hi         note xss      # 上下文：HTML 注释
+/echo?id=hi              id   xss      # 假阳性陷阱：已转义
+
+# ── 门禁演示（取消注释即触发退出码 2）─────────────────────
+# 说明：192.0.2.0/24 是 RFC 5737 的文档网段，永远不可能是真实目标；
+#       这里只用它来证明"门禁在构造请求之前就拒绝了"。
+# http://192.0.2.1:8086/product?id=1   id  sqli

@@ -1,0 +1,88 @@
+# Day 173 实验栈：app + worker + redis + postgres + nginx
+# 关键点都在注释里，读者可直接复制改造
+name: day173-lab
+
+services:
+  redis:
+    image: redis:7-alpine
+    # 显式挂命令：关闭持久化，纯当缓存用
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+    networks: [front]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${PGUSER:-app}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-app}
+      POSTGRES_DB: ${PGDATABASE:-appdb}
+    # 命名卷：容器删了数据还在
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-app} -d ${PGDATABASE:-appdb}"]
+      interval: 2s
+      timeout: 1s
+      retries: 20
+    networks: [front]
+
+  app:
+    build: .
+    image: day173-app:1.0
+    # service_healthy 才是"等到能用了"，见 README 实验 2
+    depends_on:
+      redis:    {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    environment:
+      REDIS_HOST: redis          # 不是 localhost —— Compose 内置 DNS
+      PGHOST: postgres
+      PGUSER: ${PGUSER:-app}
+      PGPASSWORD: ${PGPASSWORD:-app}
+      PGDATABASE: ${PGDATABASE:-appdb}
+    ports:
+      - "${APP_PORT:-18080}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=2).status==200 else 1)"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+      start_period: 3s
+    networks: [front]
+
+  worker:
+    build: .
+    image: day173-app:1.0
+    command: ["python", "worker.py"]     # 同镜像，不同命令
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      ROUNDS: "5"
+      INTERVAL: "2"
+      PGHOST: postgres
+      PGUSER: ${PGUSER:-app}
+      PGPASSWORD: ${PGPASSWORD:-app}
+      PGDATABASE: ${PGDATABASE:-appdb}
+    networks: [front]
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "${NGINX_PORT:-18081}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      app: {condition: service_healthy}
+    networks: [front]
+
+networks:
+  front:
+    driver: bridge
+
+volumes:
+  pgdata:                    # 命名卷，由 Compose 自动创建
